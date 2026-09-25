@@ -134,6 +134,12 @@ pub(crate) struct RunConfig<'a> {
     /// power-on, and ROMs that display uninitialised WRAM (`test_dmatiming`,
     /// #3128) would otherwise be measuring the RNG rather than the emulator.
     pub ram_init_mode: RamInitMode,
+    /// If set to `(frame, hardware)`, the run is carried across a save state:
+    /// when `frame` frames have completed, the console's state is saved, a
+    /// fresh console configured for `hardware` loads the same ROM and restores
+    /// that state, and the run continues on it. Proves a save state survives a
+    /// change of the `snes-hardware` setting between save and load.
+    pub save_state_restore: Option<(u32, SnesHardware)>,
 }
 
 impl<'a> RunConfig<'a> {
@@ -147,7 +153,20 @@ impl<'a> RunConfig<'a> {
             controller_port2: SnesControllerType::Standard,
             hardware: None,
             ram_init_mode: RamInitMode::Zero,
+            save_state_restore: None,
         }
+    }
+
+    /// Carries the run across a save state onto a console configured for
+    /// `hardware` once `frame` frames have completed (see
+    /// [`RunConfig::save_state_restore`]).
+    pub(crate) const fn with_save_state_restore(
+        mut self,
+        frame: u32,
+        hardware: SnesHardware,
+    ) -> Self {
+        self.save_state_restore = Some((frame, hardware));
+        self
     }
 
     /// Overrides the power-on RAM pattern (see [`RunConfig::ram_init_mode`]).
@@ -322,6 +341,25 @@ fn run_rom_with_capture(
     )
 }
 
+/// A console configured as `config` asks, with `hardware` as its
+/// `snes-hardware` setting, with `rom` loaded.
+fn runner_console(
+    rom: &[u8],
+    name: &str,
+    config: &RunConfig,
+    hardware: Option<SnesHardware>,
+) -> Snes {
+    let mut app_config = crate::snes::test_support::snes_test_config();
+    app_config.snes.controller_port1 = config.controller_port1;
+    app_config.snes.controller_port2 = config.controller_port2;
+    app_config.snes.hardware = hardware;
+    app_config.frontend.ram_init_mode = config.ram_init_mode;
+    let mut snes = Snes::new(AppContext::new_with_config(app_config));
+    snes.load_rom(rom, name)
+        .unwrap_or_else(|err| panic!("failed to load SNES runner ROM {name}: {err}"));
+    snes
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_rom_with_oracle_and_capture(
     rom: &[u8],
@@ -333,14 +371,7 @@ fn run_rom_with_oracle_and_capture(
 ) -> RunResult {
     init_tracing_from_env();
 
-    let mut app_config = crate::snes::test_support::snes_test_config();
-    app_config.snes.controller_port1 = config.controller_port1;
-    app_config.snes.controller_port2 = config.controller_port2;
-    app_config.snes.hardware = config.hardware;
-    app_config.frontend.ram_init_mode = config.ram_init_mode;
-    let mut snes = Snes::new(AppContext::new_with_config(app_config));
-    snes.load_rom(rom, name)
-        .unwrap_or_else(|err| panic!("failed to load SNES runner ROM {name}: {err}"));
+    let mut snes = runner_console(rom, name, &config, config.hardware);
 
     let script = config.input_script;
     assert!(
@@ -420,6 +451,16 @@ fn run_rom_with_oracle_and_capture(
         if snes.is_ready_to_render() {
             frames = frames.saturating_add(1);
             snes.clear_ready_to_render();
+            if let Some((restore_frame, hardware)) = config.save_state_restore
+                && frames == restore_frame
+            {
+                let state = snes
+                    .save_state_bytes()
+                    .unwrap_or_else(|err| panic!("{name}: save state failed: {err}"));
+                snes = runner_console(rom, name, &config, Some(hardware));
+                snes.load_state_bytes(&state)
+                    .unwrap_or_else(|err| panic!("{name}: state restore failed: {err}"));
+            }
         }
 
         let pc = snes.cpu_pc_for_tests().unwrap_or(0);

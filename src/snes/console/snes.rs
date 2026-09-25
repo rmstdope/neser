@@ -1367,7 +1367,9 @@ mod tests {
             let bytes = source.save_state_bytes().expect("save state");
 
             let mut restored = make_snes_with_hardware(Some(restored_on));
-            restored.load_rom(&rom, "restored.sfc").expect("load restore");
+            restored
+                .load_rom(&rom, "restored.sfc")
+                .expect("load restore");
             assert_ne!(restored.target_frame_duration(), expected);
             restored.load_state_bytes(&bytes).expect("restore");
 

@@ -673,7 +673,10 @@ mod tests {
         let ntsc = measure_sa1_counts(SnesHardware::Ntsc);
         let pal = measure_sa1_counts(SnesHardware::Pal);
 
-        assert!(ntsc > 1_000, "NTSC SA-1 counter should have advanced: {ntsc}");
+        assert!(
+            ntsc > 1_000,
+            "NTSC SA-1 counter should have advanced: {ntsc}"
+        );
         let ratio = f64::from(pal) / f64::from(ntsc);
         assert!(
             (ratio - 1.190846).abs() < 0.004,
@@ -681,6 +684,49 @@ mod tests {
              (1.201808 would mean the SA-1 kept an NTSC-rate clock), got \
              {ratio:.6} from ntsc={ntsc} pal={pal}"
         );
+    }
+
+    // ---- Group H: a save state carried across a region change ------------
+
+    /// A save state carries its console's region, so one taken on a PAL
+    /// console and restored with `snes-hardware` set to NTSC keeps running as
+    /// the PAL console it came from -- whole-console, not just the APU half
+    /// that #2888 pinned. The SA-1 fixture is saved at frame 2, while both
+    /// CPUs are mid-measurement, and must finish on the NTSC-configured
+    /// console with exactly the count of an uninterrupted PAL run (the S-CPU,
+    /// PPU frame length, SA-1 and its I-RAM mailbox all restored in step),
+    /// still reading PAL from STAT78. The reverse direction holds too.
+    #[test]
+    fn sa1_measurement_survives_a_save_state_restored_on_the_other_region() {
+        let rom = sa1_frame_counter_rom();
+        let cases = [
+            (SnesHardware::Pal, SnesHardware::Ntsc, STAT78_PAL),
+            (SnesHardware::Ntsc, SnesHardware::Pal, 0x00),
+        ];
+        for (saved_on, restored_on, stat78) in cases {
+            let label = format!("sa1-restore-{saved_on:?}-on-{restored_on:?}.sfc");
+            let straight = run_rom(&rom, &label, RunConfig::new(0, 40).with_hardware(saved_on));
+            let carried = run_rom(
+                &rom,
+                &label,
+                RunConfig::new(0, 40)
+                    .with_hardware(saved_on)
+                    .with_save_state_restore(2, restored_on),
+            );
+            assert_passed(&straight, &label);
+            assert_passed(&carried, &label);
+
+            assert_eq!(
+                sa1_count(&carried),
+                sa1_count(&straight),
+                "{label}: the SA-1 count must be unchanged by the save/restore"
+            );
+            assert_eq!(
+                carried.result_bytes[2], stat78,
+                "{label}: STAT78 must still report the saved console's region"
+            );
+            assert_eq!(carried.frames, straight.frames, "{label}: frame count");
+        }
     }
 
     /// The result-block plumbing the measurement fixtures rely on: a fixture
