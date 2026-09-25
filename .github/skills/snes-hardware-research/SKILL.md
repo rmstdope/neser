@@ -1,6 +1,6 @@
 ---
 name: snes-hardware-research
-description: Research Super Nintendo (SNES/Super Famicom) hardware details from fullsnes first, with anomie's docs and the SNESdev wiki as fallbacks, and ares/Mesen2 implementation evidence when specs are incomplete.
+description: Research Super Nintendo (SNES/Super Famicom) hardware details. Specification authority is fullsnes (with curl fallbacks, anomie's docs and the SNESdev wiki as supplements); Mesen2 is the implementation reference when the specification is incomplete, ares the second, and Mesen2 the screenshot reference for visual test ROMs.
 ---
 
 # SNES Hardware Research
@@ -8,6 +8,19 @@ description: Research Super Nintendo (SNES/Super Famicom) hardware details from 
 ## Introduction
 
 Use this skill whenever you need details about any part of Super Nintendo Entertainment System (SNES) / Super Famicom hardware. This includes the 65816 CPU, PPU (1 and 2), the SPC700 audio CPU and S-DSP, the APU IPL boot ROM and 64 KB ARAM, DMA/HDMA, the memory map (LoROM/HiROM/ExHiROM), cartridge/board behavior, save hardware (battery SRAM), controller ports and peripherals, timing, electrical quirks, enhancement chips, and console/region (NTSC/PAL) differences. Prefer source-backed answers, be thorough, and never guess when documentation is missing or incomplete.
+
+## Authorities
+
+Every hardware research skill in this repository uses the same three tiers. The tiers are ranked: a lower tier is consulted only when the tier above it does not answer the question, and an answer is always labelled with the tier it came from.
+
+1. **Specification authority: fullsnes** (`https://problemkaputt.de/fullsnes.htm`).
+   The single leading source. It decides what the hardware does. Retrieval fallbacks (`curl`, offline extraction) are transports for the same source, not different authorities. anomie's SNES documents and the SNESdev wiki are supplements that expand what fullsnes summarizes briefly; they never override it. Hardware-verified test ROMs (`cputest.sfc`, blargg's APU/SPC700 suites, the vendored PPU suites) are hardware observations: when one contradicts a fullsnes sentence, report the test ROM as authoritative for that observable and say fullsnes disagrees.
+
+2. **Implementation references: Mesen2, then ares.**
+   Used only when the specification is missing, incomplete, or ambiguous, to see how a specific behavior can be implemented. Mesen2 (`https://github.com/SourMesen/Mesen2`, `Core/SNES/`) is consulted first, because it is also the project's screenshot reference and a deliberate divergence from it must be commented at the call site; ares (`https://github.com/ares-emulator/ares`, `ares/sfc/`) is the second, independent lineage, consulted when Mesen2 has no model for the behavior or when two implementations agreeing would settle a question. Implementation evidence is never equal authority with the specification. Where an emulator makes a choice the specification does not settle, say so instead of presenting it as hardware fact. bsnes, higan and ares-performance are the same lineage as ares and count as one opinion; Snes9x is not an authority but may break a Mesen2-vs-ares tie (see `references/source-priority.md`).
+
+3. **Screenshot reference: Mesen2** (navigator decision in #3000).
+   When a visual test ROM needs a reference image, capture it with Mesen2 at the same frame as NESER and pixel-diff the two captures with `python -m scripts.diff_screenshots`. An exact match approves the golden. If the captures differ and Mesen2 itself is suspect, ask the navigator instead of approving either side. ares is never used for screenshots. The headless capture recipe is in "Automating Screenshot Capture at Specific Frames" below; the reusable script is `scripts/reference_capture/mesen2_capture.lua` (see `scripts/reference_capture/README.md`, shared with the NES).
 
 ## Instructions
 
@@ -24,7 +37,7 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - First, try fetching fullsnes directly.
    - If the page cannot be retrieved with standard tools, try fetching it directly with `curl -Lsf`.
    - If fullsnes is unavailable, use anomie's SNES documents (CPU, PPU, registers, timing, DSP) and the SNESdev wiki (`https://snes.nesdev.org/wiki/` / `https://wiki.superfamicom.org/`).
-   - Use ares and Mesen2 source code only when specs are incomplete.
+   - Use Mesen2 and ares source code only when specs are incomplete.
 
 4. When researching 65816 CPU timing and cycle counts, account for variable memory speed.
    - Memory access speed depends on region (FastROM vs SlowROM, MEMSEL `$420D`) and the accessed bank/address.
@@ -50,19 +63,19 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
    - Battery SRAM size/presence comes from the header; document `.srm` layout expectations.
    - Note copier headers (512-byte) on `.smc` files and how to detect/strip them.
 
-8. If specification coverage is missing or incomplete, inspect ares and Mesen2 implementation.
-   - **Locating sources**: Check for cloned repositories alongside the current repo first (e.g., `../ares`, `../Mesen2`). If not found, ask the user for the location before fetching from GitHub.
-   - **ares** (Near/byuu's current emulator, successor to bsnes/higan):
+8. If specification coverage is missing or incomplete, inspect Mesen2, then ares.
+   - **Locating sources**: Check for cloned repositories alongside the current repo first (e.g., `../Mesen2`, `../ares`). If not found, ask the user for the location before fetching from GitHub.
+   - **Mesen2** (first):
+     - GitHub: `https://github.com/SourMesen/Mesen2`
+     - Highly accurate multi-system emulator, independent implementation, and the project's screenshot reference
+     - Source in `Core/SNES/` directory
+   - **ares** (second, Near/byuu's current emulator, successor to bsnes/higan):
      - GitHub: `https://github.com/ares-emulator/ares`
      - Focus on `ares/sfc/` core for SNES implementation
-     - Represents Near/byuu's latest understanding of SNES hardware
-   - **Mesen2**:
-     - GitHub: `https://github.com/SourMesen/Mesen2`
-     - Highly accurate multi-system emulator, independent implementation
-     - Source in `Core/SNES/` directory
+     - Consult when Mesen2 has no model for the behavior, or when a second independent implementation is needed to settle a question
    - Use these only after checking fullsnes, anomie's docs, and the SNESdev wiki.
-   - Treat ares/Mesen2 as implementation evidence, not as equal authority with written specifications.
-   - When both agree on behavior not in specs, that's strong evidence; when they disagree, state both approaches.
+   - Treat Mesen2/ares as implementation evidence, not as equal authority with written specifications.
+   - When both agree on behavior not in specs, that's strong evidence; when they disagree, state both approaches, distinguish counter-evidence from absence of evidence, and record the reasoning at the call site (see `references/source-priority.md`).
 
 9. For visual verification, cross-check against Mesen2 (the sole screenshot reference; navigator decision in #3000 — ares stays a source-code reference only, see step 8).
    - **Locating the binary**:
@@ -124,21 +137,21 @@ Use this skill whenever you need details about any part of Super Nintendo Entert
 
 ## References
 
-- `references/source-priority.md`: source order, retrieval tips, and ares/Mesen2 lookup starting points.
+- `references/source-priority.md`: source order, retrieval tips, and Mesen2/ares lookup starting points.
 
 ## Examples
 
 - Researching the memory map / LoROM vs HiROM mapping:
-  start with the fullsnes memory map section, cross-check anomie's memory-map doc, then ares `ares/sfc/cartridge/` and Mesen2 `Core/SNES/Cartridge.cpp` only if heuristics remain unclear.
+  start with the fullsnes memory map section, cross-check anomie's memory-map doc, then Mesen2 `Core/SNES/Cartridge.cpp` and ares `ares/sfc/cartridge/` only if heuristics remain unclear.
 
 - Researching Mode 7 rendering:
-  start with the fullsnes PPU section and anomie's PPU doc for the affine matrix math, then inspect ares `ares/sfc/ppu/` and Mesen2 `Core/SNES/SnesPpu.cpp` if per-scanline edge cases remain unclear.
+  start with the fullsnes PPU section and anomie's PPU doc for the affine matrix math, then inspect Mesen2 `Core/SNES/SnesPpu.cpp` and ares `ares/sfc/ppu/` if per-scanline edge cases remain unclear.
 
 - Researching the APU I/O port handshake:
-  start with fullsnes APU section for the IPL boot protocol, cross-check anomie's APU/DSP docs, then verify against blargg's SPC700 tests and ares `ares/sfc/smp/` / `ares/sfc/dsp/` and Mesen2 `Core/SNES/Apu/`.
+  start with fullsnes APU section for the IPL boot protocol, cross-check anomie's APU/DSP docs, then verify against blargg's SPC700 tests and Mesen2 `Core/SNES/Apu/` and ares `ares/sfc/smp/` / `ares/sfc/dsp/`.
 
 - Researching 65816 instruction timing:
-  start with anomie's timing doc and fullsnes CPU section, then cross-check Tom Harte / ProcessorTests 65816 vectors and ares `ares/component/processor/wdc65816/` and Mesen2 `Core/SNES/SnesCpu.cpp`.
+  start with anomie's timing doc and fullsnes CPU section, then cross-check Tom Harte / ProcessorTests 65816 vectors and Mesen2 `Core/SNES/SnesCpu.cpp` and ares `ares/component/processor/wdc65816/`.
 
 ## Known Hardware Gotchas
 
@@ -1339,6 +1352,9 @@ kill $MESEN_PID
 - Use regular mode with `--loadScript`, **not** `--testRunner` mode (different Lua environment)
 - `emu.takeScreenshot()` returns PNG binary data as string
 - `emu.stop(0)` does not work in regular mode; use external process control instead
+
+The same script, parameterised by `CAPTURE_FRAME` and `CAPTURE_OUT`, is committed as
+`scripts/reference_capture/mesen2_capture.lua`; prefer it over pasting the pattern above.
 
 (ares is not used for screenshot capture — it has no scripting support and is
 a source-code reference only; see step 9 of the Instructions.)

@@ -1,0 +1,17 @@
+diff --git a/src/platform/headless-main.c b/src/platform/headless-main.c
+index 61110b1..138a97a 100644
+--- a/src/platform/headless-main.c
++++ b/src/platform/headless-main.c
+@@ -114,6 +114,12 @@ int main(int argc, char * argv[]) {
+ 		goto argsExit;
+ 	}
+ 	core->init(core);
++	/* Give the core a framebuffer so scripts can call emu:screenshot(); the stock
++	 * headless tool never renders and would write an empty PNG. */
++	unsigned videoWidth, videoHeight;
++	core->baseVideoSize(core, &videoWidth, &videoHeight);
++	void* videoBuffer = malloc(videoWidth * videoHeight * 4);
++	core->setVideoBuffer(core, videoBuffer, videoWidth);
+ 	mCoreInitConfig(core, "headless");
+ 	mArgumentsApply(&args, NULL, 0, &core->config);
+ 
