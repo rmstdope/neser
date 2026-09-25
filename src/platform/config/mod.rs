@@ -44,14 +44,17 @@ pub const DEFAULT_CAPTURE_FRAMES: u32 = 60;
 
 /// RAM initialization mode for power-on/hard reset.
 ///
-/// Controls how all emulated RAM (CPU, PRG, CHR, PPU nametable, and palette) is
-/// initialized when the emulator powers on or performs a hard reset. This affects
-/// hardware-accuracy and determinism for testing.
+/// Controls how emulated RAM (CPU, PRG, CHR, PPU nametable) is initialized when the
+/// emulator powers on or performs a hard reset. This affects hardware-accuracy and
+/// determinism for testing.
+///
+/// NES palette RAM is the exception: every mode loads the power-up palette blargg
+/// measured on hardware, as Mesen2 does, since its contents are unspecified.
 ///
 /// Soft resets preserve RAM contents and do not re-initialize.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RamInitMode {
-    /// Initialize all RAM to 0x00.
+    /// Initialize all RAM to 0x00 (NES palette RAM excepted, see above).
     ///
     /// Provides a clean, predictable startup state. Useful for debugging and
     /// testing, though not hardware-accurate (real NES hardware has random RAM on power-on).

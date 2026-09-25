@@ -380,6 +380,59 @@ fn test_ppu_palette_ram_init_zero_mode() {
     }
 }
 
+fn write_palette_3f00(nes: &Nes, value: u8) {
+    let mut bus = nes.bus().borrow_mut();
+    bus.write(0x2006, 0x3F, false);
+    bus.write(0x2006, 0x00, false);
+    bus.write(0x2007, value, false);
+}
+
+fn read_palette_3f00(nes: &Nes) -> u8 {
+    let mut bus = nes.bus().borrow_mut();
+    bus.write(0x2006, 0x3F, false);
+    bus.write(0x2006, 0x00, false);
+    bus.read(0x2007, false)
+}
+
+fn zero_mode_nes_with_cartridge(name: &str) -> Nes {
+    let mut config = Config::with_defaults();
+    config.frontend.ram_init_mode = RamInitMode::Zero;
+    let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+        config,
+    ));
+    let rom_data = create_test_rom();
+    nes.insert_cartridge(load_test_cartridge(&rom_data, name));
+    nes
+}
+
+#[test]
+fn test_ppu_palette_hard_reset_restores_power_up_table_zero_mode() {
+    let mut nes = zero_mode_nes_with_cartridge("ram-init-palette-hard-reset.nes");
+    write_palette_3f00(&nes, 0x2A);
+
+    nes.reset(false);
+
+    assert_eq!(
+        read_palette_3f00(&nes),
+        0x09,
+        "Hard reset should reload blargg's power-up palette ($3F00 = $09) in Zero mode"
+    );
+}
+
+#[test]
+fn test_ppu_palette_soft_reset_preserves_written_value() {
+    let mut nes = zero_mode_nes_with_cartridge("ram-init-palette-soft-reset.nes");
+    write_palette_3f00(&nes, 0x2A);
+
+    nes.reset(true);
+
+    assert_eq!(
+        read_palette_3f00(&nes),
+        0x2A,
+        "Soft reset should leave palette RAM unchanged"
+    );
+}
+
 #[test]
 fn test_oam_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
