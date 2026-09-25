@@ -1344,6 +1344,53 @@ mod tests {
         );
     }
 
+    /// Audio pitch and tempo on a PAL console. The DSP runs off the APU's own
+    /// 24.576 MHz crystal at 32 kHz in both regions (fullsnes "SNES Timing
+    /// Oscillators", APU Timings), and the frontend presents one frame per
+    /// `target_frame_duration()`. So the samples produced across N frames must
+    /// equal N x that duration x the output rate: fewer and the frontend's
+    /// buffer under-runs (and the music runs slow), more and it backs up.
+    #[test]
+    fn audio_output_keeps_pace_with_the_frame_rate_in_both_regions() {
+        const OUTPUT_RATE: f32 = 48_000.0;
+        const FRAMES: u32 = 300;
+        for hardware in [SnesHardware::Ntsc, SnesHardware::Pal] {
+            let mut snes = make_snes_with_hardware(Some(hardware));
+            snes.load_rom(&valid_lorom_nop_rom(), "audio_pace.sfc")
+                .expect("load ROM");
+            snes.set_audio_sample_rate(OUTPUT_RATE);
+
+            // Let the first frame settle, then count whole frames only.
+            let _ = ticks_until_ready_to_render(&mut snes);
+            snes.clear_ready_to_render();
+            while snes.get_stereo_sample().is_some() {}
+
+            let mut samples = 0u64;
+            let mut frames = 0;
+            while frames < FRAMES {
+                snes.run_tick();
+                while snes.get_stereo_sample().is_some() {
+                    samples += 1;
+                }
+                if snes.is_ready_to_render() {
+                    snes.clear_ready_to_render();
+                    frames += 1;
+                }
+            }
+
+            let expected = f64::from(FRAMES)
+                * snes.target_frame_duration().as_secs_f64()
+                * f64::from(OUTPUT_RATE);
+            let error = (samples as f64 - expected).abs() / expected;
+            assert!(
+                error < 0.005,
+                "{hardware:?}: {FRAMES} frames produced {samples} samples at \
+                 {OUTPUT_RATE} Hz, expected {expected:.0} ({:.3}% off)",
+                error * 100.0
+            );
+        }
+    }
+
     /// The frontend paces frames by `target_frame_duration()`, so after a
     /// state restore it must follow the region the *state* carries, exactly as
     /// the PPU's scanline count and the APU's clock ratio already do. Otherwise

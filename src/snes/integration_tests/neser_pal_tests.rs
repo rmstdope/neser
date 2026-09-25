@@ -546,6 +546,82 @@ mod tests {
         assert_passed(&result, "PAL auto-joypad read");
     }
 
+    // ---- Group F: a PAL game's per-frame logic and audio ---------------------
+
+    /// WRAM byte the game loop's NMI handler counts frames in.
+    const GAME_FRAME_COUNTER: u16 = 0x0010;
+    /// Frames of game logic the loop fixture runs before reporting PASS.
+    const GAME_FRAMES: u8 = 100;
+
+    /// A game's VBlank NMI handler, the place a SNES game runs its per-frame
+    /// logic: it advances a frame counter and writes it to BG1HOFS as the
+    /// frame's horizontal scroll, then acknowledges RDNMI.
+    ///
+    /// ```text
+    ///   48         PHA
+    ///   EE 10 00   INC $0010           ; per-frame tick
+    ///   AD 10 00   LDA $0010
+    ///   8D 0D 21   STA $210D           ; BG1HOFS low: scroll one pixel a frame
+    ///   9C 0D 21   STZ $210D           ; BG1HOFS high
+    ///   2C 10 42   BIT $4210           ; acknowledge RDNMI
+    ///   68         PLA
+    ///   40         RTI
+    /// ```
+    #[rustfmt::skip]
+    const GAME_NMI_HANDLER: [u8; 18] = [
+        0x48,
+        0xEE, 0x10, 0x00, 0xAD, 0x10, 0x00,
+        0x8D, 0x0D, 0x21, 0x9C, 0x0D, 0x21,
+        0x2C, 0x10, 0x42,
+        0x68, 0x40,
+    ];
+
+    /// A European (PAL-by-header) game loop: NMI on, then the main thread
+    /// waits for its NMI handler to have run [`GAME_FRAMES`] times.
+    fn game_loop_rom() -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL GAME LOOP");
+        fixture.country(0x02);
+        let handler = fixture.place_data(&GAME_NMI_HANDLER);
+        fixture.set_emulation_nmi_vector(handler);
+        fixture.store_imm_abs(0x4200, 0x80); // NMITIMEN bit 7: VBlank NMI
+        let wait = fixture.pos();
+        fixture.lda_abs(GAME_FRAME_COUNTER);
+        fixture.cmp_imm(GAME_FRAMES);
+        fixture.bne_to(wait);
+        fixture.pass_marker_and_idle();
+        fixture.build()
+    }
+
+    /// A PAL game's logic, scroll included, is driven by the VBlank NMI, so
+    /// it advances once per frame on both consoles: 50 steps a second on PAL
+    /// and 60 on NTSC, which is why PAL games play slower unless written for
+    /// 50 Hz (fullsnes "SNES Timing": one VBlank per frame, 312 lines PAL).
+    /// The same [`GAME_FRAMES`] logic steps must take the same number of
+    /// frames in both regions -- nothing may run twice or be skipped in PAL's
+    /// longer VBlank.
+    #[test]
+    fn nmi_game_loop_advances_once_per_frame_in_both_regions() {
+        let rom = game_loop_rom();
+        let pal = run_rom(&rom, "game-loop-pal.sfc", RunConfig::new(0, 150));
+        let ntsc = run_rom(
+            &rom,
+            "game-loop-ntsc.sfc",
+            RunConfig::new(0, 150).with_hardware(SnesHardware::Ntsc),
+        );
+        assert_passed(&pal, "PAL game loop");
+        assert_passed(&ntsc, "NTSC game loop");
+
+        assert!(
+            pal.frames.abs_diff(u32::from(GAME_FRAMES)) <= 1,
+            "{GAME_FRAMES} NMI-driven logic steps should take {GAME_FRAMES} PAL frames, took {}",
+            pal.frames
+        );
+        assert_eq!(
+            pal.frames, ntsc.frames,
+            "the same logic steps must take the same frames in both regions"
+        );
+    }
+
     // ---- Group G: the SA-1 runs off the SNES master clock -----------------
 
     /// SA-1 program that counts free-running loop iterations between a start
