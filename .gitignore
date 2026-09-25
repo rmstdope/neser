@@ -75,9 +75,6 @@ test-results/
 # Local temporary automation files
 .tmp/
 
-# Agentic workflows
-.github/aw/logs
-
 # doit agent
 .doit
 

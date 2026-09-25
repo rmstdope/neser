@@ -591,6 +591,12 @@ Copilot workflows. Their sources are kept as `*.md.disabled` for reference and t
 `*.lock.yml` files are gone, so nothing runs. The Cerebro fleet replaces them: the bugfixer role
 takes bug beads, the architect files refactoring beads, and Moira triages incoming issues.
 
+The tooling that served only them is removed as well: the compile-time actions lock, the shared
+reporting include they imported, the dispatcher agent for authoring them, and the sub-issue helper
+extension (hierarchy now lives in beads as `--parent`). The `bug-of-the-day`, `code-simplifier`
+and `next-mapper` sources import that include, and the import no longer resolves; they are
+reference only.
+
 ### `.cerebro/` and `.beads/` — the fleet and its work board
 
 Neser is developed by a fleet of AI agents run by [Cerebro](https://github.com/rmstdope/cerebro),
