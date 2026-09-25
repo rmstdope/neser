@@ -248,6 +248,11 @@ pub(crate) struct RunResult {
     /// hashes identically either way. Assert on this field directly when a test needs to
     /// know overscan was actually engaged, independent of content.
     pub overscan_239_enabled: bool,
+    /// The frame duration the console the run ended on asks its frontend to
+    /// pace at (`Emulator::target_frame_duration`), so a test can check the
+    /// pacing follows the region -- including after
+    /// [`RunConfig::with_save_state_restore`] moved the run to another console.
+    pub frame_duration: std::time::Duration,
     /// Final RGB888 frame (row-major, dimensions matching `screen_dimensions`, the same
     /// layout as `Snes::screen_snapshot`), for tests that need to assert on pixels rather than on a
     /// golden CRC. Populated only when the [`RunOracle::ScreenCrc`] oracle actually reached
@@ -599,6 +604,7 @@ fn finish_result(
         overscan_239_enabled: snes
             .overscan_239_enabled_for_tests()
             .expect("finish_result is only called after a ROM has been loaded"),
+        frame_duration: snes.target_frame_duration(),
         screen_rgb,
         capture_path,
     }

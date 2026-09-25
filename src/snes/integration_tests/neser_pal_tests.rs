@@ -559,8 +559,10 @@ mod tests {
     const GAME_FRAMES: u8 = 100;
 
     /// A game's VBlank NMI handler, the place a SNES game runs its per-frame
-    /// logic: it advances a frame counter and writes it to BG1HOFS as the
-    /// frame's horizontal scroll, then acknowledges RDNMI.
+    /// logic: it advances a frame counter and writes it to BG1HOFS as a game
+    /// would its scroll, then acknowledges RDNMI. Only the counter is asserted
+    /// (BG1HOFS is write-only); the scroll write is there to give the handler a
+    /// game's shape, not as a checked output.
     ///
     /// ```text
     ///   48         PHA
@@ -597,7 +599,7 @@ mod tests {
         fixture.build()
     }
 
-    /// A PAL game's logic, scroll included, is driven by the VBlank NMI, so
+    /// A PAL game's per-frame logic is driven by the VBlank NMI, so
     /// it advances once per frame on both consoles: 50 steps a second on PAL
     /// and 60 on NTSC, which is why PAL games play slower unless written for
     /// 50 Hz (fullsnes "SNES Timing": one VBlank per frame, 312 lines PAL).
@@ -776,7 +778,9 @@ mod tests {
     /// CPUs are mid-measurement, and must finish on the NTSC-configured
     /// console with exactly the count of an uninterrupted PAL run (the S-CPU,
     /// PPU frame length, SA-1 and its I-RAM mailbox all restored in step),
-    /// still reading PAL from STAT78. The reverse direction holds too.
+    /// still reading PAL from STAT78 and paced at PAL's frame rate. The reverse
+    /// direction holds too. Mutation check: dropping the region adoption from
+    /// `Snes::load_state_bytes` fails the frame-rate assertion.
     #[test]
     fn sa1_measurement_survives_a_save_state_restored_on_the_other_region() {
         let rom = sa1_frame_counter_rom();
@@ -807,6 +811,10 @@ mod tests {
                 "{label}: STAT78 must still report the saved console's region"
             );
             assert_eq!(carried.frames, straight.frames, "{label}: frame count");
+            assert_eq!(
+                carried.frame_duration, straight.frame_duration,
+                "{label}: the restored console must be paced at the saved region's frame rate"
+            );
         }
     }
 

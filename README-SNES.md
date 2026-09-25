@@ -427,8 +427,8 @@ relative to the CPU on PAL — so the APU derives its clock ratio and audio
 sample pacing from the active region too. The SA-1 is the opposite case: it has
 no crystal and runs off the SNES master clock (fullsnes "SNES Timing
 Oscillators": "SA-1 <master> SNES Master Clock"), so it slows down with the
-65816 and its ratio to it does not change. A game's NMI-driven logic, scroll
-included, runs once per frame on both consoles, i.e. 50 steps a second on PAL.
+65816 and its ratio to it does not change. A game's NMI-driven per-frame logic
+runs once per frame on both consoles, i.e. 50 steps a second on PAL.
 
 A save state carries its console's region. Restoring it on a console whose
 `snes-hardware` setting names the other region keeps the saved region: the
