@@ -344,21 +344,25 @@ fn test_ppu_soft_reset_preserves_ram() {
 
 #[test]
 fn test_ppu_palette_ram_init_zero_mode() {
-    // Verify that PPU palette RAM ($3F00-$3F1F) is initialized according to
-    // the configured RAM init mode, using the PPU register interface.
+    // Palette RAM is unspecified at power-up (NESdev "PPU power up state"), so Zero mode
+    // does not zero it: like Mesen2 with RamPowerOnState=AllZeros, it loads the table
+    // blargg measured on hardware (power_up_palette.asm), read back through $2006/$2007.
+    const BLARGG_POWER_UP_PALETTE: [u8; 32] = [
+        0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04,
+        0x2C, 0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20,
+        0x2C, 0x08,
+    ];
     let mut config = Config::with_defaults();
     config.frontend.ram_init_mode = RamInitMode::Zero;
     let nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
         config,
     ));
 
-    // Access palette RAM via PPUADDR ($2006) and PPUDATA ($2007).
-    // For Zero mode, all palette entries should read back as 0x00.
     {
         let mut bus = nes.bus().borrow_mut();
 
-        for offset in 0u16..32 {
-            let addr = 0x3F00u16 + offset;
+        for (offset, &expected) in BLARGG_POWER_UP_PALETTE.iter().enumerate() {
+            let addr = 0x3F00u16 + offset as u16;
             let high = (addr >> 8) as u8;
             let low = (addr & 0x00FF) as u8;
 
@@ -368,8 +372,8 @@ fn test_ppu_palette_ram_init_zero_mode() {
 
             let value = bus.read(0x2007, false);
             assert_eq!(
-                value, 0x00,
-                "Palette RAM at ${:04X} should be initialized to 0x00 in Zero mode",
+                value, expected,
+                "Palette RAM at ${:04X} should hold blargg's power-up value in Zero mode",
                 addr
             );
         }

@@ -135,6 +135,15 @@ mod tests {
         "$01",
         crate::nes::console::RamInitMode::Random
     );
+    // Zero RAM init is what `--headless` captures use. The palette is unspecified at
+    // power-up (NESdev "PPU power up state"); like Mesen2 with RamPowerOnState=AllZeros,
+    // NESER loads blargg's measured table, so this ROM reports $01 (nr-aph).
+    setup_rom_console_test_with_ram_init!(
+        test_blargg_ppu_tests_2005_09_15b_power_up_palette_zero_ram_init,
+        "roms/nes/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
+        "$01",
+        crate::nes::console::RamInitMode::Zero
+    );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_sprite_ram,
         "roms/nes/automated_tests/blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
