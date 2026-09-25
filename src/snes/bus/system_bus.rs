@@ -3305,6 +3305,127 @@ mod tests {
         }
     }
 
+    /// Fill `count` bytes of cartridge SRAM at `$704000` with `value` and arm a GPDMA of them
+    /// on channel 0 to WMDATA. The write to `$420B` only arms it; with no CPU driving the
+    /// cycle hook, the bus-only fallback starts the burst eight clocks later.
+    fn arm_gpdma_to_wmdata(bus: &mut SnesSystemBus, value: u8, count: u16) {
+        for i in 0..u32::from(count) {
+            bus.write(0x704000 + i, value);
+        }
+        write_dma_channel(bus, 0, 0x00, 0x80, 0x704000, count);
+        bus.write(0x00420B, 0x01);
+    }
+
+    /// Indices in a B-bus write log of every write carrying `value`.
+    fn positions_of(log: &[(u8, u8)], value: u8) -> Vec<usize> {
+        log.iter()
+            .enumerate()
+            .filter(|&(_, &(_, v))| v == value)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    #[test]
+    fn gpdma_spanning_the_hdma_line_trigger_runs_that_lines_hdma_inside_the_burst() {
+        // gh-3139: a GPDMA burst that sweeps past line_clock 1104 used to swallow that
+        // scanline's HDMA outright -- never armed, so the line counter and table pointer did
+        // not advance and the rest of the frame read the wrong descriptors. Mesen2 re-enters
+        // `ProcessPendingTransfers` from `RunDma` after every byte, so the line runs inside
+        // the burst and the next scanline reads the next descriptor.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+        write_hdma_channel(&mut bus, 1, 0x00, 0x80, 0x703000);
+        for (i, byte) in [0x01u8, 0x7A, 0x01, 0x7B, 0x00].iter().enumerate() {
+            bus.write(0x703000 + i as u32, *byte);
+        }
+        bus.write(0x00420C, 0x02);
+
+        // Past the frame init, well before the scanline-0 line trigger.
+        tick_until_master_clock(&mut bus, 1000);
+        assert!(bus.take_b_bus_writes().is_empty(), "no HDMA line yet");
+
+        // 100 bytes at 8 clocks each: the burst runs from ~1008 to past 1800.
+        arm_gpdma_to_wmdata(&mut bus, 0x11, 100);
+        tick_until_master_clock(&mut bus, 1010);
+        assert!(
+            bus.ppu.borrow().total_master_clocks() > 1104 + 16,
+            "the burst must span the line trigger and its start delay"
+        );
+        let burst = bus.take_b_bus_writes();
+        let gpdma = positions_of(&burst, 0x11);
+        assert_eq!(gpdma.len(), 100, "every GPDMA byte is still delivered");
+        let hdma = positions_of(&burst, 0x7A);
+        assert_eq!(hdma.len(), 1, "scanline 0's HDMA line ran during the burst");
+        assert!(
+            gpdma[0] < hdma[0] && hdma[0] < gpdma[99],
+            "the HDMA line runs inside the burst, not after it: {burst:02X?}"
+        );
+
+        // Scanline 1 reads the NEXT descriptor; a swallowed line would replay 0x7A here.
+        tick_until_master_clock(&mut bus, 3000);
+        assert_eq!(bus.take_b_bus_writes(), vec![(0x80, 0x7B)]);
+    }
+
+    #[test]
+    fn gpdma_spanning_the_hdma_init_trigger_runs_the_frame_init_inside_the_burst() {
+        // The frame reload (scanline 0, ~clock 12-19) is claimed from inside a burst the same
+        // way as a line transfer (Mesen2 `_hdmaInitPending`). Without it the channel never
+        // loads its table and the first line transfer has nothing to send.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+        write_hdma_channel(&mut bus, 1, 0x00, 0x80, 0x703000);
+        for (i, byte) in [0x01u8, 0x7A, 0x00].iter().enumerate() {
+            bus.write(0x703000 + i as u32, *byte);
+        }
+        bus.write(0x00420C, 0x02);
+
+        // Armed at clock 0; the burst starts at ~8 and runs well past the init position.
+        arm_gpdma_to_wmdata(&mut bus, 0x11, 20);
+        tick_until_master_clock(&mut bus, 10);
+        assert!(
+            bus.ppu.borrow().total_master_clocks() > 100,
+            "the burst must span the init trigger"
+        );
+        assert_eq!(positions_of(&bus.take_b_bus_writes(), 0x11).len(), 20);
+
+        tick_until_master_clock(&mut bus, 1300);
+        assert_eq!(
+            bus.take_b_bus_writes(),
+            vec![(0x80, 0x7A)],
+            "the init that fell inside the burst loaded the table for scanline 0"
+        );
+    }
+
+    #[test]
+    fn a_gpdma_cannot_start_a_second_gpdma_from_inside_its_burst() {
+        // Mesen2 clears `_dmaPending` before `RunDma`, and nothing inside a burst can set it
+        // again: the only way would be a B->A transfer landing on `$420B`, and A-bus MMIO is
+        // not writable by DMA. So the nested hook claims HDMA only, and nothing runs after the
+        // burst.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        // Channel 1 is set up so that starting it would be visible in the B-bus log.
+        bus.write(0x704100, 0x5A);
+        write_dma_channel(&mut bus, 1, 0x00, 0x80, 0x704100, 1);
+        // Channel 0: B->A from WMDATA (reading WRAM $000300.., all $02) to the fixed A-bus
+        // address $00:420B, i.e. MDMAEN := $02 (channel 1) if the write were not dropped.
+        for i in 0..4u32 {
+            bus.write(0x7E0300 + i, 0x02);
+        }
+        bus.write(0x002181, 0x00);
+        bus.write(0x002182, 0x03);
+        bus.write(0x002183, 0x00);
+        write_dma_channel(&mut bus, 0, 0x88, 0x80, 0x00420B, 4);
+        bus.write(0x00420B, 0x01);
+        tick_until_master_clock(&mut bus, 200);
+
+        assert_eq!(bus.pending_gpdma, None, "the burst did not re-arm MDMAEN");
+        tick_until_master_clock(&mut bus, 2000);
+        assert!(
+            bus.take_b_bus_writes().is_empty(),
+            "no second transfer ran from inside or after the burst"
+        );
+    }
+
     #[test]
     fn hdma_pixel_at_x255_sees_pre_write_register_state() {
         // The last visible pixel (x=255, dot 277, clock 1108) renders BEFORE the
