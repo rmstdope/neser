@@ -291,9 +291,10 @@ reset_handler:
 
     @ --- Clear palette entries used by BIOS intro ---
     @ palette[0] was faded to 0x7FFF (white); palette[1] was set white for logo text.
-    @ Leave them as 0 (black) so the game starts with a clean backdrop.
+    @ Leave them as 0 so the game starts with clean palette entries; the screen
+    @ itself stays white (forced blank) until the game writes DISPCNT.
     ldr     r0, =0x05000000
-    strh    r1, [r0]            @ palette[0] = 0 (black backdrop)
+    strh    r1, [r0]            @ palette[0] = 0
     strh    r1, [r0, #2]        @ palette[1] = 0
 
     @ --- Silence BIOS jingle before jumping to game ---

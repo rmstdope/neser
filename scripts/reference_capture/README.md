@@ -17,6 +17,7 @@ NESER side, for every system:
 ```bash
 cargo build --release --bin neser
 target/release/neser --headless --frames <N> --output neser.png <rom>
+# GBA with NESER's built-in BIOS: add --skip-bios-intro (see "Frame numbering" under mGBA)
 python -m scripts.diff_screenshots neser.png reference.png --shift-search 1
 ```
 
@@ -123,11 +124,15 @@ and the equivalent NESER option only when the ROM under test exercises the real 
 Frame numbering. Both sides count frames from power-on (`emu:currentFrame()` and NESER's
 `--frames`), but they do not reach the cartridge at the same frame:
 
-- **Always pass `--skip-bios-intro` on the NESER side.** NESER's built-in BIOS plays its
+- **Pass `--skip-bios-intro` on the NESER side when it runs its built-in BIOS** (the
+  default, and what matches mGBA's HLE BIOS). NESER's built-in BIOS plays its
   logo and jingle by default, which delays the cartridge by about 255 frames (the mGBA
   suite draws its menu at frame 9 in mGBA and at frame ~265 in NESER without the flag).
   mGBA's HLE BIOS has no intro and jumps straight to the cartridge. With the flag, NESER
-  runs only the BIOS hardware init.
+  runs only the BIOS hardware init. Do not pass it with a real BIOS image (`-b` on the
+  mGBA side, `--gba-bios-path` on NESER's): both sides then play the real intro, and the
+  flag only writes 1 to IWRAM 0x03007FFC, the user IRQ-handler pointer, so RAM is no
+  longer zero-initialised.
 - **Expect one frame of offset while a ROM is still drawing its first screen.** mGBA's
   no-BIOS boot (`GBASkipBIOS`) sets VCOUNT to 126 at cartridge entry, so its first frame is
   only 102 of 228 lines long; NESER enters the cartridge near line 0 after running its

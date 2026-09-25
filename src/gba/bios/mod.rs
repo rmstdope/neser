@@ -1818,16 +1818,6 @@ mod tests {
     }
 
     #[test]
-    fn bios_full_boot_enters_cartridge_in_forced_blank() {
-        let mut gba = boot_with_full_intro(&[ARM_IDLE]).expect("Full boot should reach cartridge");
-        assert_eq!(
-            gba.bus_mut().read16(0x0400_0000),
-            DISPCNT_FORCED_BLANK,
-            "DISPCNT at cartridge entry (full intro boot)"
-        );
-    }
-
-    #[test]
     fn bios_register_ram_reset_sets_forced_blank() {
         // GBATek: RegisterRamReset "always switches the screen into forced
         // blank by setting DISPCNT=0080h (regardless of incoming R0)".
@@ -2006,10 +1996,13 @@ mod tests {
         // The full boot (with intro) should eventually reach the cartridge
         // entry point at 0x08000000 after displaying the logo and playing
         // the jingle.
-        let gba = boot_with_full_intro(&[ARM_IDLE]);
-        assert!(
-            gba.is_some(),
-            "Full boot with intro should eventually reach cartridge"
+        // It hands over in forced blank (DISPCNT = 0x0080, screen white).
+        let mut gba = boot_with_full_intro(&[ARM_IDLE])
+            .expect("Full boot with intro should eventually reach cartridge");
+        assert_eq!(
+            gba.bus_mut().read16(0x0400_0000),
+            DISPCNT_FORCED_BLANK,
+            "DISPCNT at cartridge entry (full intro boot)"
         );
     }
 
