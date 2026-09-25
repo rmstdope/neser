@@ -515,7 +515,14 @@ impl Emulator for Snes {
 
         let state = SnesSaveState::from_bytes(data)
             .map_err(|e| format!("save state deserialization failed: {e}"))?;
-        cpu.restore_save_state(&state).map_err(|e| e.to_string())
+        cpu.restore_save_state(&state).map_err(|e| e.to_string())?;
+        // The state carries its console's region and has already retuned the
+        // PPU and APU to it; frame pacing must follow the same region.
+        self.active_hardware = match cpu.bus().ppu_video_region() {
+            SnesVideoRegion::Ntsc => SnesHardware::Ntsc,
+            SnesVideoRegion::Pal => SnesHardware::Pal,
+        };
+        Ok(())
     }
 
     fn reset(&mut self, soft_reset: bool) {
@@ -1335,6 +1342,42 @@ mod tests {
             "the output rate must still be {OUTPUT_RATE} Hz after restoring a \
              PAL state onto an NTSC-configured console"
         );
+    }
+
+    /// The frontend paces frames by `target_frame_duration()`, so after a
+    /// state restore it must follow the region the *state* carries, exactly as
+    /// the PPU's scanline count and the APU's clock ratio already do. Otherwise
+    /// a PAL state restored on an NTSC-configured console runs 312-line frames
+    /// at 60 Hz (20% fast), and an NTSC state on a PAL-configured one runs
+    /// 262-line frames at 50 Hz.
+    #[test]
+    fn cross_region_state_restore_adopts_the_saved_regions_frame_pacing() {
+        let rom = valid_lorom_nop_rom_with_country(0x00);
+        let cases = [
+            (SnesHardware::Pal, SnesHardware::Ntsc),
+            (SnesHardware::Ntsc, SnesHardware::Pal),
+        ];
+        for (saved_on, restored_on) in cases {
+            let mut source = make_snes_with_hardware(Some(saved_on));
+            source.load_rom(&rom, "source.sfc").expect("load source");
+            for _ in 0..1_000 {
+                source.run_tick();
+            }
+            let expected = source.target_frame_duration();
+            let bytes = source.save_state_bytes().expect("save state");
+
+            let mut restored = make_snes_with_hardware(Some(restored_on));
+            restored.load_rom(&rom, "restored.sfc").expect("load restore");
+            assert_ne!(restored.target_frame_duration(), expected);
+            restored.load_state_bytes(&bytes).expect("restore");
+
+            assert_eq!(
+                restored.target_frame_duration(),
+                expected,
+                "a {saved_on:?} state restored on a {restored_on:?}-configured console \
+                 must be paced at the {saved_on:?} frame rate"
+            );
+        }
     }
 
     #[test]
