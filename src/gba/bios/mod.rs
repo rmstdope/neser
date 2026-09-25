@@ -1819,8 +1819,7 @@ mod tests {
 
     #[test]
     fn bios_full_boot_enters_cartridge_in_forced_blank() {
-        let mut gba =
-            boot_with_full_intro(&[ARM_IDLE]).expect("Full boot should reach cartridge");
+        let mut gba = boot_with_full_intro(&[ARM_IDLE]).expect("Full boot should reach cartridge");
         assert_eq!(
             gba.bus_mut().read16(0x0400_0000),
             DISPCNT_FORCED_BLANK,
