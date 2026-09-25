@@ -592,8 +592,9 @@ takes bug beads, the architect files refactoring beads, and Moira triages incomi
 
 The tooling that served only them is removed as well: the compile-time actions lock, the shared
 reporting include they imported, the dispatcher agent for authoring them, and the sub-issue helper
-extension (hierarchy now lives in beads as `--parent`). The disabled sources' shared import
-therefore no longer resolves; they are reference only.
+extension (hierarchy now lives in beads as `--parent`). The `bug-of-the-day`, `code-simplifier`
+and `next-mapper` sources import that include, and the import no longer resolves; they are
+reference only.
 
 ### `.cerebro/` and `.beads/` — the fleet and its work board
 
