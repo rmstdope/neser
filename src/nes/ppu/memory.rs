@@ -2,7 +2,10 @@ use crate::nes::cartridge::{Cartridge, NametableLayout};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[allow(dead_code)]
+/// Palette RAM at power-up. Its contents are unspecified on hardware (NESdev "PPU power up
+/// state"); this is the table blargg measured on his NES (power_up_palette.asm), which
+/// Mesen2 also loads whenever RAM power-on state is not random. Used for every
+/// `RamInitMode` so that zero-initialised headless captures match Mesen2's `AllZeros`.
 const DEFAULT_PALETTE_RAM: [u8; 32] = [
     0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
     0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
@@ -32,27 +35,13 @@ impl Memory {
     /// Create a new Memory instance
     pub fn new(ram_init_mode: crate::nes::console::RamInitMode) -> Self {
         let mut ppu_ram = [0u8; 4096];
-        let mut palette_ram = [0u8; 32];
 
         // Initialize nametable RAM based on mode
         crate::nes::console::initialize_ram(&mut ppu_ram, ram_init_mode);
 
-        // Initialize palette RAM based on mode
-        // Note: For Random mode, use hardware-measured power-up pattern
-        match ram_init_mode {
-            crate::nes::console::RamInitMode::Zero => {
-                // Palette RAM is already zero-initialized above
-            }
-            crate::nes::console::RamInitMode::Random
-            | crate::nes::console::RamInitMode::SeededRandom(_) => {
-                // Use hardware-measured power-up palette pattern for hardware accuracy
-                palette_ram = DEFAULT_PALETTE_RAM;
-            }
-        }
-
         Self {
             ppu_ram,
-            palette_ram,
+            palette_ram: DEFAULT_PALETTE_RAM,
             last_palette_index: None,
             last_palette_value: 0,
             mirroring_mode: NametableLayout::Horizontal,
@@ -78,18 +67,8 @@ impl Memory {
         // Initialize nametable RAM
         crate::nes::console::initialize_ram(&mut self.ppu_ram, mode);
 
-        // Initialize palette RAM
-        // Note: For Random mode, use hardware-measured power-up pattern
-        match mode {
-            crate::nes::console::RamInitMode::Zero => {
-                crate::nes::console::initialize_ram(&mut self.palette_ram, mode);
-            }
-            crate::nes::console::RamInitMode::Random
-            | crate::nes::console::RamInitMode::SeededRandom(_) => {
-                // Use hardware-measured power-up palette pattern for hardware accuracy
-                self.palette_ram = DEFAULT_PALETTE_RAM;
-            }
-        }
+        // Palette RAM always gets the power-up table, whatever the mode
+        self.palette_ram = DEFAULT_PALETTE_RAM;
 
         // Clear cache
         self.last_palette_index = None;
@@ -432,8 +411,9 @@ mod tests {
     fn test_memory_new() {
         let mut mem = Memory::default();
         assert_eq!(mem.read_chr(0, &None), 0);
-        // Default mode uses Zero initialization, so palette is all zeros
-        assert_eq!(mem.read_palette(0x3F00), 0);
+        // Zero mode still loads blargg's power-up palette (palette RAM is unspecified at
+        // power-up; Mesen2 does the same for AllZeros), so $3F00 reads $09
+        assert_eq!(mem.read_palette(0x3F00), 0x09);
     }
 
     #[test]

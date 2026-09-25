@@ -566,7 +566,9 @@ mod tests {
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
-        let expected_crcs = [0xE328388E, 0xE328388E, 0xE328388E];
+        // Rendering stays off and the palette is never written, so every frame is the
+        // backdrop colour at $3F00: $09 from the power-up palette (nr-aph), solid #083A00.
+        let expected_crcs = [0xB03F598B, 0xB03F598B, 0xB03F598B];
         for (index, expected_crc) in expected_crcs.iter().enumerate() {
             run_nes_for_frames(&mut nes, 60);
             let crc = nes.get_screen_buffer().crc32();
