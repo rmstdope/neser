@@ -4,7 +4,7 @@ Headless capture recipes for the screenshot reference of each system, verified o
 2026-09-25 on macOS (Apple Silicon). Each recipe was checked end to end: the reference
 capture and a NESER `--headless` capture of the same ROM matched pixel-for-pixel through
 `python -m scripts.diff_screenshots` (NES: instr_test-v5 official_only frame 120; GB:
-dmg-acid2 after 10 s; GBA: mGBA suite frame 300).
+dmg-acid2 after 10 s; GBA: mGBA suite frame 300, and every frame from 1 to 120 but 9 with `--skip-bios-intro`).
 
 | System | Reference | Tool | Frame-exact |
 |---|---|---|---|
@@ -117,7 +117,24 @@ CAPTURE_FRAME=300 CAPTURE_OUT="$PWD/mgba.png" \
   ~/repos/mgba/build/mgba-headless --script scripts/reference_capture/mgba_capture.lua <rom.gba>
 ```
 
-No BIOS file is passed, so mGBA uses its HLE BIOS, which matches NESER's default. Pass
-`-b <bios.bin>` on the mGBA side and the equivalent NESER option only when the ROM under
-test exercises the real BIOS. `emu:currentFrame()` counts frames from power-on, the same
-as NESER's `--frames`.
+No BIOS file is passed, so mGBA uses its HLE BIOS. Pass `-b <bios.bin>` on the mGBA side
+and the equivalent NESER option only when the ROM under test exercises the real BIOS.
+
+Frame numbering. Both sides count frames from power-on (`emu:currentFrame()` and NESER's
+`--frames`), but they do not reach the cartridge at the same frame:
+
+- **Always pass `--skip-bios-intro` on the NESER side.** NESER's built-in BIOS plays its
+  logo and jingle by default, which delays the cartridge by about 255 frames (the mGBA
+  suite draws its menu at frame 9 in mGBA and at frame ~265 in NESER without the flag).
+  mGBA's HLE BIOS has no intro and jumps straight to the cartridge. With the flag, NESER
+  runs only the BIOS hardware init.
+- **Expect one frame of offset while a ROM is still drawing its first screen.** mGBA's
+  no-BIOS boot (`GBASkipBIOS`) sets VCOUNT to 126 at cartridge entry, so its first frame is
+  only 102 of 228 lines long; NESER enters the cartridge near line 0 after running its
+  BIOS init. The mGBA suite matches pixel for pixel at every frame from 1 to 120 except
+  frame 9, where mGBA has already finished drawing the menu and NESER finishes at frame 10.
+  Compare at a frame where the screen is static (capture two consecutive frames on each
+  side and check they are identical).
+
+Before the cartridge writes DISPCNT, both show a white screen (forced blank, DISPCNT =
+0x0080).

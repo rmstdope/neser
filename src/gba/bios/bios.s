@@ -274,10 +274,10 @@ reset_handler:
     cmp     r8, #16
     blt     .Lfade_loop
 
-    @ --- Disable display before jumping to game ---
+    @ --- Disable display before clearing the logo ---
     ldr     r5, =0x04000000
-    mov     r0, #0
-    strh    r0, [r5]            @ DISPCNT = 0 (forced blank / all off)
+    mov     r0, #0x80
+    strh    r0, [r5]            @ DISPCNT = 0x0080 (forced blank, screen white)
 
     @ --- Clear VRAM logo region (Mode 4 bitmap: 240×160 = 0x9600 bytes) ---
     @ Games expect clean VRAM; the BIOS drew its logo into this region.
@@ -303,6 +303,13 @@ reset_handler:
     strh    r1, [r0]
 
 boot_finish:
+    @ --- Enter the cartridge in forced blank ---
+    @ The real BIOS hands over with DISPCNT = 0x0080 (screen white), as its
+    @ RegisterRamReset does (GBATek); mGBA powers on with the same value.
+    ldr     r0, =0x04000000
+    mov     r1, #0x80
+    strh    r1, [r0]            @ DISPCNT = 0x0080
+
     @ --- Enable IRQ/FIQ at CPU level (clear I and F bits in CPSR) ---
     @ Real GBA BIOS enters the game with I=0, F=0 so interrupt service routines
     @ can fire once the game sets IME=1. Without this, games that wait for
@@ -497,6 +504,12 @@ swi_soft_reset:
 swi_register_ram_reset:
     @ Save the flags
     mov     r11, r0
+
+    @ GBATek: always switches the screen into forced blank by setting
+    @ DISPCNT = 0x0080, regardless of the incoming flags.
+    mov     r0, #0x04000000
+    mov     r1, #0x80
+    strh    r1, [r0]
 
     @ Bit 0: Clear EWRAM
     tst     r11, #0x01

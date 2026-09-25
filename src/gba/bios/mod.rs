@@ -1801,6 +1801,54 @@ mod tests {
         );
     }
 
+    /// DISPCNT value that switches the screen into forced blank (white),
+    /// per GBATek "SWI 01h (GBA) - RegisterRamReset".
+    const DISPCNT_FORCED_BLANK: u16 = 0x0080;
+
+    #[test]
+    fn bios_skip_boot_enters_cartridge_in_forced_blank() {
+        // Cartridge code starts with the screen white (forced blank), as it
+        // does on hardware and in mGBA, until the game writes DISPCNT.
+        let mut gba = boot_with_embedded_bios(&[ARM_IDLE]);
+        assert_eq!(
+            gba.bus_mut().read16(0x0400_0000),
+            DISPCNT_FORCED_BLANK,
+            "DISPCNT at cartridge entry (skip-intro boot)"
+        );
+    }
+
+    #[test]
+    fn bios_full_boot_enters_cartridge_in_forced_blank() {
+        let mut gba =
+            boot_with_full_intro(&[ARM_IDLE]).expect("Full boot should reach cartridge");
+        assert_eq!(
+            gba.bus_mut().read16(0x0400_0000),
+            DISPCNT_FORCED_BLANK,
+            "DISPCNT at cartridge entry (full intro boot)"
+        );
+    }
+
+    #[test]
+    fn bios_register_ram_reset_sets_forced_blank() {
+        // GBATek: RegisterRamReset "always switches the screen into forced
+        // blank by setting DISPCNT=0080h (regardless of incoming R0)".
+        let mut code = arm_load_const(1, 0x0400_0000);
+        code.extend(arm_load_const(2, 0x0000_0403)); // Mode 3, BG2 on
+        code.push(arm_str(2, 1, 0)); // DISPCNT = 0x0403
+        code.push(arm_mov_imm(0, 0)); // ResetFlags = 0
+        code.push(arm_swi(0x01)); // RegisterRamReset
+        code.push(ARM_IDLE);
+
+        let mut gba = boot_with_embedded_bios(&code);
+        run_until_idle(&mut gba, 100_000);
+
+        assert_eq!(
+            gba.bus_mut().read16(0x0400_0000),
+            DISPCNT_FORCED_BLANK,
+            "DISPCNT after RegisterRamReset with R0=0"
+        );
+    }
+
     #[test]
     fn bios_boot_ramps_soundbias_to_0x200() {
         // The real GBA BIOS ramps SOUNDBIAS from 0x000 to 0x200 during boot
