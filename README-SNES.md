@@ -416,19 +416,32 @@ What actually differs between the two consoles:
 | …with SETINI overscan | 240 | 240 |
 | Output dimensions | 256x224, or 512x448 in hi-res/interlace | same |
 | SPC700 clock | ~1.025 MHz | ~1.025 MHz |
+| DSP sample rate | 32 kHz | 32 kHz |
+| SA-1 clock (master / 2) | 10.74 MHz | 10.64 MHz |
 
 PAL's extra 50 scanlines are therefore *all* blanking: the active area, the
 VBlank boundary and the framebuffer are region-independent, and only the
 frame's total length changes. Because the SPC700 runs off its own 24.576 MHz
 crystal while the 65816's master clock drops, the SPC runs ~0.92% fast
 relative to the CPU on PAL — so the APU derives its clock ratio and audio
-sample pacing from the active region too.
+sample pacing from the active region too. The SA-1 is the opposite case: it has
+no crystal and runs off the SNES master clock (fullsnes "SNES Timing
+Oscillators": "SA-1 <master> SNES Master Clock"), so it slows down with the
+65816 and its ratio to it does not change. A game's NMI-driven per-frame logic
+runs once per frame on both consoles, i.e. 50 steps a second on PAL.
+
+A save state carries its console's region. Restoring it on a console whose
+`snes-hardware` setting names the other region keeps the saved region: the
+scanline count, the APU clock ratio and the frame pacing all follow the state.
 
 `neser_pal_tests.rs` verifies all of the above from fixture ROMs: STAT78
 readback per country code and both override directions, V-IRQ existence
 probes for the 262/312 scanline counts, an OPVCT latch on the VBlank rising
 edge, an SPC700 counter uploaded through the real IPL handshake to measure
-the 1.201808 PAL/NTSC time ratio, and cross-region screen comparisons. It
+the 1.201808 PAL/NTSC time ratio, and cross-region screen comparisons; an
+NMI-driven game loop, an SA-1 loop counter measuring the frame-length-only
+1.190846 ratio, and that SA-1 fixture carried mid-measurement across a save
+state onto the other region. It
 commits no visual baselines — for rendering, the NTSC and PAL runs are each
 other's oracle. Region selection in the shared runner is
 `RunConfig::with_hardware`; header-driven detection is `FixtureRom::country`.

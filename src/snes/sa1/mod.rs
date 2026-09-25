@@ -649,6 +649,12 @@ impl SnesBus for Sa1Bus {
 /// is a deliberate simplification: real SA-1/SNES cycle-for-cycle bus arbitration (fullsnes:
 /// "SA-1 CPU can access memory at 10.74MHz rate, or less if the SNES does simultaneously access
 /// cartridge memory") is not modeled. Revisit if a conformance ROM proves timing-sensitive.
+///
+/// Region: the SA-1 has no oscillator of its own. fullsnes "SNES Timing Oscillators" lists it as
+/// "SA-1 <master> SNES Master Clock" (21.4772700 MHz NTSC, 21.2813700 MHz PAL), so its 10.74 MHz
+/// is master/2 and it slows down with the S-CPU on a PAL console. Ticking it from the shared
+/// master-clock loop is therefore region-correct as it stands; `neser_pal_tests`
+/// (`sa1_counts_in_the_frame_length_ratio_in_both_regions`) pins that.
 pub struct Sa1Core {
     cpu: Cpu<Sa1Bus>,
     registers: Rc<RefCell<Sa1ControlRegisters>>,

@@ -772,6 +772,11 @@ impl SnesSystemBus {
         self.ppu.borrow().screen_snapshot_rgb()
     }
 
+    /// The PPU's video region: fixed at power-on, replaced by a save-state restore.
+    pub fn ppu_video_region(&self) -> SnesVideoRegion {
+        self.ppu.borrow().video_region()
+    }
+
     /// Return the active PPU frame dimensions.
     pub fn ppu_screen_dimensions(&self) -> (u32, u32) {
         self.ppu.borrow().frame_dimensions()

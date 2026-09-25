@@ -1,4 +1,5 @@
-//! PAL timing and video-region verification (issue #2888).
+//! PAL timing and video-region verification (issue #2888), extended to PAL
+//! game behaviour, the SA-1 and save states across a region change (nr-273).
 //!
 //! In-code fixture ROMs, authored from fullsnes (cross-checked against ares
 //! and Mesen2) rather than from our implementation, covering the NTSC/PAL
@@ -16,13 +17,17 @@
 //! | ... with SETINI overscan     | 240           | 240           |
 //! | Output dimensions            | 256x224/239   | 256x224/239   |
 //! | SPC700 clock                 | ~1.025 MHz    | ~1.025 MHz    |
+//! | DSP sample rate              | 32 kHz        | 32 kHz        |
+//! | SA-1 clock (master / 2)      | 10.74 MHz     | 10.64 MHz     |
 //!
 //! The extra 50 PAL scanlines are therefore *all* blanking: the active
 //! display, the vblank boundary and the framebuffer are region-independent,
 //! and only the frame's total length changes. Because the SPC700 has its own
 //! 24.576 MHz crystal while the 65816's master clock drops, the SPC runs
 //! ~0.92% fast relative to the CPU on PAL -- which is what the refresh-rate
-//! fixture measures through an uploaded SPC program.
+//! fixture measures through an uploaded SPC program. The SA-1 is the opposite:
+//! fullsnes "SNES Timing Oscillators" lists it as "SA-1 <master> SNES Master
+//! Clock", so it slows with the 65816 and its ratio to it is region-free.
 //!
 //! No committed screen CRCs: where a rendered frame matters, the NTSC and PAL
 //! runs are each other's oracle (see `dimensions_and_pixels_are_region_
@@ -544,6 +549,273 @@ mod tests {
         );
 
         assert_passed(&result, "PAL auto-joypad read");
+    }
+
+    // ---- Group F: a PAL game's per-frame logic and audio ---------------------
+
+    /// WRAM byte the game loop's NMI handler counts frames in.
+    const GAME_FRAME_COUNTER: u16 = 0x0010;
+    /// Frames of game logic the loop fixture runs before reporting PASS.
+    const GAME_FRAMES: u8 = 100;
+
+    /// A game's VBlank NMI handler, the place a SNES game runs its per-frame
+    /// logic: it advances a frame counter and writes it to BG1HOFS as a game
+    /// would its scroll, then acknowledges RDNMI. Only the counter is asserted
+    /// (BG1HOFS is write-only); the scroll write is there to give the handler a
+    /// game's shape, not as a checked output.
+    ///
+    /// ```text
+    ///   48         PHA
+    ///   EE 10 00   INC $0010           ; per-frame tick
+    ///   AD 10 00   LDA $0010
+    ///   8D 0D 21   STA $210D           ; BG1HOFS low: scroll one pixel a frame
+    ///   9C 0D 21   STZ $210D           ; BG1HOFS high
+    ///   2C 10 42   BIT $4210           ; acknowledge RDNMI
+    ///   68         PLA
+    ///   40         RTI
+    /// ```
+    #[rustfmt::skip]
+    const GAME_NMI_HANDLER: [u8; 18] = [
+        0x48,
+        0xEE, 0x10, 0x00, 0xAD, 0x10, 0x00,
+        0x8D, 0x0D, 0x21, 0x9C, 0x0D, 0x21,
+        0x2C, 0x10, 0x42,
+        0x68, 0x40,
+    ];
+
+    /// A European (PAL-by-header) game loop: NMI on, then the main thread
+    /// waits for its NMI handler to have run [`GAME_FRAMES`] times.
+    fn game_loop_rom() -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL GAME LOOP");
+        fixture.country(0x02);
+        let handler = fixture.place_data(&GAME_NMI_HANDLER);
+        fixture.set_emulation_nmi_vector(handler);
+        fixture.store_imm_abs(0x4200, 0x80); // NMITIMEN bit 7: VBlank NMI
+        let wait = fixture.pos();
+        fixture.lda_abs(GAME_FRAME_COUNTER);
+        fixture.cmp_imm(GAME_FRAMES);
+        fixture.bne_to(wait);
+        fixture.pass_marker_and_idle();
+        fixture.build()
+    }
+
+    /// A PAL game's per-frame logic is driven by the VBlank NMI, so
+    /// it advances once per frame on both consoles: 50 steps a second on PAL
+    /// and 60 on NTSC, which is why PAL games play slower unless written for
+    /// 50 Hz (fullsnes "SNES Timing": one VBlank per frame, 312 lines PAL).
+    /// The same [`GAME_FRAMES`] logic steps must take the same number of
+    /// frames in both regions -- nothing may run twice or be skipped in PAL's
+    /// longer VBlank.
+    #[test]
+    fn nmi_game_loop_advances_once_per_frame_in_both_regions() {
+        let rom = game_loop_rom();
+        let pal = run_rom(&rom, "game-loop-pal.sfc", RunConfig::new(0, 150));
+        let ntsc = run_rom(
+            &rom,
+            "game-loop-ntsc.sfc",
+            RunConfig::new(0, 150).with_hardware(SnesHardware::Ntsc),
+        );
+        assert_passed(&pal, "PAL game loop");
+        assert_passed(&ntsc, "NTSC game loop");
+
+        assert!(
+            pal.frames.abs_diff(u32::from(GAME_FRAMES)) <= 1,
+            "{GAME_FRAMES} NMI-driven logic steps should take {GAME_FRAMES} PAL frames, took {}",
+            pal.frames
+        );
+        assert_eq!(
+            pal.frames, ntsc.frames,
+            "the same logic steps must take the same frames in both regions"
+        );
+    }
+
+    // ---- Group G: the SA-1 runs off the SNES master clock -----------------
+
+    /// SA-1 program that counts free-running loop iterations between a start
+    /// and a stop token the S-CPU writes into I-RAM, then publishes the 16-bit
+    /// total. The same shape as [`SPC_FRAME_COUNTER`], but on the second 65816
+    /// (emulation mode, 8-bit A), with I-RAM `$3000-$37FF` -- visible at the
+    /// same addresses from both CPUs -- as the mailbox:
+    ///
+    /// ```text
+    ///   A9 FF      LDA #$FF
+    ///   8D 2A 22   STA $222A           ; CIWP: SA-1-side I-RAM writes enabled
+    /// wait_start:
+    ///   AD 00 31   LDA $3100           ; token from the S-CPU
+    ///   C9 3C      CMP #$3C
+    ///   D0 F9      BNE wait_start
+    ///   9C 10 30   STZ $3010           ; zero the 16-bit counter
+    ///   9C 11 30   STZ $3011
+    /// loop:
+    ///   AD 00 31   LDA $3100
+    ///   C9 5A      CMP #$5A            ; stop token
+    ///   F0 0A      BEQ stop
+    ///   EE 10 30   INC $3010
+    ///   D0 F4      BNE loop
+    ///   EE 11 30   INC $3011
+    ///   80 EF      BRA loop
+    /// stop:
+    ///   A9 A5      LDA #$A5
+    ///   8D 12 30   STA $3012           ; "published"
+    /// spin:
+    ///   80 FE      BRA spin
+    /// ```
+    #[rustfmt::skip]
+    const SA1_FRAME_COUNTER: [u8; 42] = [
+        0xA9, 0xFF, 0x8D, 0x2A, 0x22,
+        0xAD, 0x00, 0x31, 0xC9, 0x3C, 0xD0, 0xF9,
+        0x9C, 0x10, 0x30, 0x9C, 0x11, 0x30,
+        0xAD, 0x00, 0x31, 0xC9, 0x5A, 0xF0, 0x0A,
+        0xEE, 0x10, 0x30, 0xD0, 0xF4, 0xEE, 0x11, 0x30, 0x80, 0xEF,
+        0xA9, 0xA5, 0x8D, 0x12, 0x30,
+        0x80, 0xFE,
+    ];
+    const SA1_TOKEN: u16 = 0x3100;
+    const SA1_COUNT_LO: u16 = 0x3010;
+    const SA1_COUNT_HI: u16 = 0x3011;
+    const SA1_PUBLISHED_FLAG: u16 = 0x3012;
+    /// Frames the SA-1 counter runs for. The loop is fast (~21,000 counts per
+    /// NTSC frame), so two frames keep both regions' totals inside 16 bits
+    /// (measured 41,968 NTSC / 49,976 PAL) while the ratio still resolves to
+    /// better than 1 part in 40,000.
+    const SA1_MEASURED_FRAMES: u8 = 2;
+
+    /// Boots [`SA1_FRAME_COUNTER`] on the SA-1, runs it across exactly
+    /// [`SA1_MEASURED_FRAMES`] frames, and reports the 16-bit count in result
+    /// bytes 0-1 and STAT78's frame-rate bit (read after the measurement) in
+    /// byte 2.
+    fn sa1_frame_counter_rom() -> Vec<u8> {
+        let mut fixture = FixtureRom::new(b"PAL SA1 RATE");
+        fixture.sa1_chipset();
+        let sa1_entry = fixture.place_data(&SA1_FRAME_COUNTER);
+
+        // fullsnes "SA-1 Memory Control": $2229 SIWP enables S-CPU writes to
+        // I-RAM; $2203/$2204 CRV is the SA-1 reset vector; clearing CCNT
+        // ($2200) bit 5 releases the SA-1 from reset.
+        fixture.store_imm_abs(0x2229, 0xFF);
+        fixture.store_imm_abs(0x2203, (sa1_entry & 0xFF) as u8);
+        fixture.store_imm_abs(0x2204, (sa1_entry >> 8) as u8);
+        fixture.store_imm_abs(0x2200, 0x00);
+
+        emit_wait_vblank_edge(&mut fixture);
+        fixture.store_imm_abs(SA1_TOKEN, SPC_START_TOKEN);
+        fixture.ldx_imm(0x00);
+        let frame_loop = fixture.pos();
+        emit_wait_vblank_edge(&mut fixture);
+        fixture.inx();
+        fixture.cpx_imm(SA1_MEASURED_FRAMES);
+        fixture.bne_to(frame_loop);
+        fixture.store_imm_abs(SA1_TOKEN, SPC_STOP_TOKEN);
+
+        let wait_published = fixture.pos();
+        fixture.lda_abs(SA1_PUBLISHED_FLAG);
+        fixture.cmp_imm(SPC_PUBLISHED);
+        fixture.bne_to(wait_published);
+
+        fixture.lda_abs(SA1_COUNT_LO);
+        fixture.sta_long(RESULT_ADDR);
+        fixture.lda_abs(SA1_COUNT_HI);
+        fixture.sta_long(RESULT_ADDR + 1);
+        fixture.lda_abs(STAT78);
+        fixture.and_imm(STAT78_PAL);
+        fixture.sta_long(RESULT_ADDR + 2);
+        fixture.pass_marker_and_idle();
+        fixture.build()
+    }
+
+    fn sa1_count(result: &RunResult) -> u32 {
+        u32::from(result.result_bytes[0]) | (u32::from(result.result_bytes[1]) << 8)
+    }
+
+    fn measure_sa1_counts(hardware: SnesHardware) -> u32 {
+        let label = format!("sa1-rate-{hardware:?}.sfc");
+        let config = RunConfig::new(0, 40).with_hardware(hardware);
+        let result = run_rom(&sa1_frame_counter_rom(), &label, config);
+        assert_passed(&result, &label);
+        sa1_count(&result)
+    }
+
+    /// fullsnes "SNES Timing Oscillators", External Oscillators (in
+    /// Cartridges): "SA-1 <master> SNES Master Clock", where <master> is
+    /// 21.4772700 MHz on NTSC and 21.2813700 MHz on PAL. The SA-1 has no
+    /// crystal of its own -- its "10.74 MHz" is master/2 -- so, unlike the
+    /// SPC700, it slows down with the S-CPU on a PAL console and its ratio to
+    /// the S-CPU is region-independent.
+    ///
+    /// Over the same number of frames the PAL/NTSC count ratio is therefore
+    /// the frame-length ratio alone, 425,568 / 357,366 = 1.190846. An SA-1
+    /// on a fixed 10.74 MHz clock would add the master-clock term as the SPC
+    /// does (1.201808), which the tolerance excludes.
+    ///
+    /// Mutation check (nr-273): giving the SA-1 one extra master clock every
+    /// 109 on PAL (its clock ~0.92% fast, as an own-crystal chip would run)
+    /// moves the ratio to 1.2017 and fails this test; unmutated it measures
+    /// 1.190812.
+    #[test]
+    fn sa1_counts_in_the_frame_length_ratio_in_both_regions() {
+        let ntsc = measure_sa1_counts(SnesHardware::Ntsc);
+        let pal = measure_sa1_counts(SnesHardware::Pal);
+
+        assert!(
+            ntsc > 1_000,
+            "NTSC SA-1 counter should have advanced: {ntsc}"
+        );
+        let ratio = f64::from(pal) / f64::from(ntsc);
+        assert!(
+            (ratio - 1.190846).abs() < 0.004,
+            "PAL/NTSC SA-1 counts should be in the 1.190846 frame-length ratio \
+             (1.201808 would mean the SA-1 kept an NTSC-rate clock), got \
+             {ratio:.6} from ntsc={ntsc} pal={pal}"
+        );
+    }
+
+    // ---- Group H: a save state carried across a region change ------------
+
+    /// A save state carries its console's region, so one taken on a PAL
+    /// console and restored with `snes-hardware` set to NTSC keeps running as
+    /// the PAL console it came from -- whole-console, not just the APU half
+    /// that #2888 pinned. The SA-1 fixture is saved at frame 2, while both
+    /// CPUs are mid-measurement, and must finish on the NTSC-configured
+    /// console with exactly the count of an uninterrupted PAL run (the S-CPU,
+    /// PPU frame length, SA-1 and its I-RAM mailbox all restored in step),
+    /// still reading PAL from STAT78 and paced at PAL's frame rate. The reverse
+    /// direction holds too. Mutation check: dropping the region adoption from
+    /// `Snes::load_state_bytes` fails the frame-rate assertion.
+    #[test]
+    fn sa1_measurement_survives_a_save_state_restored_on_the_other_region() {
+        let rom = sa1_frame_counter_rom();
+        let cases = [
+            (SnesHardware::Pal, SnesHardware::Ntsc, STAT78_PAL),
+            (SnesHardware::Ntsc, SnesHardware::Pal, 0x00),
+        ];
+        for (saved_on, restored_on, stat78) in cases {
+            let label = format!("sa1-restore-{saved_on:?}-on-{restored_on:?}.sfc");
+            let straight = run_rom(&rom, &label, RunConfig::new(0, 40).with_hardware(saved_on));
+            let carried = run_rom(
+                &rom,
+                &label,
+                RunConfig::new(0, 40)
+                    .with_hardware(saved_on)
+                    .with_save_state_restore(2, restored_on),
+            );
+            assert_passed(&straight, &label);
+            assert_passed(&carried, &label);
+
+            assert_eq!(
+                sa1_count(&carried),
+                sa1_count(&straight),
+                "{label}: the SA-1 count must be unchanged by the save/restore"
+            );
+            assert_eq!(
+                carried.result_bytes[2], stat78,
+                "{label}: STAT78 must still report the saved console's region"
+            );
+            assert_eq!(carried.frames, straight.frames, "{label}: frame count");
+            assert_eq!(
+                carried.frame_duration, straight.frame_duration,
+                "{label}: the restored console must be paced at the saved region's frame rate"
+            );
+        }
     }
 
     /// The result-block plumbing the measurement fixtures rely on: a fixture
