@@ -76,7 +76,7 @@ Every hardware research skill in this repository uses the same three tiers. The 
 
 9. For visual verification, cross-check against mGBA as the screenshot reference.
 
-- Capture with `CAPTURE_FRAME=<n> CAPTURE_OUT=<abs.png> mgba-headless --script scripts/reference_capture/mgba_capture.lua <rom.gba>` as `scripts/reference_capture/README.md` describes and pixel-diff programmatically with `python -m scripts.diff_screenshots <neser.png> <mgba.png> --shift-search 1`; exact matches become the golden. Both sides count frames from power-on.
+- Capture with `CAPTURE_FRAME=<n> CAPTURE_OUT=<abs.png> mgba-headless --script scripts/reference_capture/mgba_capture.lua <rom.gba>` as `scripts/reference_capture/README.md` describes and pixel-diff programmatically with `python -m scripts.diff_screenshots <neser.png> <mgba.png> --shift-search 1`; exact matches become the golden. Both sides count frames from power-on, but when NESER runs its built-in BIOS (mGBA without `-b`), pass `--skip-bios-intro`: that BIOS's intro otherwise delays the cartridge by about 255 frames, while mGBA's HLE BIOS has none. mGBA's no-BIOS boot also starts the cartridge at VCOUNT 126, so a ROM still drawing its first screen can be one frame ahead in mGBA; compare at a frame where the screen is static.
 - Pin everything that can vary between runs on both sides (BIOS, power-on RAM state, frame skipping) and capture the reference twice before trusting any non-zero diff.
 - If NESER and mGBA disagree and the divergence is suspected to be an mGBA quirk, ask the navigator how to proceed rather than approving either side unilaterally.
 - Document the approval (frame, diff result) in the test comment.
@@ -118,7 +118,7 @@ Every hardware research skill in this repository uses the same three tiers. The 
   start with the GBATek CPU section and the ARM7TDMI reference manual for base cycle counts, then cross-check mGBA `src/arm/` for GBA-specific penalties.
 
 - Approving a golden frame for a visual test ROM:
-  capture the same frame in mGBA and NESER with the same BIOS, diff them with `scripts.diff_screenshots`, and record the frame and the 0-px result in the test comment.
+  capture the same frame in mGBA and NESER with the same BIOS (NESER's built-in one with `--skip-bios-intro`), diff them with `scripts.diff_screenshots`, and record the frame and the 0-px result in the test comment.
 
 ## Known Hardware Gotchas
 
