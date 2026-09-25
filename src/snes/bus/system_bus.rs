@@ -3367,10 +3367,12 @@ mod tests {
     }
 
     #[test]
-    fn gpdma_spanning_the_hdma_init_trigger_runs_the_frame_init_inside_the_burst() {
-        // The frame reload (scanline 0, ~clock 12-19) is claimed from inside a burst the same
-        // way as a line transfer (Mesen2 `_hdmaInitPending`). Without it the channel never
-        // loads its table and the first line transfer has nothing to send.
+    fn gpdma_spanning_the_hdma_init_trigger_does_not_lose_the_frame_init() {
+        // The frame reload (scanline 0, ~clock 12-19) must be armed while a burst sweeps past
+        // its trigger (Mesen2 `_hdmaInitPending`), or the channel never loads its table and
+        // the first line transfer has nothing to send. Whether it then runs inside the burst
+        // or after it is not observable here -- both finish long before the line trigger --
+        // so the in-burst placement is pinned by the line-trigger test above.
         let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
         write_hdma_channel(&mut bus, 1, 0x00, 0x80, 0x703000);
