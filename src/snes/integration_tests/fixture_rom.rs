@@ -94,6 +94,21 @@ impl FixtureRom {
         self.rom[HEADER + 0x19] = country;
     }
 
+    /// Marks this fixture as an SA-1 cartridge: chipset `$35` (the byte the
+    /// vendored absindx SA-1 ROMs carry). The SA-1 CPU then sits in CCNT
+    /// reset-hold until the program releases it through `$2203/$2204/$2200`.
+    pub(crate) fn sa1_chipset(&mut self) {
+        self.rom[HEADER + 0x16] = 0x35;
+    }
+
+    /// Points the emulation-mode NMI vector (`$FFFA/$FFFB`, header offset
+    /// `$3A`) at `addr`, the vector a VBlank NMI fetches in the CPU's
+    /// post-reset emulation mode.
+    pub(crate) fn set_emulation_nmi_vector(&mut self, addr: u16) {
+        self.rom[HEADER + 0x3A] = (addr & 0xFF) as u8;
+        self.rom[HEADER + 0x3B] = (addr >> 8) as u8;
+    }
+
     /// Points the emulation-mode IRQ/BRK vector (`$FFFE/$FFFF`, header offset
     /// `$3E`) at `addr`, so a fixture can take a hardware IRQ into a handler
     /// emitted with the normal program primitives. Fixtures run in the CPU's
