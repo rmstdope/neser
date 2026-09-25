@@ -1,4 +1,5 @@
-//! PAL timing and video-region verification (issue #2888).
+//! PAL timing and video-region verification (issue #2888), extended to PAL
+//! game behaviour, the SA-1 and save states across a region change (nr-273).
 //!
 //! In-code fixture ROMs, authored from fullsnes (cross-checked against ares
 //! and Mesen2) rather than from our implementation, covering the NTSC/PAL
@@ -16,13 +17,17 @@
 //! | ... with SETINI overscan     | 240           | 240           |
 //! | Output dimensions            | 256x224/239   | 256x224/239   |
 //! | SPC700 clock                 | ~1.025 MHz    | ~1.025 MHz    |
+//! | DSP sample rate              | 32 kHz        | 32 kHz        |
+//! | SA-1 clock (master / 2)      | 10.74 MHz     | 10.64 MHz     |
 //!
 //! The extra 50 PAL scanlines are therefore *all* blanking: the active
 //! display, the vblank boundary and the framebuffer are region-independent,
 //! and only the frame's total length changes. Because the SPC700 has its own
 //! 24.576 MHz crystal while the 65816's master clock drops, the SPC runs
 //! ~0.92% fast relative to the CPU on PAL -- which is what the refresh-rate
-//! fixture measures through an uploaded SPC program.
+//! fixture measures through an uploaded SPC program. The SA-1 is the opposite:
+//! fullsnes "SNES Timing Oscillators" lists it as "SA-1 <master> SNES Master
+//! Clock", so it slows with the 65816 and its ratio to it is region-free.
 //!
 //! No committed screen CRCs: where a rendered frame matters, the NTSC and PAL
 //! runs are each other's oracle (see `dimensions_and_pixels_are_region_
