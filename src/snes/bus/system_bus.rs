@@ -3360,6 +3360,16 @@ mod tests {
             gpdma[0] < hdma[0] && hdma[0] < gpdma[99],
             "the HDMA line runs inside the burst, not after it: {burst:02X?}"
         );
+        // Exact slot (Mesen2 `ProcessPendingTransfers` order): the burst starts at 1008, pays
+        // SyncStartDma 8 + overhead 8 + channel overhead 8, so byte k occupies clocks
+        // 1033+8k..=1040+8k and the trigger clock 1104 is the last clock of byte 8. The poll
+        // after byte 8 only consumes `_dmaStartDelay`; byte 9 transfers; the poll after it
+        // runs the line. Ten GPDMA bytes precede the HDMA write -- nine would mean the start
+        // delay was skipped.
+        assert_eq!(
+            hdma[0], 10,
+            "the line runs one byte slot after the trigger's slot: {burst:02X?}"
+        );
 
         // Scanline 1 reads the NEXT descriptor; a swallowed line would replay 0x7A here.
         tick_until_master_clock(&mut bus, 3000);
@@ -3369,7 +3379,8 @@ mod tests {
     #[test]
     fn gpdma_spanning_the_hdma_init_trigger_does_not_lose_the_frame_init() {
         // The frame reload (scanline 0, ~clock 12-19) must be armed while a burst sweeps past
-        // its trigger (Mesen2 `_hdmaInitPending`), or the channel never loads its table and
+        // its trigger (Mesen2's `_hdmaInitPending`; NESER shares the one `pending_hdma` slot
+        // with the line transfer), or the channel never loads its table and
         // the first line transfer has nothing to send. Whether it then runs inside the burst
         // or after it is not observable here -- both finish long before the line trigger --
         // so the in-burst placement is pinned by the line-trigger test above.
@@ -3418,8 +3429,14 @@ mod tests {
         bus.write(0x002183, 0x00);
         write_dma_channel(&mut bus, 0, 0x88, 0x80, 0x00420B, 4);
         bus.write(0x00420B, 0x01);
-        tick_until_master_clock(&mut bus, 200);
-
+        // The bus-only fallback starts the burst inside the tick that reaches clock 8, and
+        // the whole burst runs within that one tick. Stop right after it, before a further
+        // tick's fallback could run (and so clear) anything the burst had re-armed.
+        tick_until_master_clock(&mut bus, 9);
+        assert!(
+            bus.ppu.borrow().total_master_clocks() > 40,
+            "the burst has run"
+        );
         assert_eq!(bus.pending_gpdma, None, "the burst did not re-arm MDMAEN");
         tick_until_master_clock(&mut bus, 2000);
         assert!(
