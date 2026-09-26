@@ -21,6 +21,34 @@ fn cgb_5bit_to_8bit(c5: u8) -> u8 {
     (c5 << 3) | (c5 >> 2)
 }
 
+/// Correct one 5-bit CGB colour the way the Game Boy Color LCD shows it.
+///
+/// This is the standard CGB-LCD correction used by Gambatte (`gbcToRgb32`)
+/// and higan: channels are mixed into each other and the peak stays below
+/// full brightness, giving the paler, softer picture of the real screen.
+/// Each output is at most 248, so no clamping is needed.
+#[inline]
+pub(crate) fn cgb_lcd_correct(r5: u8, g5: u8, b5: u8) -> (u8, u8, u8) {
+    let (r, g, b) = (u16::from(r5), u16::from(g5), u16::from(b5));
+    (
+        ((r * 13 + g * 2 + b) >> 1) as u8,
+        ((g * 3 + b) << 1) as u8,
+        ((r * 3 + g * 2 + b * 11) >> 1) as u8,
+    )
+}
+
+/// Apply [`cgb_lcd_correct`] in place to an RGB888 frame produced by the raw
+/// 5→8-bit expansion.
+///
+/// The raw expansion `(c << 3) | (c >> 2)` is lossless, so each 5-bit
+/// component is recovered exactly as `v >> 3`.
+pub(crate) fn apply_cgb_lcd_correction(rgb888: &mut [u8]) {
+    for pixel in rgb888.as_chunks_mut::<3>().0 {
+        let (r, g, b) = cgb_lcd_correct(pixel[0] >> 3, pixel[1] >> 3, pixel[2] >> 3);
+        *pixel = [r, g, b];
+    }
+}
+
 /// Look up an RGB color from CGB palette RAM.
 ///
 /// `palette_ram` — 64-byte palette RAM (8 palettes × 4 colors × 2 bytes, 5-5-5 LE).
@@ -99,5 +127,42 @@ mod tests {
         assert_eq!(r, 255, "R should be max");
         assert_eq!(g, 0, "G should be 0");
         assert_eq!(b, 0, "B should be 0");
+    }
+
+    // ── CGB LCD colour correction ─────────────────────────────────────────────
+
+    #[test]
+    fn test_cgb_lcd_correct_black_stays_black() {
+        assert_eq!(cgb_lcd_correct(0, 0, 0), (0, 0, 0));
+    }
+
+    #[test]
+    fn test_cgb_lcd_correct_white_is_not_full_brightness() {
+        assert_eq!(cgb_lcd_correct(31, 31, 31), (248, 248, 248));
+    }
+
+    #[test]
+    fn test_cgb_lcd_correct_mixes_primaries_across_channels() {
+        assert_eq!(cgb_lcd_correct(31, 0, 0), (201, 0, 46));
+        assert_eq!(cgb_lcd_correct(0, 31, 0), (31, 186, 31));
+        assert_eq!(cgb_lcd_correct(0, 0, 31), (15, 62, 170));
+    }
+
+    #[test]
+    fn test_apply_cgb_lcd_correction_corrects_raw_expanded_pixels() {
+        let colours = [(31u8, 0u8, 0u8), (12, 20, 31), (1, 1, 2), (31, 31, 31)];
+        let mut rgb: Vec<u8> = colours
+            .iter()
+            .flat_map(|&(r, g, b)| [cgb_5bit_to_8bit(r), cgb_5bit_to_8bit(g), cgb_5bit_to_8bit(b)])
+            .collect();
+        apply_cgb_lcd_correction(&mut rgb);
+        let expected: Vec<u8> = colours
+            .iter()
+            .flat_map(|&(r, g, b)| {
+                let (cr, cg, cb) = cgb_lcd_correct(r, g, b);
+                [cr, cg, cb]
+            })
+            .collect();
+        assert_eq!(rgb, expected);
     }
 }
