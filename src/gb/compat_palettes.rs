@@ -921,8 +921,8 @@ mod tests {
         assert_eq!(
             GbcPalette::ALL,
             [
-                Auto, Brown, Red, DarkBrown, Blue, DarkBlue, Grayscale, PastelMix, Orange,
-                Yellow, Green, DarkGreen, Reverse
+                Auto, Brown, Red, DarkBrown, Blue, DarkBlue, Grayscale, PastelMix, Orange, Yellow,
+                Green, DarkGreen, Reverse
             ]
         );
     }
@@ -933,8 +933,19 @@ mod tests {
         assert_eq!(
             names,
             [
-                "Auto", "Brown", "Red", "Dark Brown", "Blue", "Dark Blue", "Grayscale",
-                "Pastel Mix", "Orange", "Yellow", "Green", "Dark Green", "Reverse"
+                "Auto",
+                "Brown",
+                "Red",
+                "Dark Brown",
+                "Blue",
+                "Dark Blue",
+                "Grayscale",
+                "Pastel Mix",
+                "Orange",
+                "Yellow",
+                "Green",
+                "Dark Green",
+                "Reverse"
             ]
         );
     }

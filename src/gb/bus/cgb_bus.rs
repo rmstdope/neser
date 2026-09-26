@@ -433,9 +433,11 @@ impl CgbBus {
     /// `Auto` the boot ROM's own pick (a valid held button combo, else the
     /// title checksum).
     fn apply_dmg_compat_palette(&mut self, held_buttons: Option<u8>) {
-        let palette = match self.gbc_palette.combination_id().or_else(|| {
-            held_buttons.and_then(compat_palettes::button_combo_to_palette_id)
-        }) {
+        let palette = match self
+            .gbc_palette
+            .combination_id()
+            .or_else(|| held_buttons.and_then(compat_palettes::button_combo_to_palette_id))
+        {
             Some(id) => compat_palettes::get_palette_colors_by_id(id),
             None => compat_palettes::get_palette_colors(&self.cartridge_header()),
         };
@@ -2942,7 +2944,10 @@ mod tests {
 
     fn compat_bg0(bus: &CgbBus) -> [u16; 4] {
         std::array::from_fn(|i| {
-            u16::from_le_bytes([bus.ppu.bg_palette_ram[i * 2], bus.ppu.bg_palette_ram[i * 2 + 1]])
+            u16::from_le_bytes([
+                bus.ppu.bg_palette_ram[i * 2],
+                bus.ppu.bg_palette_ram[i * 2 + 1],
+            ])
         })
     }
 

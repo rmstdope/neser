@@ -648,17 +648,21 @@ mod tests {
         let mut config = GbConfig::default();
         assert_eq!(
             config.apply_args(&args(&["--gbc-palette", "bogus"])),
-            Err("Invalid --gbc-palette value: 'bogus'. Valid options are: auto, brown, red, \
+            Err(
+                "Invalid --gbc-palette value: 'bogus'. Valid options are: auto, brown, red, \
                  dark-brown, blue, dark-blue, grayscale, pastel-mix, orange, yellow, green, \
                  dark-green, reverse"
-                .to_string())
+                    .to_string()
+            )
         );
     }
 
     #[test]
     fn test_config_file_gbc_palette_valid() {
         let mut config = GbConfig::default();
-        config.apply_config_value("gbc-palette", "Pastel-Mix").unwrap();
+        config
+            .apply_config_value("gbc-palette", "Pastel-Mix")
+            .unwrap();
         assert_eq!(config.gbc_palette, GbcPalette::PastelMix);
     }
 
