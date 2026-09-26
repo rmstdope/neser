@@ -79,12 +79,16 @@ by one frame (nr-mxn):
 
 `emu.getScreenBuffer()` filters the PPU's own buffer on the emulation thread, and at
 `startFrame` that buffer still holds frame N (the SNES PPU switches buffers at the end
-of scanline 0, the NES PPU at dot 1 of the pre-render line). Because it returns pixels,
+of scanline 0, the NES PPU on the pre-render line, right after raising `StartFrame`). Because it returns pixels,
 the script encodes the PNG itself (uncompressed, so a few hundred KB). The buffer is
 uncropped: the script keeps the SNES lines 7-230 of 239 (14-461 of 478 in hi-res), the
 224 (448) that NESER outputs and Mesen2's default SNES overscan shows, and the NES
 buffer's 240 lines as they are. Mesen2's own overscan settings therefore no longer
-affect the capture.
+affect the capture. One setting still does: with the SNES `DeinterlaceMode` set to
+`CurrentField`, Mesen2 clears the buffer of an interlaced frame at scanline 240, and the
+capture of such a frame is black. The default, `Weave`, is safe; check
+`settings.json` if an interlaced capture comes out black. The script is written and
+verified for the NES and the SNES only.
 
 A static screen cannot show a one-frame offset, and the recipe had only been checked on
 static frames before nr-mxn. Verified 2026-09-27 on animated content, capture N against

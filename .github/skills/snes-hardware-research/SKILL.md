@@ -1175,6 +1175,8 @@ local frameCount = 0
 emu.addEventCallback(function()
   frameCount = frameCount + 1
   if frameCount == target then
+    -- takeScreenshot() can be one frame behind on a loaded machine; for a frame-exact
+    -- capture use the getScreenBuffer() read in scripts/reference_capture/mesen2_capture.lua
     local png = emu.takeScreenshot()
     local hex = {}
     for i = 1, #png do hex[i] = string.format("%02X", string.byte(png, i)) end
@@ -1372,7 +1374,8 @@ of one frame measured with the old `endFrame` script (Mega Man X2/X3 in nr-ve3, 
 of Street Fighter Alpha 2's two frames in nr-phv) is the script, not NESER. On static
 screens every variant gives the same image, so only animated content shows the
 difference. The scripted-input template further up has the same `takeScreenshot()` race
-on a loaded machine; confirm a surprising one-frame difference from it by re-running.
+on a loaded machine: when adapting it, replace `emu.takeScreenshot()` with the committed
+script's `emu.getScreenBuffer()` read, SNES crop and `encodePng`.
 
 (ares is not used for screenshot capture — it has no scripting support and is
 a source-code reference only; see step 9 of the Instructions.)

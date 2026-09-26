@@ -1,4 +1,5 @@
--- Capture one frame headlessly with Mesen2 (any system).
+-- Capture one frame headlessly with Mesen2 (NES and SNES; the frame and crop logic below
+-- was verified for those two consoles only).
 --   CAPTURE_FRAME  frame number to capture (default 120)
 --   CAPTURE_OUT    output PNG path (required)
 -- Requires "AllowIoOsAccess": true in Mesen2's settings.json.
@@ -12,8 +13,8 @@
 --   may not have run yet and the screenshot is still frame N-1.
 -- * emu.getScreenBuffer() runs the video filter over the PPU's own buffer on the
 --   emulation thread. At startFrame that buffer still holds frame N on both consoles: the
---   SNES PPU switches buffers at the end of scanline 0, the NES PPU at dot 1 of the
---   pre-render line, both after StartFrame.
+--   SNES PPU switches buffers at the end of scanline 0, the NES PPU on the
+--   pre-render line right after raising StartFrame.
 local target = tonumber(os.getenv("CAPTURE_FRAME") or "120")
 local out = os.getenv("CAPTURE_OUT")
 
