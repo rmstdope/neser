@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::platform::save_state::SaveStateError;
 use crate::snes::apu::SnesApuState;
 use crate::snes::cartridge::Mapping;
+use crate::snes::cx4::Cx4State;
 use crate::snes::input::InputPortsState;
 
 pub const SNES_SAVESTATE_VERSION: u32 = 2;
@@ -287,6 +288,10 @@ pub struct SnesBusState {
     /// (`#[serde(default)]` keeps those loadable).
     #[serde(default)]
     pub sa1: Option<SnesSa1State>,
+    /// `None` for cartridges without a CX4, and for save states captured before CX4 support
+    /// existed (`#[serde(default)]` keeps those loadable).
+    #[serde(default)]
+    pub cx4: Option<Cx4State>,
     /// Armed-but-not-started GPDMA as `(cpu_cycle_countdown, mdmaen, fallback_clock)`
     /// (see `SnesSystemBus::pending_gpdma`); `None` when no transfer is pending.
     #[serde(default)]

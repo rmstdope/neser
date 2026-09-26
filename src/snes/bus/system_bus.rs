@@ -6,6 +6,7 @@ use crate::snes::cartridge::Cartridge;
 use crate::snes::cartridge::EnhancementChip;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity, SnesSa1State};
+use crate::snes::cx4::Cx4;
 use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
 use crate::snes::sa1::{
@@ -103,6 +104,9 @@ pub struct SnesSystemBus {
     sa1_memory_control: Option<Rc<RefCell<Sa1MemoryControl>>>,
     /// The second 65816 CPU core for SA-1. `None` for non-SA-1 cartridges.
     sa1_core: Option<Sa1Core>,
+    /// The Capcom CX4 coprocessor, mapped at `$00-$3F/$80-$BF:$6000-$7FFF`. `None` for
+    /// cartridges without one.
+    cx4: Option<Cx4>,
     /// Every `(b_addr, value)` pair a DMA/HDMA A->B transfer has driven onto the
     /// B-bus, in order. Test-only instrument: it observes what the controller
     /// actually wrote, which is what the transfer tests are about, and replaces
@@ -186,6 +190,8 @@ impl SnesSystemBus {
             } else {
                 (None, None, None, None)
             };
+        let cx4 = (cartridge.enhancement_chip() == Some(EnhancementChip::Cx4))
+            .then(|| Cx4::new(Rc::clone(&rom), video_region));
         let mut bus = Self {
             _cartridge: cartridge,
             mapping,
@@ -213,6 +219,7 @@ impl SnesSystemBus {
             sa1_iram,
             sa1_memory_control,
             sa1_core,
+            cx4,
             #[cfg(test)]
             b_bus_writes: RefCell::new(Vec::new()),
         };
@@ -244,6 +251,9 @@ impl SnesSystemBus {
         if let Some(iram) = self.sa1_iram.as_ref() {
             iram.borrow_mut().initialize_power_on_ram(mode);
         }
+        if let Some(cx4) = self.cx4.as_mut() {
+            crate::platform::ram_init::initialize_ram(cx4.data_ram_mut(), mode);
+        }
         if !self.has_battery() {
             crate::platform::ram_init::initialize_ram(self.sram.borrow_mut().as_mut_slice(), mode);
         }
@@ -265,6 +275,22 @@ impl SnesSystemBus {
         if let Some(core) = self.sa1_core.as_mut() {
             *core.arithmetic_mut() = Sa1Arithmetic::new();
         }
+    }
+
+    /// Resets the CX4's registers and execution on the /RES line (soft and hard reset alike);
+    /// its data RAM survives, as in Mesen2. No-op without a CX4.
+    pub fn reset_cx4(&mut self) {
+        if let Some(cx4) = self.cx4.as_mut() {
+            cx4.reset();
+        }
+    }
+
+    /// The CX4's offset for `addr` when this cartridge has one and `addr` is in its window,
+    /// `$00-$3F/$80-$BF:$6000-$7FFF` (fullsnes "CX4 Memory Map": "I/O 00-3F,80-BF:6000-7FFF").
+    fn cx4_offset(&self, addr: u32) -> Option<u16> {
+        self.cx4.as_ref()?;
+        let offset = Self::decode_system_offset(addr)?;
+        (0x6000..=0x7FFF).contains(&offset).then_some(offset)
     }
 
     /// Whether the SA-1 is currently held in reset via CCNT.5. `false` for a
@@ -496,6 +522,9 @@ impl SnesSystemBus {
         if let Some(index) = Self::decode_wram_index(addr) {
             return self.wram[index];
         }
+        if let (Some(cx4), Some(offset)) = (&self.cx4, self.cx4_offset(addr)) {
+            return cx4.read(offset);
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             return iram.borrow().read(offset);
         }
@@ -534,6 +563,10 @@ impl SnesSystemBus {
 
         if let Some(index) = Self::decode_wram_index(addr) {
             return self.wram[index];
+        }
+
+        if let (Some(cx4), Some(offset)) = (&self.cx4, self.cx4_offset(addr)) {
+            return cx4.read(offset);
         }
 
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -578,6 +611,12 @@ impl SnesSystemBus {
 
         if let Some(index) = Self::decode_wram_index(addr) {
             self.wram[index] = value;
+            return;
+        }
+        if let Some(offset) = self.cx4_offset(addr) {
+            if let Some(cx4) = self.cx4.as_mut() {
+                cx4.write(offset, value);
+            }
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -952,6 +991,7 @@ impl SnesSystemBus {
             apu: self.apu.borrow().capture_state(),
             input: self.input.borrow().capture_state(),
             sa1: self.capture_sa1_state(),
+            cx4: self.cx4.as_ref().map(Cx4::capture_state),
             pending_gpdma: self.pending_gpdma,
             pending_hdma: self.pending_hdma,
         }
@@ -1051,6 +1091,11 @@ impl SnesSystemBus {
         self.apu.get_mut().restore_state(&state.apu)?;
         self.input.get_mut().restore_state(&state.input);
         self.restore_sa1_state(state.sa1.as_ref());
+        // Like SA-1, a state without CX4 data (or a cartridge without the chip) leaves the
+        // chip as it is.
+        if let (Some(cx4), Some(cx4_state)) = (self.cx4.as_mut(), state.cx4.as_ref()) {
+            cx4.restore_state(cx4_state)?;
+        }
         self.pending_gpdma = state.pending_gpdma;
         self.pending_hdma = state.pending_hdma;
         Ok(())
@@ -1441,6 +1486,9 @@ impl SnesSystemBus {
         if let Some(sa1_core) = &mut self.sa1_core {
             sa1_core.tick_one_master_clock();
         }
+        if let Some(cx4) = &mut self.cx4 {
+            cx4.tick_master_clock();
+        }
     }
 }
 
@@ -1575,6 +1623,11 @@ impl SnesBus for SnesSystemBus {
             self.mdr.set(value);
             return value;
         }
+        if let (Some(cx4), Some(offset)) = (&self.cx4, self.cx4_offset(addr)) {
+            let value = cx4.read(offset);
+            self.mdr.set(value);
+            return value;
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             let value = iram.borrow().read(offset);
             self.mdr.set(value);
@@ -1636,6 +1689,12 @@ impl SnesBus for SnesSystemBus {
 
         if let Some(index) = Self::decode_wram_index(addr) {
             self.wram[index] = value;
+            return;
+        }
+        if let Some(offset) = self.cx4_offset(addr) {
+            if let Some(cx4) = self.cx4.as_mut() {
+                cx4.write(offset, value);
+            }
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -1715,6 +1774,7 @@ impl SnesBus for SnesSystemBus {
                 .sa1_registers
                 .as_ref()
                 .is_some_and(|registers| registers.borrow().snes_irq_line())
+            || self.cx4.as_ref().is_some_and(Cx4::irq_line)
     }
 
     fn set_cpu_speed(&mut self, speed: u8) {
@@ -1937,6 +1997,141 @@ mod tests {
         rom[base + 0x1E] = 0xCB;
         rom[base + 0x1F] = 0xED;
         Cartridge::from_bytes(&rom).expect("valid SA-1 test cartridge with BW-RAM")
+    }
+
+    /// A 128 KB LoROM CX4 cartridge (chipset `$F3`, subtype `$10` as in Mega Man X2/X3) whose
+    /// ROM holds `program` as the CX4 program page at `$02:8000`.
+    fn cx4_test_cart(program: &[u16]) -> Cartridge {
+        let mut rom = vec![0u8; 0x20000];
+        for (i, word) in program.iter().enumerate() {
+            rom[0x1_0000 + i * 2..0x1_0000 + i * 2 + 2].copy_from_slice(&word.to_le_bytes());
+        }
+        let base = 0x7FC0;
+        rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
+        rom[base - 1] = 0x10; // custom chip subtype: CX4
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
+        rom[base + 0x15] = 0x20;
+        rom[base + 0x16] = 0xF3; // ROM + custom chip
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = 0x00;
+        Cartridge::from_bytes(&rom).expect("valid CX4 test cartridge")
+    }
+
+    /// Starts the CX4 program at `$02:8000` from the SNES side and ticks until it stops.
+    fn run_cx4_program(bus: &mut SnesSystemBus) {
+        for (addr, value) in [(0x00_7F49, 0x00), (0x00_7F4A, 0x80), (0x00_7F4B, 0x02)] {
+            bus.write(addr, value);
+        }
+        bus.write(0x00_7F4F, 0x00);
+        for _ in 0..100_000 {
+            bus.tick();
+            if bus.read(0x00_7F5E) & 0x40 == 0 {
+                return;
+            }
+        }
+        panic!("CX4 program did not stop");
+    }
+
+    #[test]
+    fn cx4_cart_maps_the_chip_at_6000_7fff_of_every_system_bank() {
+        let mut bus = SnesSystemBus::new(cx4_test_cart(&[]));
+        bus.write(0x00_6005, 0x42);
+        assert_eq!(
+            bus.read(0x80_7005),
+            0x42,
+            "data RAM mirrors across banks and $6000/$7000"
+        );
+        bus.write(0x3F_7F80, 0x99);
+        assert_eq!(bus.read(0xBF_7F80), 0x99, "R0 low byte");
+        assert_eq!(bus.read_for_debugger(0x00_7F80), 0x99);
+        assert_eq!(bus.read(0x40_6005), bus.mdr.get(), "not in banks $40-$7F");
+    }
+
+    #[test]
+    fn plain_lorom_cart_leaves_6000_7fff_as_open_bus() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x00_6005, 0x42);
+        bus.read(0x00_8000);
+        assert_eq!(bus.read(0x00_6005), bus.mdr.get());
+    }
+
+    #[test]
+    fn dma_reaches_cx4_data_ram_over_the_a_bus() {
+        let mut bus = SnesSystemBus::new(cx4_test_cart(&[]));
+        bus.dma_write_a_bus(0x00_6100, 0x5A);
+        assert_eq!(bus.dma_read_a_bus(0x00_6100, 0x00), 0x5A);
+        assert_eq!(bus.read(0x00_6100), 0x5A);
+    }
+
+    #[test]
+    fn cx4_program_runs_on_the_master_clock_and_its_stop_raises_the_irq() {
+        // mov A,2Ah / mov R0,A / stop
+        let mut bus = SnesSystemBus::new(cx4_test_cart(&[0x642A, 0xE060, 0xFC00]));
+        assert!(!bus.poll_irq());
+        run_cx4_program(&mut bus);
+        assert_eq!(bus.read(0x00_7F80), 0x2A);
+        assert!(bus.poll_irq(), "the CX4 raises the SNES IRQ when it stops");
+        bus.write(0x00_7F51, 0x01);
+        assert!(!bus.poll_irq(), "$7F51 bit 0 releases it");
+    }
+
+    #[test]
+    fn cx4_state_round_trips_through_a_save_state() {
+        let mut bus = SnesSystemBus::new(cx4_test_cart(&[0x642A, 0xE060, 0xFC00]));
+        bus.write(0x00_6123, 0x77);
+        for (addr, value) in [(0x00_7F49, 0x00), (0x00_7F4A, 0x80), (0x00_7F4B, 0x02)] {
+            bus.write(addr, value);
+        }
+        bus.write(0x00_7F4F, 0x00);
+        for _ in 0..1000 {
+            bus.tick(); // stop mid cache fill
+        }
+        let saved = bus.capture_state();
+        assert!(saved.cx4.is_some());
+
+        let mut restored = SnesSystemBus::new(cx4_test_cart(&[0x642A, 0xE060, 0xFC00]));
+        restored.restore_state(&saved).expect("restore");
+        assert_eq!(restored.capture_state().cx4, saved.cx4);
+        assert_eq!(restored.read(0x00_6123), 0x77);
+        assert_eq!(restored.read(0x00_7F5E) & 0x40, 0x40, "still running");
+        for _ in 0..100_000 {
+            restored.tick();
+            if restored.read(0x00_7F5E) & 0x40 == 0 {
+                break;
+            }
+        }
+        assert_eq!(
+            restored.read(0x00_7F80),
+            0x2A,
+            "the restored program finishes"
+        );
+    }
+
+    #[test]
+    fn non_cx4_cart_saves_no_cx4_state() {
+        assert!(
+            SnesSystemBus::new(lorom_test_cart())
+                .capture_state()
+                .cx4
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn power_on_fill_covers_cx4_data_ram_and_a_reset_stops_the_chip() {
+        let mut bus = SnesSystemBus::new(cx4_test_cart(&[0x0000]));
+        bus.initialize_power_on_ram(RamInitMode::SeededRandom(42));
+        let ram: Vec<u8> = (0x6000..0x6C00).map(|a| bus.read(a)).collect();
+        assert!(
+            ram.iter().any(|&b| b != 0),
+            "CX4 data RAM is filled at power-on"
+        );
+
+        bus.write(0x00_7F4F, 0x00);
+        assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x40);
+        bus.reset_cx4();
+        assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x00, "a reset stops the CX4");
     }
 
     fn lorom_cart_with_battery_sram() -> Cartridge {

@@ -368,9 +368,10 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
-        // SA-1 is emulated (epic #2956); other enhancement chips remain header-detection-only.
+        // SA-1 (epic #2956) and CX4 (nr-t7d) are emulated; other enhancement chips remain
+        // header-detection-only.
         if let Some(chip) = cartridge.enhancement_chip()
-            && chip != EnhancementChip::Sa1
+            && !matches!(chip, EnhancementChip::Sa1 | EnhancementChip::Cx4)
         {
             let warning = format!(
                 "Warning: ROM requires SNES enhancement hardware ({chip}) which is not implemented yet; gameplay may be incorrect"
@@ -543,6 +544,9 @@ impl Emulator for Snes {
             // /RES resets the S-SMP alongside the 65816 (ports, timers, SPC
             // clock anchor, reset vector fetch); ARAM survives a soft reset.
             cpu.bus_mut().reset_apu();
+            // It also reaches the cartridge: the CX4 stops and its registers clear, while its
+            // data RAM, like ARAM, keeps its contents (Mesen2 `BaseCartridge::Reset`).
+            cpu.bus_mut().reset_cx4();
             cpu.do_reset();
         }
         self.pending_render_frames = 0;
@@ -966,6 +970,21 @@ mod tests {
         assert!(
             !toasts.iter().any(|t| t.contains("enhancement hardware")),
             "SA-1 is implemented; no warning expected, got: {toasts:?}"
+        );
+    }
+
+    #[test]
+    fn load_rom_does_not_warn_for_cx4_which_is_implemented() {
+        let mut snes = make_snes();
+        let mut rom = valid_lorom_nop_rom_with_header(0x00, 0xF3);
+        rom[0x7FBF] = 0x10; // custom chip subtype: CX4 (nr-t7d)
+
+        snes.load_rom(&rom, "cx4.sfc").expect("load ROM");
+
+        let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
+        assert!(
+            !toasts.iter().any(|t| t.contains("enhancement hardware")),
+            "CX4 is implemented; no warning expected, got: {toasts:?}"
         );
     }
 

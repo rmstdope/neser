@@ -431,6 +431,37 @@ impl Cx4 {
         self.state.irq_line
     }
 
+    /// The /RES line: every register and the execution state return to power-on, while data
+    /// RAM keeps its contents (Mesen2 `Cx4::Reset` clears `_state` but not `_dataRam`).
+    pub(crate) fn reset(&mut self) {
+        let data_ram = std::mem::take(&mut self.state.data_ram);
+        self.state = Cx4State {
+            data_ram,
+            ..Cx4State::default()
+        };
+    }
+
+    /// The data RAM, for the configured power-on fill.
+    pub(crate) fn data_ram_mut(&mut self) -> &mut [u8] {
+        &mut self.state.data_ram
+    }
+
+    pub(crate) fn capture_state(&self) -> Cx4State {
+        self.state.clone()
+    }
+
+    /// Restores a captured state. A state whose RAM or cache is the wrong size (a corrupt
+    /// file) is rejected rather than allowed to panic later.
+    pub(crate) fn restore_state(&mut self, state: &Cx4State) -> Result<(), String> {
+        if state.data_ram.len() != DATA_RAM_SIZE
+            || state.program_ram.iter().any(|page| page.len() != 256)
+        {
+            return Err("CX4 state size mismatch".to_string());
+        }
+        self.state = state.clone();
+        Ok(())
+    }
+
     /// Maps an offset in `$6000-$7FFF` onto the chip's 4 KB register window; `$6xxx` mirrors
     /// `$7xxx` (Mesen2 `Read`/`Write`: `addr = 0x7000 | (addr & 0xFFF)`).
     fn window(offset: u16) -> u16 {
