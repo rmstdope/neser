@@ -35,7 +35,7 @@ pub(crate) const DATA_RAM_SIZE: usize = 0xC00;
 
 /// Every piece of CX4 state, saved and restored as one value.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Cx4State {
+pub struct Cx4State {
     /// The chip's 3 KB data RAM.
     pub data_ram: Vec<u8>,
     /// R0-R15, 24 bits each, shared with the SNES at `$7F80-$7FAF`.
