@@ -1,4 +1,4 @@
-//! Super FX (GSU-1) coprocessor, built against fullsnes "SNES Cart GSU-n" (Graphic Support Unit).
+//! Super FX (GSU-1 and GSU-2) coprocessor, built against fullsnes "SNES Cart GSU-n" (Graphic Support Unit).
 //!
 //! The GSU is a 16-bit RISC CPU on the cartridge with sixteen registers, its own view of the Game
 //! Pak ROM and RAM, a 512-byte code cache, and a PLOT unit that draws pixels straight into SNES
@@ -22,9 +22,40 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-/// Version code register (`$303B`). fullsnes knows `$01` for the MC1 ("Black Blob") and `$04`
-/// for the GSU2; the MC1 is the only GSU-1-family value it records, and it is Star Fox's chip.
-const VERSION_CODE: u8 = 0x01;
+/// Which Super FX a cartridge carries. fullsnes "Memory Map": "There is no info in the header
+/// (nor extended header) whether the game uses a GSU1 or GSU2. Games with 2MByte ROM are
+/// typically using GSU2", so the ROM size decides. (The unreleased Star Fox 2, 1 MB on a GSU2, is
+/// the known exception and reads as a GSU-1 here.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GsuVersion {
+    /// The Mario Chip 1 and the GSU-1/1A: Star Fox, Stunt Race FX, Vortex and others.
+    Gsu1,
+    /// The GSU-2/2-SP1: Yoshi's Island, Doom, Winter Gold.
+    Gsu2,
+}
+
+impl GsuVersion {
+    /// The largest ROM a GSU-1 cartridge carries (fullsnes: "1Mbyte max").
+    const GSU1_MAX_ROM: usize = 0x10_0000;
+
+    pub(crate) fn for_rom_size(len: usize) -> Self {
+        if len > Self::GSU1_MAX_ROM {
+            Self::Gsu2
+        } else {
+            Self::Gsu1
+        }
+    }
+
+    /// The version code register (`$303B`). fullsnes knows `$01` for the MC1 ("Black Blob") and
+    /// `$04` for the GSU2; the MC1 is the only GSU-1-family value it records, and it is Star Fox's
+    /// chip.
+    fn version_code(self) -> u8 {
+        match self {
+            Self::Gsu1 => 0x01,
+            Self::Gsu2 => 0x04,
+        }
+    }
+}
 
 /// Opcode `NOP`, which fills the program prefetch at power-on and after STOP so that the first
 /// instruction a (re)started GSU executes is a harmless one (Mesen2 `ProgramReadBuffer = 0x01`).
@@ -179,6 +210,8 @@ pub struct Gsu {
     state: GsuState,
     rom: Rc<Vec<u8>>,
     ram: Rc<RefCell<Vec<u8>>>,
+    /// Fixed by the cartridge, so neither reset nor a save state changes it.
+    version: GsuVersion,
     /// Set by an instruction that wrote R15, so the pipeline does not also advance it. Only
     /// meaningful within one `exec`.
     r15_changed: bool,
@@ -190,6 +223,7 @@ impl Gsu {
     pub fn new(rom: Rc<Vec<u8>>, ram: Rc<RefCell<Vec<u8>>>) -> Self {
         Self {
             state: GsuState::power_on(),
+            version: GsuVersion::for_rom_size(rom.len()),
             rom,
             ram,
             r15_changed: false,
@@ -286,7 +320,7 @@ impl Gsu {
             }
             0x34 => s.pbr,
             0x36 => s.rombr,
-            0x3B => VERSION_CODE,
+            0x3B => self.version.version_code(),
             0x3C => s.rambr,
             0x3E => s.cbr as u8,
             0x3F => (s.cbr >> 8) as u8,
@@ -402,6 +436,13 @@ fn code_cache_window_slot(offset: u16) -> Option<usize> {
 
 #[cfg(test)]
 mod alu_tests;
+#[cfg(test)]
+#[test]
+fn gsu_version_follows_rom_size() {
+    assert_eq!(GsuVersion::for_rom_size(0x10_0000), GsuVersion::Gsu1);
+    assert_eq!(GsuVersion::for_rom_size(0x10_0001), GsuVersion::Gsu2);
+    assert_eq!(GsuVersion::for_rom_size(0x20_0000), GsuVersion::Gsu2);
+}
 #[cfg(test)]
 #[test]
 fn gsu_state_missing_fields_deserializes_to_power_on() {

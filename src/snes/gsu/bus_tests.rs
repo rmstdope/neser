@@ -9,15 +9,27 @@ use crate::snes::cartridge::Cartridge;
 /// Builds a 128 KB LoROM Super FX cartridge (chipset `$14`, 32 KB Game Pak RAM declared in the
 /// extended header) whose ROM holds `fill(offset)` at every byte outside the header.
 pub(super) fn gsu_cart_rom(fill: impl Fn(usize) -> u8) -> Vec<u8> {
-    let mut rom: Vec<u8> = (0..0x2_0000).map(fill).collect();
+    sized_gsu_cart_rom(0x2_0000, 0x05, fill)
+}
+
+/// Builds a 2 MB LoROM Super FX cartridge, the size fullsnes gives for GSU2 games ("Games with
+/// 2MByte ROM are typically using GSU2"), declaring `ram_size_code` (`1 << n` KB) as its Game Pak
+/// RAM.
+pub(super) fn gsu2_cart_rom(ram_size_code: u8, fill: impl Fn(usize) -> u8) -> Vec<u8> {
+    sized_gsu_cart_rom(0x20_0000, ram_size_code, fill)
+}
+
+fn sized_gsu_cart_rom(len: usize, ram_size_code: u8, fill: impl Fn(usize) -> u8) -> Vec<u8> {
+    let mut rom: Vec<u8> = (0..len).map(fill).collect();
     let base = 0x7FC0;
     rom[0x7FB0..0x8000].fill(0);
     rom[base..base + 21].copy_from_slice(b"GSU BUS TEST         ");
     rom[base + 0x15] = 0x20; // Slow LoROM.
     rom[base + 0x16] = 0x14; // Chipset: GSU + RAM.
-    rom[base + 0x17] = 0x07; // 128 KB.
+    // ROM size, `1 << n` KB (fullsnes "Cartridge Header"): $07 = 128 KB, $0B = 2 MB.
+    rom[base + 0x17] = (len >> 10).trailing_zeros() as u8;
     rom[base + 0x1A] = 0x33; // Extended header present.
-    rom[0x7FBD] = 0x05; // Expansion RAM: 32 KB.
+    rom[0x7FBD] = ram_size_code; // Expansion RAM size.
     rom[base + 0x3C] = 0x00; // Reset vector $8000.
     rom[base + 0x3D] = 0x80;
     rom
@@ -88,6 +100,14 @@ fn gsu_register_write_latches_low_byte_until_odd_write() {
 fn gsu_version_code_register_reads_gsu1() {
     let bus = gsu_bus(&gsu_cart_rom(|_| 0));
     assert_eq!(bus.read(0x00_303B), 0x01);
+}
+
+#[test]
+fn gsu2_cart_version_code_reads_04() {
+    // fullsnes "General I/O Ports", VCR: "4=GSU2"; at `$303B` and its mirror `$333B`.
+    let bus = gsu_bus(&gsu2_cart_rom(0x05, |_| 0));
+    assert_eq!(bus.read(0x00_303B), 0x04);
+    assert_eq!(bus.read(0x80_333B), 0x04);
 }
 
 #[test]
