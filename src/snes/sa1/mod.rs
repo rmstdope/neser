@@ -19,9 +19,11 @@
 //! own prose there is ambiguous or explicitly says "unknown" in isolation (see
 //! [`memory_control::decode_rom_index`]'s doc comment and [`Sa1Bus`]'s doc comment respectively).
 
+mod arithmetic;
 mod iram;
 mod memory_control;
 
+pub use arithmetic::Sa1Arithmetic;
 pub use iram::{Sa1IRam, decode_mirror_offset};
 pub use memory_control::{
     Sa1MemoryControl, decode_direct_offset as decode_bwram_direct_offset, decode_rom_index,
