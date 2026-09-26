@@ -109,3 +109,71 @@ fn sa1_cpu_reads_its_cumulative_sum_and_overflow_flag() {
     // stepping below zero wraps to $FF_FFFF_FFFF and carries out of bit 39.
     assert_eq!(sa1_result(0x02, &[(0xFFFF, 0x0001)], 0x230A), 0x80FF);
 }
+
+/// The captured SA-1 arithmetic state of `snes`, as `(math_mr, math_overflow)`.
+fn captured_sum(snes: &Snes) -> (u64, bool) {
+    let sa1 = snes
+        .bus_for_tests()
+        .expect("ROM loaded")
+        .capture_state()
+        .sa1
+        .expect("an SA-1 cartridge captures SA-1 state");
+    (sa1.math_mr, sa1.math_overflow)
+}
+
+fn run_fixture(rom: &[u8]) -> Snes {
+    let mut snes = Snes::new(crate::snes::test_support::snes_test_app_context());
+    snes.load_rom(rom, "sa1-math-test.sfc")
+        .expect("failed to load SA-1 arithmetic fixture ROM");
+    for _ in 0..4000 {
+        snes.run_tick();
+    }
+    snes
+}
+
+#[test]
+fn sa1_arithmetic_state_survives_a_save_state_round_trip() {
+    let rom = build_sa1_math_rom(0x02, &[(0xFFFF, 0x0001)], 0x2306);
+    let source = run_fixture(&rom);
+    assert_eq!(captured_sum(&source), (0xFF_FFFF_FFFF, true));
+    let bytes = source.save_state_bytes().expect("save state");
+
+    let mut restored = Snes::new(crate::snes::test_support::snes_test_app_context());
+    restored
+        .load_rom(&rom, "sa1-math-test.sfc")
+        .expect("failed to load SA-1 arithmetic fixture ROM");
+    assert_eq!(
+        captured_sum(&restored),
+        (0, false),
+        "a fresh console starts at 0"
+    );
+    restored.load_state_bytes(&bytes).expect("load state");
+
+    assert_eq!(captured_sum(&restored), (0xFF_FFFF_FFFF, true));
+    let sa1 = restored
+        .bus_for_tests()
+        .expect("ROM loaded")
+        .capture_state()
+        .sa1
+        .expect("SA-1 state");
+    assert_eq!(sa1.math_control, 0x02, "MCNT (sum mode) is restored");
+    assert_eq!(sa1.math_ma, 0xFFFF, "MA survives a sum");
+    assert_eq!(sa1.math_mb, 0x0000, "MB was destroyed by the sum");
+}
+
+#[test]
+fn hard_reset_returns_the_arithmetic_unit_to_power_on() {
+    let rom = build_sa1_math_rom(0x02, &[(3, 4), (5, 6)], 0x2306);
+    let mut snes = run_fixture(&rom);
+    assert_eq!(captured_sum(&snes), (42, false));
+
+    snes.reset(true);
+    assert_eq!(
+        captured_sum(&snes),
+        (42, false),
+        "a soft reset (/RES) leaves the SA-1 alone"
+    );
+
+    snes.reset(false);
+    assert_eq!(captured_sum(&snes), (0, false));
+}

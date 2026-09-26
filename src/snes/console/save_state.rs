@@ -235,6 +235,22 @@ pub struct SnesSa1State {
     /// SFR bit 7 (SNES-side IRQ-from-SA-1 pending). See `sa1_irq_pending`.
     #[serde(default)]
     pub snes_irq_pending: bool,
+    /// `$2250` MCNT bits 0-1 of the arithmetic unit (nr-ps1). Like every arithmetic field below,
+    /// a state saved before the unit existed deserializes to its power-on value of 0.
+    #[serde(default)]
+    pub math_control: u8,
+    /// `$2251/$2252` MA.
+    #[serde(default)]
+    pub math_ma: u16,
+    /// `$2253/$2254` MB.
+    #[serde(default)]
+    pub math_mb: u16,
+    /// `$2306-$230A` MR, the 40-bit result.
+    #[serde(default)]
+    pub math_mr: u64,
+    /// `$230B` OF bit 7.
+    #[serde(default)]
+    pub math_overflow: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]

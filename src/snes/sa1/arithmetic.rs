@@ -80,6 +80,21 @@ impl Sa1Arithmetic {
         }
     }
 
+    /// The raw register state, for save states: `(control, ma, mb, mr, overflow)`.
+    pub(crate) fn raw(&self) -> (u8, u16, u16, u64, bool) {
+        (self.control, self.ma, self.mb, self.mr, self.overflow)
+    }
+
+    /// Restores the raw register state captured by [`Self::raw`]. Bits of `control` outside
+    /// MCNT's two mode bits are dropped, as a `$2250` write would drop them.
+    pub(crate) fn restore_raw(&mut self, control: u8, ma: u16, mb: u16, mr: u64, overflow: bool) {
+        self.control = control & (MCNT_DIVIDE | MCNT_SUM);
+        self.ma = ma;
+        self.mb = mb;
+        self.mr = mr & MR_MASK;
+        self.overflow = overflow;
+    }
+
     fn execute(&mut self) {
         let product = i64::from(self.ma as i16) * i64::from(self.mb as i16);
         if self.control & MCNT_SUM != 0 {
@@ -142,7 +157,11 @@ mod tests {
     fn multiply_is_signed_16_by_16() {
         let mut unit = Sa1Arithmetic::new();
         run(&mut unit, MULTIPLY, 0xFFFE, 0x0003); // -2 * 3
-        assert_eq!(result(&unit), 0xFFFF_FFFA, "32-bit signed product, bits 32-39 zero");
+        assert_eq!(
+            result(&unit),
+            0xFFFF_FFFA,
+            "32-bit signed product, bits 32-39 zero"
+        );
 
         run(&mut unit, MULTIPLY, 0x7FFF, 0x7FFF);
         assert_eq!(result(&unit), 0x3FFF_0001);
@@ -212,7 +231,11 @@ mod tests {
             write_word(&mut unit, 0x2251, 0x7FFF);
             write_word(&mut unit, 0x2253, 0x7FFF);
         }
-        assert_eq!(result(&unit), 4 * 0x3FFF_0001, "sum exceeds 32 bits into MR bits 32-39");
+        assert_eq!(
+            result(&unit),
+            4 * 0x3FFF_0001,
+            "sum exceeds 32 bits into MR bits 32-39"
+        );
 
         write_word(&mut unit, 0x2251, 0xFFFF); // -1
         write_word(&mut unit, 0x2253, 0x0001);
@@ -225,7 +248,11 @@ mod tests {
         run(&mut unit, SUM, 3, 4);
         assert_eq!(result(&unit), 12);
         run(&mut unit, SUM, 5, 6);
-        assert_eq!(result(&unit), 30, "a sum run without re-writing MCNT would give 42");
+        assert_eq!(
+            result(&unit),
+            30,
+            "a sum run without re-writing MCNT would give 42"
+        );
     }
 
     #[test]
@@ -239,7 +266,11 @@ mod tests {
         write_word(&mut unit, 0x2251, 0x0001);
         write_word(&mut unit, 0x2253, 0x0001);
         assert_eq!(result(&unit), 0);
-        assert_eq!(unit.read(0x230B), Some(0x80), "0xFF_FFFF_FFFF + 1 carries out of bit 39");
+        assert_eq!(
+            unit.read(0x230B),
+            Some(0x80),
+            "0xFF_FFFF_FFFF + 1 carries out of bit 39"
+        );
         write_word(&mut unit, 0x2251, 0x0001);
         write_word(&mut unit, 0x2253, 0x0001);
         assert_eq!(unit.read(0x230B), Some(0x00));

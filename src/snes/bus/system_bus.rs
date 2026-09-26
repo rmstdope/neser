@@ -9,7 +9,8 @@ use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdenti
 use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
 use crate::snes::sa1::{
-    self, Sa1ControlRegisters, Sa1Core, Sa1IRam, Sa1MemoryControl, decode_mirror_offset,
+    self, Sa1Arithmetic, Sa1ControlRegisters, Sa1Core, Sa1IRam, Sa1MemoryControl,
+    decode_mirror_offset,
 };
 use crate::trace_apu;
 use std::cell::{Cell, RefCell};
@@ -258,6 +259,11 @@ impl SnesSystemBus {
     pub fn reset_sa1_to_power_on(&mut self) {
         if let Some(registers) = self.sa1_registers.as_ref() {
             *registers.borrow_mut() = Sa1ControlRegisters::new();
+        }
+        // fullsnes "Reset" table: MCNT = $00. The operand and result registers are not listed;
+        // they return to 0 like the rest of this unit's power-on state.
+        if let Some(core) = self.sa1_core.as_mut() {
+            *core.arithmetic_mut() = Sa1Arithmetic::new();
         }
     }
 
@@ -968,6 +974,7 @@ impl SnesSystemBus {
             .sa1_core
             .as_ref()
             .expect("sa1_core is constructed alongside sa1_registers");
+        let (math_control, math_ma, math_mb, math_mr, math_overflow) = core.arithmetic().raw();
         Some(SnesSa1State {
             ccnt: registers.ccnt(),
             sie: registers.sie(),
@@ -996,6 +1003,11 @@ impl SnesSystemBus {
             sa1_irq_pending: registers.sa1_irq_pending(),
             sa1_nmi_pending: registers.sa1_nmi_pending(),
             snes_irq_pending: registers.snes_irq_pending(),
+            math_control,
+            math_ma,
+            math_mb,
+            math_mr,
+            math_overflow,
         })
     }
 
@@ -1096,6 +1108,13 @@ impl SnesSystemBus {
         core.restore_cpu_state(&state.cpu);
         core.set_booted(state.booted);
         core.set_master_clock_debt(state.master_clock_debt);
+        core.arithmetic_mut().restore_raw(
+            state.math_control,
+            state.math_ma,
+            state.math_mb,
+            state.math_mr,
+            state.math_overflow,
+        );
     }
 
     pub(crate) fn sample_ready(&self) -> bool {

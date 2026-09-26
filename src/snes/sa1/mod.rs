@@ -457,6 +457,14 @@ impl Sa1Bus {
         }
     }
 
+    pub(crate) fn arithmetic(&self) -> &Sa1Arithmetic {
+        &self.arithmetic
+    }
+
+    pub(crate) fn arithmetic_mut(&mut self) -> &mut Sa1Arithmetic {
+        &mut self.arithmetic
+    }
+
     /// Fullsnes: "IRQ/NMI/Reset vectors can be mapped. Other vectors (BRK/COP etc) are always
     /// taken from ROM (for BOTH CPUs)." -- so only these 5 vector-word addresses (reset has a
     /// single pair; NMI/IRQ each have both a native- and emulation-mode pair, both always
@@ -744,6 +752,15 @@ impl Sa1Core {
 
     pub(crate) fn set_booted(&mut self, booted: bool) {
         self.booted = booted;
+    }
+
+    /// The SA-1-side arithmetic unit, which lives on the SA-1 CPU's own bus.
+    pub(crate) fn arithmetic(&self) -> &Sa1Arithmetic {
+        self.cpu.bus().arithmetic()
+    }
+
+    pub(crate) fn arithmetic_mut(&mut self) -> &mut Sa1Arithmetic {
+        self.cpu.bus_mut().arithmetic_mut()
     }
 
     pub(crate) fn master_clock_debt(&self) -> i64 {
