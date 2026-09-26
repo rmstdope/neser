@@ -72,6 +72,7 @@ import {
 } from "./input/pointer_lock";
 import { computeButtonStates } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
+import { cgbColorButtonLabel, cgbColorButtonVisible } from "./display/cgb_color_correction";
 import { selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
@@ -698,6 +699,29 @@ let saveStateAvailable = false;
 let running = false;
 let paused = false;
 let romFromFile = false; // true only when ROM was loaded from the file input
+/** Game Boy Color LCD colour correction; lives for the page, not across reloads (like Filter). */
+let cgbColorCorrection = false;
+const cgbColorToggleBtn = document.getElementById("cgb-color-toggle") as HTMLButtonElement | null;
+
+/** Show the Colors button only while a colour Game Boy game is running or paused. */
+function updateCgbColorButton() {
+    if (!cgbColorToggleBtn) return;
+    const visible = cgbColorButtonVisible({
+        kind: emulator?.kind ?? null,
+        isColor: emulator?.kind === "gb" && emulator.inst.is_color(),
+        active: running || paused,
+    });
+    cgbColorToggleBtn.style.display = visible ? "" : "none";
+    cgbColorToggleBtn.textContent = cgbColorButtonLabel(cgbColorCorrection);
+}
+
+cgbColorToggleBtn?.addEventListener("click", () => {
+    cgbColorCorrection = !cgbColorCorrection;
+    if (emulator?.kind === "gb") {
+        emulator.inst.set_cgb_color_correction(cgbColorCorrection);
+    }
+    updateCgbColorButton();
+});
 
 // ── Autorun context + DOM elements ───────────────────────────────────────────
 const autorunCtx = createAutorunContext();
@@ -760,6 +784,7 @@ function updateEmulationButtons() {
     if (autorunLoadBtn) {
         autorunLoadBtn.disabled = romBytes === null || !romFromFile || running;
     }
+    updateCgbColorButton();
 }
 
 /** Create a fresh emulator instance and update kind-dependent UI. */
@@ -770,6 +795,7 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
     nes = null;
     if (kind === "gb") {
         const gb = new WasmGb();
+        gb.set_cgb_color_correction(cgbColorCorrection);
         emulator = { kind: "gb", inst: gb };
     } else if (kind === "gba") {
         const gba = new WasmGba();

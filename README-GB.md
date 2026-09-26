@@ -88,6 +88,22 @@ Documented presets:
 - `dmg`
 - `none`
 
+Game Boy Color LCD color correction can be enabled with:
+
+```bash
+neser --cgb-color-correction path/to/game.gbc
+```
+
+Or in `neser.conf`:
+
+```text
+cgb-color-correction=true
+```
+
+It applies to everything shown in color, including black-and-white games the
+Game Boy Color colorizes. In the web frontend, the "Colors" button in the top
+bar switches it while a color game is running.
+
 ## Boot animation
 
 The Game Boy boot animation can be enabled with:
