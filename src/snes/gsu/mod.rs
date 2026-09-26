@@ -12,6 +12,8 @@
 //! count is behind the master clock (as Mesen2's `Gsu::Run`). Costs are counted in master clocks:
 //! one GSU cycle is one master clock at 21.4 MHz (CLSR bit 0 set) and two at 10.7 MHz.
 
+mod core;
+mod instructions;
 pub(crate) mod memory;
 
 use std::cell::RefCell;
@@ -176,6 +178,9 @@ pub struct Gsu {
     state: GsuState,
     rom: Rc<Vec<u8>>,
     ram: Rc<RefCell<Vec<u8>>>,
+    /// Set by an instruction that wrote R15, so the pipeline does not also advance it. Only
+    /// meaningful within one `exec`.
+    r15_changed: bool,
 }
 
 impl Gsu {
@@ -186,7 +191,14 @@ impl Gsu {
             state: GsuState::power_on(),
             rom,
             ram,
+            r15_changed: false,
         }
+    }
+
+    /// The GSU's IRQ output to the S-CPU: the SFR IRQ flag unless CFGR bit 7 masks it
+    /// (fullsnes CFGR: "IRQ Interrupt Mask (0=Trigger IRQ on STOP opcode, 1=Disable IRQ)").
+    pub fn irq_line(&self) -> bool {
+        self.state.irq && self.state.cfgr & 0x80 == 0
     }
 
     /// Whether the GSU currently owns the ROM bus, so the S-CPU sees fixed vectors instead.
@@ -285,9 +297,13 @@ impl Gsu {
                 let index = usize::from(reg >> 1);
                 let word = u16::from(value) << 8 | u16::from(self.state.write_latch);
                 self.state.r[index] = word;
-                // fullsnes: writing R15's MSB sets GO and starts execution.
-                if index == 15 {
-                    self.state.go = true;
+                match index {
+                    // fullsnes leaves open whether an S-CPU write of R14 prefetches `[R14]` like
+                    // a GSU one does; Mesen2 does, and so does this.
+                    14 => self.start_rom_buffer_fill(),
+                    // fullsnes: writing R15's MSB sets GO and starts execution.
+                    15 => self.state.go = true,
+                    _ => {}
                 }
             }
             0x30 => self.write_sfr(value),
@@ -295,7 +311,7 @@ impl Gsu {
             0x34 => {
                 self.state.pbr = value;
                 // Cached code belonged to the old bank (Mesen2 empties the cache here too).
-                self.invalidate_code_cache();
+                self.invalidate_all_code_cache_lines();
             }
             0x37 => self.state.cfgr = value,
             0x38 => self.state.scbr = value,
@@ -324,7 +340,7 @@ impl Gsu {
             // fullsnes "Code-Cache": an S-CPU write of GO=0 sets CBR to 0 and marks every cache
             // line empty (how the S-CPU prepares to write code into the cache itself).
             s.cbr = 0;
-            self.invalidate_code_cache();
+            self.invalidate_all_code_cache_lines();
         }
     }
 
@@ -337,10 +353,6 @@ impl Gsu {
         if slot & 0x0F == 0x0F {
             self.state.code_cache_valid[slot >> 4] = true;
         }
-    }
-
-    fn invalidate_code_cache(&mut self) {
-        self.state.code_cache_valid = [false; CODE_CACHE_LINES];
     }
 }
 
@@ -362,3 +374,5 @@ fn code_cache_window_slot(offset: u16) -> Option<usize> {
 
 #[cfg(test)]
 mod bus_tests;
+#[cfg(test)]
+mod core_tests;
