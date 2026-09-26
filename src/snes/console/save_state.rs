@@ -613,4 +613,16 @@ mod tests {
         assert!(!state.sa1_nmi_pending);
         assert!(!state.snes_irq_pending);
     }
+
+    /// A `SnesSa1State` saved before the arithmetic unit existed (nr-ps1) deserializes with it at
+    /// its power-on state: multiply mode, operands, result and overflow flag all 0.
+    #[test]
+    fn sa1_state_missing_arithmetic_fields_deserializes_to_power_on() {
+        let state: SnesSa1State = serde_json::from_str("{}").expect("deserialize");
+        assert_eq!(state.math_control, 0x00);
+        assert_eq!(state.math_ma, 0x0000);
+        assert_eq!(state.math_mb, 0x0000);
+        assert_eq!(state.math_mr, 0);
+        assert!(!state.math_overflow);
+    }
 }

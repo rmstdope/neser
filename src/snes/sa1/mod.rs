@@ -735,6 +735,11 @@ impl Sa1Core {
         &self.cpu
     }
 
+    #[cfg(test)]
+    pub(crate) fn bus_mut_for_tests(&mut self) -> &mut Sa1Bus {
+        self.cpu.bus_mut()
+    }
+
     /// Captures the inner 65816 CPU's register/flag state, for save-state serialization. This
     /// reuses `Cpu<B>`'s existing bus-agnostic `Stateful` impl -- the same mechanism the main
     /// CPU already uses -- since `Cpu<Sa1Bus>`'s architectural state doesn't depend on the bus.

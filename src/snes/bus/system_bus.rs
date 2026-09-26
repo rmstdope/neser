@@ -1154,6 +1154,13 @@ impl SnesSystemBus {
         self.sa1_core.as_ref().map(|core| core.cpu().read_pc())
     }
 
+    /// The SA-1 CPU's own bus, or `None` for non-SA-1 cartridges -- the only way a test can reach
+    /// SA-1-side registers such as the arithmetic unit without running SA-1 code.
+    #[cfg(test)]
+    pub(crate) fn sa1_bus_mut_for_tests(&mut self) -> Option<&mut crate::snes::sa1::Sa1Bus> {
+        self.sa1_core.as_mut().map(|core| core.bus_mut_for_tests())
+    }
+
     /// Returns the SA-1 CPU's accumulator, or `None` for non-SA-1 cartridges.
     #[cfg(test)]
     pub(crate) fn sa1_cpu_a_for_tests(&self) -> Option<u16> {

@@ -262,7 +262,8 @@ mod tests {
         run(&mut unit, SUM, 0xFFFF, 0x0001); // 0 + (-1) wraps below zero, carrying out of bit 39
         assert_eq!(result(&unit), 0xFF_FFFF_FFFF);
         assert_eq!(unit.read(0x230B), Some(0x80));
-        // Adding +1 back brings the 40-bit sum to 0 with no carry out: OF clears.
+        // Adding +1 wraps the 40-bit sum to 0, but $FF_FFFF_FFFF + 1 carries out of bit 39, so
+        // OF stays set. Only the next step, 0 + 1, has no carry out and clears it.
         write_word(&mut unit, 0x2251, 0x0001);
         write_word(&mut unit, 0x2253, 0x0001);
         assert_eq!(result(&unit), 0);

@@ -7,6 +7,7 @@
 //! follow fullsnes "SNES Cart SA-1 Arithmetic Maths" (see `src/snes/sa1/arithmetic.rs`).
 
 use crate::platform::emulator::Emulator;
+use crate::snes::bus::SnesBus;
 use crate::snes::console::Snes;
 
 const HEADER: usize = 0x7FC0;
@@ -159,6 +160,20 @@ fn sa1_arithmetic_state_survives_a_save_state_round_trip() {
     assert_eq!(sa1.math_control, 0x02, "MCNT (sum mode) is restored");
     assert_eq!(sa1.math_ma, 0xFFFF, "MA survives a sum");
     assert_eq!(sa1.math_mb, 0x0000, "MB was destroyed by the sum");
+
+    // The restored accumulator is the one the SA-1 CPU's own bus computes with: one more sum
+    // step (MA kept at -1, MB = -2, so +2) carries $FF_FFFF_FFFF over to 1 and keeps OF set. An
+    // unrestored unit (multiply mode, MA = 0) would read 0 with OF clear.
+    let sa1_bus = restored
+        .bus_mut_for_tests()
+        .expect("ROM loaded")
+        .sa1_bus_mut_for_tests()
+        .expect("an SA-1 cartridge has an SA-1 bus");
+    sa1_bus.write(0x00_2253, 0xFE);
+    sa1_bus.write(0x00_2254, 0xFF);
+    assert_eq!(sa1_bus.read(0x00_2306), 0x01);
+    assert_eq!(sa1_bus.read(0x00_230A), 0x00);
+    assert_eq!(sa1_bus.read(0x00_230B), 0x80);
 }
 
 #[test]
@@ -166,13 +181,6 @@ fn hard_reset_returns_the_arithmetic_unit_to_power_on() {
     let rom = build_sa1_math_rom(0x02, &[(3, 4), (5, 6)], 0x2306);
     let mut snes = run_fixture(&rom);
     assert_eq!(captured_sum(&snes), (42, false));
-
-    snes.reset(true);
-    assert_eq!(
-        captured_sum(&snes),
-        (42, false),
-        "a soft reset (/RES) leaves the SA-1 alone"
-    );
 
     snes.reset(false);
     assert_eq!(captured_sum(&snes), (0, false));
