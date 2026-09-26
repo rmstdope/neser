@@ -88,10 +88,25 @@ nes-hardware=nes-ntsc
 #   composite-direct - FBX "Composite Direct" palette.
 #   mesen            - Mesen2's default palette; use it to compare captures with Mesen2.
 # An unknown value is ignored with a warning and the default palette is kept.
-# At runtime, press F8 (NES only) to cycle through these palettes.
+# At runtime, press F8 in an NES game to cycle through these palettes.
 # Headless capture (--headless) uses this palette too.
 # Default: default
 nes-palette=default
+
+# Preset Game Boy shade palette for original Game Boy (DMG) games.
+# Game Boy Color games are not affected.
+# Allowed values (case-insensitive):
+#   grey      - Neutral grey shades (preserves prior behavior).
+#   dmg-green - The original Game Boy's green screen.
+#   pocket    - Game Boy Pocket's olive-grey screen.
+#   light     - Game Boy Light's backlit blue-green screen.
+# "gray" is accepted as another spelling of grey.
+# An unknown value is ignored with a warning and the default palette is kept.
+# At runtime, press F8 in an original Game Boy game to cycle through these palettes.
+# The Game Boy LCD filter (gb-filter=dmg) is drawn in this palette.
+# Headless capture (--headless) uses this palette too.
+# Default: grey (dmg-green when gb-filter=dmg)
+#gb-palette=grey
 
 # -----------------------------------------------------------------------------
 # Audio Settings
