@@ -1,0 +1,52 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Game Boy Palettes</title><style>
+:root{--bg:#f6f6f4;--fg:#1d1d1f;--mut:#666;--card:#fff;--line:#ddd}
+@media (prefers-color-scheme:dark){:root{--bg:#18181a;--fg:#eee;--mut:#aaa;--card:#232326;--line:#3a3a3e}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--mut);margin:0 0 20px;max-width:760px}
+.grid{display:flex;flex-wrap:wrap;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;width:220px}
+.card h2{font-size:16px;margin:0 0 2px}.card p{font-size:13px;color:var(--mut);margin:6px 0 0}
+canvas{width:192px;height:173px;image-rendering:pixelated;border-radius:4px;display:block;margin:8px 0}
+.sw{display:flex;gap:4px}.sw span{flex:1;height:18px;border-radius:3px;border:1px solid #0002}
+.cycle{margin:20px 0;padding:12px 14px;background:var(--card);border:1px solid var(--line);border-radius:10px;max-width:760px}
+.toast{display:inline-block;background:rgba(0,0,0,.75);color:#fff;padding:6px 12px;border-radius:6px;font-size:14px;margin:4px 6px 4px 0}
+.screen{position:relative;display:inline-block}.screen .toast{position:absolute;left:8px;top:8px;margin:0}
+.big canvas{width:384px;height:346px}
+code{background:var(--card);border:1px solid var(--line);padding:1px 5px;border-radius:4px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;max-width:760px;margin:0 0 16px}
+</style><body><h1>Game Boy shade palettes — agreed</h1><p class=sub>Chosen drawings for choosing and cycling the original Game Boy palette.</p><section style='margin-bottom:40px'><h2 style='font-size:20px'>Option A — four palettes</h2><p class=sub>The Game Boy shade palettes a player can choose between, in the order F8 steps through them. Each screen is the same game frame drawn in that palette.</p><div class=grid><div class="card"><h2>Grey</h2><canvas data-p='["#FFFFFF", "#ADADAD", "#525252", "#000000"]'></canvas><div class="sw"><span style="background:#FFFFFF"></span><span style="background:#ADADAD"></span><span style="background:#525252"></span><span style="background:#000000"></span></div><p>What you see today — stays the starting palette.</p></div><div class="card"><h2>DMG Green</h2><canvas data-p='["#9BBC0F", "#8BAC0F", "#306230", "#0F380F"]'></canvas><div class="sw"><span style="background:#9BBC0F"></span><span style="background:#8BAC0F"></span><span style="background:#306230"></span><span style="background:#0F380F"></span></div><p>The original 1989 Game Boy's pea-green screen.</p></div><div class="card"><h2>Pocket</h2><canvas data-p='["#C4CFA1", "#8B956D", "#4D533C", "#1F1F1F"]'></canvas><div class="sw"><span style="background:#C4CFA1"></span><span style="background:#8B956D"></span><span style="background:#4D533C"></span><span style="background:#1F1F1F"></span></div><p>Game Boy Pocket: olive-grey, near-black darkest shade.</p></div><div class="card"><h2>Light</h2><canvas data-p='["#00B581", "#009A71", "#00694A", "#004F3B"]'></canvas><div class="sw"><span style="background:#00B581"></span><span style="background:#009A71"></span><span style="background:#00694A"></span><span style="background:#004F3B"></span></div><p>Game Boy Light (Japan only) with its backlight on: blue-green.</p></div></div><div class=cycle><b>F8 in an original Game Boy game:</b> Grey → DMG Green → Pocket → Light → back to Grey<br>The message shown briefly in the top-left corner on each press:<br><span class=toast>Palette: Grey</span><span class=toast>Palette: DMG Green</span><span class=toast>Palette: Pocket</span><span class=toast>Palette: Light</span></div></section><section style='margin-bottom:40px'><h2 style='font-size:20px'>Option A — the LCD look follows the chosen palette</h2><p class=sub>With the Game Boy LCD look (the dot-matrix screen effect) switched on, the player picks Pocket with F8. The screen keeps its dot-matrix grid and motion blur, but in the Pocket colours.</p><div class="box big"><div class=screen><canvas data-p='["#C4CFA1", "#8B956D", "#4D533C", "#1F1F1F"]' style="filter:contrast(.92)"></canvas><span class=toast>Palette: Pocket</span></div><p>LCD look on + Pocket → a Pocket-coloured dot-matrix screen. Every palette works with and without the LCD look.</p></div></section><section style='margin-bottom:40px'><h2 style='font-size:20px'>Option A — LCD look starts green</h2><p class=sub>A player who already uses the Game Boy LCD look and has never chosen a palette. Today their screen is green. With this option it stays green: when the LCD look is on and no palette was chosen, the starting palette is DMG Green. Without the LCD look the starting palette is Grey, as today.</p><div class=grid><div class="card"><h2>LCD look on, nothing chosen</h2><canvas data-p='["#9BBC0F", "#8BAC0F", "#306230", "#0F380F"]'></canvas><div class="sw"><span style="background:#9BBC0F"></span><span style="background:#8BAC0F"></span><span style="background:#306230"></span><span style="background:#0F380F"></span></div></div><div class="card"><h2>LCD look off, nothing chosen</h2><canvas data-p='["#FFFFFF", "#ADADAD", "#525252", "#000000"]'></canvas><div class="sw"><span style="background:#FFFFFF"></span><span style="background:#ADADAD"></span><span style="background:#525252"></span><span style="background:#000000"></span></div></div></div><div class=cycle>F8 with the LCD look on starts from DMG Green: DMG Green → Pocket → Light → Grey → DMG Green</div></section><section style='margin-bottom:40px'><h2 style='font-size:20px'>The words, exactly</h2><p class=sub>Every word a player reads for this change, written the same way as the NES palette's words. The default line assumes Option A for the LCD look.</p><div class=box><b>Settings file, new block after the NES palette</b><pre>
+# Preset Game Boy shade palette for original Game Boy (DMG) games.
+# Game Boy Color games are not affected.
+# Allowed values (case-insensitive):
+#   grey      - Neutral grey shades (preserves prior behavior).
+#   dmg-green - The original Game Boy's green screen.
+#   pocket    - Game Boy Pocket's olive-grey screen.
+#   light     - Game Boy Light's backlit blue-green screen.
+# "gray" is accepted as another spelling of grey.
+# An unknown value is ignored with a warning and the default palette is kept.
+# At runtime, press F8 in an original Game Boy game to cycle through these palettes.
+# The Game Boy LCD filter (gb-filter=dmg) is drawn in this palette.
+# Headless capture (--headless) uses this palette too.
+# Default: grey (dmg-green when gb-filter=dmg)
+#gb-palette=grey</pre></div>
+<div class=box><b>Command-line help</b><pre>--gb-palette  Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)</pre></div>
+<div class=box><b>Unknown value on the command line (the game does not start)</b><pre>Invalid --gb-palette value: 'bogus'. Valid options are: grey, dmg-green, pocket, light</pre></div>
+<div class=box><b>Unknown value in the settings file (the game starts with the default)</b><pre>Warning: invalid value 'bogus' for 'gb-palette'; keeping default ('grey'). Valid values: grey, dmg-green, pocket, light</pre></div>
+<div class=box><b>Message in the corner on F8</b><br><span class=toast>Palette: Grey</span><span class=toast>Palette: DMG Green</span><span class=toast>Palette: Pocket</span><span class=toast>Palette: Light</span></div>
+<div class=box><b>Keyboard help list (desktop and web)</b><pre>F8    Cycle Palette (NES, Game Boy)</pre></div></section><script>
+function draw(c,pal){const x=c.getContext('2d');const W=160,H=144;c.width=W;c.height=H;
+x.fillStyle=pal[0];x.fillRect(0,0,W,H);
+// ground
+for(let i=0;i<W;i+=8){x.fillStyle=pal[3];x.fillRect(i,120,8,24);x.fillStyle=pal[2];x.fillRect(i+1,121,6,6);x.fillStyle=pal[1];x.fillRect(i+2,122,3,3);}
+// hills
+x.fillStyle=pal[1];x.beginPath();x.arc(40,120,30,Math.PI,0);x.fill();x.beginPath();x.arc(120,120,20,Math.PI,0);x.fill();
+// cloud
+x.fillStyle=pal[1];x.fillRect(90,20,30,8);x.fillRect(96,14,18,6);
+// blocks
+for(let i=0;i<4;i++){x.fillStyle=pal[3];x.fillRect(56+i*12,70,12,12);x.fillStyle=pal[2];x.fillRect(57+i*12,71,10,10);x.fillStyle=pal[1];x.fillRect(59+i*12,73,4,4);}
+// hero
+x.fillStyle=pal[3];x.fillRect(30,100,10,20);x.fillStyle=pal[2];x.fillRect(31,102,8,6);x.fillStyle=pal[0];x.fillRect(35,103,2,2);
+// text
+x.fillStyle=pal[3];x.font='8px monospace';x.fillText('SCORE 004200',4,10);}
+document.querySelectorAll('canvas[data-p]').forEach(c=>draw(c,JSON.parse(c.dataset.p)));
+</script>
