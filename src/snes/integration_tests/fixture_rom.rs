@@ -101,6 +101,22 @@ impl FixtureRom {
         self.rom[HEADER + 0x16] = 0x35;
     }
 
+    /// Marks this fixture as a Capcom CX4 cartridge: chipset `$F3` (ROM + custom chip) with
+    /// custom-chip subtype `$10` at `$FFBF`, the header Mega Man X2/X3 carry (fullsnes "CX4
+    /// Cartridge Header"). The CX4 then answers at `$6000-$7FFF` of the system banks.
+    pub(crate) fn cx4_chipset(&mut self) {
+        self.rom[HEADER + 0x16] = 0xF3;
+        self.rom[HEADER - 1] = 0x10;
+    }
+
+    /// Writes `bytes` into the second 32 KiB bank (LoROM `$01:8000-$01:FFFF`, file offset
+    /// `$8000 + offset`), which no emitted program or header touches: room for data another
+    /// processor reads, such as a CX4 program.
+    pub(crate) fn place_in_bank1(&mut self, offset: u16, bytes: &[u8]) {
+        let start = 0x8000 + usize::from(offset);
+        self.rom[start..start + bytes.len()].copy_from_slice(bytes);
+    }
+
     /// Points the emulation-mode NMI vector (`$FFFA/$FFFB`, header offset
     /// `$3A`) at `addr`, the vector a VBlank NMI fetches in the CPU's
     /// post-reset emulation mode.
