@@ -133,11 +133,17 @@ impl RomBrowserApp {
     pub(super) fn ensure_selected_visible(&mut self) {
         let Some(ref gl) = self.gl else { return };
         let (display_w, display_h) = gl.logical_size();
+        self.scroll_to_show_selected(display_w, display_h);
+    }
+
+    /// Moves the scroll target just enough that the selected cell is fully inside the grid
+    /// area of a `display_w` x `display_h` window.
+    pub(super) fn scroll_to_show_selected(&mut self, display_w: f32, display_h: f32) {
         let sidebar_w = theme::sidebar_width(display_w);
         let grid_area_w = display_w - sidebar_w;
         let (cols, cover_w) = theme::grid_layout(grid_area_w);
         let cell_h = theme::cell_height(cover_w);
-        let grid_height = display_h - theme::HEADER_HEIGHT;
+        let grid_height = self.grid_height(display_h);
 
         let row = self.selected_index / cols;
         let cell_top = theme::GRID_PADDING + row as f32 * (cell_h + theme::GRID_SPACING);

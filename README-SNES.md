@@ -16,9 +16,17 @@ Use `neser --help` for the complete current CLI reference.
 
 Enhancement chips: the SA-1 (Super Mario RPG and others), the Capcom CX4 (Mega Man X2 and
 X3), the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2), the
-Super FX GSU-1 and GSU-2 (Star Fox, Yoshi's Island, Doom) and the S-DD1 decompressor (Star
-Ocean, Street Fighter Alpha 2) are emulated. Cartridges with any other enhancement chip
-load, but show a warning that the chip is not implemented yet, and may not run correctly.
+Super FX GSU-1 and GSU-2 (Star Fox, Yoshi's Island, Doom), the S-DD1 decompressor (Star
+Ocean, Street Fighter Alpha 2) and the DSP-1 (Super Mario Kart, Pilotwings) are emulated.
+Cartridges with any other enhancement chip load, but show a warning that the chip is not
+implemented yet, and may not run correctly.
+
+The DSP-1 runs its own program, which game dumps do not contain and NESER cannot include, so a
+DSP-1 game needs a firmware file you supply: put `dsp1b.rom` (8192 bytes; optionally `dsp1.rom`
+for the original chip) in `~/.neser/firmware`, or point `--snes-firmware-dir` at another folder.
+Without it the game does not start: the game browser says why in a strip above the games, and a
+command-line launch prints the reason and exits. The browser version asks for the file once and
+keeps it in the browser; the sidebar's "SNES firmware" block replaces or forgets it.
 
 ## SNES configuration (native frontend)
 
@@ -26,6 +34,7 @@ SNES-specific options:
 
 - `--snes-hardware <snes-ntsc|snes-pal>`
 - `--snes-spc-ipl-path <path>`
+- `--snes-firmware-dir <folder>` (coprocessor firmware such as `dsp1b.rom`; default `~/.neser/firmware`)
 - `--snes-controller-port1 <standard|multitap|mouse|superscope>`
 - `--snes-controller-port2 <standard|multitap|mouse|superscope>`
 
@@ -328,6 +337,11 @@ Test suites:
   buffer (all PASS, matching Mesen2's screen pixel for pixel). A hand-built
   fixture DMAs a table into CX4 RAM, runs a CX4 program from ROM (a square,
   a data-ROM lookup, a RAM read) and checks the results from the 65816 side.
+- `dsp1_tests.rs` -- the DSP-1 (nr-auv). Nintendo's firmware cannot be
+  shipped, so a synthetic uPD77C25 program written with the test assembler
+  (`src/snes/upd77c25/asm.rs`) multiplies words from DR, and a hand-built
+  fixture on a DSP LoROM cartridge exchanges them through DR/SR in both
+  LoROM windows. Real-game checks with a player's `dsp1b.rom` stay manual.
 - `obc1_tests.rs` -- the OBC1 OBJ controller (nr-ufb). No OBC1 test ROM is
   known, so a hand-built fixture on an OBC1 cartridge writes objects through
   the `$7FF0-$7FF6` ports at both buffer bases and checks the SRAM buffer
@@ -451,6 +465,7 @@ What actually differs between the two consoles:
 | DSP sample rate | 32 kHz | 32 kHz |
 | SA-1 clock (master / 2) | 10.74 MHz | 10.64 MHz |
 | CX4 clock (own 20 MHz crystal) | 20.00 MHz | 20.00 MHz |
+| DSP-1 clock (own 7.6 MHz crystal) | 7.60 MHz | 7.60 MHz |
 
 PAL's extra 50 scanlines are therefore *all* blanking: the active area, the
 VBlank boundary and the framebuffer are region-independent, and only the

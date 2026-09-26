@@ -1,4 +1,4 @@
-use crate::snes::cartridge::header::parse_header_at;
+use crate::snes::cartridge::header::{TITLE_LEN, parse_header_at};
 use crate::snes::cartridge::mapping::{Mapping, detect_mapping};
 use std::fmt;
 // A 32 KiB single-bank LoROM has its header flush against the end of the
@@ -72,6 +72,7 @@ pub struct Cartridge {
     has_battery: bool,
     speed: RomSpeed,
     title: String,
+    title_bytes: [u8; TITLE_LEN],
     country: u8,
     enhancement_chip: Option<EnhancementChip>,
 }
@@ -109,6 +110,7 @@ impl Cartridge {
                 RomSpeed::Slow
             },
             title: header.title,
+            title_bytes: header.title_bytes,
             country: header.country,
             enhancement_chip,
         })
@@ -136,6 +138,11 @@ impl Cartridge {
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    /// The header title's raw bytes, spaces and all.
+    pub fn title_bytes(&self) -> &[u8] {
+        &self.title_bytes
     }
 
     pub fn country(&self) -> u8 {

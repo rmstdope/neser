@@ -38,7 +38,7 @@ impl RomBrowserApp {
         let grid_area_w = display_w - sidebar_w;
         let (cols, cover_w) = theme::grid_layout(grid_area_w);
         let cell_h = theme::cell_height(cover_w);
-        let grid_height = display_h - theme::HEADER_HEIGHT;
+        let grid_height = self.grid_height(display_h);
 
         // Determine the range of rows visible on screen (with buffer).
         let first_visible_row =

@@ -73,6 +73,8 @@ impl RomBrowserApp {
             .map(|&idx| self.catalog[idx].clone())
             .collect();
 
+        let launch_error = self.launch_error.clone();
+        let mut launch_strip = (0.0, false);
         let search_active = self.search_active;
         let search_query = self.search_query.clone();
         let no_roms_hint = self.no_roms_hint.clone();
@@ -265,6 +267,10 @@ impl RomBrowserApp {
                     );
                 });
 
+            if let Some(lines) = &launch_error {
+                launch_strip = Self::render_launch_error_strip(ui, lines);
+            }
+
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
@@ -329,6 +335,12 @@ impl RomBrowserApp {
                 );
             }
         });
+
+        let (strip_height, strip_closed) = launch_strip;
+        self.apply_launch_strip_height(strip_height, display_w, display_h);
+        if strip_closed {
+            self.clear_launch_error();
+        }
     }
 
     fn render_loading_screen(

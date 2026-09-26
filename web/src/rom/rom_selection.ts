@@ -12,17 +12,16 @@ export async function handleRomSelection({
     running: boolean;
     stop: () => void;
     applyRomBytes: (bytes: Uint8Array, name: string) => Promise<void>;
-    start?: () => Promise<void>;
+    /** Starts the game; resolving `false` means it did not start and focus is left alone. */
+    start?: () => Promise<void | boolean>;
     focusCanvas?: () => void;
 }) {
     if (running) {
         stop();
     }
     await applyRomBytes(bytes, name);
-    if (start) {
-        await start();
-    }
-    if (focusCanvas) {
+    const started = start ? await start() : undefined;
+    if (focusCanvas && started !== false) {
         focusCanvas();
     }
 }
