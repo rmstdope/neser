@@ -7,9 +7,12 @@
 //! ROM banking, and BW-RAM mapping/write-protection (see [`memory_control`]); the cross-CPU
 //! IRQ/status handshake (`$2300`/`$2301` SFR/CFR, SNV/SIV vector-override interception); and the
 //! remaining read-only register block (`$2302-$230E`: H/V counter reads sharing the main [`Ppu`],
-//! stubbed arithmetic-result/overflow and variable-length-data-port registers, and the
-//! never-implemented-on-real-hardware `$230E` version code). Automating the absindx conformance
-//! ROMs themselves is a separate sub-issue of #2956 that lands on top of this.
+//! stubbed variable-length-data-port registers, and the never-implemented-on-real-hardware
+//! `$230E` version code). Automating the absindx conformance ROMs themselves is a separate
+//! sub-issue of #2956 that lands on top of this. The multiply/divide/cumulative-sum unit
+//! (`$2250-$2254`, `$2306-$230B`; see [`arithmetic`]) followed in nr-ps1, because Super Mario
+//! RPG's SA-1 code loops on its results. SA-1 DMA, character conversion, the timer and
+//! variable-length bit processing are still not emulated.
 //!
 //! Register bit layouts and reset values are sourced from fullsnes ("SNES Cart SA-1 I/O Map" /
 //! "Interrupt/Control on SNES Side" / "Interrupt/Control on SA-1 Side" / "Memory Control" / "Timer"
@@ -416,10 +419,10 @@ impl Default for Sa1ControlRegisters {
 /// `$40-$4F`), gated by the shared write-protection rule (see [`memory_control`]).
 ///
 /// `$2302-$2305` (HCR/VCR H/V counter reads) are also SA-1-side (#2961), sharing the main bus's
-/// [`Ppu`] read-only to latch its live dot/scanline position. `$2306-$230B` (arithmetic
-/// result/overflow) and `$230C`/`$230D` (variable-length data port) always read their
-/// power-on-equivalent default of `0`, since the arithmetic and variable-length-bit units behind
-/// them are out of scope (#2961's issue text defers their actual computation) -- only `$230E`
+/// [`Ppu`] read-only to latch its live dot/scanline position. `$2306-$230B` read the arithmetic
+/// unit's result and overflow flag ([`Sa1Arithmetic`], written through `$2250-$2254`).
+/// `$230C`/`$230D` (variable-length data port) always read their power-on-equivalent default of
+/// `0`, since the variable-length-bit unit behind them is out of scope -- only `$230E`
 /// (SNES-side VC, confirmed by bsnes's `SA1::readIOCPU` to not exist on real hardware at all) and
 /// genuinely unmapped offsets fall through to open bus.
 pub struct Sa1Bus {
@@ -429,6 +432,9 @@ pub struct Sa1Bus {
     rom: Rc<Vec<u8>>,
     sram: Rc<RefCell<Vec<u8>>>,
     ppu: Rc<RefCell<Ppu>>,
+    /// `$2250-$2254` / `$2306-$230B`: SA-1-side only, so owned here rather than shared with
+    /// `SnesSystemBus` like the register blocks both CPUs reach.
+    arithmetic: Sa1Arithmetic,
 }
 
 impl Sa1Bus {
@@ -447,6 +453,7 @@ impl Sa1Bus {
             rom,
             sram,
             ppu,
+            arithmetic: Sa1Arithmetic::new(),
         }
     }
 
@@ -553,12 +560,9 @@ impl SnesBus for Sa1Bus {
         if Self::is_system_offset(addr, 0x2305) {
             return self.registers.borrow().vcr_high();
         }
-        // $2306-$230A (MR arithmetic result) and $230B (OF overflow flag) always read their
-        // power-on-equivalent default of 0 -- the arithmetic unit behind them is out of scope
-        // (#2961's issue text explicitly defers real multiply/divide/cumulative-sum computation
-        // to a future issue).
-        if Self::system_offset_in(addr, 0x2306..=0x230B).is_some() {
-            return 0;
+        // $2306-$230A (MR arithmetic result) and $230B (OF overflow flag).
+        if let Some(offset) = Self::system_offset_in(addr, 0x2306..=0x230B) {
+            return self.arithmetic.read(offset).unwrap_or(0);
         }
         // $230C/$230D (VDP variable-length data read port) likewise always read 0 -- the
         // variable-length-bit unit behind them is out of scope (#2961's issue text explicitly
@@ -601,6 +605,11 @@ impl SnesBus for Sa1Bus {
         // $2225 BMAP and $2227 CBWE are SA-1-side-writable (fullsnes I/O map "Side" column); the
         // SNES-side register block ($2220-$2224, $2226, $2228) is written from `SnesSystemBus`
         // instead -- see the module doc comment.
+        // $2250-$2254 (MCNT, MA, MB) are SA-1-side-writable (fullsnes I/O map "Side" column).
+        if let Some(offset) = Self::system_offset_in(addr, 0x2250..=0x2254) {
+            self.arithmetic.write(offset, value);
+            return;
+        }
         if Self::is_system_offset(addr, 0x2225) {
             self.memory_control.borrow_mut().write(0x2225, value);
             return;
@@ -1101,10 +1110,9 @@ mod tests {
 
     #[test]
     fn bus_arithmetic_result_overflow_and_variable_length_data_port_default_to_zero() {
-        // The arithmetic and variable-length-bit units behind these registers are out of scope
-        // for #2961 (its issue text defers real computation to a future issue) -- they must
-        // still read back a plausible power-on-equivalent default rather than crashing or
-        // falling through to open bus.
+        // At power-on the arithmetic result/overflow registers read 0 (nothing has run yet), and
+        // the variable-length-bit port -- still out of scope -- reads the same default rather
+        // than crashing or falling through to open bus.
         let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
         let rom = Rc::new(vec![0u8; 0x8000]);
         let bus = Sa1Bus::new(
