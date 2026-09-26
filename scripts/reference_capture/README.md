@@ -1,10 +1,12 @@
 # Reference-emulator screenshot capture
 
 Headless capture recipes for the screenshot reference of each system, verified on
-2026-09-25 on macOS (Apple Silicon). Each recipe was checked end to end: the reference
-capture and a NESER `--headless` capture of the same ROM matched pixel-for-pixel through
-`python -m scripts.diff_screenshots` (NES: blargg_ppu_tests power_up_palette frame 120 with --nes-palette mesen; GB:
-dmg-acid2 after 10 s; GBA: mGBA suite frame 300, and every frame from 1 to 120 but 9 with `--skip-bios-intro`).
+2026-09-25 on macOS (Apple Silicon), the NES check on 2026-09-26. Each recipe was checked
+end to end: the reference capture and a NESER `--headless` capture of the same ROM matched
+pixel-for-pixel through `python -m scripts.diff_screenshots`
+(NES: blargg_ppu_tests power_up_palette frame 120 with --nes-palette mesen; GB:
+dmg-acid2 after 10 s; GBA: mGBA suite frame 300, and every frame from 1 to 120 but 9
+with `--skip-bios-intro`).
 
 | System | Reference | Tool | Frame-exact |
 |---|---|---|---|

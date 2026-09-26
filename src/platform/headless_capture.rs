@@ -481,6 +481,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn run_draws_with_the_default_palette_when_none_is_configured() {
+        // Given a configuration that never mentions a palette
+        use crate::nes::ppu::NesPalette;
+        let temp = TempDir::new().expect("create temp dir");
+        let output = temp.path().join("untouched.png");
+        run(
+            &make_app_context(),
+            "roms/nes/rainwarrior/color_test.nes",
+            &capture_to(&output, 10),
+        )
+        .expect("capture should succeed");
+
+        // Then it matches an explicit Default capture, the window's starting palette
+        let explicit = capture_with_palette(
+            "roms/nes/rainwarrior/color_test.nes",
+            10,
+            NesPalette::Default,
+            &temp,
+        );
+        assert_eq!(decode_png(&output).2, explicit);
+    }
+
     // --- per-system capture ---
     //
     // The runner asks the console for its dimensions, so a capture that assumed
