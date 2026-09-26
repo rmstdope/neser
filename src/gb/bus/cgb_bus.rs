@@ -417,14 +417,13 @@ impl CgbBus {
     }
 
     /// Sets the player's colourisation choice for a DMG-only game. When the
-    /// game is already running in DMG compatibility mode the screen changes at
-    /// once; otherwise the choice applies when the boot ROM hands over.
-    /// Re-setting `Auto` leaves the palettes as they are (so a state load or a
-    /// held boot combo keeps its pick).
+    /// game is already running in DMG compatibility mode the screen is
+    /// recoloured at once in that choice (for `Auto`, the title pick), which
+    /// also puts a loaded save state in the current choice; otherwise the
+    /// choice applies when the boot ROM hands over.
     pub fn set_gbc_palette(&mut self, palette: GbcPalette) {
-        let changed = palette != self.gbc_palette;
         self.gbc_palette = palette;
-        if self.ppu.dmg_compat && (changed || palette != GbcPalette::Auto) {
+        if self.ppu.dmg_compat {
             self.apply_dmg_compat_palette(None);
         }
     }

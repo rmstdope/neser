@@ -2100,6 +2100,25 @@ mod tests {
     }
 
     #[test]
+    fn test_state_saved_under_a_chosen_palette_loads_in_auto_when_auto_is_chosen() {
+        let mut gb = loaded(
+            make_cgb_gameboy_with_gbc_palette(GbcPalette::Auto),
+            &minimal_rom(),
+        );
+        let auto = gb.drawn_compat_bg0();
+        for _ in 0..2 {
+            gb.cycle_gbc_palette(); // Brown, Red
+        }
+        let red_state = gb.save_state_bytes().unwrap();
+        for _ in 0..11 {
+            gb.cycle_gbc_palette(); // … Reverse, Auto
+        }
+        assert_eq!(gb.gbc_palette(), GbcPalette::Auto);
+        gb.load_state_bytes(&red_state).unwrap();
+        assert_eq!(gb.drawn_compat_bg0(), auto);
+    }
+
+    #[test]
     fn test_cycle_gbc_palette_toasts_wraps_to_auto_and_redraws() {
         let mut gb = loaded(
             make_cgb_gameboy_with_gbc_palette(GbcPalette::Auto),
