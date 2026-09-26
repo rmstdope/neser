@@ -1175,6 +1175,8 @@ local frameCount = 0
 emu.addEventCallback(function()
   frameCount = frameCount + 1
   if frameCount == target then
+    -- takeScreenshot() can be one frame behind on a loaded machine; for a frame-exact
+    -- capture use the getScreenBuffer() read in scripts/reference_capture/mesen2_capture.lua
     local png = emu.takeScreenshot()
     local hex = {}
     for i = 1, #png do hex[i] = string.format("%02X", string.byte(png, i)) end
@@ -1309,7 +1311,10 @@ function save(fname, data)
     return false
 end
 
-function onEndFrame()
+-- startFrame, not endFrame: Mesen2 raises EndFrame before the PPU sends the frame it
+-- has just rendered, so a screenshot there is the previous frame. takeScreenshot() can
+-- still be one frame behind on a loaded machine; see the note below (nr-mxn).
+function onStartFrame()
     frame = frame + 1
     
     if frame == targetFrame then
@@ -1325,7 +1330,7 @@ function onEndFrame()
     end
 end
 
-emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
+emu.addEventCallback(onStartFrame, emu.eventType.startFrame)
 ```
 
 **Running the script:**
@@ -1355,6 +1360,22 @@ kill $MESEN_PID
 
 The same script, parameterised by `CAPTURE_FRAME` and `CAPTURE_OUT`, is committed as
 `scripts/reference_capture/mesen2_capture.lua`; prefer it over pasting the pattern above.
+
+**Frame N is `emu.getScreenBuffer()` at the N-th `startFrame` (from nr-mxn).** The
+pattern above avoids one of two ways to be a frame behind, not both. `EndFrame` is raised before the PPU sends
+the frame it has just rendered (`SnesPpu.cpp`, `NesPpu.cpp`:
+`ProcessEvent(EventType::EndFrame)`, then `SendFrame()`), so the N-th `endFrame` shows
+frame N-1 (the pattern and the committed script used it until nr-mxn). And
+`emu.takeScreenshot()` copies the video-decode thread's output, which
+`SendFrame()` only signals, so even on `startFrame` it is sometimes frame N-1 on a loaded
+machine. `getScreenBuffer()` reads the PPU buffer synchronously; the committed script
+does that and encodes the PNG itself (see `scripts/reference_capture/README.md`). A lead
+of one frame measured with the old `endFrame` script (Mega Man X2/X3 in nr-ve3, and one
+of Street Fighter Alpha 2's two frames in nr-phv) is the script, not NESER. On static
+screens every variant gives the same image, so only animated content shows the
+difference. The scripted-input template further up has the same `takeScreenshot()` race
+on a loaded machine: when adapting it, replace `emu.takeScreenshot()` with the committed
+script's `emu.getScreenBuffer()` read, SNES crop and `encodePng`.
 
 (ares is not used for screenshot capture — it has no scripting support and is
 a source-code reference only; see step 9 of the Instructions.)
