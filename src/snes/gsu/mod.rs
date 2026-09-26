@@ -15,6 +15,7 @@
 mod core;
 mod instructions;
 pub(crate) mod memory;
+mod plot;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -380,3 +381,5 @@ mod bus_tests;
 mod core_tests;
 #[cfg(test)]
 mod flow_tests;
+#[cfg(test)]
+mod memory_tests;

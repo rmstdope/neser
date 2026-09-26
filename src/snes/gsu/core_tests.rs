@@ -93,11 +93,18 @@ impl Rig {
         self.clocks - start
     }
 
+    /// [`Rig::run_until_stop`], then enough idle clocks for a store still in the RAM write
+    /// buffer to land.
+    pub fn run_until_stop_and_settle(&mut self) {
+        self.run_until_stop();
+        self.tick(16);
+    }
+
     /// Starts `program` at `$00:8000` and runs it to its STOP.
     pub fn run(program: &[u8]) -> Self {
         let mut rig = Self::new(program);
         rig.start_at(PROGRAM);
-        rig.run_until_stop();
+        rig.run_until_stop_and_settle();
         rig
     }
 }

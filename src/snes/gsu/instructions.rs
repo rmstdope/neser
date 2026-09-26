@@ -31,10 +31,12 @@ impl Gsu {
             0x0F => self.op_branch(self.state.overflow),
             0x10..=0x1F => self.op_to_move(n),
             0x20..=0x2F => self.op_with(n),
+            0x30..=0x3B => self.op_stw_stb(n),
             0x3C => self.op_loop(),
             0x3D => self.op_alt(true, false),
             0x3E => self.op_alt(false, true),
             0x3F => self.op_alt(true, true),
+            0x40..=0x4B => self.op_ldw_ldb(n),
             0x4D => self.op_swap(),
             0x4F => self.op_not(),
             0x50..=0x5F => self.op_add_adc(n),
@@ -42,6 +44,7 @@ impl Gsu {
             0x70 => self.op_merge(),
             0x71..=0x7F => self.op_and_bic(n),
             0x80..=0x8F => self.op_mult_umult(n),
+            0x90 => self.op_sbk(),
             0x91..=0x94 => self.op_link(n),
             0x95 => self.op_sex(),
             0x96 => self.op_asr_div2(),
@@ -54,7 +57,9 @@ impl Gsu {
             0xC0 => self.op_hib(),
             0xC1..=0xCF => self.op_or_xor(n),
             0xD0..=0xDE => self.op_inc(n),
+            0xDF => self.op_getc_ramb_romb(),
             0xE0..=0xEE => self.op_dec(n),
+            0xEF => self.op_getb(),
             0xF0..=0xFF => self.op_iwt_lm_sm(n),
             _ => self.reset_prefixes(),
         }
@@ -379,10 +384,18 @@ impl Gsu {
         self.reset_prefixes();
     }
 
-    /// `$An`: IBT Rn,#pp; with ALT1 LMS Rn,(yy); with ALT2 SMS (yy),Rn.
+    /// `$An`: IBT Rn,#pp; with ALT1 LMS Rn,(kk); with ALT2 SMS (kk),Rn. The short address is
+    /// the operand times two.
     fn op_ibt_lms_sms(&mut self, n: u8) {
-        let value = self.read_operand() as i8 as u16;
-        self.write_reg(n, value);
+        let operand = self.read_operand();
+        if self.state.alt1 {
+            let value = self.load_word(u16::from(operand) << 1);
+            self.write_reg(n, value);
+        } else if self.state.alt2 {
+            self.store_word(u16::from(operand) << 1, self.state.r[usize::from(n)]);
+        } else {
+            self.write_reg(n, operand as i8 as u16);
+        }
         self.reset_prefixes();
     }
 
@@ -390,7 +403,126 @@ impl Gsu {
     fn op_iwt_lm_sm(&mut self, n: u8) {
         let lo = self.read_operand();
         let hi = self.read_operand();
-        self.write_reg(n, u16::from_le_bytes([lo, hi]));
+        let operand = u16::from_le_bytes([lo, hi]);
+        if self.state.alt1 {
+            let value = self.load_word(operand);
+            self.write_reg(n, value);
+        } else if self.state.alt2 {
+            self.store_word(operand, self.state.r[usize::from(n)]);
+        } else {
+            self.write_reg(n, operand);
+        }
+        self.reset_prefixes();
+    }
+
+    // ---- RAM ------------------------------------------------------------------------------
+
+    /// Reads a word at `[RAMBR:address]`: low byte at `address`, high byte at `address ^ 1`,
+    /// which is fullsnes' "LSB/MSB swapped" at odd addresses. Remembers the address for SBK.
+    fn load_word(&mut self, address: u16) -> u16 {
+        self.state.last_ram_address = address;
+        let lo = self.read_data_ram(address);
+        let hi = self.read_data_ram(address ^ 1);
+        u16::from_le_bytes([lo, hi])
+    }
+
+    fn store_word(&mut self, address: u16, value: u16) {
+        self.state.last_ram_address = address;
+        self.write_data_ram(address, value as u8);
+        self.write_data_ram(address ^ 1, (value >> 8) as u8);
+    }
+
+    /// `$3n` (n = 0..11): STW (Rn),Rs; with ALT1 STB (Rn),Rs (low byte only).
+    fn op_stw_stb(&mut self, n: u8) {
+        let address = self.state.r[usize::from(n)];
+        let value = self.src();
+        if self.state.alt1 {
+            self.state.last_ram_address = address;
+            self.write_data_ram(address, value as u8);
+        } else {
+            self.store_word(address, value);
+        }
+        self.reset_prefixes();
+    }
+
+    /// `$4n` (n = 0..11): LDW Rd,(Rn); with ALT1 LDB Rd,(Rn) (zero-extended).
+    fn op_ldw_ldb(&mut self, n: u8) {
+        let address = self.state.r[usize::from(n)];
+        let value = if self.state.alt1 {
+            self.state.last_ram_address = address;
+            u16::from(self.read_data_ram(address))
+        } else {
+            self.load_word(address)
+        };
+        self.write_dest(value);
+        self.reset_prefixes();
+    }
+
+    /// `$90`: SBK, store Sreg to the most recently used RAM address.
+    fn op_sbk(&mut self) {
+        let address = self.state.last_ram_address;
+        self.write_data_ram(address, self.src() as u8);
+        self.write_data_ram(address ^ 1, (self.src() >> 8) as u8);
+        self.reset_prefixes();
+    }
+
+    /// A data read from Game Pak RAM. It waits for the RAM write buffer and the bus, but costs
+    /// nothing beyond the opcode's fetch: fullsnes lists LDW at 7 cycles, yet Mesen2's
+    /// `ReadRamBuffer` charges no time and the S-CPU cannot observe the difference.
+    fn read_data_ram(&mut self, address: u16) -> u8 {
+        self.finish_ram_buffer();
+        self.wait_for_ram_access();
+        self.ram_byte(super::core::ram_offset(self.state.rambr, address))
+    }
+
+    /// A data write into the RAM write buffer: it lands `memory_cost` master clocks later while
+    /// the GSU carries on, and a second write first waits for the one before it (fullsnes
+    /// "RAM-Write-Data Cache").
+    fn write_data_ram(&mut self, address: u16, value: u8) {
+        self.finish_ram_buffer();
+        self.state.ram_write_address = address;
+        self.state.ram_write_value = value;
+        self.state.ram_delay = self.memory_cost();
+    }
+
+    // ---- ROM ------------------------------------------------------------------------------
+
+    /// The ROM read buffer, once any fill in flight has completed.
+    fn read_rom_buffer(&mut self) -> u8 {
+        self.finish_rom_buffer();
+        self.state.rom_buffer
+    }
+
+    /// `$EF`: GETB; ALT1 GETBH; ALT2 GETBL; ALT3 GETBS.
+    fn op_getb(&mut self) {
+        let byte = self.read_rom_buffer();
+        let value = match (self.state.alt1, self.state.alt2) {
+            (false, false) => u16::from(byte),
+            (true, false) => (self.src() & 0x00FF) | u16::from(byte) << 8,
+            (false, true) => (self.src() & 0xFF00) | u16::from(byte),
+            (true, true) => byte as i8 as u16,
+        };
+        self.write_dest(value);
+        self.reset_prefixes();
+    }
+
+    /// `$DF`: GETC (and GETC with ALT1, which has no variant); ALT2 RAMB; ALT3 ROMB. Changing a
+    /// bank first lets the buffer operation on the old bank finish (fullsnes "Other Caches").
+    fn op_getc_ramb_romb(&mut self) {
+        match (self.state.alt1, self.state.alt2) {
+            (_, false) => {
+                let byte = self.read_rom_buffer();
+                self.state.colr = self.color_register_input(byte);
+            }
+            (false, true) => {
+                self.finish_ram_buffer();
+                self.state.rambr = self.src() as u8 & 0x01;
+            }
+            (true, true) => {
+                self.finish_rom_buffer();
+                self.state.rombr = self.src() as u8;
+            }
+        }
         self.reset_prefixes();
     }
 }
