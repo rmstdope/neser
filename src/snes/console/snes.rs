@@ -1532,7 +1532,11 @@ mod tests {
 
         loaded_then_reset.reset(false);
 
-        assert_eq!(master_clock(&loaded), 186, "Mesen2's power-on startup delay");
+        assert_eq!(
+            master_clock(&loaded),
+            186,
+            "Mesen2's power-on startup delay"
+        );
         assert_eq!(master_clock(&loaded_then_reset), master_clock(&loaded));
     }
 
@@ -1551,7 +1555,11 @@ mod tests {
         let mut restored = make_snes();
         restored.load_rom(&rom, "test.sfc").unwrap();
         restored.load_state_bytes(&state).unwrap();
-        assert_ne!(restored.cpu_pc_for_tests(), reset_pc, "the state moved the PC");
+        assert_ne!(
+            restored.cpu_pc_for_tests(),
+            reset_pc,
+            "the state moved the PC"
+        );
 
         restored.reset(false);
 
