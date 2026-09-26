@@ -321,6 +321,14 @@ impl SnesSystemBus {
             .then_some(offset & 0x1FFF)
     }
 
+    /// Resets the Super FX, if the cartridge has one: the cartridge /RESET line follows the
+    /// console's on every reset, soft or hard (Mesen2 resets its GSU on both as well).
+    pub fn reset_gsu(&mut self) {
+        if let Some(gsu) = &mut self.gsu {
+            gsu.get_mut().reset();
+        }
+    }
+
     /// Whether the SA-1 is currently held in reset via CCNT.5. `false` for a
     /// cartridge without an SA-1.
     #[cfg(test)]
@@ -1092,6 +1100,7 @@ impl SnesSystemBus {
             input: self.input.borrow().capture_state(),
             sa1: self.capture_sa1_state(),
             cx4: self.cx4.as_ref().map(Cx4::capture_state),
+            gsu: self.gsu.as_ref().map(|gsu| gsu.borrow().capture_state()),
             pending_gpdma: self.pending_gpdma,
             pending_hdma: self.pending_hdma,
         }
@@ -1195,6 +1204,11 @@ impl SnesSystemBus {
         // chip as it is.
         if let (Some(cx4), Some(cx4_state)) = (self.cx4.as_mut(), state.cx4.as_ref()) {
             cx4.restore_state(cx4_state)?;
+        }
+        // As for the SA-1: a state without a GSU section (another cartridge, or saved before
+        // Super FX support) leaves the GSU as it is.
+        if let (Some(gsu), Some(gsu_state)) = (&mut self.gsu, &state.gsu) {
+            gsu.get_mut().restore_state(gsu_state);
         }
         self.pending_gpdma = state.pending_gpdma;
         self.pending_hdma = state.pending_hdma;

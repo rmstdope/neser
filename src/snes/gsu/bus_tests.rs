@@ -182,3 +182,66 @@ fn gsu_irq_reaches_snes_cpu_via_poll_irq() {
     assert_ne!(bus.read(0x00_3031) & 0x80, 0);
     assert!(!bus.poll_irq(), "reading $3031 acknowledges");
 }
+
+/// A GSU cart whose program increments R1 1000 times in a LOOP and STOPs.
+fn counting_gsu_rom() -> Vec<u8> {
+    let mut rom = gsu_cart_rom(|_| 0);
+    #[rustfmt::skip]
+    rom[..11].copy_from_slice(&[
+        0xFC, 0xE8, 0x03, // IWT R12,#1000
+        0x2F, 0x1D,       // MOVE R13,R15
+        0xD1,             // INC R1
+        0x3C,             // LOOP
+        0x01,             // delay slot
+        0x00, 0x01,       // STOP; NOP
+        0x01,
+    ]);
+    rom
+}
+
+fn start_gsu(bus: &mut SnesSystemBus) {
+    bus.write(0x00_3039, 0x00); // 10.7 MHz
+    bus.write(0x00_303A, 0x18);
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80);
+}
+
+fn read_r1(bus: &SnesSystemBus) -> u16 {
+    u16::from_le_bytes([bus.read(0x00_3002), bus.read(0x00_3003)])
+}
+
+#[test]
+fn gsu_state_round_trips_through_save_state() {
+    let rom = counting_gsu_rom();
+    let mut original = gsu_bus(&rom);
+    start_gsu(&mut original);
+    for _ in 0..5_000 {
+        original.tick();
+    }
+    let saved = original.capture_state();
+    assert!(saved.gsu.is_some());
+    for _ in 0..5_000 {
+        original.tick();
+    }
+
+    let mut restored = gsu_bus(&rom);
+    restored.restore_state(&saved).expect("restore");
+    for _ in 0..5_000 {
+        restored.tick();
+    }
+    let (r1, running) = (read_r1(&restored), restored.read(0x00_3030) & 0x20);
+    assert_eq!((r1, running), (read_r1(&original), original.read(0x00_3030) & 0x20));
+    assert!(r1 > 0 && r1 < 1000, "caught mid-loop, got R1 = {r1}");
+}
+
+#[test]
+fn reset_stops_the_gsu() {
+    let mut bus = gsu_bus(&counting_gsu_rom());
+    start_gsu(&mut bus);
+    for _ in 0..1_000 {
+        bus.tick();
+    }
+    bus.reset_gsu();
+    assert_eq!(bus.read(0x00_3030) & 0x20, 0, "GO cleared");
+    assert_eq!(read_r1(&bus), 0, "registers back to power-on");
+}

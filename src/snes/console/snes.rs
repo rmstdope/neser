@@ -537,6 +537,9 @@ impl Emulator for Snes {
         // a hard reset here is not yet a full power cycle.
         let ram_init_mode = (!soft_reset).then(|| self.ram_init_mode());
         if let Some(cpu) = self.cpu.as_mut() {
+            // The GSU stops first, on either kind of reset, so it is not running while RAM is
+            // refilled below.
+            cpu.bus_mut().reset_gsu();
             if let Some(mode) = ram_init_mode {
                 // Order matters: the SA-1 must be back under CCNT.5 reset-hold
                 // before I-RAM is refilled, or it keeps executing from its old
@@ -1059,6 +1062,27 @@ mod tests {
             cycles.abs_diff(pal_expected) <= 1,
             "{cycles} CX4 cycles in {clocks} master clocks; PAL rate gives {pal_expected}"
         );
+    }
+
+    #[test]
+    fn reset_stops_a_running_super_fx() {
+        // The cartridge /RESET line resets the GSU with the S-CPU, on a soft reset as well.
+        for soft_reset in [true, false] {
+            let mut snes = make_snes();
+            let mut rom = valid_lorom_nop_rom_with_header(0x00, 0x14); // Super FX
+            rom[..3].copy_from_slice(&[0x05, 0xFE, 0x01]); // GSU: BRA to itself
+            snes.load_rom(&rom, "gsu.sfc").expect("load ROM");
+            let bus = snes.bus_mut_for_tests().expect("bus");
+            bus.write(0x00_303A, 0x18);
+            bus.write(0x00_301E, 0x00);
+            bus.write(0x00_301F, 0x80);
+            assert_ne!(bus.read(0x00_3030) & 0x20, 0, "GSU started");
+
+            snes.reset(soft_reset);
+
+            let bus = snes.bus_mut_for_tests().expect("bus");
+            assert_eq!(bus.read(0x00_3030) & 0x20, 0, "soft_reset = {soft_reset}");
+        }
     }
 
     #[test]

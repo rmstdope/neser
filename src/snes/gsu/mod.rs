@@ -196,6 +196,24 @@ impl Gsu {
         }
     }
 
+    /// The cartridge /RESET line (fullsnes "SNES Pinouts GSU Chips"): the GSU returns to its
+    /// power-on state, stopped, with both buses given back to the S-CPU. The code cache is
+    /// cleared rather than left with stale lines. Game Pak RAM is not touched.
+    pub fn reset(&mut self) {
+        self.state = GsuState::power_on();
+    }
+
+    pub fn capture_state(&self) -> GsuState {
+        self.state.clone()
+    }
+
+    /// Restores a captured state. A code cache of the wrong size (a hand-edited or corrupt
+    /// state) is resized rather than trusted, since every fetch indexes it.
+    pub fn restore_state(&mut self, state: &GsuState) {
+        self.state = state.clone();
+        self.state.code_cache.resize(CODE_CACHE_SIZE, 0);
+    }
+
     /// The GSU's IRQ output to the S-CPU: the SFR IRQ flag unless CFGR bit 7 masks it
     /// (fullsnes CFGR: "IRQ Interrupt Mask (0=Trigger IRQ on STOP opcode, 1=Disable IRQ)").
     pub fn irq_line(&self) -> bool {
@@ -375,6 +393,15 @@ fn code_cache_window_slot(offset: u16) -> Option<usize> {
 
 #[cfg(test)]
 mod alu_tests;
+#[cfg(test)]
+#[test]
+fn gsu_state_missing_fields_deserializes_to_power_on() {
+    // A save state written before a field existed must still load.
+    let state: GsuState = serde_json::from_str("{}").expect("deserialize");
+    assert_eq!(state.program_prefetch, NOP_OPCODE);
+    assert_eq!(state.code_cache.len(), CODE_CACHE_SIZE);
+    assert!(!state.go);
+}
 #[cfg(test)]
 mod bus_tests;
 #[cfg(test)]

@@ -292,6 +292,10 @@ pub struct SnesBusState {
     /// existed (`#[serde(default)]` keeps those loadable).
     #[serde(default)]
     pub cx4: Option<Cx4State>,
+    /// The Super FX's whole state; `None` for other cartridges, and for save states captured
+    /// before Super FX support existed (`#[serde(default)]` keeps those loadable).
+    #[serde(default)]
+    pub gsu: Option<crate::snes::gsu::GsuState>,
     /// Armed-but-not-started GPDMA as `(cpu_cycle_countdown, mdmaen, fallback_clock)`
     /// (see `SnesSystemBus::pending_gpdma`); `None` when no transfer is pending.
     #[serde(default)]
