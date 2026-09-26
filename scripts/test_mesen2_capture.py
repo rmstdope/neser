@@ -1,14 +1,17 @@
 """Frame alignment of scripts/reference_capture/mesen2_capture.lua against NESER (nr-mxn).
 
 The committed Mesen2 capture script must save the same frame as ``neser --headless
---frames N`` for ``CAPTURE_FRAME=N``. A static test ROM cannot show a one-frame offset,
-so each case is a ROM that changes every frame: the capture must equal NESER frame N at
-0 px and differ from frames N-1 and N+1.
+--frames N`` for ``CAPTURE_FRAME=N``. A static screen cannot show a one-frame offset, so
+each case samples animated content at frames where it differs from both neighbours: the
+capture must equal NESER frame N at 0 px and differ from frames N-1 and N+1. Several
+frames per ROM, because a capture that races Mesen2's video-decode thread is wrong only
+some of the time, and mostly on a loaded machine.
 
-This needs the Mesen2 release binary and a release NESER build, so it is skipped where
-either is missing (CI has no Mesen2). Point ``MESEN2_BIN`` / ``NESER_BIN`` at them when
-they are not in the default places (``/Applications/Mesen.app`` and
-``target/release/neser``).
+Opt-in: set ``NESER_MESEN2_CAPTURE_TEST=1``. It needs the Mesen2 release binary and a
+release NESER build of the tree under test (``cargo build --release --bin neser``); the
+gate builds no release binary, so an automatic run would test whatever stale build is on
+disk. Point ``MESEN2_BIN`` / ``NESER_BIN`` at the binaries when they are not in the
+default places (``/Applications/Mesen.app`` and ``target/release/neser``).
 
 The committed script is run unchanged except for a prepended shim. The shim replaces
 ``io.open`` so the PNG reaches stdout as hex and ``os.getenv`` so the frame comes from
@@ -46,7 +49,8 @@ os.getenv = function(k)
 end
 """
 
-# (rom, NESER flags, Mesen2 flags, frame) for content that changes every frame.
+# (rom, NESER flags, Mesen2 flags, frames), each frame one where the content differs
+# from both neighbouring frames.
 NES_FLAGS = ["--nes.DisableFrameSkipping=true", "--nes.RamPowerOnState=AllZeros"]
 SNES_FLAGS = ["--snes.disableFrameSkipping=true", "--snes.RamPowerOnState=AllZeros"]
 CASES = [
@@ -56,13 +60,13 @@ CASES = [
         "roms/nes/automated_tests/nmi_sync/demo_ntsc.nes",
         ["--nes-palette", "mesen"],
         NES_FLAGS,
-        120,
+        (61, 64, 67, 120, 300),
     ),
     (
         "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/window-precalculated-single.sfc",
         [],
         SNES_FLAGS,
-        120,
+        (61, 72, 73, 120, 300),
     ),
 ]
 
@@ -98,21 +102,26 @@ def mesen2_capture(rom: Path, flags: list[str], frame: int, out_dir: Path) -> Sc
     return load_screenshot(png)
 
 
+@unittest.skipUnless(os.environ.get("NESER_MESEN2_CAPTURE_TEST") == "1", "opt-in, see docstring")
 @unittest.skipUnless(MESEN2.is_file() and shutil.which("pgrep"), "Mesen2 binary not found")
 @unittest.skipUnless(NESER.is_file(), "release NESER binary not found (cargo build --release)")
 class TestMesen2CaptureFrameAlignment(unittest.TestCase):
     def test_capture_frame_n_is_neser_frame_n_on_animated_content(self) -> None:
-        for rom_path, neser_flags, mesen2_flags, frame in CASES:
-            with self.subTest(rom=Path(rom_path).name), tempfile.TemporaryDirectory() as tmp:
-                rom, out_dir = REPO / rom_path, Path(tmp)
-                capture = mesen2_capture(rom, mesen2_flags, frame, out_dir)
-                diffs = {
-                    n: diff_pixels(neser_frame(rom, neser_flags, n, out_dir), capture)
-                    for n in (frame - 1, frame, frame + 1)
-                }
-                self.assertEqual(diffs[frame], 0, f"differing pixels by NESER frame: {diffs}")
-                self.assertNotEqual(diffs[frame - 1], 0, "content must animate to prove alignment")
-                self.assertNotEqual(diffs[frame + 1], 0, "content must animate to prove alignment")
+        for rom_path, neser_flags, mesen2_flags, frames in CASES:
+            for frame in frames:
+                with (
+                    self.subTest(rom=Path(rom_path).name, frame=frame),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    rom, out_dir = REPO / rom_path, Path(tmp)
+                    capture = mesen2_capture(rom, mesen2_flags, frame, out_dir)
+                    diffs = {
+                        n: diff_pixels(neser_frame(rom, neser_flags, n, out_dir), capture)
+                        for n in (frame - 1, frame, frame + 1)
+                    }
+                    self.assertEqual(diffs[frame], 0, f"differing pixels by NESER frame: {diffs}")
+                    self.assertNotEqual(diffs[frame - 1], 0, f"frame must animate: {diffs}")
+                    self.assertNotEqual(diffs[frame + 1], 0, f"frame must animate: {diffs}")
 
 
 if __name__ == "__main__":

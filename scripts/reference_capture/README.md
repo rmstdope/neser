@@ -8,7 +8,7 @@ matched pixel-for-pixel through `python -m scripts.diff_screenshots`
 dmg-acid2 after 10 s; CGB: cgb-acid2 after 10 s, both against the SameBoy tester the
 recipe builds, with colour correction disabled (see "Colour: DMG and CGB"); GBA: mGBA
 suite frame 300, and every frame from 1 to 120 but 9 with `--skip-bios-intro`). The
-Mesen2 recipe was re-verified on animated NES and SNES content on 2026-09-26 (nr-mxn; see
+Mesen2 recipe was re-verified on animated NES and SNES content on 2026-09-27 (nr-mxn; see
 "Frame numbering" under Mesen2).
 
 | System | Reference | Tool | Frame-exact |
@@ -61,22 +61,41 @@ For the SNES replace the two `--nes.*` flags with `--snes.disableFrameSkipping=t
 --snes.RamPowerOnState=AllZeros`. The frame-skip flag is mandatory for animated content:
 testRunner emulation runs far faster than real time and otherwise renders only every other
 frame. `CAPTURE_OUT` must be absolute. The script prints `SAVED <path>` and stops the
-emulator; the whole run takes well under a second. The stdout log also lists the mapper,
+emulator; the whole run takes about a second. The stdout log also lists the mapper,
 CRCs and any uninitialised-memory reads, which is useful in itself.
 
-Frame numbering: the script counts `startFrame` events from power-on and takes the
-screenshot there, so `CAPTURE_FRAME=N` is the N-th emulated frame, the same frame as
-NESER's `--frames N`. It must not be `endFrame`: Mesen2 raises that event before the PPU
-sends the frame it has just rendered (`SnesPpu.cpp` and `NesPpu.cpp` call
-`ProcessEvent(EndFrame)` before `SendFrame()`), so a screenshot taken there is frame N-1.
-A static screen cannot show that offset; until nr-mxn the script used `endFrame` and the
-recipe had only been checked on static frames. Verified 2026-09-26 on animated content,
-NESER N against capture N at 0 px and against N±1 not:
+Frame numbering: the script counts `startFrame` events from power-on and, at the N-th,
+reads the pixels with `emu.getScreenBuffer()`, so `CAPTURE_FRAME=N` is the N-th emulated
+frame, the same frame as NESER's `--frames N`. Two easier-looking choices are both wrong
+by one frame (nr-mxn):
+
+- `endFrame`: Mesen2 raises it before the PPU sends the frame it has just rendered
+  (`SnesPpu.cpp` and `NesPpu.cpp` call `ProcessEvent(EndFrame)` before `SendFrame()`),
+  so a screenshot there is always frame N-1. The script did this until nr-mxn.
+- `emu.takeScreenshot()`: it copies the output of Mesen2's video-decode thread, which
+  `SendFrame()` only signals. On a loaded machine the decode of frame N has not always
+  run by `startFrame`, and the screenshot is frame N-1 some of the time (4 of 48
+  captures at load average 30-50).
+
+`emu.getScreenBuffer()` filters the PPU's own buffer on the emulation thread, and at
+`startFrame` that buffer still holds frame N (the SNES PPU switches buffers at the end
+of scanline 0, the NES PPU at dot 1 of the pre-render line). Because it returns pixels,
+the script encodes the PNG itself (uncompressed, so a few hundred KB). The buffer is
+uncropped: the script keeps the SNES lines 7-230 of 239 (14-461 of 478 in hi-res), the
+224 (448) that NESER outputs and Mesen2's default SNES overscan shows, and the NES
+buffer's 240 lines as they are. Mesen2's own overscan settings therefore no longer
+affect the capture.
+
+A static screen cannot show a one-frame offset, and the recipe had only been checked on
+static frames before nr-mxn. Verified 2026-09-27 on animated content, capture N against
+NESER N at 0 px and against N±1 not:
 `undisbeliever-ppu-window/window-precalculated-single.sfc` (SNES) and
-`nmi_sync/demo_ntsc.nes` (NES, which alternates two images each frame) at frames 61, 120,
-300 and 601. `python -m unittest scripts.test_mesen2_capture` repeats that check; it
-needs Mesen2 and a release NESER build, is skipped without them, and leaves
-`AllowIoOsAccess` alone.
+`nmi_sync/demo_ntsc.nes` (NES; it alternates two images each frame, so it pins the
+parity only), at 24 frames each, twice at load average 30-50 with no miss. It was also
+verified on `mandrill64PerTileRowHiRes.sfc` (512x448) and on the NES static check above.
+The check is `NESER_MESEN2_CAPTURE_TEST=1 python -m unittest scripts.test_mesen2_capture`.
+It is opt-in because it needs Mesen2 and a release build of the tree under test (the
+gate builds none). It leaves `AllowIoOsAccess` alone.
 
 ## SameBoy (GB and CGB)
 
