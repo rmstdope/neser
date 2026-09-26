@@ -4,9 +4,7 @@ use crate::platform::debugging::{cpu_trace_level, trace_clock_in_window};
 use crate::platform::save_state::{SaveStateError, Stateful};
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::SnesSystemBus;
-use crate::snes::console::save_state::{
-    SnesBlockMoveDirection, SnesBlockMoveState, SnesCpuState, SnesSaveState, SnesSaveStateError,
-};
+use crate::snes::console::save_state::{SnesCpuState, SnesSaveState, SnesSaveStateError};
 use crate::snes::cpu::mem_speed::mem_access_cycles;
 use crate::snes::ppu::SnesVideoRegion;
 use crate::trace_cpu;
@@ -50,13 +48,6 @@ const STOPPED_MASTER_CLOCKS: u32 = 4;
 enum BlockMoveDirection {
     Increment,
     Decrement,
-}
-
-#[derive(Clone, Copy)]
-struct BlockMoveState {
-    dst_bank: u8,
-    src_bank: u8,
-    direction: BlockMoveDirection,
 }
 
 /// WDC 65C816 CPU
@@ -203,10 +194,6 @@ pub struct Cpu<B: SnesBus> {
     /// frames real hardware never creates (#2985, absindx SA1RamProtectionTest).
     irq_i_shadow: bool,
 
-    /// In-progress MVN/MVP transfer state. When present, each `step()` performs one
-    /// transfer unit and keeps architectural PC at the post-operand address.
-    block_move_state: Option<BlockMoveState>,
-
     /// Bus for memory access
     bus: B,
 }
@@ -280,7 +267,6 @@ impl<B: SnesBus> Cpu<B> {
             memory_bus_cycles: 0,
             read_write_mask: 0xFF_FFFF,
             irq_i_shadow: true,
-            block_move_state: None,
             bus,
         }
     }
@@ -432,14 +418,9 @@ impl<B: SnesBus> Cpu<B> {
             fast_rom: self.fast_rom,
             memory_bus_cycles: self.memory_bus_cycles,
             irq_i_shadow: self.irq_i_shadow,
-            block_move_state: self.block_move_state.map(|state| SnesBlockMoveState {
-                dst_bank: state.dst_bank,
-                src_bank: state.src_bank,
-                direction: match state.direction {
-                    BlockMoveDirection::Increment => SnesBlockMoveDirection::Increment,
-                    BlockMoveDirection::Decrement => SnesBlockMoveDirection::Decrement,
-                },
-            }),
+            // A block move in progress is fully described by PC (on the opcode), A, X
+            // and Y, as on the 65816; only saves from before nr-ve3 carry this.
+            block_move_state: None,
         }
     }
 
@@ -467,14 +448,12 @@ impl<B: SnesBus> Cpu<B> {
         self.fast_rom = state.fast_rom;
         self.memory_bus_cycles = state.memory_bus_cycles;
         self.irq_i_shadow = state.irq_i_shadow;
-        self.block_move_state = state.block_move_state.map(|state| BlockMoveState {
-            dst_bank: state.dst_bank,
-            src_bank: state.src_bank,
-            direction: match state.direction {
-                SnesBlockMoveDirection::Increment => BlockMoveDirection::Increment,
-                SnesBlockMoveDirection::Decrement => BlockMoveDirection::Decrement,
-            },
-        });
+        // Saves from before nr-ve3 held a move in flight with PC on its source-bank
+        // operand, two bytes past the opcode; rewind so the move re-executes from the
+        // opcode like every other byte of it.
+        if state.block_move_state.is_some() {
+            self.pc = self.pc.wrapping_sub(2);
+        }
 
         if self.e {
             self.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
@@ -777,10 +756,6 @@ impl<B: SnesBus> Cpu<B> {
         self.memory_bus_cycles = 0;
         self.read_write_mask = 0xFF_FFFF;
         let mut wai_wake_cycles: u8 = 0;
-
-        if let Some(state) = self.block_move_state {
-            return self.step_block_move_unit(state);
-        }
 
         // `nmi_pending` is kept continuously up to date by
         // `resolve_nmi_arm_counter`/`poll_and_arm_nmi_edge`, and the two IRQ
@@ -1373,35 +1348,28 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn op_mvn(&mut self) -> u8 {
-        let state = BlockMoveState {
-            dst_bank: self.fetch_byte(),
-            src_bank: self.fetch_byte(),
-            direction: BlockMoveDirection::Increment,
-        };
-        self.pc = self.pc.wrapping_sub(1);
-        self.block_move_state = Some(state);
-        self.step_block_move_unit(state) + if self.e { 2 } else { 0 }
+        self.block_move(BlockMoveDirection::Increment)
     }
 
     fn op_mvp(&mut self) -> u8 {
-        let state = BlockMoveState {
-            dst_bank: self.fetch_byte(),
-            src_bank: self.fetch_byte(),
-            direction: BlockMoveDirection::Decrement,
-        };
-        self.pc = self.pc.wrapping_sub(1);
-        self.block_move_state = Some(state);
-        self.step_block_move_unit(state) + if self.e { 2 } else { 0 }
+        self.block_move(BlockMoveDirection::Decrement)
     }
 
-    fn step_block_move_unit(&mut self, state: BlockMoveState) -> u8 {
-        let src_addr = (state.src_bank as u32) << 16 | self.x as u32;
-        let dst_addr = (state.dst_bank as u32) << 16 | self.y as u32;
+    /// Move one byte of an MVN/MVP. The 65816 executes the whole 7-cycle
+    /// instruction -- opcode and both operands fetched again, read, write, two
+    /// internal cycles -- once per byte, pointing PC back at the opcode until A
+    /// wraps to $FFFF, so interrupts are taken between bytes (Mesen2 `MVN`/`MVP`,
+    /// `PC -= 3`).
+    fn block_move(&mut self, direction: BlockMoveDirection) -> u8 {
+        let dst_bank = self.fetch_byte();
+        let src_bank = self.fetch_byte();
+        let src_addr = (src_bank as u32) << 16 | self.x as u32;
+        let dst_addr = (dst_bank as u32) << 16 | self.y as u32;
         let byte = self.read8(src_addr);
         self.write8(dst_addr, byte);
-        self.dbr = state.dst_bank;
+        self.dbr = dst_bank;
 
-        match state.direction {
+        match direction {
             BlockMoveDirection::Increment => {
                 self.write_x(self.read_x().wrapping_add(1));
                 self.write_y(self.read_y().wrapping_add(1));
@@ -1413,9 +1381,8 @@ impl<B: SnesBus> Cpu<B> {
         }
 
         self.a = self.a.wrapping_sub(1);
-        if self.a == 0xFFFF {
-            self.block_move_state = None;
-            self.pc = self.pc.wrapping_add(1);
+        if self.a != 0xFFFF {
+            self.pc = self.pc.wrapping_sub(3);
         }
 
         7
@@ -11622,6 +11589,7 @@ mod emulation_dp_wrap_tests {
 mod mvn_mvp_per_byte_cycle_tests {
     use super::*;
     use crate::snes::bus::TestBus;
+    use crate::snes::console::save_state::{SnesBlockMoveDirection, SnesBlockMoveState};
 
     fn native16() -> Cpu<TestBus> {
         let mut cpu = Cpu::new(TestBus::new());
@@ -11631,7 +11599,9 @@ mod mvn_mvp_per_byte_cycle_tests {
     }
 
     /// MVN must move exactly one byte per step() call, returning 7 cycles each time.
-    /// While the transfer is in progress, PC remains on the second operand byte.
+    /// While the transfer is in progress, PC points back at the MVN opcode: the
+    /// 65816 re-executes the whole instruction for every byte (Mesen2 `MVN`:
+    /// `PC -= 3` until A wraps to $FFFF).
     #[test]
     fn mvn_moves_one_byte_per_step_7_cycles() {
         let mut cpu = native16();
@@ -11641,12 +11611,12 @@ mod mvn_mvp_per_byte_cycle_tests {
         cpu.y = 0x0020;
         cpu.bus.load(0x0000, &[0x54, 0x02, 0x01]); // MVN dst=$02, src=$01
 
-        // First step: moves 1 byte, returns 7 cycles, PC stays on the src-bank operand.
+        // First step: moves 1 byte, returns 7 cycles, PC goes back to the opcode.
         let c1 = cpu.step();
         assert_eq!(c1, 7, "MVN must return 7 cycles per byte");
         assert_eq!(
-            cpu.pc, 0x0002,
-            "PC must stay on the MVN src-bank operand while transfer is in progress"
+            cpu.pc, 0x0000,
+            "PC must point back at the MVN opcode while the transfer is in progress"
         );
         assert_eq!(cpu.bus.read(0x02_0020), 0xAA, "first byte transferred");
         assert_eq!(cpu.a, 0x0000, "A decremented to 0 after first byte");
@@ -11672,8 +11642,8 @@ mod mvn_mvp_per_byte_cycle_tests {
         let c1 = cpu.step();
         assert_eq!(c1, 7, "MVP must return 7 cycles per byte");
         assert_eq!(
-            cpu.pc, 0x0002,
-            "PC must stay on the MVP src-bank operand while transfer is in progress"
+            cpu.pc, 0x0000,
+            "PC must point back at the MVP opcode while the transfer is in progress"
         );
         assert_eq!(cpu.bus.read(0x02_0021), 0xBB, "first byte (from high end)");
         assert_eq!(cpu.a, 0x0000);
@@ -11683,6 +11653,74 @@ mod mvn_mvp_per_byte_cycle_tests {
         assert_eq!(cpu.pc, 0x0003, "PC advances past MVP after last byte");
         assert_eq!(cpu.bus.read(0x02_0020), 0xAA);
         assert_eq!(cpu.a, 0xFFFF);
+    }
+
+    /// Every byte of a block move is a full 7-cycle instruction: opcode fetch, two
+    /// operand fetches, the source read, the destination write and two internal
+    /// cycles (65816 datasheet: MVN/MVP take 7 cycles per byte; Mesen2 `MVN`/`MVP`
+    /// re-run from the opcode for each byte). From WRAM-speed addresses that is
+    /// 5 x 8 + 2 x 6 = 52 master clocks, on the last byte as on the first.
+    ///
+    /// nr-ve3: the bytes after the first used to cost only their read and write
+    /// (16 master clocks), so Mega Man X2's 80-byte MVN in its NMI handler finished
+    /// ~2,850 master clocks early and the fade-in's INIDISP write landed on scanline
+    /// 15 instead of Mesen2's 18.
+    #[test]
+    fn every_block_move_byte_costs_the_full_instruction_in_master_clocks() {
+        // Emulation mode too: the ProcessorTests `44.e`/`54.e` vectors record seven bus cycles
+        // per byte there as well, with no extra internal cycles.
+        for (opcode, emulation) in [(0x54u8, false), (0x44, false), (0x54, true), (0x44, true)] {
+            let mut cpu = native16();
+            cpu.bus.load(0x0000, &[opcode, 0x00, 0x00]); // MVN/MVP $00,$00
+            cpu.a = 0x0002; // 3 bytes
+            cpu.x = 0x0010;
+            cpu.y = 0x0080;
+            if emulation {
+                cpu.e = true;
+                cpu.p |= FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH;
+            }
+
+            for byte in 0..3 {
+                let before = cpu.bus.tick_count();
+                cpu.step();
+                assert_eq!(
+                    cpu.bus.tick_count() - before,
+                    52,
+                    "opcode {opcode:#04X} (E={emulation}) byte {byte}: 3 fetches + read + write \
+                     at 8 clocks, 2 internal cycles at 6"
+                );
+            }
+            assert_eq!(cpu.a, 0xFFFF);
+            assert_eq!(cpu.pc, 0x0003);
+        }
+    }
+
+    /// A save from before nr-ve3 taken mid-move has PC on the source-bank operand
+    /// and a `block_move_state`. Restoring it rewinds PC to the opcode, the move
+    /// finishes, and a new save carries no `block_move_state`.
+    #[test]
+    fn a_pre_nr_ve3_save_taken_mid_move_resumes_from_the_opcode() {
+        let mut cpu = native16();
+        cpu.bus.load(0x0000, &[0x54, 0x02, 0x01]); // MVN dst=$02, src=$01
+        cpu.bus.load(0x01_0011, &[0xBB]);
+        let mut state = cpu.capture_state_inner();
+        state.a = 0x0000; // one byte left
+        state.x = 0x0011;
+        state.y = 0x0021;
+        state.pc = 0x0002;
+        state.block_move_state = Some(SnesBlockMoveState {
+            dst_bank: 0x02,
+            src_bank: 0x01,
+            direction: SnesBlockMoveDirection::Increment,
+        });
+
+        cpu.restore_state_inner(&state);
+        assert_eq!(cpu.pc, 0x0000, "rewound to the MVN opcode");
+        cpu.step();
+        assert_eq!(cpu.bus.read(0x02_0021), 0xBB, "last byte moved");
+        assert_eq!(cpu.a, 0xFFFF);
+        assert_eq!(cpu.pc, 0x0003);
+        assert_eq!(cpu.capture_state_inner().block_move_state, None);
     }
 }
 
@@ -12265,6 +12303,38 @@ mod interrupt_dispatch_tests {
             "the level, visible during LDA's own cycles, dispatches IRQ \
              right after LDA -- not one more instruction later"
         );
+    }
+
+    /// An interrupt is taken between the bytes of a block move, and the address it
+    /// pushes is the MVN opcode, so RTI resumes the move (65816 datasheet; Mesen2
+    /// `MVN` rewinds PC by 3 per byte and services interrupts at the instruction
+    /// boundary). nr-ve3: the old per-byte shortcut skipped the interrupt check and
+    /// held a pending IRQ off until the whole move was done.
+    #[test]
+    fn irq_is_taken_between_block_move_bytes_and_returns_to_the_opcode() {
+        let mut cpu = Cpu::new(PollIrqBus::new());
+        cpu.e = false;
+        cpu.p &= !(FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH);
+        cpu.set_flag_i(false);
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.a = 0x0003; // 4 bytes
+        cpu.x = 0x1000;
+        cpu.y = 0x1100;
+        cpu.bus.load(0x00_8000, &[0x54, 0x00, 0x00]); // MVN $00,$00
+        cpu.bus.load(0x00_FFEE, &[0x00, 0x91]); // native IRQ vector -> $9100
+
+        cpu.step(); // first byte, no IRQ yet
+        assert_eq!(cpu.a, 0x0002);
+        cpu.bus.irq_level = true;
+        cpu.step(); // second byte; the level is seen during it
+        assert_eq!(cpu.a, 0x0001, "the byte in flight completes");
+        cpu.step();
+        assert_eq!(cpu.pc, 0x9100, "IRQ dispatched before the move finishes");
+        assert_eq!(cpu.a, 0x0001, "no further byte moved");
+        // Native-mode IRQ pushes PBR, PCH, PCL, P.
+        assert_eq!(cpu.bus.read(0x01FE), 0x80, "pushed PCH");
+        assert_eq!(cpu.bus.read(0x01FD), 0x00, "pushed PCL: the MVN opcode");
     }
 
     #[test]

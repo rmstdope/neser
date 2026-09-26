@@ -2883,6 +2883,22 @@ mod tests {
         assert_eq!(bus.read(0x7E0000), 0x5A);
     }
 
+    /// fullsnes ("SNES I/O Map", CPU DMA ports): `$43x0-$43xB` and `$43xF` hold `FFh` at
+    /// power-up (A1Bx is listed "xxh"; Mesen2 writes `$FF` there too). nr-ve3: Mega Man X2
+    /// enables HDMA channels 5-7 mid-frame without ever writing `$43x8`/`$43xA`, so they run
+    /// on these power-up values; with `$00` NESER read the table from `$0000` instead of
+    /// `$FFFF`, one byte ahead of the console, and the fade-in's first frame scrolled wrong.
+    #[test]
+    fn dma_channel_registers_power_up_as_ff() {
+        let bus = SnesSystemBus::new(lorom_test_cart());
+        for channel in 0..8u32 {
+            for reg in (0x0..=0xBu32).chain([0xF]) {
+                let addr = 0x4300 | (channel << 4) | reg;
+                assert_eq!(bus.read(addr), 0xFF, "${addr:04X} at power-up");
+            }
+        }
+    }
+
     #[test]
     fn read_for_debugger_on_mmio_returns_mdr_without_side_effects() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());

@@ -427,6 +427,27 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         actual_cycles += step_cycles;
     }
 
+    // A block move re-executes the whole 7-cycle instruction per byte (nr-ve3). The vectors
+    // stop a fixed number of cycles in, which for MVN/MVP is 7k + 2: k whole bytes, then the
+    // next byte's opcode and first-operand fetches. Those two fetches change nothing but PC,
+    // which they advance from the opcode by 2, so the k executed bytes must match the vector's
+    // first 7k bus cycles exactly and the PC comparison allows for the two trailing fetches.
+    let mut trailing_fetch_pc_advance: u16 = 0;
+    if repeat_instruction {
+        let executed_cycles = expected_steps * 7;
+        let expected: Vec<ObservedCycle> = vector.cycles[..executed_cycles]
+            .iter()
+            .map(decode_vector_cycle)
+            .collect();
+        let actual = shared.recorded_cycles();
+        if let Some(details) = compare_bus_cycles(&vector.name, &expected, &actual) {
+            return Err(VectorFailure { details });
+        }
+        if vector.cycles.len() - executed_cycles == 2 && cpu.read_pc() == initial_pc {
+            trailing_fetch_pc_advance = 2;
+        }
+    }
+
     if !repeat_instruction {
         let expected_cycles = vector.cycles.len();
         if actual_cycles != expected_cycles {
@@ -448,7 +469,7 @@ fn run_vector_case(vector: &ProcessorTestVector) -> Result<(), VectorFailure> {
         }
     }
 
-    let actual_pc = cpu.read_pc();
+    let actual_pc = cpu.read_pc().wrapping_add(trailing_fetch_pc_advance);
     let actual_s = cpu.read_s();
     let actual_p = cpu.read_p();
     let actual_a = cpu.read_a();
