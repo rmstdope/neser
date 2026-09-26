@@ -368,12 +368,16 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
-        // SA-1 (epic #2956), CX4 (nr-t7d) and OBC1 (nr-ufb) are emulated; other enhancement
-        // chips remain header-detection-only.
+        // SA-1 (epic #2956), CX4 (nr-t7d), OBC1 (nr-ufb) and the Super FX (nr-hab.1) are
+        // emulated; other enhancement chips remain header-detection-only. The header cannot tell
+        // a GSU-1 from a GSU-2, so no Super FX cartridge warns.
         if let Some(chip) = cartridge.enhancement_chip()
             && !matches!(
                 chip,
-                EnhancementChip::Sa1 | EnhancementChip::Cx4 | EnhancementChip::Obc1
+                EnhancementChip::Sa1
+                    | EnhancementChip::Cx4
+                    | EnhancementChip::Obc1
+                    | EnhancementChip::SuperFx
             )
         {
             let warning = format!(
@@ -1061,6 +1065,20 @@ mod tests {
         assert!(
             cycles.abs_diff(pal_expected) <= 1,
             "{cycles} CX4 cycles in {clocks} master clocks; PAL rate gives {pal_expected}"
+        );
+    }
+
+    #[test]
+    fn load_rom_does_not_warn_for_super_fx_which_is_implemented() {
+        let mut snes = make_snes();
+        let rom = valid_lorom_nop_rom_with_header(0x00, 0x14); // Super FX (nr-hab.1)
+
+        snes.load_rom(&rom, "gsu.sfc").expect("load ROM");
+
+        let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
+        assert!(
+            !toasts.iter().any(|t| t.contains("enhancement hardware")),
+            "the Super FX is implemented; no warning expected, got: {toasts:?}"
         );
     }
 

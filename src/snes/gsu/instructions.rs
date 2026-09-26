@@ -64,7 +64,6 @@ impl Gsu {
             0xE0..=0xEE => self.op_dec(n),
             0xEF => self.op_getb(),
             0xF0..=0xFF => self.op_iwt_lm_sm(n),
-            _ => self.reset_prefixes(),
         }
     }
 
