@@ -1009,6 +1009,21 @@ fn wasm_gb_cycle_palette_queues_the_toast() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_gb_cycle_palette_on_game_boy_color_hardware_cycles_the_gbc_palette() {
+    let mut gb = WasmGb::new();
+    gb.game_boy_mut()
+        .app_context()
+        .borrow_mut()
+        .config_mut()
+        .gb
+        .hardware = Some(crate::gb::model::GbHardware::Cgb);
+    gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
+    drained(&mut gb);
+    assert_eq!(gb.cycle_palette(), "Brown");
+    assert_eq!(drained(&mut gb), vec!["Palette: Brown".to_string()]);
+}
+
+#[wasm_bindgen_test]
 fn wasm_gb_cycle_palette_without_a_dmg_game_is_silent() {
     let mut gb = WasmGb::new();
     assert_eq!(gb.cycle_palette(), "");

@@ -87,19 +87,29 @@ impl WasmGb {
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
-    /// F8: cycles an original Game Boy game's shade palette and queues the
-    /// toast. Returns the new palette's name, or `""` when no original Game
-    /// Boy game is running (nothing changes, no toast).
+    /// F8: cycles an original Game Boy game's palette and queues the toast:
+    /// the shade palette on Game Boy hardware, the colourisation on Game Boy
+    /// Color hardware. Returns the new palette's name, or `""` when no
+    /// original Game Boy game is running (nothing changes, no toast).
     #[wasm_bindgen]
     pub fn cycle_palette(&mut self) -> String {
-        match self.gb.cycle_palette() {
-            Some(palette) => {
-                self.pending_toasts
-                    .push(crate::gb::ppu::dmg_palette::palette_toast_message(palette));
-                palette.display_name().to_string()
+        if let Some(palette) = self.gb.cycle_palette() {
+            self.pending_toasts
+                .push(crate::gb::ppu::dmg_palette::palette_toast_message(palette));
+            return palette.display_name().to_string();
+        }
+        match self.gb.cycle_gbc_palette() {
+            Some(toast) => {
+                self.pending_toasts.push(toast);
+                self.gb.gbc_palette().display_name().to_string()
             }
             None => String::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn game_boy_mut(&mut self) -> &mut GameBoy {
+        &mut self.gb
     }
 
     /// Called when a game starts, with whether the Game Boy LCD filter is on.
