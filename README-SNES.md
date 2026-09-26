@@ -22,10 +22,10 @@ Ocean, Street Fighter Alpha 2), the DSP-1 (Super Mario Kart, Pilotwings), the DS
 Cartridges with any other enhancement chip load, but show a warning that the chip is not
 implemented yet, and may not run correctly.
 
-The DSP-1, DSP-2 and DSP-4 run their own program, which game dumps do not contain and NESER cannot
-include, so these games need a firmware file you supply: put `dsp1b.rom` (optionally `dsp1.rom`
-for the original chip), `dsp2.rom` or `dsp4.rom` in `~/.neser/firmware`, or point `--snes-firmware-dir` at
-another folder. Each file must be the genuine firmware of its chip (8192 bytes, and a known good
+The DSP-1, DSP-2 and DSP-4 run their own program, which game dumps do not contain and NESER
+cannot include, so these games need a firmware file you supply: put `dsp1b.rom` (optionally
+`dsp1.rom` for the original chip), `dsp2.rom` or `dsp4.rom` in `~/.neser/firmware`, or point
+`--snes-firmware-dir` at another folder. Each file must be the genuine firmware of its chip (8192 bytes, and a known good
 dump: NESER recognises it by its SHA-256, in either byte order), so another chip's file under the
 wrong name is refused. Without it the game does not start: the game browser says why in a strip
 above the games, and a command-line launch prints the reason and exits. The browser version asks
