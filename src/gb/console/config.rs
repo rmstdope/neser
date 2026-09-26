@@ -118,8 +118,23 @@ impl GbConfig {
             self.boot_animation = val;
         }
 
-        if let Some(val) = crate::platform::config::parse_bool_arg(args, "--cgb-color-correction")?
-        {
+        const CGB_COLOR_CORRECTION_FLAG: &str = "--cgb-color-correction";
+        let cgb_color_correction =
+            crate::platform::config::parse_bool_arg(args, CGB_COLOR_CORRECTION_FLAG).map_err(
+                |_| {
+                    // Only the `--flag=value` form can be invalid: a non-boolean
+                    // word after the bare flag is a positional argument.
+                    let value = args
+                        .iter()
+                        .find_map(|arg| {
+                            arg.strip_prefix(CGB_COLOR_CORRECTION_FLAG)?
+                                .strip_prefix('=')
+                        })
+                        .unwrap_or_default();
+                    format!("Invalid cgb_color_correction value: '{value}'")
+                },
+            )?;
+        if let Some(val) = cgb_color_correction {
             self.cgb_color_correction = val;
         }
 
@@ -482,6 +497,19 @@ mod tests {
             config.apply_args(&args).unwrap();
             assert_eq!(config.cgb_color_correction, expected, "value={value}");
         }
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_color_correction_invalid_uses_agreed_message() {
+        let mut config = GbConfig::default();
+        let args = vec![
+            "neser".to_string(),
+            "--cgb-color-correction=maybe".to_string(),
+        ];
+        assert_eq!(
+            config.apply_args(&args).unwrap_err(),
+            "Invalid cgb_color_correction value: 'maybe'"
+        );
     }
 
     #[test]
