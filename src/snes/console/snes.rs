@@ -368,10 +368,13 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
-        // SA-1 (epic #2956) and CX4 (nr-t7d) are emulated; other enhancement chips remain
-        // header-detection-only.
+        // SA-1 (epic #2956), CX4 (nr-t7d) and OBC1 (nr-ufb) are emulated; other enhancement
+        // chips remain header-detection-only.
         if let Some(chip) = cartridge.enhancement_chip()
-            && !matches!(chip, EnhancementChip::Sa1 | EnhancementChip::Cx4)
+            && !matches!(
+                chip,
+                EnhancementChip::Sa1 | EnhancementChip::Cx4 | EnhancementChip::Obc1
+            )
         {
             let warning = format!(
                 "Warning: ROM requires SNES enhancement hardware ({chip}) which is not implemented yet; gameplay may be incorrect"
@@ -970,6 +973,21 @@ mod tests {
         assert!(
             !toasts.iter().any(|t| t.contains("enhancement hardware")),
             "SA-1 is implemented; no warning expected, got: {toasts:?}"
+        );
+    }
+
+    #[test]
+    fn load_rom_does_not_warn_for_obc1_which_is_implemented() {
+        let mut snes = make_snes();
+        let mut rom = valid_lorom_nop_rom_with_header(0x00, 0x25);
+        rom[0x7FD8] = 0x03; // 8 KiB SRAM, as Metal Combat: Falcon's Revenge (nr-ufb)
+
+        snes.load_rom(&rom, "obc1.sfc").expect("load ROM");
+
+        let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
+        assert!(
+            !toasts.iter().any(|t| t.contains("enhancement hardware")),
+            "OBC1 is implemented; no warning expected, got: {toasts:?}"
         );
     }
 

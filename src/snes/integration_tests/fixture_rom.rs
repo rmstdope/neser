@@ -109,6 +109,14 @@ impl FixtureRom {
         self.rom[HEADER - 1] = 0x10;
     }
 
+    /// Marks this fixture as an OBC1 cartridge with the header Metal Combat: Falcon's Revenge
+    /// carries: chipset `$25` (ROM + RAM + battery + OBC1) and 8 KiB SRAM (RAM-size field
+    /// `$03`). The OBC1's ports and SRAM then answer at `$6000-$7FFF` of the system banks.
+    pub(crate) fn obc1_chipset(&mut self) {
+        self.rom[HEADER + 0x16] = 0x25;
+        self.rom[HEADER + 0x18] = 0x03;
+    }
+
     /// Writes `bytes` into the second 32 KiB bank (LoROM `$01:8000-$01:FFFF`, file offset
     /// `$8000 + offset`), which no emitted program or header touches: room for data another
     /// processor reads, such as a CX4 program.

@@ -10,6 +10,7 @@ pub mod console;
 pub mod cpu;
 pub mod cx4;
 pub mod input;
+pub mod obc1;
 pub mod ppu;
 pub mod sa1;
 
