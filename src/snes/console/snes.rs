@@ -381,6 +381,12 @@ impl Snes {
         }
     }
 
+    /// Flip the Turbo switch of the Super Scope on the given port and return its new
+    /// position (`true` = on), or `None` when no game is loaded or no scope is on that port.
+    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
+        self.cpu.as_mut()?.toggle_superscope_turbo(port)
+    }
+
     /// Set the Super Scope pause button state for the given port.
     pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
         if let Some(cpu) = self.cpu.as_mut() {
@@ -448,6 +454,9 @@ impl Emulator for Snes {
             self.app_context.borrow_mut().add_toast(warning);
         }
         let config = self.app_context.borrow().config().snes.clone();
+        let (port1, port2) = config.effective_controller_ports(
+            crate::snes::input::is_super_scope_game(cartridge.title_bytes()),
+        );
         self.active_hardware = Self::resolve_hardware_mode(config.hardware, cartridge.country());
 
         let video_region = match self.active_hardware {
@@ -464,7 +473,12 @@ impl Emulator for Snes {
             },
         );
         let mut cpu = Cpu::new(bus);
-        cpu.configure_controllers(config.controller_port1, config.controller_port2);
+        cpu.configure_controllers(port1, port2);
+        if cpu.has_superscope() {
+            self.app_context
+                .borrow_mut()
+                .add_toast(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED);
+        }
         cpu.do_reset();
         self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
@@ -1009,6 +1023,92 @@ mod tests {
 
         snes.clear_ready_to_render();
         assert!(!snes.is_ready_to_render());
+    }
+
+    fn scope_toasts(snes: &Snes) -> usize {
+        snes.app_context
+            .borrow_mut()
+            .visible_toasts(Instant::now())
+            .iter()
+            .filter(|t| t.as_str() == crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED)
+            .count()
+    }
+
+    #[test]
+    fn a_super_scope_game_loads_with_the_scope_on_port2_and_says_so() {
+        let mut snes = make_snes();
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
+            "mc.sfc",
+        )
+        .expect("load ROM");
+
+        assert!(snes.has_superscope_on_port(1), "scope plugged into port 2");
+        assert!(!snes.has_superscope_on_port(0), "port 1 stays a controller");
+        assert_eq!(scope_toasts(&snes), 1);
+        assert_eq!(
+            snes.app_context.borrow().config().snes.controller_port2,
+            SnesControllerType::Standard,
+            "the player's settings are not changed"
+        );
+    }
+
+    #[test]
+    fn the_players_port2_choice_keeps_the_scope_out() {
+        let mut config = snes_test_config();
+        config
+            .snes
+            .apply_config_value("snes_controller_port2", "standard")
+            .expect("config parse");
+        let mut snes = Snes::new(AppContext::new_with_config(config));
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
+            "mc.sfc",
+        )
+        .expect("load ROM");
+
+        assert!(!snes.has_superscope());
+        assert_eq!(scope_toasts(&snes), 0);
+    }
+
+    #[test]
+    fn a_scope_chosen_in_settings_says_so_for_any_game() {
+        let mut config = snes_test_config();
+        config
+            .snes
+            .apply_config_value("snes_controller_port2", "superscope")
+            .expect("config parse");
+        let mut snes = Snes::new(AppContext::new_with_config(config));
+        snes.load_rom(&valid_lorom_nop_rom(), "other.sfc")
+            .expect("load ROM");
+
+        assert!(snes.has_superscope_on_port(1));
+        assert_eq!(scope_toasts(&snes), 1);
+    }
+
+    #[test]
+    fn loading_another_game_after_a_scope_game_unplugs_the_scope() {
+        let mut snes = make_snes();
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
+            "mc.sfc",
+        )
+        .expect("load ROM");
+        snes.toggle_superscope_turbo(1);
+        snes.load_rom(&valid_lorom_nop_rom(), "other.sfc")
+            .expect("load ROM");
+        assert!(!snes.has_superscope());
+
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
+            "mc.sfc",
+        )
+        .expect("load ROM");
+        assert_eq!(
+            snes.toggle_superscope_turbo(1),
+            Some(true),
+            "Turbo starts off again on every load"
+        );
     }
 
     #[test]

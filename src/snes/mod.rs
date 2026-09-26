@@ -10,6 +10,7 @@ pub mod console;
 pub mod cpu;
 pub mod cx4;
 pub mod dsp;
+pub mod frontend_toasts;
 pub mod gsu;
 pub mod input;
 pub mod obc1;

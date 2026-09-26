@@ -1150,6 +1150,12 @@ impl SnesSystemBus {
         self.input.get_mut().set_superscope_turbo(port, pressed);
     }
 
+    /// Flip the Turbo switch of the Super Scope on the given port; its new position, or
+    /// `None` when that port has no Super Scope.
+    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
+        self.input.get_mut().toggle_superscope_turbo(port)
+    }
+
     /// Set Super Scope pause button state for the given port.
     pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
         self.input.get_mut().set_superscope_pause(port, pressed);

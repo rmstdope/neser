@@ -49,6 +49,9 @@ pub struct SnesConfig {
     pub controller_port1: SnesControllerType,
     /// Device plugged into controller port 2.
     pub controller_port2: SnesControllerType,
+    /// Whether the player chose port 2's device (CLI flag or config file). A choice wins
+    /// over plugging the Super Scope in for a Super Scope game.
+    pub controller_port2_explicit: bool,
 }
 
 /// SNES video hardware timing mode.
@@ -82,6 +85,21 @@ impl SnesConfig {
         }
     }
 
+    /// The devices to plug into ports 1 and 2 for a game: the configured ones, except that a
+    /// Super Scope game gets the Super Scope on port 2 unless the player chose port 2's
+    /// device. Decided per load; the configuration itself never changes.
+    pub fn effective_controller_ports(
+        &self,
+        super_scope_game: bool,
+    ) -> (SnesControllerType, SnesControllerType) {
+        let port2 = if super_scope_game && !self.controller_port2_explicit {
+            SnesControllerType::SuperScope
+        } else {
+            self.controller_port2
+        };
+        (self.controller_port1, port2)
+    }
+
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         if let Some(path) = parse_cli_string_arg(args, "--snes-spc-ipl-path") {
             self.spc_ipl_path = Some(path);
@@ -101,6 +119,7 @@ impl SnesConfig {
         }
         if let Some(value) = parse_cli_string_arg(args, "--snes-controller-port2") {
             self.controller_port2 = parse_controller_type("--snes-controller-port2", &value)?;
+            self.controller_port2_explicit = true;
         }
         Ok(())
     }
@@ -130,6 +149,7 @@ impl SnesConfig {
             }
             "snes_controller_port2" | "controller_port2" => {
                 self.controller_port2 = parse_controller_type("snes_controller_port2", value)?;
+                self.controller_port2_explicit = true;
             }
             _ => {}
         }
@@ -176,6 +196,61 @@ mod tests {
         cfg.apply_config_value("snes-controller-port1", "mouse")
             .expect("config parse");
         assert_eq!(cfg.controller_port1, SnesControllerType::Mouse);
+    }
+
+    #[test]
+    fn port2_is_explicit_only_once_the_player_sets_it() {
+        assert!(!SnesConfig::default().controller_port2_explicit);
+
+        let mut from_cli = SnesConfig::default();
+        from_cli
+            .apply_args(&[
+                "neser".to_string(),
+                "--snes-controller-port2".to_string(),
+                "standard".to_string(),
+            ])
+            .expect("args parse");
+        assert!(from_cli.controller_port2_explicit);
+
+        let mut from_file = SnesConfig::default();
+        from_file
+            .apply_config_value("snes_controller_port2", "standard")
+            .expect("config parse");
+        assert!(from_file.controller_port2_explicit);
+    }
+
+    #[test]
+    fn a_super_scope_game_gets_the_scope_on_port2_and_keeps_port1() {
+        let cfg = SnesConfig {
+            controller_port1: SnesControllerType::Mouse,
+            ..SnesConfig::default()
+        };
+        assert_eq!(
+            cfg.effective_controller_ports(true),
+            (SnesControllerType::Mouse, SnesControllerType::SuperScope)
+        );
+        // The player's settings are untouched, so the next game starts from them again.
+        assert_eq!(cfg.controller_port2, SnesControllerType::Standard);
+    }
+
+    #[test]
+    fn the_players_port2_choice_wins_over_a_super_scope_game() {
+        let mut cfg = SnesConfig::default();
+        cfg.apply_config_value("snes_controller_port2", "standard")
+            .expect("config parse");
+        assert_eq!(
+            cfg.effective_controller_ports(true),
+            (SnesControllerType::Standard, SnesControllerType::Standard)
+        );
+    }
+
+    #[test]
+    fn other_games_use_the_configured_ports() {
+        let cfg = SnesConfig::default();
+        assert_eq!(
+            cfg.effective_controller_ports(false),
+            (SnesControllerType::Standard, SnesControllerType::Standard)
+        );
     }
 
     #[test]

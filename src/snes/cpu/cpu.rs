@@ -10061,6 +10061,10 @@ impl Cpu<SnesSystemBus> {
         self.bus.set_superscope_turbo(port, pressed);
     }
 
+    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
+        self.bus.toggle_superscope_turbo(port)
+    }
+
     pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
         self.bus.set_superscope_pause(port, pressed);
     }
