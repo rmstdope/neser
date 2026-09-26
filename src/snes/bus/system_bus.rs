@@ -7,6 +7,8 @@ use crate::snes::cartridge::EnhancementChip;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity, SnesSa1State};
 use crate::snes::cx4::Cx4;
+use crate::snes::gsu::Gsu;
+use crate::snes::gsu::memory::{self as gsu_memory, SnesTarget as GsuTarget};
 use crate::snes::input::{InputPorts, SnesButton};
 use crate::snes::obc1;
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
@@ -111,6 +113,10 @@ pub struct SnesSystemBus {
     /// Whether this cartridge has an OBC1 (Metal Combat: Falcon's Revenge), whose ports and
     /// SRAM answer at `$00-$3F/$80-$BF:$6000-$7FFF`. The chip keeps its registers in `sram`.
     obc1: bool,
+    /// The Super FX. `None` for other cartridges. A `RefCell` because reading its `$3031` status
+    /// clears the IRQ flag while the bus read path takes `&self`. It shares `rom` and `sram`
+    /// (Game Pak RAM) with the bus.
+    gsu: Option<RefCell<Gsu>>,
     /// Every `(b_addr, value)` pair a DMA/HDMA A->B transfer has driven onto the
     /// B-bus, in order. Test-only instrument: it observes what the controller
     /// actually wrote, which is what the transfer tests are about, and replaces
@@ -197,6 +203,8 @@ impl SnesSystemBus {
         let cx4 = (cartridge.enhancement_chip() == Some(EnhancementChip::Cx4))
             .then(|| Cx4::new(Rc::clone(&rom), video_region));
         let obc1 = cartridge.enhancement_chip() == Some(EnhancementChip::Obc1);
+        let gsu = (cartridge.enhancement_chip() == Some(EnhancementChip::SuperFx))
+            .then(|| RefCell::new(Gsu::new(Rc::clone(&rom), Rc::clone(&sram))));
         let mut bus = Self {
             _cartridge: cartridge,
             mapping,
@@ -226,6 +234,7 @@ impl SnesSystemBus {
             sa1_core,
             cx4,
             obc1,
+            gsu,
             #[cfg(test)]
             b_bus_writes: RefCell::new(Vec::new()),
         };
@@ -530,6 +539,46 @@ impl SnesSystemBus {
         })
     }
 
+    /// An S-CPU-side read on a Super FX cartridge, for every address the S-CPU itself does not
+    /// own (WRAM and its I/O are decoded first). `None` is open bus. `peek` skips the one read
+    /// side effect (`$3031` clearing the GSU IRQ flag), for the debugger.
+    fn gsu_cart_read(&self, gsu: &RefCell<Gsu>, addr: u32, peek: bool) -> Option<u8> {
+        match gsu_memory::decode_snes(addr & 0xFF_FFFF)? {
+            GsuTarget::Registers(offset) if peek => gsu.borrow().peek_register(offset),
+            GsuTarget::Registers(offset) => gsu.borrow_mut().read_register(offset),
+            // fullsnes "GSU Interrupt Vectors": while the GSU runs with RON set, the S-CPU sees
+            // fixed words instead of ROM.
+            GsuTarget::Rom(_) if gsu.borrow().snes_rom_blocked() => {
+                Some(gsu_memory::rom_bus_blocked_byte(addr))
+            }
+            GsuTarget::Rom(index) => {
+                (!self.rom.is_empty()).then(|| self.rom[index % self.rom.len()])
+            }
+            // While the GSU owns the RAM bus (GO and RAN), the S-CPU is not connected to it.
+            // fullsnes lists no value, so this is open bus; Mesen2 returns 0 with a TODO.
+            GsuTarget::Ram(_) if gsu.borrow().snes_ram_blocked() => None,
+            GsuTarget::Ram(index) => {
+                let sram = self.sram.borrow();
+                (!sram.is_empty()).then(|| sram[index % sram.len()])
+            }
+        }
+    }
+
+    /// An S-CPU-side write on a Super FX cartridge; see [`Self::gsu_cart_read`].
+    fn gsu_cart_write(&self, gsu: &RefCell<Gsu>, addr: u32, value: u8) {
+        match gsu_memory::decode_snes(addr & 0xFF_FFFF) {
+            Some(GsuTarget::Registers(offset)) => gsu.borrow_mut().write_register(offset, value),
+            Some(GsuTarget::Ram(index)) if !gsu.borrow().snes_ram_blocked() => {
+                let mut sram = self.sram.borrow_mut();
+                let len = sram.len();
+                if len != 0 {
+                    sram[index % len] = value;
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn dma_read_a_bus_impl(&self, addr: u32, open_bus: u8) -> u8 {
         if Self::is_dma_a_bus_mmio(addr) {
             return open_bus;
@@ -563,6 +612,9 @@ impl SnesSystemBus {
                 .sa1_rom_index(addr)
                 .and_then(|index| self.rom.get(index).copied())
                 .unwrap_or(open_bus);
+        }
+        if let Some(gsu) = &self.gsu {
+            return self.gsu_cart_read(gsu, addr, false).unwrap_or(open_bus);
         }
         if let Some(index) = self.decode_rom_index(addr) {
             return self.rom.get(index).copied().unwrap_or(open_bus);
@@ -613,6 +665,12 @@ impl SnesSystemBus {
                 .unwrap_or(self.mdr.get());
         }
 
+        if let Some(gsu) = &self.gsu {
+            return self
+                .gsu_cart_read(gsu, addr, true)
+                .unwrap_or(self.mdr.get());
+        }
+
         if let Some(index) = self.decode_rom_index(addr) {
             return self.rom.get(index).copied().unwrap_or(self.mdr.get());
         }
@@ -657,6 +715,10 @@ impl SnesSystemBus {
                 self.write_sa1_bwram(index, value);
             }
             // ROM is read-only.
+            return;
+        }
+        if let Some(gsu) = &self.gsu {
+            self.gsu_cart_write(gsu, addr, value);
             return;
         }
         if let Some(index) = self.decode_sram_index(addr) {
@@ -1700,6 +1762,15 @@ impl SnesBus for SnesSystemBus {
                 self.mdr.get()
             };
         }
+        if let Some(gsu) = &self.gsu {
+            return match self.gsu_cart_read(gsu, addr, false) {
+                Some(value) => {
+                    self.mdr.set(value);
+                    value
+                }
+                None => self.mdr.get(),
+            };
+        }
         if let Some(index) = self.decode_rom_index(addr) {
             if let Some(&value) = self.rom.get(index) {
                 self.mdr.set(value);
@@ -1753,6 +1824,10 @@ impl SnesBus for SnesSystemBus {
                 self.write_sa1_bwram(index, value);
             }
             // ROM is read-only.
+            return;
+        }
+        if let Some(gsu) = &self.gsu {
+            self.gsu_cart_write(gsu, addr, value);
             return;
         }
         if let Some(index) = self.decode_sram_index(addr) {
