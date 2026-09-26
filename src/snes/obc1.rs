@@ -80,9 +80,6 @@ fn ram_write(sram: &mut [u8], offset: u16, value: u8) {
 mod tests {
     use super::*;
 
-    const BASE: u16 = 0x1FF5;
-    const INDEX: u16 = 0x1FF6;
-
     fn sram() -> Vec<u8> {
         vec![0; 0x2000]
     }
@@ -90,7 +87,7 @@ mod tests {
     #[test]
     fn oam_ports_address_base_plus_index_times_four() {
         let mut ram = sram();
-        write(&mut ram, INDEX, 5);
+        write(&mut ram, INDEX_REGISTER, 5);
         for (port, value) in [
             (0x1FF0, 0x11),
             (0x1FF1, 0x22),
@@ -108,11 +105,11 @@ mod tests {
     #[test]
     fn base_bit_selects_7c00_or_7800() {
         let mut ram = sram();
-        write(&mut ram, BASE, 0x01);
-        write(&mut ram, INDEX, 127);
+        write(&mut ram, BASE_REGISTER, 0x01);
+        write(&mut ram, INDEX_REGISTER, 127);
         write(&mut ram, 0x1FF3, 0xA5);
         assert_eq!(ram[0x1800 + 127 * 4 + 3], 0xA5, "bit 0 set: $7800");
-        write(&mut ram, BASE, 0xFE);
+        write(&mut ram, BASE_REGISTER, 0xFE);
         write(&mut ram, 0x1FF3, 0x5A);
         assert_eq!(ram[0x1C00 + 127 * 4 + 3], 0x5A, "only bit 0 counts");
     }
@@ -120,14 +117,14 @@ mod tests {
     #[test]
     fn high_table_write_replaces_only_the_objects_two_bits() {
         let mut ram = sram();
-        write(&mut ram, INDEX, 5); // high-table byte $200 + 5/4 = $201, bits 2-3
+        write(&mut ram, INDEX_REGISTER, 5); // high-table byte $200 + 5/4 = $201, bits 2-3
         ram[0x1E01] = 0xFF;
         write(&mut ram, 0x1FF4, 0x02);
         assert_eq!(ram[0x1E01], 0xFB);
-        write(&mut ram, INDEX, 127); // byte $200 + 31, bits 6-7
+        write(&mut ram, INDEX_REGISTER, 127); // byte $200 + 31, bits 6-7
         write(&mut ram, 0x1FF4, 0xFD); // only the low two bits of the value are used
         assert_eq!(ram[0x1E1F], 0x40);
-        write(&mut ram, BASE, 0x01);
+        write(&mut ram, BASE_REGISTER, 0x01);
         write(&mut ram, 0x1FF4, 0x03);
         assert_eq!(ram[0x1A1F], 0xC0, "the high table follows the base");
     }
@@ -135,7 +132,7 @@ mod tests {
     #[test]
     fn high_table_read_returns_the_whole_byte() {
         let mut ram = sram();
-        write(&mut ram, INDEX, 6);
+        write(&mut ram, INDEX_REGISTER, 6);
         ram[0x1E01] = 0xB7;
         assert_eq!(read(&ram, 0x1FF4), 0xB7);
     }
@@ -143,12 +140,16 @@ mod tests {
     #[test]
     fn index_is_seven_bits_and_not_incremented() {
         let mut ram = sram();
-        write(&mut ram, INDEX, 0x81); // object 1
+        write(&mut ram, INDEX_REGISTER, 0x81); // object 1
         write(&mut ram, 0x1FF0, 0x10);
         write(&mut ram, 0x1FF0, 0x20);
         assert_eq!(ram[0x1C04], 0x20, "the same object twice");
         assert_eq!(ram[0x1C08], 0x00);
-        assert_eq!(read(&ram, INDEX), 0x81, "the index byte is plain SRAM");
+        assert_eq!(
+            read(&ram, INDEX_REGISTER),
+            0x81,
+            "the index byte is plain SRAM"
+        );
     }
 
     #[test]

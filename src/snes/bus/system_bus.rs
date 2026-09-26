@@ -2092,7 +2092,11 @@ mod tests {
         bus.write(0x3F_7F80, 0x99);
         assert_eq!(bus.read(0xBF_7F80), 0x99, "R0 low byte");
         assert_eq!(bus.read_for_debugger(0x00_7F80), 0x99);
-        assert_eq!(bus.read(0x40_6005), bus.mdr.get(), "not in banks $40-$7F");
+        // Capture the open-bus value first: a read sets `mdr` to what it returns, so comparing
+        // against `mdr` afterwards could never fail.
+        let open_bus = bus.mdr.get();
+        assert_ne!(open_bus, 0x42);
+        assert_eq!(bus.read(0x40_6005), open_bus, "not in banks $40-$7F");
     }
 
     #[test]
@@ -2225,7 +2229,11 @@ mod tests {
         );
         assert_eq!(bus.read(0x00_7FF1), 0x99, "the port reads it back");
         bus.read(0x00_8000);
-        assert_eq!(bus.read(0x40_6005), bus.mdr.get(), "not in banks $40-$6F");
+        // Capture the open-bus value first: a read sets `mdr` to what it returns, so comparing
+        // against `mdr` afterwards could never fail.
+        let open_bus = bus.mdr.get();
+        assert_ne!(open_bus, 0x42);
+        assert_eq!(bus.read(0x40_6005), open_bus, "not in banks $40-$6F");
     }
 
     #[test]
