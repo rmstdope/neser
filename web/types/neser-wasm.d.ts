@@ -88,7 +88,7 @@ declare module "*/pkg/neser" {
 
     export function gamepad_init_toast_message(gamepads_enabled: boolean, detected_controllers: number): string;
 
-    /** The key ("dsp1", "dsp2") of the DSP chip whose firmware a SNES ROM needs to start, or undefined. */
+    /** The key ("dsp1" to "dsp4") of the DSP chip whose firmware a SNES ROM needs to start, or undefined. */
     export function snes_rom_dsp_chip(rom: Uint8Array): string | undefined;
 
     /** Whether `image` is a genuine dump of the chip `chip` (a key such as "dsp2"). */

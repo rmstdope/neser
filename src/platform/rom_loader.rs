@@ -250,12 +250,23 @@ mod tests {
     }
 
     #[test]
+    fn firmware_problem_preflight_detects_missing_dsp3_firmware() {
+        let dir = TempDir::new().unwrap();
+        let context = app_context_with_firmware_dir(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX", false);
+        assert_eq!(
+            firmware_problem(&context, "SD Gundam GX (Japan).sfc", &rom),
+            Some(FirmwareProblem::Missing {
+                chip: DspChip::Dsp3,
+                folder: dir.path().to_path_buf()
+            })
+        );
+    }
+
+    #[test]
     fn firmware_problem_ignores_other_games() {
         let dir = TempDir::new().unwrap();
         let context = app_context_with_firmware_dir(dir.path());
-        // DSP-3 (SD Gundam GX) is not emulated yet, so it needs no firmware.
-        let dsp3 = crate::snes::test_support::dsp_rom(b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX", false);
-        assert_eq!(firmware_problem(&context, "gx.sfc", &dsp3), None);
         assert_eq!(
             firmware_problem(&context, "plain.sfc", &minimal_snes_rom()),
             None

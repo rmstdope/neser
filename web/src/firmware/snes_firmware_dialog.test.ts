@@ -16,10 +16,11 @@ import { chipByKey } from "./snes_firmware_words";
 
 const dsp1 = chipByKey("dsp1")!;
 const dsp2 = chipByKey("dsp2")!;
+const dsp3 = chipByKey("dsp3")!;
 const dsp4 = chipByKey("dsp4")!;
 
-/** Tests' stand-in for the wasm check: a file filled with 0x11 is the genuine DSP-1 firmware, 0x22 the DSP-2's, 0x44 the DSP-4's. */
-const FILL: Record<string, number> = { dsp1: 0x11, dsp2: 0x22, dsp4: 0x44 };
+/** Tests' stand-in for the wasm check: a file filled with 0x11 is the genuine DSP-1 firmware, 0x22 the DSP-2's, 0x33 the DSP-3's, 0x44 the DSP-4's. */
+const FILL: Record<string, number> = { dsp1: 0x11, dsp2: 0x22, dsp3: 0x33, dsp4: 0x44 };
 const isGenuine: IsGenuine = (key, bytes) => bytes.length === 8192 && bytes[0] === (FILL[key] ?? -1);
 
 function loadMarkup() {
@@ -90,7 +91,7 @@ function failingStore(initial: Record<string, Uint8Array> = {}): FirmwareStore {
     };
 }
 
-const genuine = (key: "dsp1" | "dsp2" | "dsp4") => new Uint8Array(8192).fill(FILL[key]);
+const genuine = (key: "dsp1" | "dsp2" | "dsp3" | "dsp4") => new Uint8Array(8192).fill(FILL[key]);
 
 describe("SNES firmware dialog", () => {
     beforeEach(loadMarkup);
@@ -286,6 +287,46 @@ describe("SNES firmware sidebar block", () => {
         ]);
     });
 
+    it("lists DSP-3 between DSP-2 and DSP-4, in chip order", async () => {
+        const store = memoryStore({
+            dsp4: genuine("dsp4"),
+            dsp3: genuine("dsp3"),
+            dsp1: genuine("dsp1"),
+            dsp2: genuine("dsp2")
+        });
+        const { elements, controller } = sidebar(store);
+        await controller.refresh();
+        expect(rowTexts(elements.rows)).toEqual([
+            "DSP-1: stored ✓ Replace… Forget",
+            "DSP-2: stored ✓ Replace… Forget",
+            "DSP-3: stored ✓ Replace… Forget",
+            "DSP-4: stored ✓ Replace… Forget"
+        ]);
+    });
+
+    it("Replace… and Forget on the DSP-3 row act on the DSP-3 file only", async () => {
+        const old = genuine("dsp3");
+        const store = memoryStore({ dsp2: genuine("dsp2"), dsp3: old });
+        const { elements, controller, messages } = sidebar(store);
+        await controller.refresh();
+
+        button(elements.rows, "dsp3", "Replace…").click();
+        chooseFile(elements.fileInput, "dsp2.rom", 8192, 0x22);
+        await flush();
+        await flush();
+        expect(store.files.get("dsp3")).toBe(old);
+        expect(messages).toEqual([
+            "That isn't a DSP-3 firmware file\n\"dsp2.rom\" is 8 KB but is not the DSP-3 firmware."
+        ]);
+
+        button(elements.rows, "dsp3", "Forget").click();
+        await flush();
+        await flush();
+        expect(store.files.has("dsp3")).toBe(false);
+        expect(store.files.has("dsp2")).toBe(true);
+        expect(rowTexts(elements.rows)).toEqual(["DSP-2: stored ✓ Replace… Forget"]);
+    });
+
     it("Forget on the DSP-4 row removes only the DSP-4 file", async () => {
         const store = memoryStore({ dsp1: genuine("dsp1"), dsp4: genuine("dsp4") });
         const { elements, controller } = sidebar(store);
@@ -397,6 +438,23 @@ describe("obtaining the firmware for a game", () => {
         const result = await obtainSnesFirmware({
             chip: dsp2,
             store: memoryStore({ dsp1: genuine("dsp1") }),
+            isGenuine,
+            request: async () => {
+                asked = true;
+                return null;
+            },
+            showMessage: () => {},
+            onStored: async () => {}
+        });
+        expect(asked).toBe(true);
+        expect(result).toBeNull();
+    });
+
+    it("asks for the DSP-3 file even when DSP-1, DSP-2 and DSP-4 firmware are stored", async () => {
+        let asked = false;
+        const result = await obtainSnesFirmware({
+            chip: dsp3,
+            store: memoryStore({ dsp1: genuine("dsp1"), dsp2: genuine("dsp2"), dsp4: genuine("dsp4") }),
             isGenuine,
             request: async () => {
                 asked = true;
