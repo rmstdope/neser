@@ -232,8 +232,13 @@ impl Ppu {
     }
 
     /// Sets the RGB drawn for the four DMG shades (lightest to darkest).
+    ///
+    /// A STOP-mode blank screen is redrawn in the new lightest shade.
     pub fn set_dmg_shades(&mut self, shades: [(u8, u8, u8); 4]) {
         self.dmg_shades = shades;
+        if self.stop_display_mode == StopDisplayMode::SolidWhite {
+            self.enter_stop_display_mode(StopDisplayMode::SolidWhite);
+        }
     }
 
     /// The RGB drawn for the four DMG shades (lightest to darkest).
@@ -1581,6 +1586,14 @@ mod tests {
         let mut ppu = Ppu::new();
         ppu.set_dmg_shades(POCKET);
         ppu.enter_stop_display_mode(StopDisplayMode::SolidWhite);
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), POCKET[0]);
+    }
+
+    #[test]
+    fn test_changing_shades_during_stop_redraws_the_blank_screen() {
+        let mut ppu = Ppu::new();
+        ppu.enter_stop_display_mode(StopDisplayMode::SolidWhite);
+        ppu.set_dmg_shades(POCKET);
         assert_eq!(ppu.screen_buffer.get_pixel(0, 0), POCKET[0]);
     }
 
