@@ -81,7 +81,13 @@ fn gsu2_cart_128kb_ram_reaches_bank_71() {
     bus.write(0x71_4321, 0x22);
     assert_eq!(bus.read(0x70_4321), 0x11);
     assert_eq!(bus.read(0x71_4321), 0x22);
-    assert_eq!(bus.read(0xF1_4321), 0x22, "mirror at $F1");
+    // fullsnes' GSU2 map lists `$F0-$F1` only among its optional extra CPU ROM (`C0-FF`); the
+    // RAM mirror there is its GSU1 map's, kept for every Super FX cart as Mesen2 does.
+    assert_eq!(
+        bus.read(0xF1_4321),
+        0x22,
+        "mirror at $F1 (Mesen2, GSU1 map)"
+    );
 }
 
 #[test]
@@ -153,6 +159,31 @@ fn gsu2_status_registers_mirror_at_3020() {
     assert_eq!(bus.read(0x00_3020) & 0x20, 0x20, "SFR GO via $3020");
     bus.write(0x00_3020, 0x00); // GO=0 through the mirror stops the GSU.
     assert_eq!(bus.read(0x00_3030) & 0x20, 0x00, "stopped");
+}
+
+#[test]
+fn gsu2_reading_3021_clears_irq() {
+    // fullsnes SFR bit 15: "IRQ ... reset on read"; on a GSU2 `$3021` is `$3031`.
+    let mut rom = gsu2_cart_rom(0x05, |_| 0);
+    rom[..2].copy_from_slice(&[0x00, 0x01]); // STOP; NOP.
+    let mut bus = gsu_bus(&rom);
+    bus.write(0x00_303A, 0x18); // RON | RAN
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80); // GO
+    for _ in 0..200 {
+        bus.tick();
+    }
+    assert_eq!(bus.read(0x00_3030) & 0x20, 0x00, "stopped");
+    assert_eq!(
+        bus.read(0x00_3021) & 0x80,
+        0x80,
+        "IRQ set by STOP, read via $3021"
+    );
+    assert_eq!(
+        bus.read(0x00_3031) & 0x80,
+        0x00,
+        "the $3021 read cleared it"
+    );
 }
 
 #[test]
