@@ -439,6 +439,164 @@ pub fn button_combo_to_palette_id(buttons: u8) -> Option<u8> {
     }
 }
 
+/// The palette a player chooses for an original Game Boy (DMG) game running on
+/// Game Boy Color hardware (`gbc-palette=` / `--gbc-palette`, F8 at runtime).
+///
+/// `Auto` is the boot ROM's own pick (title checksum, or a button combo held
+/// during the boot animation). The other twelve are the boot ROM's manual
+/// combinations, named by colour, in console order (Up, Left, Down, Right;
+/// each alone, then +A, then +B).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GbcPalette {
+    /// The combination the boot ROM picks for the game.
+    #[default]
+    Auto,
+    /// Up.
+    Brown,
+    /// Up + A.
+    Red,
+    /// Up + B.
+    DarkBrown,
+    /// Left.
+    Blue,
+    /// Left + A.
+    DarkBlue,
+    /// Left + B.
+    Grayscale,
+    /// Down.
+    PastelMix,
+    /// Down + A.
+    Orange,
+    /// Down + B.
+    Yellow,
+    /// Right.
+    Green,
+    /// Right + A.
+    DarkGreen,
+    /// Right + B.
+    Reverse,
+}
+
+impl GbcPalette {
+    /// Every choice in F8 cycle order.
+    pub const ALL: [GbcPalette; 13] = [
+        GbcPalette::Auto,
+        GbcPalette::Brown,
+        GbcPalette::Red,
+        GbcPalette::DarkBrown,
+        GbcPalette::Blue,
+        GbcPalette::DarkBlue,
+        GbcPalette::Grayscale,
+        GbcPalette::PastelMix,
+        GbcPalette::Orange,
+        GbcPalette::Yellow,
+        GbcPalette::Green,
+        GbcPalette::DarkGreen,
+        GbcPalette::Reverse,
+    ];
+
+    /// Human-readable name, as shown in the toast.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            GbcPalette::Auto => "Auto",
+            GbcPalette::Brown => "Brown",
+            GbcPalette::Red => "Red",
+            GbcPalette::DarkBrown => "Dark Brown",
+            GbcPalette::Blue => "Blue",
+            GbcPalette::DarkBlue => "Dark Blue",
+            GbcPalette::Grayscale => "Grayscale",
+            GbcPalette::PastelMix => "Pastel Mix",
+            GbcPalette::Orange => "Orange",
+            GbcPalette::Yellow => "Yellow",
+            GbcPalette::Green => "Green",
+            GbcPalette::DarkGreen => "Dark Green",
+            GbcPalette::Reverse => "Reverse",
+        }
+    }
+
+    /// Lowercase config/CLI identifier.
+    pub fn config_id(self) -> &'static str {
+        match self {
+            GbcPalette::Auto => "auto",
+            GbcPalette::Brown => "brown",
+            GbcPalette::Red => "red",
+            GbcPalette::DarkBrown => "dark-brown",
+            GbcPalette::Blue => "blue",
+            GbcPalette::DarkBlue => "dark-blue",
+            GbcPalette::Grayscale => "grayscale",
+            GbcPalette::PastelMix => "pastel-mix",
+            GbcPalette::Orange => "orange",
+            GbcPalette::Yellow => "yellow",
+            GbcPalette::Green => "green",
+            GbcPalette::DarkGreen => "dark-green",
+            GbcPalette::Reverse => "reverse",
+        }
+    }
+
+    /// Parses a config/CLI identifier, case-insensitively; "greyscale" is Grayscale.
+    pub fn from_config_id(id: &str) -> Option<GbcPalette> {
+        let id = id.trim().to_ascii_lowercase();
+        if id == "greyscale" {
+            return Some(GbcPalette::Grayscale);
+        }
+        GbcPalette::ALL.into_iter().find(|p| p.config_id() == id)
+    }
+
+    /// Every identifier in cycle order, joined with ", ".
+    pub fn config_id_list() -> String {
+        GbcPalette::ALL.map(GbcPalette::config_id).join(", ")
+    }
+
+    /// The next choice in cycle order, wrapping around.
+    pub fn next(self) -> GbcPalette {
+        let idx = GbcPalette::ALL.iter().position(|&p| p == self).unwrap_or(0);
+        GbcPalette::ALL[(idx + 1) % GbcPalette::ALL.len()]
+    }
+
+    /// The boot ROM combination id this palette selects; `None` for `Auto`.
+    pub fn combination_id(self) -> Option<u8> {
+        match self {
+            GbcPalette::Auto => None,
+            GbcPalette::Brown => Some(5),
+            GbcPalette::Red => Some(43),
+            GbcPalette::DarkBrown => Some(28),
+            GbcPalette::Blue => Some(48),
+            GbcPalette::DarkBlue => Some(40),
+            GbcPalette::Grayscale => Some(7),
+            GbcPalette::PastelMix => Some(8),
+            GbcPalette::Orange => Some(3),
+            GbcPalette::Yellow => Some(49),
+            GbcPalette::Green => Some(1),
+            GbcPalette::DarkGreen => Some(0),
+            GbcPalette::Reverse => Some(6),
+        }
+    }
+}
+
+/// The name of the palette `Auto` picks for this cartridge, when that
+/// combination is one of the twelve named ones; `None` when the boot ROM
+/// gives the game a combination of its own.
+///
+/// `header` should start at ROM address $0100.
+pub fn auto_tint_name(header: &[u8]) -> Option<&'static str> {
+    let id = get_palette_id(header);
+    GbcPalette::ALL
+        .into_iter()
+        .find(|p| p.combination_id() == Some(id))
+        .map(GbcPalette::display_name)
+}
+
+/// Toast shown when F8 changes the palette of a DMG game on a Game Boy Color.
+pub fn gbc_palette_toast_message(palette: GbcPalette, header: &[u8]) -> String {
+    match palette {
+        GbcPalette::Auto => format!(
+            "Palette: Auto ({})",
+            auto_tint_name(header).unwrap_or("game\u{2019}s own")
+        ),
+        chosen => format!("Palette: {}", chosen.display_name()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,5 +911,120 @@ mod tests {
         assert_eq!(button_combo_to_palette_id(0x18), Some(5));
         // Up + A + Select + Start = still valid Up + A
         assert_eq!(button_combo_to_palette_id(0x1D), Some(43));
+    }
+
+    // ── gbc-palette (player-chosen compatibility palette) ─────────────
+
+    #[test]
+    fn gbc_palette_all_is_in_f8_order() {
+        use GbcPalette::*;
+        assert_eq!(
+            GbcPalette::ALL,
+            [
+                Auto, Brown, Red, DarkBrown, Blue, DarkBlue, Grayscale, PastelMix, Orange,
+                Yellow, Green, DarkGreen, Reverse
+            ]
+        );
+    }
+
+    #[test]
+    fn gbc_palette_names_are_the_agreed_words() {
+        let names: Vec<&str> = GbcPalette::ALL.map(GbcPalette::display_name).to_vec();
+        assert_eq!(
+            names,
+            [
+                "Auto", "Brown", "Red", "Dark Brown", "Blue", "Dark Blue", "Grayscale",
+                "Pastel Mix", "Orange", "Yellow", "Green", "Dark Green", "Reverse"
+            ]
+        );
+    }
+
+    #[test]
+    fn gbc_palette_config_id_list_is_the_agreed_text() {
+        assert_eq!(
+            GbcPalette::config_id_list(),
+            "auto, brown, red, dark-brown, blue, dark-blue, grayscale, pastel-mix, orange, \
+             yellow, green, dark-green, reverse"
+        );
+    }
+
+    #[test]
+    fn gbc_palette_ids_round_trip_in_any_case() {
+        for p in GbcPalette::ALL {
+            assert_eq!(GbcPalette::from_config_id(p.config_id()), Some(p));
+            assert_eq!(
+                GbcPalette::from_config_id(&format!(" {} ", p.config_id().to_uppercase())),
+                Some(p)
+            );
+        }
+        assert_eq!(
+            GbcPalette::from_config_id("greyscale"),
+            Some(GbcPalette::Grayscale)
+        );
+        assert_eq!(GbcPalette::from_config_id("bogus"), None);
+        assert_eq!(GbcPalette::default(), GbcPalette::Auto);
+    }
+
+    #[test]
+    fn gbc_palette_next_wraps_reverse_to_auto() {
+        for w in GbcPalette::ALL.windows(2) {
+            assert_eq!(w[0].next(), w[1]);
+        }
+        assert_eq!(GbcPalette::Reverse.next(), GbcPalette::Auto);
+    }
+
+    #[test]
+    fn gbc_palette_combination_ids_are_the_boot_rom_button_combos() {
+        // Buttons (NES convention): A=0x01, B=0x02, Up=0x10, Down=0x20, Left=0x40, Right=0x80.
+        let combos = [
+            (GbcPalette::Brown, 0x10),
+            (GbcPalette::Red, 0x11),
+            (GbcPalette::DarkBrown, 0x12),
+            (GbcPalette::Blue, 0x40),
+            (GbcPalette::DarkBlue, 0x41),
+            (GbcPalette::Grayscale, 0x42),
+            (GbcPalette::PastelMix, 0x20),
+            (GbcPalette::Orange, 0x21),
+            (GbcPalette::Yellow, 0x22),
+            (GbcPalette::Green, 0x80),
+            (GbcPalette::DarkGreen, 0x81),
+            (GbcPalette::Reverse, 0x82),
+        ];
+        for (palette, buttons) in combos {
+            assert_eq!(
+                palette.combination_id(),
+                button_combo_to_palette_id(buttons),
+                "{palette:?}"
+            );
+        }
+        assert_eq!(GbcPalette::Auto.combination_id(), None);
+    }
+
+    #[test]
+    fn gbc_palette_auto_tint_name_names_one_of_the_twelve() {
+        let unknown = make_header(&[0u8; 16], 0x00);
+        assert_eq!(auto_tint_name(&unknown), Some("Dark Green"));
+        let tetris = make_header(b"TETRIS\0\0\0\0\0\0\0\0\0\0", 0x01);
+        assert_eq!(auto_tint_name(&tetris), Some("Orange"));
+        let zelda = make_header(b"ZELDA\0\0\0\0\0\0\0\0\0\0\0", 0x01);
+        assert_eq!(auto_tint_name(&zelda), None);
+    }
+
+    #[test]
+    fn gbc_palette_toasts_are_the_agreed_words() {
+        let unknown = make_header(&[0u8; 16], 0x00);
+        let zelda = make_header(b"ZELDA\0\0\0\0\0\0\0\0\0\0\0", 0x01);
+        assert_eq!(
+            gbc_palette_toast_message(GbcPalette::Auto, &unknown),
+            "Palette: Auto (Dark Green)"
+        );
+        assert_eq!(
+            gbc_palette_toast_message(GbcPalette::Auto, &zelda),
+            "Palette: Auto (game\u{2019}s own)"
+        );
+        assert_eq!(
+            gbc_palette_toast_message(GbcPalette::PastelMix, &zelda),
+            "Palette: Pastel Mix"
+        );
     }
 }
