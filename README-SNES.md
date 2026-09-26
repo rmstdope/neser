@@ -14,6 +14,10 @@ cargo run --release --bin neser -- path/to/game.sfc
 
 Use `neser --help` for the complete current CLI reference.
 
+Enhancement chips: the SA-1 (Super Mario RPG and others) and the Capcom CX4 (Mega Man X2 and
+X3) are emulated. Cartridges with any other enhancement chip load, but show a warning that the
+chip is not implemented yet, and may not run correctly.
+
 ## SNES configuration (native frontend)
 
 SNES-specific options:
@@ -47,7 +51,7 @@ Notes:
 
 The generic (unprefixed) `ram_init_mode` / `--ram-init-mode` setting also
 applies to the SNES since #3128. It controls the power-on contents of WRAM,
-VRAM, CGRAM, OAM, APU ARAM and SA-1 I-RAM — `random` (the desktop default,
+VRAM, CGRAM, OAM, APU ARAM, SA-1 I-RAM and CX4 data RAM — `random` (the desktop default,
 matching Mesen2's `RamState::Random` and ares), `zero`, or
 `seeded-random:SEED` for a randomised but reproducible machine. Cartridge RAM is
 filled too unless it is battery-backed — a `.sav`-backed save is left alone and
@@ -312,6 +316,12 @@ Test suites:
   signed/unsigned division, the 40-bit cumulative sum and its overflow flag,
   and that unit's state across a save state and a hard reset (nr-ps1; Super
   Mario RPG hung on a black screen after its opening without it).
+- `cx4_tests.rs` -- the Capcom CX4 (nr-t7d). Overload's `cx4test.sfc`
+  (`jonasquinn-test-roms/cx4test/`) checks the chip's SNES-side memory map and
+  port bits; the test reads its seven verdicts out of the ROM's WRAM text
+  buffer (all PASS, matching Mesen2's screen pixel for pixel). A hand-built
+  fixture DMAs a table into CX4 RAM, runs a CX4 program from ROM (a square,
+  a data-ROM lookup, a RAM read) and checks the results from the 65816 side.
 - `input_standard_controller_tests.rs` -- standard-controller protocol
   fixtures (#2886), assembled in-code via the shared `fixture_rom.rs`
   builder (no on-disk assets): `$4016`/`$4017` serial order incl. the four
@@ -423,6 +433,7 @@ What actually differs between the two consoles:
 | SPC700 clock | ~1.025 MHz | ~1.025 MHz |
 | DSP sample rate | 32 kHz | 32 kHz |
 | SA-1 clock (master / 2) | 10.74 MHz | 10.64 MHz |
+| CX4 clock (own 20 MHz crystal) | 20.00 MHz | 20.00 MHz |
 
 PAL's extra 50 scanlines are therefore *all* blanking: the active area, the
 VBlank boundary and the framebuffer are region-independent, and only the
@@ -490,7 +501,7 @@ directory and are never committed. To approve a new or changed golden:
    identical runs is the tell.
 
    Since #3128 NESER's SNES core honours the same `ram_init_mode` setting the
-   NES core uses (WRAM, VRAM, CGRAM, OAM, ARAM, SA-1 I-RAM), and its desktop
+   NES core uses (WRAM, VRAM, CGRAM, OAM, ARAM, SA-1 I-RAM, CX4 data RAM), and its desktop
    default is `random` too — so the *NESER* side needs pinning as well. The
    automated suites already do it: `RunConfig` defaults to
    `RamInitMode::Zero` (`rom_runner.rs`), and `--headless` capture forces
