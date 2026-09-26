@@ -183,7 +183,11 @@ mod tests {
             .filter(|&i| DATA_ROM[i] != formula(i))
             .map(|i| format!("{i:03X}: {:06X} != {:06X}", DATA_ROM[i], formula(i)))
             .collect();
-        assert!(mismatches.is_empty(), "{} mismatches: {mismatches:?}", mismatches.len());
+        assert!(
+            mismatches.is_empty(),
+            "{} mismatches: {mismatches:?}",
+            mismatches.len()
+        );
     }
 
     /// The first and last value fullsnes prints for each table.
