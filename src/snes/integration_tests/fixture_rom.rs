@@ -109,6 +109,11 @@ impl FixtureRom {
         self.rom[HEADER - 1] = 0x10;
     }
 
+    /// Chipset `$03` (ROM + DSP), a DSP-1B cartridge unless the title says otherwise.
+    pub(crate) fn dsp_chipset(&mut self) {
+        self.rom[HEADER + 0x16] = 0x03;
+    }
+
     /// Marks this fixture as an OBC1 cartridge with the header Metal Combat: Falcon's Revenge
     /// carries: chipset `$25` (ROM + RAM + battery + OBC1) and 8 KiB SRAM (RAM-size field
     /// `$03`). The OBC1's ports and SRAM then answer at `$6000-$7FFF` of the system banks.

@@ -14,6 +14,9 @@ pub(crate) const HEADER_CHECKSUM_OFFSET: usize = 0x1E;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SnesHeader {
     pub title: String,
+    /// The title's raw 21 bytes. Some titles are half-width katakana, which [`Self::title`]'s
+    /// UTF-8 decoding cannot keep.
+    pub title_bytes: [u8; TITLE_LEN],
     pub map_mode: u8,
     pub chipset: u8,
     pub chipset_subtype: Option<u8>,
@@ -78,6 +81,7 @@ pub(crate) fn parse_header_at(
 
     Some(SnesHeader {
         title,
+        title_bytes: title_bytes.try_into().expect("TITLE_LEN bytes"),
         map_mode,
         chipset,
         chipset_subtype,

@@ -1152,6 +1152,51 @@ fn minimal_snes_rom() -> Vec<u8> {
     rom
 }
 
+/// A DSP cartridge header on the minimal ROM: chipset `$03`, a DSP-1B game.
+fn dsp1_snes_rom() -> Vec<u8> {
+    let mut rom = minimal_snes_rom();
+    rom[0x7FC0 + 0x16] = 0x03;
+    rom
+}
+
+#[wasm_bindgen_test]
+fn snes_rom_needs_dsp1_true_for_dsp1_header_false_otherwise() {
+    assert!(crate::wasm_snes::snes_rom_needs_dsp1(&dsp1_snes_rom()));
+    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&minimal_snes_rom()));
+    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&[1, 2, 3]));
+    let mut dsp2 = dsp1_snes_rom();
+    dsp2[0x7FC0..0x7FC0 + 21].copy_from_slice(b"DUNGEON MASTER       ");
+    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&dsp2));
+}
+
+#[wasm_bindgen_test]
+fn set_dsp1_firmware_rejects_wrong_size() {
+    let mut snes = WasmSnes::new();
+    assert!(snes.set_dsp1_firmware(&[0u8; 12288]).is_err());
+    assert!(snes.set_dsp1_firmware(&[0u8; 8192]).is_ok());
+}
+
+#[wasm_bindgen_test]
+fn dsp1_rom_without_firmware_errors_and_loads_once_supplied() {
+    let mut snes = WasmSnes::new();
+    assert!(
+        snes.load_rom(&dsp1_snes_rom(), "Super Mario Kart (USA).sfc")
+            .is_err()
+    );
+    snes.set_dsp1_firmware(&[0u8; 8192]).expect("valid size");
+    snes.load_rom(&dsp1_snes_rom(), "Super Mario Kart (USA).sfc")
+        .expect("loads with firmware");
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .iter()
+        .filter_map(|t| t.as_string())
+        .collect();
+    assert!(
+        !toasts.iter().any(|t| t.contains("enhancement hardware")),
+        "no DSP warning once emulated: {toasts:?}"
+    );
+}
+
 #[wasm_bindgen_test]
 fn wasm_snes_constructs() {
     let _snes = WasmSnes::new();

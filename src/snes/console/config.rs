@@ -12,6 +12,13 @@ pub(crate) const SNES_CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--snes-firmware-dir",
+        help: Some(
+            "Folder holding SNES coprocessor firmware such as dsp1b.rom (default: ~/.neser/firmware)",
+        ),
+        has_value: true,
+    },
+    CliFlag {
         flag: "--snes-hardware",
         help: Some("SNES hardware timing mode: snes-ntsc or snes-pal"),
         has_value: true,
@@ -35,6 +42,9 @@ pub struct SnesConfig {
     pub hardware: Option<SnesHardware>,
     /// Optional path to an external 64-byte SPC IPL ROM.
     pub spc_ipl_path: Option<String>,
+    /// Folder holding coprocessor firmware such as `dsp1b.rom` (`snes-firmware-dir`); `None`
+    /// means `~/.neser/firmware`. See [`SnesConfig::resolved_firmware_dir`].
+    pub firmware_dir: Option<String>,
     /// Device plugged into controller port 1.
     pub controller_port1: SnesControllerType,
     /// Device plugged into controller port 2.
@@ -59,9 +69,25 @@ impl SnesHardware {
 }
 
 impl SnesConfig {
+    /// The firmware folder: the configured one, or `$HOME/.neser/firmware`. The default is built
+    /// from `HOME` so every message shows the full path; a configured value is used as written.
+    pub fn resolved_firmware_dir(&self) -> std::path::PathBuf {
+        match &self.firmware_dir {
+            Some(dir) => std::path::PathBuf::from(dir),
+            None => std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default()
+                .join(".neser")
+                .join("firmware"),
+        }
+    }
+
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         if let Some(path) = parse_cli_string_arg(args, "--snes-spc-ipl-path") {
             self.spc_ipl_path = Some(path);
+        }
+        if let Some(dir) = parse_cli_string_arg(args, "--snes-firmware-dir") {
+            self.firmware_dir = (!dir.is_empty()).then_some(dir);
         }
         if let Some(hardware) = parse_cli_string_arg(args, "--snes-hardware") {
             self.hardware = Some(SnesHardware::parse(&hardware).ok_or_else(|| {
@@ -88,6 +114,9 @@ impl SnesConfig {
                 } else {
                     self.spc_ipl_path = Some(value.to_string());
                 }
+            }
+            "snes_firmware_dir" => {
+                self.firmware_dir = (!value.is_empty()).then(|| value.to_string());
             }
             "snes_hardware" => {
                 self.hardware = Some(SnesHardware::parse(value).ok_or_else(|| {
@@ -156,6 +185,51 @@ mod tests {
             cfg.apply_config_value("snes-controller-port1", "bogus")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn snes_firmware_dir_parses_from_config_key_and_cli_flag() {
+        let mut cfg = SnesConfig::default();
+        cfg.apply_config_value("snes-firmware-dir", "/fw/from/config")
+            .expect("config parse");
+        assert_eq!(
+            cfg.resolved_firmware_dir(),
+            std::path::PathBuf::from("/fw/from/config")
+        );
+        cfg.apply_args(&[
+            "neser".to_string(),
+            "--snes-firmware-dir".to_string(),
+            "/fw/from/cli".to_string(),
+        ])
+        .expect("args parse");
+        assert_eq!(cfg.firmware_dir.as_deref(), Some("/fw/from/cli"));
+        cfg.apply_config_value("snes-firmware-dir", "")
+            .expect("config parse");
+        assert_eq!(cfg.firmware_dir, None);
+    }
+
+    #[test]
+    fn resolved_firmware_dir_defaults_to_home_neser_firmware() {
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+        assert_eq!(
+            SnesConfig::default().resolved_firmware_dir(),
+            home.join(".neser").join("firmware")
+        );
+    }
+
+    #[test]
+    fn snes_firmware_dir_flag_has_the_agreed_help() {
+        let flag = super::SNES_CLI_FLAGS
+            .iter()
+            .find(|f| f.flag == "--snes-firmware-dir")
+            .expect("flag declared");
+        assert_eq!(
+            flag.help,
+            Some(
+                "Folder holding SNES coprocessor firmware such as dsp1b.rom (default: ~/.neser/firmware)"
+            )
+        );
+        assert!(flag.has_value);
     }
 
     #[test]

@@ -133,6 +133,10 @@ The browser frontend is built from the Rust WASM target and the JavaScript front
 
 Supported ROM extensions in the web frontend include `.nes`, `.gb`/`.gbc`/`.cgb`, `.gba`, and SNES `.sfc`/`.smc`.
 
+SNES games with a DSP-1 chip (Super Mario Kart, Pilotwings) need the chip's firmware, which you
+supply: on the desktop put `dsp1b.rom` in `~/.neser/firmware` (or set `snes-firmware-dir`); the
+browser version asks for the file once. See [README-SNES.md](README-SNES.md).
+
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 
 Convenience commands:

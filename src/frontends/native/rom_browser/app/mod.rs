@@ -181,6 +181,12 @@ pub struct RomBrowserApp {
     boxart_by_game_id: std::collections::HashMap<i64, PathBuf>,
     /// Message shown when the catalog is empty, listing the ROM search paths.
     no_roms_hint: String,
+    /// Why the last game did not start: the strip's bold first line and its second line.
+    /// `None` hides the strip. See [`RomBrowserApp::set_launch_error`].
+    launch_error: Option<(String, String)>,
+    /// The strip's height as last drawn (0 when hidden), so scrolling keeps the selected
+    /// game clear of it.
+    launch_strip_height: f32,
 }
 
 impl RomBrowserApp {
@@ -277,6 +283,8 @@ impl RomBrowserApp {
             texture_pending: Vec::new(),
             boxart_by_game_id: std::collections::HashMap::new(),
             no_roms_hint,
+            launch_error: None,
+            launch_strip_height: 0.0,
         }
     }
 
@@ -348,6 +356,7 @@ mod actions;
 mod catalog_state;
 mod handler;
 mod input;
+mod launch_error;
 mod render;
 mod textures;
 

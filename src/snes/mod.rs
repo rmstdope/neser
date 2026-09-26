@@ -9,12 +9,14 @@ pub mod cartridge;
 pub mod console;
 pub mod cpu;
 pub mod cx4;
+pub mod dsp1;
 pub mod gsu;
 pub mod input;
 pub mod obc1;
 pub mod ppu;
 pub mod sa1;
 pub mod sdd1;
+pub mod upd77c25;
 
 #[cfg(test)]
 mod integration_tests;

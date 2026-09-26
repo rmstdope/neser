@@ -17,8 +17,11 @@ use crate::snes::cartridge::{Cartridge, EnhancementChip};
 use crate::snes::console::config::SnesHardware;
 use crate::snes::console::save_state::SnesSaveState;
 use crate::snes::cpu::Cpu;
+use crate::snes::dsp1::{self, DspModel};
 use crate::snes::ppu::SnesVideoRegion;
+use crate::snes::upd77c25::Upd77c25Firmware;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::Duration;
 
 /// SNES display width in pixels (standard NTSC mode).
@@ -47,6 +50,9 @@ pub struct Snes {
     /// frame numbering matches hardware and Mesen2 (issue #2990).
     pending_render_frames: u32,
     active_hardware: SnesHardware,
+    /// DSP-1 firmware handed over by a frontend (the browser version), used before the
+    /// `snes-firmware-dir` folder is looked at.
+    supplied_dsp_firmware: Option<Rc<Upd77c25Firmware>>,
 }
 
 impl Snes {
@@ -63,7 +69,38 @@ impl Snes {
             rom_path: None,
             pending_render_frames: 0,
             active_hardware: SnesHardware::Ntsc,
+            supplied_dsp_firmware: None,
         }
+    }
+
+    /// Supplies the DSP-1 firmware image for the next DSP-1 game, instead of the firmware
+    /// folder. Returns the image's size when it is not an 8192-byte DSP-n image.
+    pub fn set_dsp1_firmware(&mut self, image: &[u8]) -> Result<(), usize> {
+        self.supplied_dsp_firmware = Some(Rc::new(Upd77c25Firmware::from_image(image)?));
+        Ok(())
+    }
+
+    /// The DSP-1 firmware for `model`: the supplied image, else the firmware
+    /// folder read fresh. `Err` carries the words a player reads when it cannot be found.
+    fn resolve_dsp1_firmware(
+        &self,
+        model: DspModel,
+        name: &str,
+    ) -> Result<Rc<Upd77c25Firmware>, String> {
+        if let Some(firmware) = &self.supplied_dsp_firmware {
+            return Ok(Rc::clone(firmware));
+        }
+        // The browser version supplies the firmware above; there is no folder there, so a
+        // missing image is reported as missing.
+        let dir = self
+            .app_context
+            .borrow()
+            .config()
+            .snes
+            .resolved_firmware_dir();
+        dsp1::load_from_dir(&dir, model)
+            .map(Rc::new)
+            .map_err(|problem| problem.cli_message(&crate::platform::rom_loader::game_name(name)))
     }
 
     /// Whether the header's `$FFD9` destination code implies 50 Hz PAL timing.
@@ -368,9 +405,15 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
-        // SA-1 (epic #2956), CX4 (nr-t7d), OBC1 (nr-ufb), the Super FX (nr-hab.1) and the S-DD1
-        // (nr-10g) are emulated; other enhancement chips remain header-detection-only. The header
-        // cannot tell a GSU-1 from a GSU-2, so no Super FX cartridge warns.
+        // SA-1 (epic #2956), CX4 (nr-t7d), OBC1 (nr-ufb), the Super FX (nr-hab.1), the S-DD1
+        // (nr-10g) and the DSP-1 (nr-auv) are emulated; other enhancement chips remain
+        // header-detection-only. The header cannot tell a GSU-1 from a GSU-2, so no Super FX
+        // cartridge warns.
+        let dsp_model = dsp1::identify(&cartridge);
+        let dsp_firmware = match dsp_model {
+            Some(model) if model.is_dsp1() => Some(self.resolve_dsp1_firmware(model, name)?),
+            _ => None,
+        };
         if let Some(chip) = cartridge.enhancement_chip()
             && !matches!(
                 chip,
@@ -380,6 +423,7 @@ impl Emulator for Snes {
                     | EnhancementChip::SuperFx
                     | EnhancementChip::Sdd1
             )
+            && dsp_firmware.is_none()
         {
             let warning = format!(
                 "Warning: ROM requires SNES enhancement hardware ({chip}) which is not implemented yet; gameplay may be incorrect"
@@ -400,6 +444,7 @@ impl Emulator for Snes {
                 spc_ipl_path: config.spc_ipl_path,
                 video_region,
                 ram_init_mode: self.ram_init_mode(),
+                dsp_firmware,
             },
         );
         let mut cpu = Cpu::new(bus);
@@ -560,6 +605,7 @@ impl Emulator for Snes {
             cpu.bus_mut().reset_cx4();
             // And the S-DD1: banks back to 0-3, nothing armed (Mesen2 `Sdd1::Reset`).
             cpu.bus_mut().reset_sdd1();
+            cpu.bus_mut().reset_dsp();
             cpu.do_reset();
         }
         self.pending_render_frames = 0;
@@ -958,10 +1004,11 @@ mod tests {
 
     #[test]
     fn load_rom_adds_warning_toast_when_enhancement_chip_is_required() {
+        // DSP-2 (Dungeon Master) is not emulated yet and keeps the warning.
         let mut snes = make_snes();
-        let rom = valid_lorom_nop_rom_with_header(0x00, 0x03); // DSP
+        let rom = crate::snes::test_support::dsp_rom(b"DUNGEON MASTER", false);
 
-        snes.load_rom(&rom, "dsp.sfc").expect("load ROM");
+        snes.load_rom(&rom, "dsp2.sfc").expect("load ROM");
 
         let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
         assert!(
@@ -969,6 +1016,80 @@ mod tests {
                 .iter()
                 .any(|t| t.contains("enhancement hardware (DSP)")),
             "expected unsupported enhancement warning toast, got: {toasts:?}"
+        );
+    }
+
+    fn make_snes_with_firmware_dir(dir: &std::path::Path) -> Snes {
+        let mut config = snes_test_config();
+        config.snes.firmware_dir = Some(dir.to_string_lossy().into_owned());
+        Snes::new(AppContext::new_with_config(config))
+    }
+
+    #[test]
+    fn dsp1_rom_without_firmware_fails_to_load_with_cli_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut snes = make_snes_with_firmware_dir(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", false);
+
+        let err = snes
+            .load_rom(&rom, "/roms/Super Mario Kart (USA).sfc")
+            .expect_err("no firmware, no start");
+        assert_eq!(
+            err,
+            dsp1::FirmwareProblem::Missing {
+                folder: dir.path().to_path_buf()
+            }
+            .cli_message("Super Mario Kart (USA)")
+        );
+        assert!(snes.cpu.is_none(), "the game does not start");
+    }
+
+    #[test]
+    fn dsp1_rom_with_firmware_in_folder_loads_without_warning_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("dsp1b.rom"),
+            vec![0u8; crate::snes::upd77c25::DSP_IMAGE_SIZE],
+        )
+        .unwrap();
+        let mut snes = make_snes_with_firmware_dir(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", false);
+
+        snes.load_rom(&rom, "mk.sfc").expect("firmware found");
+
+        let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
+        assert!(
+            !toasts.iter().any(|t| t.contains("enhancement hardware")),
+            "DSP-1 is emulated; no warning expected, got: {toasts:?}"
+        );
+        assert_eq!(
+            snes.cpu
+                .as_ref()
+                .unwrap()
+                .bus()
+                .dsp_port_for_test(0x30_C000),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn dsp1_rom_with_supplied_firmware_loads_even_without_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut snes = make_snes_with_firmware_dir(&dir.path().join("absent"));
+        assert_eq!(snes.set_dsp1_firmware(&[0u8; 100]), Err(100));
+        snes.set_dsp1_firmware(&vec![0u8; crate::snes::upd77c25::DSP_IMAGE_SIZE])
+            .expect("8192 bytes");
+        let rom = crate::snes::test_support::dsp_rom(b"PILOTWINGS", true);
+
+        snes.load_rom(&rom, "pw.sfc")
+            .expect("supplied firmware used");
+        assert_eq!(
+            snes.cpu
+                .as_ref()
+                .unwrap()
+                .bus()
+                .dsp_port_for_test(0x00_7000),
+            Some(true)
         );
     }
 

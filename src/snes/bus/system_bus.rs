@@ -17,6 +17,7 @@ use crate::snes::sa1::{
     decode_mirror_offset,
 };
 use crate::snes::sdd1::Sdd1;
+use crate::snes::upd77c25::{Upd77c25, Upd77c25Firmware};
 use crate::trace_apu;
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -122,6 +123,10 @@ pub struct SnesSystemBus {
     /// answers `$4800-$4807`. A `RefCell` because DMA reads advance its decompression on the
     /// `&self` read paths. `None` for cartridges without one.
     sdd1: Option<RefCell<Sdd1>>,
+    /// The DSP-1's uPD77C25, present when the cartridge has a DSP and firmware was supplied.
+    /// A `RefCell` because reading its DR port advances the transfer while the bus read path
+    /// takes `&self`.
+    dsp: Option<RefCell<Upd77c25>>,
     /// Every `(b_addr, value)` pair a DMA/HDMA A->B transfer has driven onto the
     /// B-bus, in order. Test-only instrument: it observes what the controller
     /// actually wrote, which is what the transfer tests are about, and replaces
@@ -152,6 +157,9 @@ pub struct SnesBusOptions {
     pub video_region: SnesVideoRegion,
     /// Power-on pattern for every volatile RAM (`ram_init_mode`).
     pub ram_init_mode: RamInitMode,
+    /// The DSP-1 firmware for a DSP cartridge (`Snes::load_rom` resolves it). `None` leaves a
+    /// DSP cartridge without its chip.
+    pub dsp_firmware: Option<Rc<Upd77c25Firmware>>,
 }
 
 impl Default for SnesBusOptions {
@@ -166,6 +174,7 @@ impl Default for SnesBusOptions {
             spc_ipl_path: None,
             video_region: SnesVideoRegion::Ntsc,
             ram_init_mode: RamInitMode::Zero,
+            dsp_firmware: None,
         }
     }
 }
@@ -212,6 +221,11 @@ impl SnesSystemBus {
             .then(|| RefCell::new(Gsu::new(Rc::clone(&rom), Rc::clone(&sram))));
         let sdd1 = (cartridge.enhancement_chip() == Some(EnhancementChip::Sdd1))
             .then(|| RefCell::new(Sdd1::new(Rc::clone(&rom))));
+        let dsp = options
+            .dsp_firmware
+            .as_ref()
+            .filter(|_| cartridge.enhancement_chip() == Some(EnhancementChip::Dsp))
+            .map(|firmware| RefCell::new(Upd77c25::new(Rc::clone(firmware), video_region)));
         let mut bus = Self {
             _cartridge: cartridge,
             mapping,
@@ -243,6 +257,7 @@ impl SnesSystemBus {
             obc1,
             gsu,
             sdd1,
+            dsp,
             #[cfg(test)]
             b_bus_writes: RefCell::new(Vec::new()),
         };
@@ -276,6 +291,14 @@ impl SnesSystemBus {
         }
         if let Some(cx4) = self.cx4.as_mut() {
             crate::platform::ram_init::initialize_ram(cx4.data_ram_mut(), mode);
+        }
+        if let Some(dsp) = self.dsp.as_mut() {
+            let ram = dsp.get_mut().data_ram_mut();
+            let mut bytes: Vec<u8> = ram.iter().flat_map(|w| w.to_le_bytes()).collect();
+            crate::platform::ram_init::initialize_ram(&mut bytes, mode);
+            for (word, pair) in ram.iter_mut().zip(bytes.as_chunks::<2>().0) {
+                *word = u16::from_le_bytes([pair[0], pair[1]]);
+            }
         }
         if !self.has_battery() {
             crate::platform::ram_init::initialize_ram(self.sram.borrow_mut().as_mut_slice(), mode);
@@ -372,6 +395,52 @@ impl SnesSystemBus {
         (0x6000..=0x7FFF)
             .contains(&offset)
             .then_some(offset & 0x1FFF)
+    }
+
+    /// Resets the DSP-1 on the /RES line, soft and hard reset alike (fullsnes "Reset (Vector
+    /// 000h)" keeps the other registers and the data RAM). No-op without a DSP.
+    pub fn reset_dsp(&mut self) {
+        if let Some(dsp) = self.dsp.as_mut() {
+            dsp.get_mut().reset();
+        }
+    }
+
+    /// Whether `addr` is one of the DSP-1's ports, and if so whether it is SR (`true`) or DR.
+    ///
+    /// fullsnes "SNES Cart DSP-n/ST010/ST011" lists, per board, DR/SR at
+    /// `30-3F:8000-BFFF`/`C000-FFFF` (LoROM 1 MB), `60-6F:0000-3FFF`/`4000-7FFF` (LoROM 2 MB) and
+    /// `00-1F:6000-6FFF`/`7000-7FFF` (HiROM), all mirrored at `$80-$FF`. This decodes Mesen2's
+    /// union of them (`NecDsp` constructor): both LoROM windows with A14 choosing SR, and the
+    /// HiROM window with A12. fullsnes' `20-3F` LoROM range (DSP-2/3 boards with RAM) and the
+    /// `00-0F,20-2F` MAD-2 HiROM range are not decoded: no DSP-1 game uses them.
+    fn dsp_port(&self, addr: u32) -> Option<bool> {
+        self.dsp.as_ref()?;
+        let bank = (addr >> 16) & 0x7F;
+        let offset = addr & 0xFFFF;
+        match self.mapping {
+            Mapping::LoRom => {
+                let window = ((0x30..=0x3F).contains(&bank) && offset >= 0x8000)
+                    || ((0x60..=0x6F).contains(&bank) && offset < 0x8000);
+                window.then_some(offset & 0x4000 != 0)
+            }
+            Mapping::HiRom | Mapping::ExHiRom => (bank <= 0x1F
+                && (0x6000..=0x7FFF).contains(&offset))
+            .then_some(offset & 0x1000 != 0),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dsp_port_for_test(&self, addr: u32) -> Option<bool> {
+        self.dsp_port(addr)
+    }
+
+    fn dsp_read(&self, is_sr: bool) -> u8 {
+        let dsp = self.dsp.as_ref().expect("dsp_port found a DSP");
+        if is_sr {
+            dsp.borrow().read_sr()
+        } else {
+            dsp.borrow_mut().read_dr()
+        }
     }
 
     /// Resets the Super FX, if the cartridge has one: the cartridge /RESET line follows the
@@ -660,6 +729,9 @@ impl SnesSystemBus {
         if let Some(byte) = self.sdd1_read(addr, open_bus, false) {
             return byte;
         }
+        if let Some(is_sr) = self.dsp_port(addr) {
+            return self.dsp_read(is_sr);
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             return iram.borrow().read(offset);
         }
@@ -708,6 +780,9 @@ impl SnesSystemBus {
         }
         if let Some(offset) = self.obc1_offset(addr) {
             return obc1::read(&self.sram.borrow(), offset);
+        }
+        if let (Some(dsp), Some(is_sr)) = (&self.dsp, self.dsp_port(addr)) {
+            return dsp.borrow().peek(is_sr);
         }
 
         if let Some(byte) = self.sdd1_read(addr, self.mdr.get(), true) {
@@ -775,6 +850,13 @@ impl SnesSystemBus {
             return;
         }
         if self.sdd1_write(addr, value) {
+            return;
+        }
+        if let Some(is_sr) = self.dsp_port(addr) {
+            // SR is read-only from the SNES side (Mesen2 `NecDsp::Write` ignores it).
+            if !is_sr && let Some(dsp) = self.dsp.as_mut() {
+                dsp.get_mut().write_dr(value);
+            }
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -1116,6 +1198,9 @@ impl SnesSystemBus {
         if let Some(cx4) = self.cx4.as_mut() {
             cx4.set_video_region(video_region);
         }
+        if let Some(dsp) = self.dsp.as_mut() {
+            dsp.get_mut().set_video_region(video_region);
+        }
     }
 
     #[cfg(test)]
@@ -1163,6 +1248,7 @@ impl SnesSystemBus {
             input: self.input.borrow().capture_state(),
             sa1: self.capture_sa1_state(),
             cx4: self.cx4.as_ref().map(Cx4::capture_state),
+            dsp: self.dsp.as_ref().map(|dsp| dsp.borrow().capture_state()),
             gsu: self.gsu.as_ref().map(|gsu| gsu.borrow().capture_state()),
             sdd1: self.sdd1.as_ref().map(|sdd1| sdd1.borrow().capture_state()),
             pending_gpdma: self.pending_gpdma,
@@ -1268,6 +1354,9 @@ impl SnesSystemBus {
         // chip as it is.
         if let (Some(cx4), Some(cx4_state)) = (self.cx4.as_mut(), state.cx4.as_ref()) {
             cx4.restore_state(cx4_state)?;
+        }
+        if let (Some(dsp), Some(dsp_state)) = (self.dsp.as_mut(), state.dsp.as_ref()) {
+            dsp.get_mut().restore_state(dsp_state)?;
         }
         // As for the SA-1: a state without a GSU section (another cartridge, or saved before
         // Super FX support) leaves the GSU as it is.
@@ -1681,6 +1770,9 @@ impl SnesSystemBus {
         if let Some(cx4) = &mut self.cx4 {
             cx4.tick_master_clock();
         }
+        if let Some(dsp) = &mut self.dsp {
+            dsp.get_mut().tick_master_clock();
+        }
         // The GSU runs off the cartridge's copy of the 21.47 MHz master clock (fullsnes: 10.74
         // MHz or 21.4 MHz by CLSR), so it advances with every master clock, including the ones
         // DRAM refresh and DMA steal from the S-CPU.
@@ -1835,6 +1927,11 @@ impl SnesBus for SnesSystemBus {
             self.mdr.set(value);
             return value;
         }
+        if let Some(is_sr) = self.dsp_port(addr) {
+            let value = self.dsp_read(is_sr);
+            self.mdr.set(value);
+            return value;
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             let value = iram.borrow().read(offset);
             self.mdr.set(value);
@@ -1918,6 +2015,13 @@ impl SnesBus for SnesSystemBus {
             return;
         }
         if self.sdd1_write(addr, value) {
+            return;
+        }
+        if let Some(is_sr) = self.dsp_port(addr) {
+            // SR is read-only from the SNES side (Mesen2 `NecDsp::Write` ignores it).
+            if !is_sr && let Some(dsp) = self.dsp.as_mut() {
+                dsp.get_mut().write_dr(value);
+            }
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -2227,6 +2331,111 @@ mod tests {
         rom[base + 0x1E] = 0xCB;
         rom[base + 0x1F] = 0xED;
         Cartridge::from_bytes(&rom).expect("valid SA-1 test cartridge with BW-RAM")
+    }
+
+    /// A DSP-1 bus whose synthetic firmware sets SR's user flags to `$60`, outputs `$1234` on DR
+    /// and waits for the SNES to take it.
+    fn dsp_test_bus(hirom: bool) -> SnesSystemBus {
+        use crate::snes::upd77c25::asm::{DST_DR, DST_SR, JRQM, NOP, jp, ld};
+        use crate::snes::upd77c25::{DATA_WORDS, PROGRAM_WORDS};
+        let mut program = vec![NOP; PROGRAM_WORDS];
+        program[..3].copy_from_slice(&[ld(DST_SR, 0x6000), ld(DST_DR, 0x1234), jp(JRQM, 2)]);
+        let firmware = Upd77c25Firmware::from_words(program, vec![0; DATA_WORDS]);
+        let rom = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", hirom);
+        let mut bus = SnesSystemBus::new_with_options(
+            Cartridge::from_bytes(&rom).unwrap(),
+            &SnesBusOptions {
+                dsp_firmware: Some(Rc::new(firmware)),
+                ..SnesBusOptions::default()
+            },
+        );
+        for _ in 0..40 {
+            bus.tick_one_master_clock();
+        }
+        bus
+    }
+
+    #[test]
+    fn lorom_dsp_ports_at_30_3f_and_60_6f_with_a14_selecting_sr() {
+        let bus = dsp_test_bus(false);
+        // SR = RQM | USF1 | USF0 → high byte $E0, at A14 = 1, in both windows and mirrors.
+        for addr in [
+            0x30_C000, 0x3F_FFFF, 0xB0_C000, 0xBF_F123, 0x60_4000, 0x6F_7FFF, 0xE0_4000,
+        ] {
+            assert_eq!(bus.read(addr), 0xE0, "SR at {addr:06X}");
+        }
+        // DR at A14 = 0: the low byte, then the high byte.
+        assert_eq!(bus.read(0x30_8000), 0x34);
+        assert_eq!(bus.read(0x6F_3FFF), 0x12);
+        assert_eq!(
+            bus.read(0x30_C000) & 0x80,
+            0,
+            "RQM clears once both halves are read"
+        );
+        // Just outside the windows the bus decodes something else.
+        for addr in [
+            0x2F_C000, 0x40_C000, 0x30_7FFF, 0x5F_4000, 0x70_4000, 0x60_8000,
+        ] {
+            assert_eq!(bus.dsp_port(addr), None, "{addr:06X} is not a DSP port");
+        }
+    }
+
+    #[test]
+    fn hirom_dsp_ports_at_00_1f_6000_7fff_with_a12_selecting_sr() {
+        let bus = dsp_test_bus(true);
+        for addr in [0x00_7000, 0x1F_7FFF, 0x80_7000, 0x9F_7ABC] {
+            assert_eq!(bus.read(addr), 0xE0, "SR at {addr:06X}");
+        }
+        assert_eq!(bus.read(0x00_6000), 0x34);
+        assert_eq!(bus.read(0x1F_6FFF), 0x12);
+        for addr in [0x20_7000, 0x00_5FFF, 0x00_8000, 0xA0_6000, 0x30_C000] {
+            assert_eq!(bus.dsp_port(addr), None, "{addr:06X} is not a DSP port");
+        }
+    }
+
+    #[test]
+    fn snes_writes_reach_dr_and_sr_writes_are_ignored() {
+        let mut bus = dsp_test_bus(false);
+        bus.read(0x30_8000);
+        bus.read(0x30_8000);
+        bus.write(0x30_8000, 0xCD);
+        bus.write(0x30_8000, 0xAB);
+        bus.write(0x30_C000, 0xFF);
+        let dsp = bus.dsp.as_ref().unwrap().borrow();
+        assert_eq!(dsp.state.dr, 0xABCD);
+        assert_eq!(dsp.state.sr & 0x6000, 0x6000, "SR is read-only to the SNES");
+    }
+
+    #[test]
+    fn debugger_peek_of_dr_does_not_advance_the_transfer() {
+        let bus = dsp_test_bus(false);
+        assert_eq!(bus.read_for_debugger_impl(0x30_8000), 0x34);
+        assert_eq!(bus.read_for_debugger_impl(0x30_8000), 0x34);
+        assert_eq!(bus.read(0x30_8000), 0x34);
+    }
+
+    #[test]
+    fn dsp_cart_without_firmware_or_non_dsp_cart_has_no_ports() {
+        let rom = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", false);
+        let bus = SnesSystemBus::new(Cartridge::from_bytes(&rom).unwrap());
+        assert!(bus.dsp.is_none());
+        assert_eq!(bus.dsp_port(0x30_C000), None);
+    }
+
+    #[test]
+    fn dsp_state_in_snapshot_and_reset_keeps_ram() {
+        let mut bus = dsp_test_bus(false);
+        bus.dsp.as_mut().unwrap().get_mut().state.ram[7] = 0x7777;
+        let saved = bus.capture_state();
+        assert_eq!(saved.dsp.as_ref().map(|d| d.ram[7]), Some(0x7777));
+        bus.dsp.as_mut().unwrap().get_mut().state.ram[7] = 0;
+        bus.restore_state(&saved).unwrap();
+        assert_eq!(bus.dsp.as_ref().unwrap().borrow().state.ram[7], 0x7777);
+
+        bus.reset_dsp();
+        let dsp = bus.dsp.as_ref().unwrap().borrow();
+        assert_eq!((dsp.state.pc, dsp.state.sr), (0, 0));
+        assert_eq!(dsp.state.ram[7], 0x7777);
     }
 
     /// A 128 KB LoROM CX4 cartridge (chipset `$F3`, subtype `$10` as in Mega Man X2/X3) whose

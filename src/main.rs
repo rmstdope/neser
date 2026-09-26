@@ -16,6 +16,8 @@ use nes::console::{
 use platform::app_context::AppContext;
 use platform::autorun::AutorunFormat;
 use platform::debugging::log_info;
+#[cfg(feature = "native")]
+use platform::rom_loader::LaunchError;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -275,7 +277,15 @@ fn run_native_frontend(
 
     if let Some(rom_path) = rom_path {
         // ROM path provided via CLI — go straight to emulation (no return to browser).
-        run_native_emulator(app_context, &rom_path, None)
+        match run_native_emulator(app_context, &rom_path, None) {
+            Ok(()) => Ok(()),
+            Err(LaunchError::Firmware(problem)) => {
+                let game = platform::rom_loader::game_name(&rom_path);
+                eprintln!("{}", problem.cli_message(&game));
+                std::process::exit(1);
+            }
+            Err(LaunchError::Load(e) | LaunchError::Runtime(e)) => Err(e.into()),
+        }
     } else {
         // No ROM path — launch the ROM browser in a loop.
         // After emulation ends, return to the browser for another selection.
@@ -285,11 +295,18 @@ fn run_native_frontend(
             match browser.run(&mut event_loop)? {
                 BrowserResult::RomSelected(path) => {
                     let rom_path = path.to_string_lossy().to_string();
-                    // Run the emulator; when it exits, loop back to the browser.
-                    if let Err(e) =
-                        run_native_emulator(app_context.clone(), &rom_path, Some(&mut event_loop))
-                    {
-                        crate::platform::debugging::log_info(format!("Emulator error: {e}"));
+                    // Run the emulator; when it exits, loop back to the browser. A game that
+                    // could not start says why in the browser's strip; one that started clears
+                    // it.
+                    let result =
+                        run_native_emulator(app_context.clone(), &rom_path, Some(&mut event_loop));
+                    if let Err(e) = &result {
+                        crate::platform::debugging::log_info(format!("Emulator error: {e:?}"));
+                    }
+                    let game = platform::rom_loader::game_name(&rom_path);
+                    match result.err().and_then(|e| e.strip_lines(&game)) {
+                        Some(lines) => browser.set_launch_error(lines),
+                        None => browser.clear_launch_error(),
                     }
                 }
                 BrowserResult::Closed => return Ok(()),
@@ -304,9 +321,18 @@ fn run_native_emulator(
     app_context: Rc<RefCell<AppContext>>,
     rom_path: &str,
     event_loop: Option<&mut winit::event_loop::EventLoop<()>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), LaunchError> {
     use frontends::native::{NativeAudio, NativeEventLoop};
     use platform::audio::EmulatorAudio;
+
+    // A DSP-1 game without its firmware is refused before anything else (no audio device, no
+    // window), so the frontend can word the refusal for where the player is.
+    if let Ok(rom_bytes) = std::fs::read(rom_path)
+        && let Some(problem) =
+            platform::rom_loader::firmware_problem(&app_context, rom_path, &rom_bytes)
+    {
+        return Err(LaunchError::Firmware(problem));
+    }
 
     // Read autorun config up front
     let (
@@ -347,12 +373,14 @@ fn run_native_emulator(
     let audio = if !audio_enabled || headless {
         None
     } else {
-        let audio = NativeAudio::new(configured_sample_rate as i32, audio_buffer_ms)?;
+        let audio = NativeAudio::new(configured_sample_rate as i32, audio_buffer_ms)
+            .map_err(|e| LaunchError::Load(e.to_string()))?;
         audio_sample_rate = Some(audio.actual_sample_rate() as f32);
         Some(audio)
     };
 
-    let mut console = platform::rom_loader::load_console(&app_context, rom_path)?;
+    let mut console =
+        platform::rom_loader::load_console(&app_context, rom_path).map_err(LaunchError::Load)?;
 
     if let Some(actual_rate) = audio_sample_rate {
         console.set_audio_sample_rate(actual_rate);
@@ -366,14 +394,17 @@ fn run_native_emulator(
 
     // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
     if autorun_mode != platform::autorun::AutorunMode::None {
-        native_loop.init_autorun(
-            autorun_mode,
-            rom_path,
-            autorun_overwrite,
-            autorun_extend,
-            autorun_from_checkpoint,
-            autorun_format,
-        )?;
+        native_loop
+            .init_autorun(
+                autorun_mode,
+                rom_path,
+                autorun_overwrite,
+                autorun_extend,
+                autorun_from_checkpoint,
+                autorun_format,
+            )
+            // The event loop has not run yet, so to the game browser this is a failed start.
+            .map_err(|e| LaunchError::Load(e.to_string()))?;
     }
 
     let run_result = if let Some(el) = event_loop {
@@ -391,7 +422,7 @@ fn run_native_emulator(
         std::process::exit(exit_code);
     }
 
-    run_result.map_err(|e| e.into())
+    run_result.map_err(LaunchError::Runtime)
 }
 
 #[cfg(test)]

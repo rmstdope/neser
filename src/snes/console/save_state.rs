@@ -293,6 +293,10 @@ pub struct SnesBusState {
     /// existed (`#[serde(default)]` keeps those loadable).
     #[serde(default)]
     pub cx4: Option<Cx4State>,
+    /// The DSP-1's uPD77C25 (its firmware is not saved; it is read again at load). `None` for
+    /// other cartridges and for save states captured before DSP-1 support.
+    #[serde(default)]
+    pub dsp: Option<crate::snes::upd77c25::Upd77c25State>,
     /// The Super FX's whole state; `None` for other cartridges, and for save states captured
     /// before Super FX support existed (`#[serde(default)]` keeps those loadable).
     #[serde(default)]

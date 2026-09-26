@@ -73,6 +73,12 @@ pub const MAX_SIDEBAR_WIDTH: f32 = 420.0;
 /// Header bar height.
 pub const HEADER_HEIGHT: f32 = 48.0;
 
+/// Background of the strip that says why a game could not start.
+pub const STRIP_BG: Color32 = Color32::from_rgb(0x5A, 0x1D, 0x1D);
+
+/// Text and ✕ colour on that strip.
+pub const STRIP_TEXT: Color32 = Color32::from_rgb(0xF4, 0xE4, 0xE4);
+
 /// Smooth scroll speed (higher = faster, 1.0 = instant).
 pub const SCROLL_SPEED: f32 = 80.0;
 

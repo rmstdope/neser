@@ -13,7 +13,58 @@
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::emulator::{Console, SystemType};
 use crate::platform::frontend_toasts::cartridge_load_toast_message;
+use crate::snes::dsp1::{self, FirmwareProblem};
 use std::path::Path;
+
+/// Why a game launched from a desktop frontend did not run, sorted by what the player is told.
+#[derive(Debug)]
+pub enum LaunchError {
+    /// A DSP-1 game whose firmware is missing or invalid; the game never started.
+    Firmware(FirmwareProblem),
+    /// Any other failure before the game started (an unreadable file, an unsupported mapper,
+    /// an invalid GBA BIOS, no audio device...), carrying the existing error text.
+    Load(String),
+    /// The game started and then its run ended with an error.
+    Runtime(String),
+}
+
+impl LaunchError {
+    /// The game browser strip's two lines (the first bold) for `game`, or `None` when the game
+    /// did start and nothing is shown.
+    pub fn strip_lines(&self, game: &str) -> Option<(String, String)> {
+        match self {
+            Self::Firmware(problem) => Some(problem.strip_lines(game)),
+            Self::Load(text) => Some((format!("{game} can't start."), text.clone())),
+            Self::Runtime(_) => None,
+        }
+    }
+}
+
+/// The firmware problem that stops `rom_bytes` from starting, if it is a DSP-1 game whose
+/// firmware is not in the `snes-firmware-dir` folder; checked before a desktop launch so the
+/// refusal can be worded for where the player is. `Snes::load_rom` enforces the same rule for
+/// every other caller.
+pub fn firmware_problem(
+    app_context: &SharedAppContext,
+    rom_path: &str,
+    rom_bytes: &[u8],
+) -> Option<FirmwareProblem> {
+    if detect_system_type(rom_path) != SystemType::Snes {
+        return None;
+    }
+    let model = dsp1::identify_rom(rom_bytes).filter(|model| model.is_dsp1())?;
+    let dir = app_context.borrow().config().snes.resolved_firmware_dir();
+    dsp1::load_from_dir(&dir, model).err()
+}
+
+/// The name a message uses for a game: its ROM file name without the extension.
+pub fn game_name(rom_path: &str) -> String {
+    Path::new(rom_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(rom_path)
+        .to_string()
+}
 
 /// Detect the emulated system from a ROM path's file extension.
 ///
@@ -130,6 +181,80 @@ mod tests {
             ..Default::default()
         };
         Rc::new(RefCell::new(AppContext::new_with_config(config)))
+    }
+
+    fn app_context_with_firmware_dir(dir: &std::path::Path) -> SharedAppContext {
+        let context = make_app_context();
+        context.borrow_mut().config_mut().snes.firmware_dir =
+            Some(dir.to_string_lossy().into_owned());
+        context
+    }
+
+    #[test]
+    fn firmware_problem_preflight_detects_missing_dsp1_firmware() {
+        let dir = TempDir::new().unwrap();
+        let context = app_context_with_firmware_dir(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", false);
+        assert_eq!(
+            firmware_problem(&context, "Super Mario Kart (USA).sfc", &rom),
+            Some(FirmwareProblem::Missing {
+                folder: dir.path().to_path_buf()
+            })
+        );
+
+        std::fs::write(
+            dir.path().join("dsp1b.rom"),
+            vec![0u8; crate::snes::upd77c25::DSP_IMAGE_SIZE],
+        )
+        .unwrap();
+        assert_eq!(firmware_problem(&context, "mk.sfc", &rom), None);
+    }
+
+    #[test]
+    fn firmware_problem_ignores_other_games() {
+        let dir = TempDir::new().unwrap();
+        let context = app_context_with_firmware_dir(dir.path());
+        let dsp2 = crate::snes::test_support::dsp_rom(b"DUNGEON MASTER", false);
+        assert_eq!(firmware_problem(&context, "dm.sfc", &dsp2), None);
+        assert_eq!(
+            firmware_problem(&context, "plain.sfc", &minimal_snes_rom()),
+            None
+        );
+        let dsp1 = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", false);
+        assert_eq!(firmware_problem(&context, "not-snes.nes", &dsp1), None);
+    }
+
+    #[test]
+    fn game_name_strips_extension() {
+        assert_eq!(
+            game_name("/roms/Super Mario Kart (USA).sfc"),
+            "Super Mario Kart (USA)"
+        );
+        assert_eq!(game_name("Pilotwings.smc"), "Pilotwings");
+    }
+
+    #[test]
+    fn launch_error_strip_lines() {
+        let folder = std::path::PathBuf::from("/fw");
+        assert_eq!(
+            LaunchError::Firmware(FirmwareProblem::Missing {
+                folder: folder.clone()
+            })
+            .strip_lines("Super Mario Kart (USA)"),
+            Some(FirmwareProblem::Missing { folder }.strip_lines("Super Mario Kart (USA)"))
+        );
+        assert_eq!(
+            LaunchError::Load("Unsupported mapper: 5".to_string())
+                .strip_lines("Kirby's Adventure (Hack)"),
+            Some((
+                "Kirby's Adventure (Hack) can't start.".to_string(),
+                "Unsupported mapper: 5".to_string()
+            ))
+        );
+        assert_eq!(
+            LaunchError::Runtime("window lost".to_string()).strip_lines("x"),
+            None
+        );
     }
 
     /// Write `bytes` to a uniquely named file with `extension` inside `dir`.
