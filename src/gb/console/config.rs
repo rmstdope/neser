@@ -4,6 +4,7 @@
 //! emulated DMG hardware variant and hardware target selection.
 
 use crate::gb::model::{CgbModel, DmgModel, GbHardware};
+use crate::gb::ppu::GbPalette;
 use crate::platform::config::CliFlag;
 
 /// GB-specific CLI flags, defined here so that the GB module owns its flag
@@ -13,6 +14,11 @@ pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--gb-filter",
         help: Some("Game Boy shader filter: dmg or none"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--gb-palette",
+        help: Some("Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)"),
         has_value: true,
     },
     CliFlag {
@@ -56,6 +62,9 @@ pub struct GbConfig {
     /// Whether to show the boot ROM animation (logo + chime).
     /// Default is `false` (skip boot animation for faster startup).
     pub boot_animation: bool,
+    /// Shade palette for original Game Boy (DMG) games. `None` means the
+    /// player chose none, so the frontend picks the starting palette.
+    pub palette: Option<GbPalette>,
 }
 
 impl Default for GbConfig {
@@ -65,6 +74,7 @@ impl Default for GbConfig {
             cgb_variant: CgbModel::CgbE,
             hardware: None,
             boot_animation: false,
+            palette: None,
         }
     }
 }
@@ -97,6 +107,15 @@ impl GbConfig {
             self.hardware = Some(GbHardware::parse(&hardware).ok_or_else(|| {
                 format!(
                     "Invalid --gb-hardware value: '{hardware}'. Valid options are: {VALID_HARDWARE_TARGETS}",
+                )
+            })?);
+        }
+
+        if let Some(palette) = crate::platform::config::parse_cli_string_arg(args, "--gb-palette") {
+            self.palette = Some(GbPalette::from_config_id(&palette).ok_or_else(|| {
+                format!(
+                    "Invalid --gb-palette value: '{palette}'. Valid options are: {}",
+                    GbPalette::config_id_list()
                 )
             })?);
         }
@@ -135,6 +154,10 @@ impl GbConfig {
                     )
                 })?);
             }
+            "gb_palette" => match GbPalette::from_config_id(value) {
+                Some(palette) => self.palette = Some(palette),
+                None => eprintln!("{}", invalid_gb_palette_warning(value, self.palette)),
+            },
             "gb_boot_animation" => {
                 self.boot_animation = crate::platform::config::parse_bool(value)
                     .map_err(|_| {
@@ -149,6 +172,17 @@ impl GbConfig {
         }
         Ok(())
     }
+}
+
+/// The warning printed for an unknown `gb-palette` config-file value; `kept`
+/// is the palette already configured, if any.
+fn invalid_gb_palette_warning(value: &str, kept: Option<GbPalette>) -> String {
+    format!(
+        "Warning: invalid value '{value}' for 'gb-palette'; keeping default ('{}'). \
+         Valid values: {}",
+        kept.unwrap_or_default().config_id(),
+        GbPalette::config_id_list()
+    )
 }
 
 #[cfg(test)]
@@ -429,5 +463,87 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
         assert!(err_msg.contains("Invalid gb_boot_animation value"));
+    }
+
+    // ── gb-palette ─────────────────────────────────────────────────────
+
+    fn args(extra: &[&str]) -> Vec<String> {
+        std::iter::once("neser")
+            .chain(extra.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn test_gb_palette_is_unset_by_default() {
+        assert_eq!(GbConfig::default().palette, None);
+    }
+
+    #[test]
+    fn test_cli_gb_palette_valid_any_case() {
+        for (value, expected) in [
+            ("pocket", GbPalette::Pocket),
+            ("DMG-Green", GbPalette::DmgGreen),
+            ("gray", GbPalette::Grey),
+            ("LIGHT", GbPalette::Light),
+        ] {
+            let mut config = GbConfig::default();
+            config.apply_args(&args(&["--gb-palette", value])).unwrap();
+            assert_eq!(config.palette, Some(expected), "{value}");
+        }
+    }
+
+    #[test]
+    fn test_cli_gb_palette_invalid_is_the_agreed_error() {
+        let mut config = GbConfig::default();
+        assert_eq!(
+            config.apply_args(&args(&["--gb-palette", "bogus"])),
+            Err("Invalid --gb-palette value: 'bogus'. Valid options are: grey, dmg-green, pocket, light".to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_gb_palette_valid() {
+        let mut config = GbConfig::default();
+        config.apply_config_value("gb-palette", "Pocket").unwrap();
+        assert_eq!(config.palette, Some(GbPalette::Pocket));
+    }
+
+    #[test]
+    fn test_config_file_gb_palette_invalid_keeps_previous_value() {
+        let mut config = GbConfig::default();
+        config.apply_config_value("gb-palette", "light").unwrap();
+        config.apply_config_value("gb-palette", "bogus").unwrap();
+        assert_eq!(config.palette, Some(GbPalette::Light));
+
+        let mut unset = GbConfig::default();
+        unset.apply_config_value("gb-palette", "bogus").unwrap();
+        assert_eq!(unset.palette, None);
+    }
+
+    #[test]
+    fn test_config_file_gb_palette_warning_is_the_agreed_text() {
+        assert_eq!(
+            invalid_gb_palette_warning("bogus", None),
+            "Warning: invalid value 'bogus' for 'gb-palette'; keeping default ('grey'). \
+             Valid values: grey, dmg-green, pocket, light"
+        );
+        assert!(
+            invalid_gb_palette_warning("bogus", Some(GbPalette::Pocket))
+                .contains("keeping default ('pocket')")
+        );
+    }
+
+    #[test]
+    fn test_gb_palette_flag_help_is_the_agreed_line() {
+        let flag = GB_CLI_FLAGS
+            .iter()
+            .find(|f| f.flag == "--gb-palette")
+            .expect("--gb-palette flag");
+        assert!(flag.has_value);
+        assert_eq!(
+            flag.help,
+            Some("Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)")
+        );
     }
 }
