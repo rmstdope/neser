@@ -8,6 +8,7 @@ use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity, SnesSa1State};
 use crate::snes::cx4::Cx4;
 use crate::snes::input::{InputPorts, SnesButton};
+use crate::snes::obc1;
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
 use crate::snes::sa1::{
     self, Sa1Arithmetic, Sa1ControlRegisters, Sa1Core, Sa1IRam, Sa1MemoryControl,
@@ -107,6 +108,9 @@ pub struct SnesSystemBus {
     /// The Capcom CX4 coprocessor, mapped at `$00-$3F/$80-$BF:$6000-$7FFF`. `None` for
     /// cartridges without one.
     cx4: Option<Cx4>,
+    /// Whether this cartridge has an OBC1 (Metal Combat: Falcon's Revenge), whose ports and
+    /// SRAM answer at `$00-$3F/$80-$BF:$6000-$7FFF`. The chip keeps its registers in `sram`.
+    obc1: bool,
     /// Every `(b_addr, value)` pair a DMA/HDMA A->B transfer has driven onto the
     /// B-bus, in order. Test-only instrument: it observes what the controller
     /// actually wrote, which is what the transfer tests are about, and replaces
@@ -192,6 +196,7 @@ impl SnesSystemBus {
             };
         let cx4 = (cartridge.enhancement_chip() == Some(EnhancementChip::Cx4))
             .then(|| Cx4::new(Rc::clone(&rom), video_region));
+        let obc1 = cartridge.enhancement_chip() == Some(EnhancementChip::Obc1);
         let mut bus = Self {
             _cartridge: cartridge,
             mapping,
@@ -220,6 +225,7 @@ impl SnesSystemBus {
             sa1_memory_control,
             sa1_core,
             cx4,
+            obc1,
             #[cfg(test)]
             b_bus_writes: RefCell::new(Vec::new()),
         };
@@ -291,6 +297,19 @@ impl SnesSystemBus {
         self.cx4.as_ref()?;
         let offset = Self::decode_system_offset(addr)?;
         (0x6000..=0x7FFF).contains(&offset).then_some(offset)
+    }
+
+    /// The OBC1's offset (`addr & 0x1FFF`) for `addr` when this cartridge has one with SRAM and
+    /// `addr` is in its window, `$00-$3F/$80-$BF:$6000-$7FFF` (fullsnes "SNES Cart OBC1": "bytes
+    /// at 6000h..7FFFh contain 8Kbyte battery-backed SRAM"; the banks follow Mesen2 `Obc1.cpp`).
+    fn obc1_offset(&self, addr: u32) -> Option<u16> {
+        if !self.obc1 || self.sram.borrow().is_empty() {
+            return None;
+        }
+        let offset = Self::decode_system_offset(addr)?;
+        (0x6000..=0x7FFF)
+            .contains(&offset)
+            .then_some(offset & 0x1FFF)
     }
 
     /// Whether the SA-1 is currently held in reset via CCNT.5. `false` for a
@@ -525,6 +544,9 @@ impl SnesSystemBus {
         if let (Some(cx4), Some(offset)) = (&self.cx4, self.cx4_offset(addr)) {
             return cx4.read(offset);
         }
+        if let Some(offset) = self.obc1_offset(addr) {
+            return obc1::read(&self.sram.borrow(), offset);
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             return iram.borrow().read(offset);
         }
@@ -567,6 +589,9 @@ impl SnesSystemBus {
 
         if let (Some(cx4), Some(offset)) = (&self.cx4, self.cx4_offset(addr)) {
             return cx4.read(offset);
+        }
+        if let Some(offset) = self.obc1_offset(addr) {
+            return obc1::read(&self.sram.borrow(), offset);
         }
 
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -617,6 +642,10 @@ impl SnesSystemBus {
             if let Some(cx4) = self.cx4.as_mut() {
                 cx4.write(offset, value);
             }
+            return;
+        }
+        if let Some(offset) = self.obc1_offset(addr) {
+            obc1::write(&mut self.sram.borrow_mut(), offset, value);
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -1637,6 +1666,11 @@ impl SnesBus for SnesSystemBus {
             self.mdr.set(value);
             return value;
         }
+        if let Some(offset) = self.obc1_offset(addr) {
+            let value = obc1::read(&self.sram.borrow(), offset);
+            self.mdr.set(value);
+            return value;
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             let value = iram.borrow().read(offset);
             self.mdr.set(value);
@@ -1704,6 +1738,10 @@ impl SnesBus for SnesSystemBus {
             if let Some(cx4) = self.cx4.as_mut() {
                 cx4.write(offset, value);
             }
+            return;
+        }
+        if let Some(offset) = self.obc1_offset(addr) {
+            obc1::write(&mut self.sram.borrow_mut(), offset, value);
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -2155,6 +2193,75 @@ mod tests {
         assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x40);
         bus.reset_cx4();
         assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x00, "a reset stops the CX4");
+    }
+
+    /// A 128 KB LoROM OBC1 cartridge with the Metal Combat header: chipset `$25` (ROM + RAM +
+    /// battery + OBC1) and 8 KiB SRAM.
+    fn obc1_test_cart() -> Cartridge {
+        let mut rom = vec![0u8; 0x20000];
+        let base = 0x7FC0;
+        rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
+        rom[base + 0x15] = 0x20;
+        rom[base + 0x16] = 0x25; // ROM + RAM + battery + OBC1
+        rom[base + 0x17] = 0x07;
+        rom[base + 0x18] = 0x03; // 8 KiB SRAM
+        Cartridge::from_bytes(&rom).expect("valid OBC1 test cartridge")
+    }
+
+    #[test]
+    fn obc1_cart_maps_ports_and_sram_at_6000_7fff_of_every_system_bank() {
+        let mut bus = SnesSystemBus::new(obc1_test_cart());
+        bus.write(0x00_6005, 0x42);
+        assert_eq!(bus.read(0x80_6005), 0x42, "SRAM mirrors into the $80 banks");
+        assert_eq!(bus.read_for_debugger(0x3F_6005), 0x42);
+        bus.write(0x00_7FF6, 5); // object 5, base $7C00
+        bus.write(0xBF_7FF1, 0x99);
+        assert_eq!(
+            bus.read(0x00_7C15),
+            0x99,
+            "Yloc of object 5 at $7C00 + 5*4 + 1"
+        );
+        assert_eq!(bus.read(0x00_7FF1), 0x99, "the port reads it back");
+        bus.read(0x00_8000);
+        assert_eq!(bus.read(0x40_6005), bus.mdr.get(), "not in banks $40-$6F");
+    }
+
+    #[test]
+    fn obc1_sram_is_shared_with_the_70_window() {
+        let mut bus = SnesSystemBus::new(obc1_test_cart());
+        bus.write(0x00_7FF6, 1);
+        bus.write(0x00_7FF0, 0x5A);
+        assert_eq!(bus.read(0x70_1C04), 0x5A);
+        bus.write(0x70_0010, 0x77);
+        assert_eq!(bus.read(0x00_6010), 0x77);
+    }
+
+    #[test]
+    fn dma_reaches_obc1_over_the_a_bus() {
+        let mut bus = SnesSystemBus::new(obc1_test_cart());
+        bus.dma_write_a_bus(0x00_7FF6, 2);
+        bus.dma_write_a_bus(0x00_7FF2, 0x3C);
+        assert_eq!(
+            bus.read(0x00_7C0A),
+            0x3C,
+            "Tile of object 2, written through the port"
+        );
+        assert_eq!(bus.dma_read_a_bus(0x00_7FF2, 0x00), 0x3C);
+    }
+
+    #[test]
+    fn obc1_registers_survive_a_save_state() {
+        let mut bus = SnesSystemBus::new(obc1_test_cart());
+        bus.write(0x00_7FF5, 0x01); // base $7800
+        bus.write(0x00_7FF6, 3);
+        let saved = bus.capture_state();
+
+        let mut restored = SnesSystemBus::new(obc1_test_cart());
+        restored.restore_state(&saved).expect("restore");
+        restored.write(0x00_7FF3, 0xE1);
+        assert_eq!(restored.read(0x00_780F), 0xE1, "Attr of object 3 at $7800");
     }
 
     fn lorom_cart_with_battery_sram() -> Cartridge {

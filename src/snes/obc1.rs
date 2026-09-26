@@ -91,7 +91,12 @@ mod tests {
     fn oam_ports_address_base_plus_index_times_four() {
         let mut ram = sram();
         write(&mut ram, INDEX, 5);
-        for (port, value) in [(0x1FF0, 0x11), (0x1FF1, 0x22), (0x1FF2, 0x33), (0x1FF3, 0x44)] {
+        for (port, value) in [
+            (0x1FF0, 0x11),
+            (0x1FF1, 0x22),
+            (0x1FF2, 0x33),
+            (0x1FF3, 0x44),
+        ] {
             write(&mut ram, port, value);
         }
         // Base bit 0 clear: $7C00, i.e. SRAM offset $1C00; object 5 at +$14.
