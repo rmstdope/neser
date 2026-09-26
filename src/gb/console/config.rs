@@ -3,6 +3,7 @@
 //! [`GbConfig`] holds Game Boy-specific configuration options such as the
 //! emulated DMG hardware variant and hardware target selection.
 
+use crate::gb::compat_palettes::GbcPalette;
 use crate::gb::model::{CgbModel, DmgModel, GbHardware};
 use crate::gb::ppu::GbPalette;
 use crate::platform::config::CliFlag;
@@ -19,6 +20,13 @@ pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--gb-palette",
         help: Some("Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--gbc-palette",
+        help: Some(
+            "Colour palette for original Game Boy games on a Game Boy Color: auto, brown, red, \u{2026} (default: auto)",
+        ),
         has_value: true,
     },
     CliFlag {
@@ -72,6 +80,9 @@ pub struct GbConfig {
     /// Shade palette for original Game Boy (DMG) games. `None` means the
     /// player chose none, so the frontend picks the starting palette.
     pub palette: Option<GbPalette>,
+    /// Palette for original Game Boy (DMG) games running on Game Boy Color
+    /// hardware. `Auto` is the boot ROM's own pick.
+    pub gbc_palette: GbcPalette,
     /// When true, everything the CGB shows in colour is displayed with the
     /// CGB-LCD colour correction (see `gb::ppu::rendering::cgb_lcd_correct`).
     /// A display choice only: not part of save states. Default: `false`
@@ -87,6 +98,7 @@ impl Default for GbConfig {
             hardware: None,
             boot_animation: false,
             palette: None,
+            gbc_palette: GbcPalette::Auto,
             cgb_color_correction: false,
         }
     }
@@ -133,6 +145,16 @@ impl GbConfig {
             })?);
         }
 
+        if let Some(palette) = crate::platform::config::parse_cli_string_arg(args, "--gbc-palette")
+        {
+            self.gbc_palette = GbcPalette::from_config_id(&palette).ok_or_else(|| {
+                format!(
+                    "Invalid --gbc-palette value: '{palette}'. Valid options are: {}",
+                    GbcPalette::config_id_list()
+                )
+            })?;
+        }
+
         if let Some(val) = crate::platform::config::parse_bool_arg(args, "--gb-boot-animation")? {
             self.boot_animation = val;
         }
@@ -163,7 +185,8 @@ impl GbConfig {
     /// Apply a config file key-value pair to this config.
     ///
     /// Accepts `gb-dmg-variant`, `gb-cgb-variant`, `gb-hardware`,
-    /// `gb-boot-animation` and `cgb-color-correction` keys.
+    /// `gb-boot-animation`, `gb-palette`, `gbc-palette` and
+    /// `cgb-color-correction` keys.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {
@@ -191,6 +214,10 @@ impl GbConfig {
             "gb_palette" => match GbPalette::from_config_id(value) {
                 Some(palette) => self.palette = Some(palette),
                 None => eprintln!("{}", invalid_gb_palette_warning(value, self.palette)),
+            },
+            "gbc_palette" => match GbcPalette::from_config_id(value) {
+                Some(palette) => self.gbc_palette = palette,
+                None => eprintln!("{}", invalid_gbc_palette_warning(value)),
             },
             "gb_boot_animation" => {
                 self.boot_animation = crate::platform::config::parse_bool(value)
@@ -220,6 +247,16 @@ fn invalid_gb_palette_warning(value: &str, kept: Option<GbPalette>) -> String {
          Valid values: {}",
         kept.unwrap_or_default().config_id(),
         GbPalette::config_id_list()
+    )
+}
+
+/// The warning printed for an unknown `gbc-palette` config-file value.
+fn invalid_gbc_palette_warning(value: &str) -> String {
+    format!(
+        "Warning: invalid value '{value}' for 'gbc-palette'; keeping default ('{}'). \
+         Valid values: {}",
+        GbcPalette::default().config_id(),
+        GbcPalette::config_id_list()
     )
 }
 
@@ -582,6 +619,79 @@ mod tests {
         assert_eq!(
             flag.help,
             Some("Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)")
+        );
+    }
+
+    // ── gbc-palette ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_gbc_palette_is_auto_by_default() {
+        assert_eq!(GbConfig::default().gbc_palette, GbcPalette::Auto);
+    }
+
+    #[test]
+    fn test_cli_gbc_palette_valid_any_case() {
+        for (value, expected) in [
+            ("red", GbcPalette::Red),
+            ("Dark-Green", GbcPalette::DarkGreen),
+            ("GREYSCALE", GbcPalette::Grayscale),
+            ("auto", GbcPalette::Auto),
+        ] {
+            let mut config = GbConfig::default();
+            config.apply_args(&args(&["--gbc-palette", value])).unwrap();
+            assert_eq!(config.gbc_palette, expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn test_cli_gbc_palette_invalid_is_the_agreed_error() {
+        let mut config = GbConfig::default();
+        assert_eq!(
+            config.apply_args(&args(&["--gbc-palette", "bogus"])),
+            Err("Invalid --gbc-palette value: 'bogus'. Valid options are: auto, brown, red, \
+                 dark-brown, blue, dark-blue, grayscale, pastel-mix, orange, yellow, green, \
+                 dark-green, reverse"
+                .to_string())
+        );
+    }
+
+    #[test]
+    fn test_config_file_gbc_palette_valid() {
+        let mut config = GbConfig::default();
+        config.apply_config_value("gbc-palette", "Pastel-Mix").unwrap();
+        assert_eq!(config.gbc_palette, GbcPalette::PastelMix);
+    }
+
+    #[test]
+    fn test_config_file_gbc_palette_invalid_keeps_auto() {
+        let mut config = GbConfig::default();
+        config.apply_config_value("gbc-palette", "bogus").unwrap();
+        assert_eq!(config.gbc_palette, GbcPalette::Auto);
+    }
+
+    #[test]
+    fn test_config_file_gbc_palette_warning_is_the_agreed_text() {
+        assert_eq!(
+            invalid_gbc_palette_warning("bogus"),
+            "Warning: invalid value 'bogus' for 'gbc-palette'; keeping default ('auto'). \
+             Valid values: auto, brown, red, dark-brown, blue, dark-blue, grayscale, \
+             pastel-mix, orange, yellow, green, dark-green, reverse"
+        );
+    }
+
+    #[test]
+    fn test_gbc_palette_flag_help_is_the_agreed_line() {
+        let flag = GB_CLI_FLAGS
+            .iter()
+            .find(|f| f.flag == "--gbc-palette")
+            .expect("--gbc-palette flag");
+        assert!(flag.has_value);
+        assert_eq!(
+            flag.help,
+            Some(
+                "Colour palette for original Game Boy games on a Game Boy Color: \
+                 auto, brown, red, \u{2026} (default: auto)"
+            )
         );
     }
 
