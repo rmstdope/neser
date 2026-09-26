@@ -108,7 +108,9 @@ fn mapping_mode_matches(map_mode: u8, mapping: Mapping) -> bool {
     }
     let mode_nibble = map_mode & 0x0F;
     match mapping {
-        Mapping::LoRom => mode_nibble == 0x0,
+        // fullsnes "Cartridge Header": 2 = "LoROM/32K Banks + S-DD1" (the S-DD1 then maps
+        // the cartridge itself; see `crate::snes::sdd1`).
+        Mapping::LoRom => matches!(mode_nibble, 0x0 | 0x2),
         Mapping::HiRom => mode_nibble == 0x1,
         Mapping::ExHiRom => mode_nibble == 0x5,
     }

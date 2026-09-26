@@ -253,6 +253,21 @@ mod tests {
         assert_eq!(cart.rom()[0], 0x55);
     }
 
+    /// Street Fighter Alpha 2 carries the same header at $7FC0 and $FFC0, map mode $32.
+    /// fullsnes "Cartridge Header": map mode 2 is "LoROM/32K Banks + S-DD1", so the LoROM
+    /// candidate must win rather than the HiROM tie-break.
+    #[test]
+    fn from_bytes_detects_sdd1_map_mode_32_as_lorom_when_both_headers_match() {
+        let mut rom = vec![0u8; 0x20000];
+        for base in [0x7FC0, 0xFFC0] {
+            write_header(&mut rom, base, 0x32, 0x43, 0x00, b"SDD1 TEST           ");
+        }
+
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.mapping(), Mapping::LoRom);
+        assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::Sdd1));
+    }
+
     #[test]
     fn from_bytes_detects_hirom_mapping() {
         let mut rom = vec![0u8; 0x20000];

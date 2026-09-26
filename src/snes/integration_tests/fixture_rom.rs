@@ -117,6 +117,13 @@ impl FixtureRom {
         self.rom[HEADER + 0x18] = 0x03;
     }
 
+    /// Marks this fixture as an S-DD1 cartridge: map mode `$32` ("LoROM/32K Banks + S-DD1",
+    /// fullsnes "Cartridge Header") and chipset `$43` (ROM + S-DD1).
+    pub(crate) fn sdd1_chipset(&mut self) {
+        self.rom[HEADER + 0x15] = 0x32;
+        self.rom[HEADER + 0x16] = 0x43;
+    }
+
     /// Writes `bytes` into the second 32 KiB bank (LoROM `$01:8000-$01:FFFF`, file offset
     /// `$8000 + offset`), which no emitted program or header touches: room for data another
     /// processor reads, such as a CX4 program.
