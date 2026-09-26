@@ -1309,7 +1309,9 @@ function save(fname, data)
     return false
 end
 
-function onEndFrame()
+-- startFrame, not endFrame: Mesen2 raises EndFrame before the PPU sends the frame it
+-- has just rendered, so a screenshot there is the previous frame (nr-mxn).
+function onStartFrame()
     frame = frame + 1
     
     if frame == targetFrame then
@@ -1325,7 +1327,7 @@ function onEndFrame()
     end
 end
 
-emu.addEventCallback(onEndFrame, emu.eventType.endFrame)
+emu.addEventCallback(onStartFrame, emu.eventType.startFrame)
 ```
 
 **Running the script:**
@@ -1355,6 +1357,15 @@ kill $MESEN_PID
 
 The same script, parameterised by `CAPTURE_FRAME` and `CAPTURE_OUT`, is committed as
 `scripts/reference_capture/mesen2_capture.lua`; prefer it over pasting the pattern above.
+
+**Capture on `startFrame`, never `endFrame` (from nr-mxn).** Mesen2 raises `EndFrame`
+before the PPU sends the frame it has just rendered (`SnesPpu.cpp`, `NesPpu.cpp`:
+`ProcessEvent(EventType::EndFrame)`, then `SendFrame()`), so a screenshot taken on the
+N-th `endFrame` is frame N-1 and makes NESER look one frame ahead. The committed script
+used `endFrame` until nr-mxn; a lead of one frame measured with it before then (Mega Man
+X2/X3 in nr-ve3, and one of Street Fighter Alpha 2's two frames in nr-phv) is the
+script, not NESER. On static screens the two events give the same image, so only
+animated content shows the difference.
 
 (ares is not used for screenshot capture — it has no scripting support and is
 a source-code reference only; see step 9 of the Instructions.)

@@ -7,7 +7,9 @@ matched pixel-for-pixel through `python -m scripts.diff_screenshots`
 (NES: blargg_ppu_tests power_up_palette frame 120 with --nes-palette mesen; GB:
 dmg-acid2 after 10 s; CGB: cgb-acid2 after 10 s, both against the SameBoy tester the
 recipe builds, with colour correction disabled (see "Colour: DMG and CGB"); GBA: mGBA
-suite frame 300, and every frame from 1 to 120 but 9 with `--skip-bios-intro`).
+suite frame 300, and every frame from 1 to 120 but 9 with `--skip-bios-intro`). The
+Mesen2 recipe was re-verified on animated NES and SNES content on 2026-09-26 (nr-mxn; see
+"Frame numbering" under Mesen2).
 
 | System | Reference | Tool | Frame-exact |
 |---|---|---|---|
@@ -62,8 +64,19 @@ frame. `CAPTURE_OUT` must be absolute. The script prints `SAVED <path>` and stop
 emulator; the whole run takes well under a second. The stdout log also lists the mapper,
 CRCs and any uninitialised-memory reads, which is useful in itself.
 
-Frame numbering: the script counts `endFrame` events from power-on, so `CAPTURE_FRAME=N`
-is the N-th emulated frame, the same count as NESER's `--frames N`.
+Frame numbering: the script counts `startFrame` events from power-on and takes the
+screenshot there, so `CAPTURE_FRAME=N` is the N-th emulated frame, the same frame as
+NESER's `--frames N`. It must not be `endFrame`: Mesen2 raises that event before the PPU
+sends the frame it has just rendered (`SnesPpu.cpp` and `NesPpu.cpp` call
+`ProcessEvent(EndFrame)` before `SendFrame()`), so a screenshot taken there is frame N-1.
+A static screen cannot show that offset; until nr-mxn the script used `endFrame` and the
+recipe had only been checked on static frames. Verified 2026-09-26 on animated content,
+NESER N against capture N at 0 px and against N±1 not:
+`undisbeliever-ppu-window/window-precalculated-single.sfc` (SNES) and
+`nmi_sync/demo_ntsc.nes` (NES, which alternates two images each frame) at frames 61, 120,
+300 and 601. `python -m unittest scripts.test_mesen2_capture` repeats that check; it
+needs Mesen2 and a release NESER build, is skipped without them, and leaves
+`AllowIoOsAccess` alone.
 
 ## SameBoy (GB and CGB)
 
