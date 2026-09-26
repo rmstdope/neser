@@ -1,0 +1,105 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>DSP-2 Firmware</title><style>
+:root{--bg:#f6f6f4;--fg:#1d1d1f;--mut:#666;--card:#fff;--line:#ddd;--warn:#b3261e;--acc:#2a6df4}
+@media (prefers-color-scheme:dark){:root{--bg:#18181a;--fg:#eee;--mut:#aaa;--card:#232326;--line:#3a3a3e;--warn:#ff8a80;--acc:#8ab4ff}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px;max-width:900px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:24px 0 6px}.sub{color:var(--mut);margin:0 0 16px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin:0 0 14px;overflow-x:auto}
+pre{margin:0;font:13px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+.win{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#111;color:#eee;max-width:640px}
+.bar{background:#2b2b2e;color:#ccc;font-size:12px;padding:6px 10px}
+.screen{position:relative;aspect-ratio:256/224;background:#000;display:flex;align-items:center;justify-content:center}
+.toast{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:6px 8px;font-size:13px;white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px}.cell{background:#333;aspect-ratio:3/4;border-radius:4px;font-size:11px;padding:4px;color:#bbb}
+.banner{background:#4a1f1c;color:#ffd7d2;padding:10px 12px;font-size:13px;border-bottom:1px solid #7a2f2a;display:flex;gap:10px;align-items:flex-start}
+.banner b{color:#fff}.x{margin-left:auto;cursor:pointer;opacity:.8}
+.cost{color:var(--mut);font-size:14px}.rec{display:inline-block;background:var(--acc);color:#fff;border-radius:4px;padding:0 6px;font-size:12px;margin-left:6px}
+.web{border:1px solid var(--line);border-radius:10px;background:#1b1b1d;color:#ddd;max-width:640px;overflow:hidden}
+.web .top{padding:8px 10px;font-size:13px;display:flex;gap:8px;align-items:center;border-bottom:1px solid #333}
+.btn{background:#3a3a3e;border:1px solid #555;border-radius:6px;padding:3px 10px;font-size:13px;color:#eee}
+.btn.p{background:#2a6df4;border-color:#2a6df4}
+.status{padding:6px 10px;font-size:13px}.red{color:#f88}
+.dlg{position:absolute;inset:0;background:#000a;display:flex;align-items:center;justify-content:center}
+.dlg>div{background:#2b2b2e;border-radius:10px;padding:16px;max-width:380px;font-size:14px;color:#eee}
+.wtoast{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);background:#222e;border-radius:8px;padding:8px 12px;font-size:13px;max-width:420px;color:#fff}
+code{font:13px ui-monospace,Menlo,monospace}
+.side{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;max-width:640px;background:#1b1b1d;color:#ddd;font-size:13px}
+.sb{width:230px;padding:10px;display:flex;flex-direction:column;gap:6px;border-right:1px solid #333}
+.field{background:#2b2b2e;border-radius:4px;padding:3px 6px}.main{flex:1;display:flex;align-items:center;justify-content:center;color:#777}
+.fw{border:1px solid #444;border-radius:6px;padding:6px 8px}.ok{color:#9d9}.row{display:flex;align-items:center;gap:6px;margin-top:4px}.row span:first-child{flex:1}
+@media (max-width:520px){.side{flex-direction:column}.sb{width:auto;border-right:0}}
+</style><body>
+<h1 style='font-size:26px'>SNES DSP-2 firmware — agreed</h1><p class=sub>Dungeon Master (DSP-2) follows everything agreed for DSP-1 (docs/ui/nr-auv-dsp1-firmware.html), plus: a per-chip sidebar in the browser version, and a check that the file really is the right chip's firmware — applied to every chip.</p>
+<section style='margin:0 0 40px;padding-top:12px;border-top:1px solid var(--line)'>
+<h1>Option A — one row per chip, each with its own Replace… and Forget</h1>
+<p class=sub>Browser version. Once a DSP-2 file is stored alongside DSP-1, the “SNES firmware” block lists each stored chip on its own row. Each row has its own buttons, so forgetting a bad DSP-2 file leaves the DSP-1 file alone. Chips with nothing stored are not listed. When the last row is forgotten, the block disappears (as agreed for DSP-1).  — it is how browser emulators list BIOS files, and it scales to DSP-3, DSP-4 and the rest.</p>
+<h2>Only DSP-2 stored</h2><div class=side><div class=sb><b>ROM</b><span class=field>ROM file: Choose file…</span><span class=field>Select ROM from server ▾</span><div class=fw><b>SNES firmware</b><div class=row><span class=ok>DSP-2: stored ✓</span><span class=btn>Replace…</span><span class=btn>Forget</span></div></div><span class='btn' style='background:#2d7a3a;text-align:center'>Start</span></div><div class=main>(no game running)</div></div>
+<h2>DSP-1 and DSP-2 stored</h2><div class=side><div class=sb><b>ROM</b><span class=field>ROM file: Choose file…</span><span class=field>Select ROM from server ▾</span><div class=fw><b>SNES firmware</b><div class=row><span class=ok>DSP-1: stored ✓</span><span class=btn>Replace…</span><span class=btn>Forget</span></div><div class=row><span class=ok>DSP-2: stored ✓</span><span class=btn>Replace…</span><span class=btn>Forget</span></div></div><span class='btn' style='background:#2d7a3a;text-align:center'>Start</span></div><div class=main>(no game running)</div></div>
+<p class=cost><b>Cost:</b> the block grows by one line per chip; with all six chips stored it is six rows tall in a sidebar that already scrolls.</p>
+</section>
+<section style='margin:0 0 40px;padding-top:12px;border-top:1px solid var(--line)'>
+<h1>Option B — recognise the real firmware and refuse anything else</h1>
+<p class=sub>Neser knows the fingerprint of the genuine DSP-2 firmware. A file of the right size that is not it is refused with its own message, on the desktop strip, on the command line and in the browser dialog. The same check would then be added to DSP-1, changing what was agreed there (it only checked size).</p>
+<h2>Desktop — game browser strip</h2>
+<div class=win><div class=bar>Neser — Game browser</div><div class=banner><div><b>Dungeon Master (Japan) can’t start: the DSP-2 firmware isn’t valid.</b><br><code>/Users/henrik/.neser/firmware/dsp2.rom</code> is not the DSP-2 firmware (it may be the firmware of a different chip).</div><span class=x>✕</span></div><div class=grid><div class='cell sel'>Dungeon Master (Japan)</div><div class=cell>Super Mario Kart (USA)</div><div class=cell>Pilotwings (USA)</div><div class=cell>F-Zero (USA)</div></div></div>
+<h2>Command line</h2><div class=box><pre>Error: /Users/henrik/.neser/firmware/dsp2.rom is not valid SNES DSP-2 firmware: it is not the DSP-2 firmware (it may be the firmware of a different chip).</pre></div>
+<h2>Browser dialog (stays open)</h2>
+<div class=web><div class=screen><div class=dlg><div><b>That isn’t a DSP-2 firmware file</b><p style='margin:8px 0;color:#f88'>“dsp1b.rom” is 8 KB but is not the DSP-2 firmware.</p><div style='display:flex;gap:8px;justify-content:flex-end'><span class=btn>Cancel</span><span class='btn p'>Choose file…</span></div></div></div></div></div>
+<p class=cost><b>Cost:</b> three new messages, the DSP-1 agreement reopened, and a legitimately different dump (a rare alternative revision) would be refused.</p>
+</section>
+<section style='margin:0 0 40px;padding-top:12px;border-top:1px solid var(--line)'>
+<h1>Option A — DSP-1 gets the same check, so every chip behaves alike</h1>
+<p class=sub>Every word a player reads for DSP-2, exactly as it would ship. With this option, the DSP-1 messages also get a “right size, wrong file” line (the same wording with DSP-1 and dsp1b.rom), and the settings file says so for every chip.  — a player sees the same behaviour whichever chip their game uses.</p>
+<h2>Settings file (the SNES firmware block, updated)</h2>
+<div class=box><pre># Folder holding SNES coprocessor firmware files.
+# Some SNES cartridges carry a math chip (DSP-1, DSP-2) whose program is
+# stored in the chip itself. Game dumps do not contain it, and NESER cannot
+# include it, so these games need a firmware file you supply, placed in this
+# folder under its usual name:
+#   dsp1b.rom  - DSP-1B (Super Mario Kart, Pilotwings, and most DSP-1 games)
+#   dsp1.rom   - original DSP-1 (used instead of dsp1b.rom when present and
+#                the game was built for the original chip)
+#   dsp2.rom   - DSP-2 (Dungeon Master)
+# Each file must be the genuine firmware for its chip, exactly 8192 bytes.
+# Default: ~/.neser/firmware
+#snes-firmware-dir=/absolute/path/to/firmware</pre></div>
+<h2>DSP-1 — the new line (strip / command line / browser)</h2>
+<div class=box><pre>&lt;folder&gt;/dsp1b.rom is not the DSP-1 firmware (it may be the firmware of a different chip).
+Error: &lt;folder&gt;/dsp1b.rom is not valid SNES DSP-1 firmware: it is not the DSP-1 firmware (it may be the firmware of a different chip).
+“dsp2.rom” is 8 KB but is not the DSP-1 firmware.</pre></div>
+<h2>Desktop — game browser strip, firmware missing</h2>
+<div class=box><pre><b>&lt;game&gt; can’t start: it needs the DSP-2 firmware.</b>
+Put dsp2.rom in &lt;folder&gt; and try again.</pre></div>
+<h2>Desktop — strip, file is the wrong size</h2>
+<div class=box><pre><b>&lt;game&gt; can’t start: the DSP-2 firmware isn’t valid.</b>
+&lt;folder&gt;/dsp2.rom is 12,288 bytes; it must be exactly 8,192 bytes.</pre></div>
+<h2>Desktop — strip, right size but not the DSP-2 firmware</h2>
+<div class=box><pre><b>&lt;game&gt; can’t start: the DSP-2 firmware isn’t valid.</b>
+&lt;folder&gt;/dsp2.rom is not the DSP-2 firmware (it may be the firmware of a different chip).</pre></div>
+<h2>Command line (Neser then exits)</h2>
+<div class=box><pre>Error: &lt;game&gt; needs the SNES DSP-2 firmware, which was not found.
+Put dsp2.rom in &lt;folder&gt;, or point --snes-firmware-dir at the folder holding it.
+
+Error: &lt;folder&gt;/dsp2.rom is not valid SNES DSP-2 firmware: it is 12,288 bytes; it must be exactly 8,192 bytes.
+
+Error: &lt;folder&gt;/dsp2.rom is not valid SNES DSP-2 firmware: it is not the DSP-2 firmware (it may be the firmware of a different chip).</pre></div>
+<h2>Browser version — dialog</h2>
+<div class=box><pre><b>This game needs the DSP-2 firmware</b>
+Choose your dsp2.rom file (8 KB). It stays in this browser, so you only do this once.
+[Cancel]  [Choose file…]</pre></div>
+<h2>Browser version — wrong file chosen (dialog stays open)</h2>
+<div class=box><pre><b>That isn’t a DSP-2 firmware file</b>
+“mario.zip” is 1.2 MB; the firmware is exactly 8 KB.          ← wrong size
+“dsp1b.rom” is 8 KB but is not the DSP-2 firmware.            ← right size, wrong file
+[Cancel]  [Choose file…]</pre></div>
+<h2>Browser version — Cancel or Esc</h2>
+<div class=box><pre>Status line, in red:  Failed to load ROM: &lt;game&gt; needs the DSP-2 firmware
+3-second message:     Not started: &lt;game&gt; needs the DSP-2 firmware</pre></div>
+<h2>Browser version — after storing, and the sidebar</h2>
+<div class=box><pre>DSP-2 firmware stored
+
+<b>SNES firmware</b>
+DSP-1: stored ✓   [Replace…] [Forget]
+DSP-2: stored ✓   [Replace…] [Forget]</pre></div>
+<p class=sub>Sidebar Replace… with a wrong file shows the same “isn’t a DSP-2 firmware file” words as a message at the bottom. Forget on one row removes only that chip; the block disappears when the last row goes.</p>
+<p class=cost><b>Cost:</b> the DSP-1 work, being built now, gains a check and three messages after the fact.</p>
+</section>
