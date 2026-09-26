@@ -489,10 +489,12 @@ mod tests {
 
     #[test]
     fn every_dsp_chip_is_emulated() {
-        assert!(DspChip::Dsp1.is_emulated(FIRMWARE_FILES));
-        assert!(DspChip::Dsp2.is_emulated(FIRMWARE_FILES));
-        assert!(DspChip::Dsp3.is_emulated(FIRMWARE_FILES));
-        assert!(DspChip::Dsp4.is_emulated(FIRMWARE_FILES));
+        for chip in DspChip::ALL {
+            assert!(
+                chip.is_emulated(FIRMWARE_FILES),
+                "{chip:?} has no firmware row"
+            );
+        }
     }
 
     #[test]

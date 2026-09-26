@@ -421,8 +421,8 @@ impl Emulator for Snes {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
         // SA-1 (epic #2956), CX4 (nr-t7d), OBC1 (nr-ufb), the Super FX (nr-hab.1), the S-DD1
         // (nr-10g) and the DSP-1/2/3/4 (nr-auv, nr-608, nr-72o, nr-tfq) are emulated; other
-        // enhancement chips remain header-detection-only. The header cannot tell a GSU-1 from a GSU-2, so no Super FX
-        // cartridge warns.
+        // enhancement chips remain header-detection-only. The header cannot tell a GSU-1 from a
+        // GSU-2, so no Super FX cartridge warns.
         let dsp_model = dsp::identify(&cartridge);
         let dsp_firmware = match dsp_model {
             Some(model) if model.chip().is_emulated(self.firmware_table) => {
