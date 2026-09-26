@@ -100,3 +100,85 @@ fn non_gsu_cart_leaves_3000_open_bus() {
     let open_bus = bus.read(0x00_8000);
     assert_eq!(bus.read(0x00_303B), open_bus);
 }
+
+/// A GSU cart whose program at `$00:8000` loops on itself (BRA to itself; NOP in the delay
+/// slot), started with both buses handed to the GSU.
+fn running_gsu_bus() -> SnesSystemBus {
+    let mut rom = gsu_cart_rom(|_| 0);
+    rom[..3].copy_from_slice(&[0x05, 0xFE, 0x01]);
+    let mut bus = gsu_bus(&rom);
+    bus.write(0x00_303A, 0x18); // RON | RAN
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80); // GO
+    for _ in 0..100 {
+        bus.tick();
+    }
+    bus
+}
+
+#[test]
+fn snes_reads_fixed_vectors_from_rom_while_gsu_runs_with_ron() {
+    let mut rom = gsu_cart_rom(|_| 0xEE);
+    rom[..3].copy_from_slice(&[0x05, 0xFE, 0x01]);
+    rom[0x7FEA] = 0xEE; // The fixture zeroes the header; give the NMI vector a visible value.
+    let mut bus = gsu_bus(&rom);
+    assert_eq!(bus.read(0x00_FFEA), 0xEE, "real ROM before the GSU starts");
+    bus.write(0x00_303A, 0x18);
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80);
+    for (addr, value) in [
+        (0x00_FFEA, 0x08), // NMI -> $0108
+        (0x00_FFEB, 0x01),
+        (0x00_FFEE, 0x0C), // IRQ -> $010C
+        (0x00_FFE4, 0x04), // COP -> $0104
+        (0x00_FFFC, 0x00), // anything else -> $0100
+        (0x41_1234, 0x04), // the HiROM view too
+    ] {
+        assert_eq!(bus.read(addr), value, "${addr:06X}");
+    }
+    bus.write(0x00_3030, 0x00); // Clear GO.
+    assert_eq!(bus.read(0x00_FFEA), 0xEE);
+}
+
+#[test]
+fn snes_ram_reads_open_bus_while_gsu_runs_with_ran() {
+    let mut bus = gsu_bus(&gsu_cart_rom(|_| 0));
+    bus.write(0x70_0000, 0x5A);
+    bus.write(0x00_303A, 0x08); // RAN (ROM stays with the S-CPU)
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80);
+    bus.read(0x00_8000); // Leaves $00 on the bus.
+    assert_eq!(bus.read(0x70_0000), 0x00, "open bus, not the RAM's $5A");
+    bus.write(0x70_0000, 0x77);
+    bus.write(0x00_3030, 0x00);
+    assert_eq!(bus.read(0x70_0000), 0x5A, "the write while blocked was dropped");
+}
+
+#[test]
+fn register_writes_other_than_sfr_scmr_ignored_while_running() {
+    let mut bus = running_gsu_bus();
+    bus.write(0x00_3002, 0x34);
+    bus.write(0x00_3003, 0x12);
+    assert_eq!(bus.read(0x00_3002), 0x00);
+    // SCMR still takes writes (to hand the buses back) and SFR can stop the GSU.
+    bus.write(0x00_3030, 0x00);
+    assert_eq!(bus.read(0x00_3030) & 0x20, 0);
+}
+
+#[test]
+fn gsu_irq_reaches_snes_cpu_via_poll_irq() {
+    let mut rom = gsu_cart_rom(|_| 0);
+    rom[..2].copy_from_slice(&[0x00, 0x01]); // STOP; NOP
+    let mut bus = gsu_bus(&rom);
+    bus.write(0x00_303A, 0x18);
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80);
+    let mut ticks = 0;
+    while !bus.poll_irq() {
+        bus.tick();
+        ticks += 1;
+        assert!(ticks < 1000, "the GSU's STOP never raised the S-CPU IRQ line");
+    }
+    assert_ne!(bus.read(0x00_3031) & 0x80, 0);
+    assert!(!bus.poll_irq(), "reading $3031 acknowledges");
+}

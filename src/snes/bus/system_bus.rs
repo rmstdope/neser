@@ -1589,6 +1589,12 @@ impl SnesSystemBus {
         if let Some(cx4) = &mut self.cx4 {
             cx4.tick_master_clock();
         }
+        // The GSU runs off the cartridge's copy of the 21.47 MHz master clock (fullsnes: 10.74
+        // MHz or 21.4 MHz by CLSR), so it advances with every master clock, including the ones
+        // DRAM refresh and DMA steal from the S-CPU.
+        if let Some(gsu) = &mut self.gsu {
+            gsu.get_mut().tick_one_master_clock();
+        }
     }
 }
 
@@ -1897,6 +1903,9 @@ impl SnesBus for SnesSystemBus {
                 .as_ref()
                 .is_some_and(|registers| registers.borrow().snes_irq_line())
             || self.cx4.as_ref().is_some_and(Cx4::irq_line)
+            // The GSU's STOP IRQ (SFR bit 15 unless CFGR masks it) is a plain level on the
+            // cartridge /IRQ pin, like the SA-1's.
+            || self.gsu.as_ref().is_some_and(|gsu| gsu.borrow().irq_line())
     }
 
     fn set_cpu_speed(&mut self, speed: u8) {
