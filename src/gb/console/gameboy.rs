@@ -269,11 +269,20 @@ impl GameBoy {
     }
 
     /// Snapshot the current frame as a 160×144 RGB888 byte vector.
+    ///
+    /// This is the frame a person sees (window, screenshot, headless
+    /// capture, web), so it carries the `cgb-color-correction` display
+    /// setting when a game is shown in colour. The PPU's own buffer, the
+    /// CRC and save states stay raw.
     pub fn screen_snapshot(&self) -> Vec<u8> {
-        self.gb.as_ref().map_or_else(
-            || vec![0u8; (Self::SCREEN_WIDTH * Self::SCREEN_HEIGHT * 3) as usize],
-            |gb| gb.screen_snapshot(),
-        )
+        let Some(gb) = self.gb.as_ref() else {
+            return vec![0u8; (Self::SCREEN_WIDTH * Self::SCREEN_HEIGHT * 3) as usize];
+        };
+        let mut rgb = gb.screen_snapshot();
+        if self.is_cgb_mode() && self.app_context.borrow().config().gb.cgb_color_correction {
+            crate::gb::ppu::rendering::apply_cgb_lcd_correction(&mut rgb);
+        }
+        rgb
     }
 
     /// CRC32 of the current screen buffer.
@@ -490,8 +499,8 @@ impl GameBoy {
         )
     }
 
-    #[cfg(feature = "native")]
-    /// Check if the emulator is running in CGB mode.
+    /// Check if the emulator is running in CGB mode, i.e. showing its
+    /// picture in colour (CGB games, and DMG games the CGB colourises).
     pub fn is_cgb_mode(&self) -> bool {
         self.gb
             .as_ref()
@@ -761,6 +770,111 @@ mod tests {
             .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
         rom[0x014D] = chk;
         rom
+    }
+
+    /// Put an endless `JR -2` at the entry point, so the CPU idles while the
+    /// PPU keeps producing frames (a ROM of zeros runs into a STOP).
+    fn idling(mut rom: Vec<u8>) -> Vec<u8> {
+        rom[0x0100] = 0x18;
+        rom[0x0101] = 0xFE;
+        rom
+    }
+
+    fn make_gameboy_with_color_correction(hardware: Option<GbHardware>) -> GameBoy {
+        let mut config = Config::default();
+        config.gb.hardware = hardware;
+        config.gb.cgb_color_correction = true;
+        let app_context = AppContext::new_with_config(config).into_shared();
+        GameBoy::new(app_context)
+    }
+
+    fn run_frames(gb: &mut GameBoy, frames: u32) {
+        for _ in 0..frames {
+            while !gb.is_frame_ready() {
+                gb.run_tick();
+            }
+            gb.clear_frame_ready();
+        }
+    }
+
+    /// The PPU's own, uncorrected frame.
+    fn raw_frame(gb: &GameBoy) -> Vec<u8> {
+        gb.gb.as_ref().expect("ROM loaded").screen_snapshot()
+    }
+
+    fn corrected(raw: &[u8]) -> Vec<u8> {
+        let mut rgb = raw.to_vec();
+        crate::gb::ppu::rendering::apply_cgb_lcd_correction(&mut rgb);
+        rgb
+    }
+
+    // ── CGB colour correction on the frame output ───────────────────────────
+
+    #[test]
+    fn test_color_correction_applies_to_cgb_game_snapshot() {
+        let mut gb = make_gameboy_with_color_correction(None);
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        run_frames(&mut gb, 2);
+        let raw = raw_frame(&gb);
+        assert_ne!(raw, corrected(&raw), "test frame must change under correction");
+        assert_eq!(gb.screen_snapshot(), corrected(&raw));
+    }
+
+    #[test]
+    fn test_color_correction_off_leaves_cgb_snapshot_raw() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        run_frames(&mut gb, 2);
+        assert_eq!(gb.screen_snapshot(), raw_frame(&gb));
+    }
+
+    #[test]
+    fn test_color_correction_applies_to_colourised_dmg_game() {
+        let mut gb = make_gameboy_with_color_correction(Some(GbHardware::Cgb));
+        gb.load_rom(&idling(minimal_rom()), "test.gb").unwrap();
+        run_frames(&mut gb, 2);
+        let raw = raw_frame(&gb);
+        assert_ne!(raw, corrected(&raw), "test frame must change under correction");
+        assert_eq!(gb.screen_snapshot(), corrected(&raw));
+    }
+
+    #[test]
+    fn test_color_correction_applies_under_gba_hardware() {
+        let mut gb = make_gameboy_with_color_correction(Some(GbHardware::Gba));
+        gb.load_rom(&idling(minimal_dual_rom()), "test.gbc").unwrap();
+        run_frames(&mut gb, 2);
+        assert_eq!(gb.screen_snapshot(), corrected(&raw_frame(&gb)));
+    }
+
+    #[test]
+    fn test_color_correction_never_touches_black_and_white_output() {
+        let mut gb = make_gameboy_with_color_correction(None);
+        gb.load_rom(&idling(minimal_rom()), "test.gb").unwrap();
+        run_frames(&mut gb, 2);
+        assert_eq!(gb.screen_snapshot(), raw_frame(&gb));
+    }
+
+    #[test]
+    fn test_color_correction_leaves_screen_crc_raw() {
+        let mut gb = make_gameboy_with_color_correction(None);
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        run_frames(&mut gb, 2);
+        let raw_crc = gb.gb.as_ref().unwrap().screen_crc32();
+        assert_eq!(gb.screen_crc32(), raw_crc);
+    }
+
+    #[test]
+    fn test_color_correction_follows_runtime_config_change() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        run_frames(&mut gb, 2);
+        gb.app_context()
+            .borrow_mut()
+            .config_mut()
+            .gb
+            .cgb_color_correction = true;
+        let raw = raw_frame(&gb);
+        assert_eq!(gb.screen_snapshot(), corrected(&raw));
     }
 
     // ── safety before ROM load ──────────────────────────────────────────────
