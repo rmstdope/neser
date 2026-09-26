@@ -703,13 +703,14 @@ let romFromFile = false; // true only when ROM was loaded from the file input
 let cgbColorCorrection = false;
 const cgbColorToggleBtn = document.getElementById("cgb-color-toggle") as HTMLButtonElement | null;
 
-/** Show the Colors button only while a colour Game Boy game is running or paused. */
+/** Show the Colors button only while a colour Game Boy game is running (not paused). */
 function updateCgbColorButton() {
     if (!cgbColorToggleBtn) return;
     const visible = cgbColorButtonVisible({
         kind: emulator?.kind ?? null,
         isColor: emulator?.kind === "gb" && emulator.inst.is_color(),
-        active: running || paused,
+        running,
+        paused,
     });
     cgbColorToggleBtn.style.display = visible ? "" : "none";
     cgbColorToggleBtn.textContent = cgbColorButtonLabel(cgbColorCorrection);

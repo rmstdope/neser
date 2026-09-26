@@ -852,7 +852,13 @@ mod tests {
         gb.load_rom(&idling(minimal_dual_rom()), "test.gbc")
             .unwrap();
         run_frames(&mut gb, 2);
-        assert_eq!(gb.screen_snapshot(), corrected(&raw_frame(&gb)));
+        let raw = raw_frame(&gb);
+        assert_ne!(
+            raw,
+            corrected(&raw),
+            "test frame must change under correction"
+        );
+        assert_eq!(gb.screen_snapshot(), corrected(&raw));
     }
 
     #[test]
@@ -883,6 +889,11 @@ mod tests {
             .gb
             .cgb_color_correction = true;
         let raw = raw_frame(&gb);
+        assert_ne!(
+            raw,
+            corrected(&raw),
+            "test frame must change under correction"
+        );
         assert_eq!(gb.screen_snapshot(), corrected(&raw));
     }
 

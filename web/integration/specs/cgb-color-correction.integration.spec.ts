@@ -5,11 +5,13 @@ import {
     loadRomFromFileInput,
     openApp,
     waitForIdleState,
+    waitForPausedState,
     waitForRunningState
 } from "../helpers/lifecycle.helpers";
 
 const COLORS_BUTTON_SELECTOR = "#cgb-color-toggle";
 const STOP_BUTTON_SELECTOR = "#stop";
+const PAUSE_BUTTON_SELECTOR = "#pause";
 const ACID_DIR = path.join("roms", "gb", "automated_tests", "acid");
 
 async function loadGbRom(page: Page, fileName: string) {
@@ -38,6 +40,14 @@ test.describe("Colors button (Game Boy Color LCD colour correction)", () => {
         await colors.click();
         await expect(colors).toHaveText("Colors: Raw");
         await waitForRunningState(page);
+
+        await page.locator(PAUSE_BUTTON_SELECTOR).click();
+        await waitForPausedState(page);
+        await expect(colors).toBeHidden();
+
+        await page.locator(PAUSE_BUTTON_SELECTOR).click();
+        await expect(colors).toBeVisible();
+        await expect(colors).toHaveText("Colors: Raw");
     });
 
     test("Given the state is on, when other games load, then it hides and comes back with the same state", async ({ page }) => {
