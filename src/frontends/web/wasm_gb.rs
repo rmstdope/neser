@@ -87,6 +87,40 @@ impl WasmGb {
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
+    /// F8: cycles an original Game Boy game's shade palette and queues the
+    /// toast. Returns the new palette's name, or `""` when no original Game
+    /// Boy game is running (nothing changes, no toast).
+    #[wasm_bindgen]
+    pub fn cycle_palette(&mut self) -> String {
+        match self.gb.cycle_palette() {
+            Some(palette) => {
+                self.pending_toasts
+                    .push(crate::gb::ppu::dmg_palette::palette_toast_message(palette));
+                palette.display_name().to_string()
+            }
+            None => String::new(),
+        }
+    }
+
+    /// Called when a game starts, with whether the Game Boy LCD filter is on.
+    #[wasm_bindgen]
+    pub fn start_lcd_filter(&mut self, active: bool) {
+        self.gb.start_lcd_filter(active);
+    }
+
+    /// Called when the Game Boy LCD filter is switched on or off.
+    #[wasm_bindgen]
+    pub fn set_lcd_filter_active(&mut self, active: bool) {
+        self.gb.set_lcd_filter_active(active);
+    }
+
+    /// The LCD filter's palette texture as 2x1 RGBA: background, foreground.
+    #[wasm_bindgen]
+    pub fn lcd_filter_palette_rgba(&self) -> Vec<u8> {
+        let [(br, bg, bb), (fr, fg, fb)] = self.gb.palette().lcd_filter_colors();
+        vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
+    }
+
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGBA8888).
     ///
     /// Returns a `Uint8Array` of `160 × 144 × 4` bytes.
