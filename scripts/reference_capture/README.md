@@ -5,7 +5,8 @@ Headless capture recipes for the screenshot reference of each system, verified o
 end to end: the reference capture and a NESER `--headless` capture of the same ROM matched
 pixel-for-pixel through `python -m scripts.diff_screenshots`
 (NES: blargg_ppu_tests power_up_palette frame 120 with --nes-palette mesen; GB:
-dmg-acid2 after 10 s; GBA: mGBA suite frame 300, and every frame from 1 to 120 but 9
+dmg-acid2 after 10 s; CGB: cgb-acid2 after 10 s, only against a SameBoy tester built
+without colour correction (see "Colour: DMG and CGB"); GBA: mGBA suite frame 300, and every frame from 1 to 120 but 9
 with `--skip-bios-intro`).
 
 | System | Reference | Tool | Frame-exact |
@@ -71,8 +72,11 @@ The SameBoy.app cask has no command-line mode. Its repository ships a headless
 
 ```bash
 git clone --depth 1 https://github.com/LIJI32/SameBoy ~/repos/SameBoy
-cd ~/repos/SameBoy && make tester -j8    # the boot-ROM step fails without rgbds; the tester itself builds
+cd ~/repos/SameBoy && make -k build/bin/tester/sameboy_tester -j8
 ```
+
+Without rgbds the boot-ROM step fails; `-k` and the binary as target let the tester link
+anyway (plain `make tester -j8` stops at the boot-ROM error on a fresh tree).
 
 Result: `~/repos/SameBoy/build/bin/tester/sameboy_tester`. Because the bundled boot ROMs
 did not build, point `--boot` at the ones inside `/Applications/SameBoy.app` (installed
@@ -96,6 +100,34 @@ so early captures diverge on timing alone (dmg-acid2 at 120/180/240 NESER frames
 of SameBoy differ by 44 %; at 600 frames vs 10 s they are identical). Use SameBoy only for
 screens that are static by the capture time, and prove it by capturing at two lengths that
 give byte-identical BMPs before trusting the diff.
+
+### Colour: DMG and CGB
+
+Measured 2026-09-26 (nr-x4l), NESER `--headless --frames 600` against `sameboy_tester
+--length 10`, both stable (NESER 600 = 720 frames, SameBoy 10 s = 12 s, byte-identical):
+
+| ROM | SameBoy model | Differing pixels | Cause |
+|---|---|---|---|
+| dmg-acid2.gb | `--dmg` (DMG-B) | 0 / 23040 | none: both use greys 0, 85, 170, 255 |
+| cgb-acid2.gbc | default (CGB-E) | 6814 / 23040 (29.6 %) | SameBoy's colour correction only |
+
+The CGB difference is colour alone. Every NESER colour maps to exactly one SameBoy colour
+(e.g. (255,255,0) → (255,213,0), (0,0,255) → (0,107,255), (107,189,255) → (125,233,255)):
+NESER expands RGB555 as `(c << 3) | (c >> 2)`, the formula cgb-acid2 specifies, while the
+tester hard-codes `GB_set_color_correction_mode(&gb, GB_COLOR_CORRECTION_EMULATE_HARDWARE)`
+(Modern – Balanced) and has no flag for it. With correction disabled the frames are
+identical (0 pixels). To compare a CGB frame pixel for pixel, build a second tester in a
+copy of the source so the stock one stays as the reference:
+
+```bash
+rsync -a --exclude build ~/repos/SameBoy/ ~/repos/SameBoy-nocc/
+cd ~/repos/SameBoy-nocc
+sed -i '' 's/GB_COLOR_CORRECTION_EMULATE_HARDWARE);/GB_COLOR_CORRECTION_DISABLED);/' Tester/main.c
+make -k build/bin/tester/sameboy_tester -j8
+```
+
+DMG output does not pass through the correction, so both testers give the same DMG
+frame. Whether NESER should offer a matching correction is nr-y3e.
 
 ## mGBA (GBA)
 
