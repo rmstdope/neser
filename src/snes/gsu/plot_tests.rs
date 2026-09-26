@@ -44,11 +44,21 @@ fn tile_row_address_for_each_height_and_depth() {
     // 160 high, 16 colours: tile (X/8)*$14 + Y/8, row TileNo*$20.
     assert_eq!(address(DEPTH_16 | HEIGHT_160, 0, 0, 8, 0), 0x14 * 0x20);
     // 192 high (HT1 only), 256 colours: tile (X/8)*$18 + Y/8, row TileNo*$40.
-    assert_eq!(address(DEPTH_256 | 0x20, 0, 0, 8, 15), (0x18 + 1) * 0x40 + 7 * 2);
+    assert_eq!(
+        address(DEPTH_256 | 0x20, 0, 0, 8, 15),
+        (0x18 + 1) * 0x40 + 7 * 2
+    );
     // OBJ mode: (Y/$80)*$200 + (X/$80)*$100 + (Y/8 AND $F)*$10 + (X/8 AND $F).
     let obj_tile = 0x100 + 2 * 0x10 + 1;
-    assert_eq!(address(DEPTH_4 | HEIGHT_OBJ, 0, 0, 0x88, 0x10), obj_tile * 0x10);
-    assert_eq!(address(DEPTH_4, 0x10, 0, 0x88, 0x10), obj_tile * 0x10, "POR bit 4");
+    assert_eq!(
+        address(DEPTH_4 | HEIGHT_OBJ, 0, 0, 0x88, 0x10),
+        obj_tile * 0x10
+    );
+    assert_eq!(
+        address(DEPTH_4, 0x10, 0, 0x88, 0x10),
+        obj_tile * 0x10,
+        "POR bit 4"
+    );
     // SCBR is in 1 KB units.
     assert_eq!(address(DEPTH_4, 0, 2, 0, 0), 0x800);
 }
@@ -58,7 +68,11 @@ fn plot_writes_bitplanes_and_advances_r1() {
     let program = [COLOR, PLOT, RPIX[0], RPIX[1]];
     let mut rig = run(DEPTH_4, &[(0, 0x0003)], &program, 0);
     let ram = rig.ram.borrow().clone();
-    assert_eq!((ram[0], ram[1]), (0x80, 0x80), "colour 3 at x=0: bit 7 of both planes");
+    assert_eq!(
+        (ram[0], ram[1]),
+        (0x80, 0x80),
+        "colour 3 at x=0: bit 7 of both planes"
+    );
     assert_eq!(rig.reg(1), 1, "PLOT increments R1");
 }
 
@@ -69,7 +83,10 @@ fn plot_256_colours_spreads_eight_planes() {
     let ram = rig.ram.borrow();
     assert_eq!(ram[0x00], 0x80, "plane 0");
     assert_eq!(ram[0x31], 0x80, "plane 7 at +$31");
-    assert_eq!(ram[0x01] | ram[0x10] | ram[0x11] | ram[0x20] | ram[0x21] | ram[0x30], 0);
+    assert_eq!(
+        ram[0x01] | ram[0x10] | ram[0x11] | ram[0x20] | ram[0x21] | ram[0x30],
+        0
+    );
 }
 
 #[test]
@@ -106,7 +123,9 @@ fn pixel_cache_merges_partial_rows() {
 #[test]
 fn dither_uses_high_nibble_on_odd_pixels() {
     // CMODE #2 (dither), COLOR $21, PLOT twice at (0,0) and (1,0): colours 1 then 2.
-    let program = [0xB3, CMODE[0], CMODE[1], COLOR, PLOT, PLOT, RPIX[0], RPIX[1]];
+    let program = [
+        0xB3, CMODE[0], CMODE[1], COLOR, PLOT, PLOT, RPIX[0], RPIX[1],
+    ];
     let rig = run(DEPTH_4, &[(0, 0x0021), (3, 0x0002)], &program, 0x00);
     let ram = rig.ram.borrow();
     assert_eq!(ram[0], 0x80, "plane 0: pixel 0 = 1");
@@ -118,7 +137,9 @@ fn dithered_colour_0_half_is_transparent() {
     // fullsnes: "Dither can mix transparent & non-transparent pixels": COLR $50 dithers to
     // 0 on even pixels (skipped) and 5 on odd ones (drawn). Transparency is tested after the
     // dither stage, as in fullsnes' COLOR -> Dither -> Transp diagram.
-    let program = [0xB3, CMODE[0], CMODE[1], COLOR, PLOT, PLOT, RPIX[0], RPIX[1]];
+    let program = [
+        0xB3, CMODE[0], CMODE[1], COLOR, PLOT, PLOT, RPIX[0], RPIX[1],
+    ];
     let rig = run(DEPTH_16, &[(0, 0x0050), (3, 0x0002)], &program, 0x00);
     let ram = rig.ram.borrow();
     // Colour 5 = planes 0 and 2 at x=1 (bit 6); x=0 untouched.

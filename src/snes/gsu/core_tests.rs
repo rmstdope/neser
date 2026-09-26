@@ -18,7 +18,6 @@ pub(super) const SCMR_RON_RAN: u8 = 0x18;
 
 pub(super) struct Rig {
     pub gsu: Gsu,
-    pub rom: Rc<Vec<u8>>,
     pub ram: Rc<RefCell<Vec<u8>>>,
     /// Master clocks ticked so far.
     pub clocks: u64,
@@ -36,8 +35,7 @@ impl Rig {
         let rom = Rc::new(rom);
         let ram = Rc::new(RefCell::new(vec![0u8; 0x8000]));
         Self {
-            gsu: Gsu::new(Rc::clone(&rom), Rc::clone(&ram)),
-            rom,
+            gsu: Gsu::new(rom, Rc::clone(&ram)),
             ram,
             clocks: 0,
         }
@@ -139,7 +137,11 @@ fn stop_irq_is_masked_by_cfgr_bit7_but_flag_still_sets() {
     rig.gsu.write_register(0x3037, 0x80);
     rig.start_at(PROGRAM);
     rig.run_until_stop();
-    assert_ne!(rig.sfr() & SFR_IRQ, 0, "fullsnes: set even if IRQ is disabled in CFGR");
+    assert_ne!(
+        rig.sfr() & SFR_IRQ,
+        0,
+        "fullsnes: set even if IRQ is disabled in CFGR"
+    );
     assert!(!rig.gsu.irq_line());
 }
 

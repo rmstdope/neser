@@ -14,7 +14,10 @@ fn branch_executes_one_delay_slot_byte_before_target() {
         0xD4,       // $8005 INC R4
         0x00, 0x01,
     ]);
-    assert_eq!([rig.reg(1), rig.reg(2), rig.reg(3), rig.reg(4)], [1, 0, 0, 1]);
+    assert_eq!(
+        [rig.reg(1), rig.reg(2), rig.reg(3), rig.reg(4)],
+        [1, 0, 0, 1]
+    );
 }
 
 #[test]

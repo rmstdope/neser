@@ -86,13 +86,13 @@ fn cmp_sets_flags_without_writing() {
 #[test]
 fn logic_ops() {
     let cases: [(&[u8], u16, u16); 7] = [
-        (&[0x71], 0xF000, S),              // AND R1
-        (&[0x3D, 0x71], 0x00F0, 0),        // BIC R1
-        (&[0xC1], 0xFFF0, S),              // OR R1
-        (&[0x3D, 0xC1], 0x0FF0, 0),        // XOR R1
-        (&[0x3E, 0x7F], 0x0000, Z),        // AND #15
-        (&[0x3F, 0x7F], 0xF0F0, S),        // BIC #15
-        (&[0x4F], 0x0F0F, 0),              // NOT
+        (&[0x71], 0xF000, S),       // AND R1
+        (&[0x3D, 0x71], 0x00F0, 0), // BIC R1
+        (&[0xC1], 0xFFF0, S),       // OR R1
+        (&[0x3D, 0xC1], 0x0FF0, 0), // XOR R1
+        (&[0x3E, 0x7F], 0x0000, Z), // AND #15
+        (&[0x3F, 0x7F], 0xF0F0, S), // BIC #15
+        (&[0x4F], 0x0F0F, 0),       // NOT
     ];
     for (program, result, flag_bits) in cases {
         let mut rig = run(&[(0, 0xF0F0), (1, 0xFF00)], program);
@@ -112,9 +112,15 @@ fn shifts_and_rotates() {
     let mut rig = run(&[(0, 0x8001)], &[0x96]); // ASR
     assert_eq!((rig.reg(0), flags(&mut rig)), (0xC000, C | S));
     // ROL through carry, carry set by a preceding ADD.
-    let mut rig = run(&[(0, 0x8000), (1, 0xFFFF), (2, 0x0001)], &[0x21, 0x52, 0x04]);
+    let mut rig = run(
+        &[(0, 0x8000), (1, 0xFFFF), (2, 0x0001)],
+        &[0x21, 0x52, 0x04],
+    );
     assert_eq!((rig.reg(0), flags(&mut rig)), (0x0001, C));
-    let mut rig = run(&[(0, 0x0001), (1, 0xFFFF), (2, 0x0001)], &[0x21, 0x52, 0x97]); // ROR
+    let mut rig = run(
+        &[(0, 0x0001), (1, 0xFFFF), (2, 0x0001)],
+        &[0x21, 0x52, 0x97],
+    ); // ROR
     assert_eq!((rig.reg(0), flags(&mut rig)), (0x8000, C | S));
 }
 

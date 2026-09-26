@@ -88,7 +88,11 @@ mod tests {
     fn lorom_and_hirom_views_of_the_same_byte_agree() {
         assert_eq!(decode_snes(0x03_8123), Some(SnesTarget::Rom(0x1_8123)));
         assert_eq!(decode_snes(0x41_8123), Some(SnesTarget::Rom(0x1_8123)));
-        assert_eq!(gsu_rom_index(0x03, 0x0123), Some(0x1_8123), "GSU lower-half mirror");
+        assert_eq!(
+            gsu_rom_index(0x03, 0x0123),
+            Some(0x1_8123),
+            "GSU lower-half mirror"
+        );
         assert_eq!(gsu_rom_index(0x60, 0x0000), None);
     }
 

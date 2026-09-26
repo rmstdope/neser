@@ -446,13 +446,23 @@ mod tests {
     #[test]
     fn super_fx_cart_ram_size_comes_from_expansion_ram_field() {
         let mut rom = vec![0u8; 0x10000];
-        write_header(&mut rom, 0x7FC0, 0x20, 0x15, 0x00, b"GSU EXT HEADER     \0\0");
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0x15,
+            0x00,
+            b"GSU EXT HEADER     \0\0",
+        );
         rom[0x7FC0 + 0x1A] = 0x33; // Maker code $33: extended header present.
         rom[0x7FBD] = 0x06; // Expansion RAM: 1 << 6 KB = 64 KB.
         let cart = Cartridge::from_bytes(&rom).expect("cart");
         assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::SuperFx));
         assert_eq!(cart.sram_size(), 64 * 1024);
-        assert!(cart.has_battery(), "chipset $15 = co-processor + RAM + battery");
+        assert!(
+            cart.has_battery(),
+            "chipset $15 = co-processor + RAM + battery"
+        );
     }
 
     /// Star Fox has no extended header; fullsnes gives its RAM as 32 KB, and treats that as the
@@ -460,7 +470,14 @@ mod tests {
     #[test]
     fn super_fx_cart_without_extended_header_has_32kb_ram() {
         let mut rom = vec![0u8; 0x10000];
-        write_header(&mut rom, 0x7FC0, 0x20, 0x13, 0x00, b"GSU NO EXT HEADER  \0\0");
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0x13,
+            0x00,
+            b"GSU NO EXT HEADER  \0\0",
+        );
         rom[0x7FC0 + 0x1A] = 0x01; // Maker code other than $33: no extended header.
         rom[0x7FBD] = 0xFF; // Not an expansion-RAM field without the extended header.
         let cart = Cartridge::from_bytes(&rom).expect("cart");

@@ -52,14 +52,22 @@ fn gsu_cart_ram_at_70_and_first_8k_mirror_at_6000() {
     let mut bus = gsu_bus(&gsu_cart_rom(|_| 0));
 
     bus.write(0x70_0010, 0x5A);
-    assert_eq!(bus.read(0x00_6010), 0x5A, "$00:6000-7FFF mirrors the first 8 KB");
+    assert_eq!(
+        bus.read(0x00_6010),
+        0x5A,
+        "$00:6000-7FFF mirrors the first 8 KB"
+    );
     assert_eq!(bus.read(0xF0_0010), 0x5A, "$F0 mirrors $70");
 
     bus.write(0xBF_7FFF, 0xC3);
     assert_eq!(bus.read(0x70_1FFF), 0xC3);
 
     bus.write(0x70_7FFF, 0x99);
-    assert_eq!(bus.read(0x71_7FFF), 0x99, "32 KB of RAM mirrors through bank $71");
+    assert_eq!(
+        bus.read(0x71_7FFF),
+        0x99,
+        "32 KB of RAM mirrors through bank $71"
+    );
 }
 
 #[test]
@@ -151,7 +159,11 @@ fn snes_ram_reads_open_bus_while_gsu_runs_with_ran() {
     assert_eq!(bus.read(0x70_0000), 0x00, "open bus, not the RAM's $5A");
     bus.write(0x70_0000, 0x77);
     bus.write(0x00_3030, 0x00);
-    assert_eq!(bus.read(0x70_0000), 0x5A, "the write while blocked was dropped");
+    assert_eq!(
+        bus.read(0x70_0000),
+        0x5A,
+        "the write while blocked was dropped"
+    );
 }
 
 #[test]
@@ -177,7 +189,10 @@ fn gsu_irq_reaches_snes_cpu_via_poll_irq() {
     while !bus.poll_irq() {
         bus.tick();
         ticks += 1;
-        assert!(ticks < 1000, "the GSU's STOP never raised the S-CPU IRQ line");
+        assert!(
+            ticks < 1000,
+            "the GSU's STOP never raised the S-CPU IRQ line"
+        );
     }
     assert_ne!(bus.read(0x00_3031) & 0x80, 0);
     assert!(!bus.poll_irq(), "reading $3031 acknowledges");
@@ -230,7 +245,10 @@ fn gsu_state_round_trips_through_save_state() {
         restored.tick();
     }
     let (r1, running) = (read_r1(&restored), restored.read(0x00_3030) & 0x20);
-    assert_eq!((r1, running), (read_r1(&original), original.read(0x00_3030) & 0x20));
+    assert_eq!(
+        (r1, running),
+        (read_r1(&original), original.read(0x00_3030) & 0x20)
+    );
     assert!(r1 > 0 && r1 < 1000, "caught mid-loop, got R1 = {r1}");
 }
 

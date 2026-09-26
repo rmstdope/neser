@@ -99,10 +99,7 @@ fn stw_and_ldw_swap_bytes_at_odd_addresses() {
         0x14, 0x42, // TO R4; LDW (R2)
         0x00, 0x01,
     ];
-    let mut rig = run(
-        Rig::new(&program),
-        &[(0, 0xBEEF), (1, 0x0101), (2, 0x0200)],
-    );
+    let mut rig = run(Rig::new(&program), &[(0, 0xBEEF), (1, 0x0101), (2, 0x0200)]);
     let ram = rig.ram.borrow().clone();
     assert_eq!((ram[0x100], ram[0x101]), (0xBE, 0xEF));
     assert_eq!((ram[0x200], ram[0x201]), (0xEF, 0xBE));
