@@ -107,8 +107,18 @@ pub struct DmaController {
 
 impl DmaController {
     pub fn new() -> Self {
+        // fullsnes ("SNES I/O Map", CPU DMA ports): `$43x0-$43xB` and `$43xF` hold `FFh` at
+        // power-up and keep their value across reset (A1Bx is listed as "xxh"; Mesen2 writes
+        // `$FF` there as well). A channel enabled mid-frame without an HDMA init runs on these
+        // values (nr-ve3). fullsnes gives `$43xC-$43xE` no power-up value (open bus on
+        // hardware), so they keep the zero this store has always held for them.
+        let mut regs = [0; DMA_REG_BYTES];
+        for channel in regs.as_chunks_mut::<16>().0 {
+            channel[0x0..=0xB].fill(0xFF);
+            channel[0xF] = 0xFF;
+        }
         Self {
-            regs: [0; DMA_REG_BYTES],
+            regs,
             hdma_active_mask: 0,
             hdma_do_transfer: [false; 8],
             dma_active_mask: 0,
@@ -1426,6 +1436,7 @@ mod tests {
         dma.write_register(0x4303, 0x30);
         dma.write_register(0x4304, 0x00);
         dma.write_register(0x4305, 0x01);
+        dma.write_register(0x4306, 0x00); // byte-count high powers up as $FF
         // ch1: refused WRAM -> $2180.
         dma.write_register(0x4310, 0x00);
         dma.write_register(0x4311, 0x80);
@@ -1433,6 +1444,7 @@ mod tests {
         dma.write_register(0x4313, 0x10);
         dma.write_register(0x4314, 0x7E);
         dma.write_register(0x4315, 0x01);
+        dma.write_register(0x4316, 0x00); // byte-count high powers up as $FF
 
         let (_charged, open_bus) = dma.start_dma(0x03, &mut bus, 0, 0, 8);
 
