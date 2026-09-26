@@ -97,6 +97,14 @@ pub struct Ppu {
     /// Preserved across LCD disable/enable cycles.
     #[serde(default)]
     scy_b_stage_only: bool,
+    /// RGB for the four DMG shades (lightest to darkest). A display setting,
+    /// not machine state: never saved, so the console re-applies it.
+    #[serde(skip, default = "grey_shades")]
+    dmg_shades: [(u8, u8, u8); 4],
+}
+
+fn grey_shades() -> [(u8, u8, u8); 4] {
+    super::GbPalette::Grey.shades()
 }
 
 impl Ppu {
@@ -138,6 +146,7 @@ impl Ppu {
             dmg_compat: false,
             cgb_model: CgbModel::default(),
             scy_b_stage_only: false,
+            dmg_shades: grey_shades(),
         }
     }
 
@@ -222,11 +231,24 @@ impl Ppu {
         );
     }
 
+    /// Sets the RGB drawn for the four DMG shades (lightest to darkest).
+    pub fn set_dmg_shades(&mut self, shades: [(u8, u8, u8); 4]) {
+        self.dmg_shades = shades;
+    }
+
+    /// The RGB drawn for the four DMG shades (lightest to darkest).
+    pub fn dmg_shades(&self) -> [(u8, u8, u8); 4] {
+        self.dmg_shades
+    }
+
     pub(crate) fn enter_stop_display_mode(&mut self, mode: StopDisplayMode) {
         self.stop_display_mode = mode;
         match mode {
             StopDisplayMode::Inactive | StopDisplayMode::PreserveCurrent => {}
-            StopDisplayMode::SolidWhite => self.screen_buffer.fill_rgb(0xFF, 0xFF, 0xFF),
+            StopDisplayMode::SolidWhite => {
+                let (r, g, b) = self.dmg_shades[0];
+                self.screen_buffer.fill_rgb(r, g, b);
+            }
             StopDisplayMode::SolidBlack => self.screen_buffer.fill_rgb(0x00, 0x00, 0x00),
         }
     }
@@ -407,6 +429,7 @@ impl Ppu {
             self.dmg_compat,
             &mut self.screen_buffer,
             self.stop_display_mode != StopDisplayMode::Inactive,
+            &self.dmg_shades,
         );
         if let Some(window_activations) = completed_window_activations {
             self.window_line = self.window_line.wrapping_add(window_activations);
@@ -1511,6 +1534,54 @@ mod tests {
         assert!(ppu.is_frame_ready());
         ppu.clear_frame_ready();
         assert!(!ppu.is_frame_ready());
+    }
+
+    const POCKET: [(u8, u8, u8); 4] = [
+        (0xC4, 0xCF, 0xA1),
+        (0x8B, 0x95, 0x6D),
+        (0x4D, 0x53, 0x3C),
+        (0x1F, 0x1F, 0x1F),
+    ];
+
+    #[test]
+    fn test_dmg_pixels_use_the_configured_shades() {
+        // Given: BG tile 1 whose leftmost pixel is colour 3, BGP identity mapping.
+        let mut ppu = Ppu::new();
+        ppu.set_dmg_shades(POCKET);
+        ppu.registers.lcdc = 0x91;
+        ppu.registers.bgp = 0xE4;
+        ppu.vram[0x1800] = 1;
+        ppu.vram[0x0010] = 0x80;
+        ppu.vram[0x0011] = 0x80;
+
+        tick_until_pixel_transfer_starts(&mut ppu);
+        tick_dots(&mut ppu, 200);
+
+        // Then: colour 3 is the darkest configured shade, colour 0 the lightest.
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), POCKET[3]);
+        assert_eq!(ppu.screen_buffer.get_pixel(1, 0), POCKET[0]);
+    }
+
+    #[test]
+    fn test_dmg_shades_default_to_todays_grey() {
+        let ppu = Ppu::new();
+        assert_eq!(ppu.dmg_shades(), crate::gb::ppu::GbPalette::Grey.shades());
+    }
+
+    #[test]
+    fn test_dmg_shades_are_not_part_of_a_save_state() {
+        let mut ppu = Ppu::new();
+        ppu.set_dmg_shades(POCKET);
+        let restored: Ppu = serde_json::from_str(&serde_json::to_string(&ppu).unwrap()).unwrap();
+        assert_eq!(restored.dmg_shades(), crate::gb::ppu::GbPalette::Grey.shades());
+    }
+
+    #[test]
+    fn test_stop_solid_white_uses_the_lightest_configured_shade() {
+        let mut ppu = Ppu::new();
+        ppu.set_dmg_shades(POCKET);
+        ppu.enter_stop_display_mode(StopDisplayMode::SolidWhite);
+        assert_eq!(ppu.screen_buffer.get_pixel(0, 0), POCKET[0]);
     }
 
     #[test]

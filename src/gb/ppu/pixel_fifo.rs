@@ -4,7 +4,7 @@ use super::background;
 use super::bg_fifo::{self, DmgLayer, DmgPixelFetch, DmgTileByteOverride};
 use super::obj_fifo::ObjFetchModel;
 use super::registers::Registers;
-use super::rendering::{self, cgb_palette_lookup, dmg_palette_index};
+use super::rendering::{cgb_palette_lookup, dmg_palette_index};
 use super::screen_buffer::ScreenBuffer;
 use super::sprites;
 use super::window;
@@ -1030,6 +1030,7 @@ impl PixelFifoRenderer {
         dmg_compat: bool,
         screen_buffer: &mut ScreenBuffer,
         suppress_output: bool,
+        dmg_shades: &[(u8, u8, u8); 4],
     ) -> Option<u8> {
         if !self.active || self.next_x as u32 >= ScreenBuffer::WIDTH {
             return None;
@@ -1128,7 +1129,15 @@ impl PixelFifoRenderer {
                     screen_buffer,
                 );
             } else {
-                self.render_dmg_pixel(x, vram, oam, registers, window_line, screen_buffer);
+                self.render_dmg_pixel(
+                    x,
+                    vram,
+                    oam,
+                    registers,
+                    window_line,
+                    screen_buffer,
+                    dmg_shades,
+                );
             }
         }
         self.clear_consumed_bgp_edge();
@@ -3160,6 +3169,7 @@ impl PixelFifoRenderer {
         registers: &Registers,
         window_line: u8,
         screen_buffer: &mut ScreenBuffer,
+        dmg_shades: &[(u8, u8, u8); 4],
     ) {
         let (colour_index, is_sprite, sprite_palette) =
             self.dmg_pixel_layers(x, vram, oam, registers, window_line);
@@ -3173,8 +3183,8 @@ impl PixelFifoRenderer {
             self.bgp_for_pixel(x, registers.bgp)
         };
         let mapped_index = dmg_palette_index(palette, colour_index);
-        let grey = rendering::dmg_grey(mapped_index);
-        screen_buffer.set_pixel(x, u32::from(self.scanline), grey, grey, grey);
+        let (r, g, b) = dmg_shades[usize::from(mapped_index)];
+        screen_buffer.set_pixel(x, u32::from(self.scanline), r, g, b);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4084,6 +4094,7 @@ mod tests {
             dmg_compat,
             screen_buffer,
             false,
+            &crate::gb::ppu::GbPalette::Grey.shades(),
         );
     }
 
@@ -4118,6 +4129,7 @@ mod tests {
                 false,
                 &mut screen_buffer,
                 false,
+                &crate::gb::ppu::GbPalette::Grey.shades(),
             ) {
                 activation_count = Some(count);
                 break;
@@ -7067,6 +7079,7 @@ mod tests {
                 true,
                 &mut screen_buffer,
                 false,
+                &crate::gb::ppu::GbPalette::Grey.shades(),
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=8");
@@ -7095,6 +7108,7 @@ mod tests {
                 true,
                 &mut screen_buffer,
                 false,
+                &crate::gb::ppu::GbPalette::Grey.shades(),
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=9");
@@ -7144,6 +7158,7 @@ mod tests {
                 true,
                 &mut screen_buffer,
                 false,
+                &crate::gb::ppu::GbPalette::Grey.shades(),
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=8");
@@ -7169,6 +7184,7 @@ mod tests {
                 true,
                 &mut screen_buffer,
                 false,
+                &crate::gb::ppu::GbPalette::Grey.shades(),
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=9");
@@ -7219,6 +7235,7 @@ mod tests {
                 true,
                 &mut screen_buffer,
                 false,
+                &crate::gb::ppu::GbPalette::Grey.shades(),
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=8");
@@ -7245,6 +7262,7 @@ mod tests {
                 true,
                 &mut screen_buffer,
                 false,
+                &crate::gb::ppu::GbPalette::Grey.shades(),
             );
             dot = dot.saturating_add(1);
             assert!(dot < deadline, "renderer did not reach next_x=9");
