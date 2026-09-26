@@ -307,6 +307,11 @@ Test suites:
 - `sa1_boot_tests.rs` / `sa1_iram_tests.rs` / `sa1_bwram_tests.rs` /
   `sa1_irq_tests.rs` -- hand-assembled SA-1 fixture-ROM tests for dual-CPU
   boot, shared I-RAM/BW-RAM exchange, and the cross-CPU IRQ handshake.
+- `sa1_arithmetic_tests.rs` -- hand-assembled SA-1 fixture-ROM tests for the
+  SA-1 arithmetic unit (`$2250-$2254` in, `$2306-$230B` out): signed multiply,
+  signed/unsigned division, the 40-bit cumulative sum and its overflow flag,
+  and that unit's state across a save state and a hard reset (nr-ps1; Super
+  Mario RPG hung on a black screen after its opening without it).
 - `input_standard_controller_tests.rs` -- standard-controller protocol
   fixtures (#2886), assembled in-code via the shared `fixture_rom.rs`
   builder (no on-disk assets): `$4016`/`$4017` serial order incl. the four
