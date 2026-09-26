@@ -3914,4 +3914,51 @@ mod tests {
             "help text:\n{help}"
         );
     }
+
+    /// Headless capture has no palette of its own: a config file's
+    /// `nes-palette=` reaches a `--headless` run exactly as it reaches the window.
+    #[test]
+    fn test_headless_keeps_the_config_file_nes_palette() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"nes-palette=smooth\n").unwrap();
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert!(config.frontend.headless_capture.is_some());
+        assert_eq!(config.nes.palette, NesPalette::Smooth);
+    }
+
+    #[test]
+    fn test_headless_takes_the_cli_nes_palette() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "--nes-palette".to_string(),
+            "mesen".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert!(config.frontend.headless_capture.is_some());
+        assert_eq!(config.nes.palette, NesPalette::Mesen);
+    }
+
+    #[test]
+    fn test_headless_without_a_palette_uses_default() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert_eq!(config.nes.palette, NesPalette::Default);
+    }
 }

@@ -435,6 +435,50 @@ mod tests {
         );
     }
 
+    /// Capture `rom` at `frames` with `palette` selected, returning the RGB bytes.
+    fn capture_with_palette(
+        rom: &str,
+        frames: u32,
+        palette: crate::nes::ppu::NesPalette,
+        temp: &TempDir,
+    ) -> Vec<u8> {
+        let mut config = Config {
+            frontend: FrontendConfig {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        config.nes.palette = palette;
+        let context = Rc::new(RefCell::new(AppContext::new_with_config(config)));
+        let output = temp.path().join(format!("{}.png", palette.config_id()));
+        run(&context, rom, &capture_to(&output, frames)).expect("capture should succeed");
+        decode_png(&output).2
+    }
+
+    #[test]
+    fn run_draws_with_the_configured_nes_palette() {
+        // Given a ROM that draws many distinct colours, captured once with the
+        // Default palette and once with Mesen2's.
+        use crate::nes::ppu::NesPalette;
+        let temp = TempDir::new().expect("create temp dir");
+        let rom = "roms/nes/rainwarrior/color_test.nes";
+        let default = capture_with_palette(rom, 10, NesPalette::Default, &temp);
+        let mesen = capture_with_palette(rom, 10, NesPalette::Mesen, &temp);
+
+        // Then the captures differ, and every Mesen pixel is the Mesen colour of
+        // a colour index whose Default colour is the Default pixel at that spot.
+        assert_ne!(default, mesen, "the palette setting must reach the capture");
+        for (d, m) in default.chunks(3).zip(mesen.chunks(3)) {
+            let d = (d[0], d[1], d[2]);
+            let m = (m[0], m[1], m[2]);
+            let matches = (0..64).any(|i| {
+                NesPalette::Default.table()[i] == d && NesPalette::Mesen.table()[i] == m
+            });
+            assert!(matches, "Default pixel {d:?} and Mesen pixel {m:?} share no colour index");
+        }
+    }
+
     // --- per-system capture ---
     //
     // The runner asks the console for its dimensions, so a capture that assumed
