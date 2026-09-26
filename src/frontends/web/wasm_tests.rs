@@ -1260,8 +1260,14 @@ fn dsp4_firmware_is_checked_against_the_dsp4_dump_only() {
     use crate::wasm_snes::is_genuine_in;
     let table = synthetic_firmware_table();
     assert!(is_genuine_in("dsp4", &[0x44; 8192], table));
-    assert!(!is_genuine_in("dsp4", &[0x1B; 8192], table), "the DSP-1's file");
-    assert!(!is_genuine_in("dsp4", &[0x22; 8192], table), "the DSP-2's file");
+    assert!(
+        !is_genuine_in("dsp4", &[0x1B; 8192], table),
+        "the DSP-1's file"
+    );
+    assert!(
+        !is_genuine_in("dsp4", &[0x22; 8192], table),
+        "the DSP-2's file"
+    );
     assert!(!is_genuine_in("dsp4", &[0x44; 12288], table));
 }
 

@@ -1020,11 +1020,11 @@ mod tests {
 
     #[test]
     fn load_rom_adds_warning_toast_when_enhancement_chip_is_required() {
-        // DSP-4 (Top Gear 3000) is not emulated yet and keeps the warning.
+        // DSP-3 (SD Gundam GX) is not emulated yet and keeps the warning.
         let mut snes = make_snes();
-        let rom = crate::snes::test_support::dsp_rom(b"TOP GEAR 3000", false);
+        let rom = crate::snes::test_support::dsp_rom(b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX", false);
 
-        snes.load_rom(&rom, "dsp4.sfc").expect("load ROM");
+        snes.load_rom(&rom, "dsp3.sfc").expect("load ROM");
 
         let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
         assert!(
