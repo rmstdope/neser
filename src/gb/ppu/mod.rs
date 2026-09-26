@@ -1,4 +1,5 @@
 pub mod background;
+pub mod dmg_palette;
 mod bg_fifo;
 mod obj_fifo;
 mod pixel_fifo;
@@ -13,5 +14,6 @@ pub mod timing;
 mod trace_tests;
 pub mod window;
 
+pub use dmg_palette::GbPalette;
 pub use ppu::Ppu;
 pub(crate) use ppu::StopDisplayMode;
