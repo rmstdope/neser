@@ -16,6 +16,7 @@ use crate::snes::sa1::{
     self, Sa1Arithmetic, Sa1ControlRegisters, Sa1Core, Sa1IRam, Sa1MemoryControl,
     decode_mirror_offset,
 };
+use crate::snes::sdd1::Sdd1;
 use crate::trace_apu;
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -117,6 +118,10 @@ pub struct SnesSystemBus {
     /// clears the IRQ flag while the bus read path takes `&self`. It shares `rom` and `sram`
     /// (Game Pak RAM) with the bus.
     gsu: Option<RefCell<Gsu>>,
+    /// The S-DD1 decompressor, which also maps the whole cartridge (ROM banks, SRAM) and
+    /// answers `$4800-$4807`. A `RefCell` because DMA reads advance its decompression on the
+    /// `&self` read paths. `None` for cartridges without one.
+    sdd1: Option<RefCell<Sdd1>>,
     /// Every `(b_addr, value)` pair a DMA/HDMA A->B transfer has driven onto the
     /// B-bus, in order. Test-only instrument: it observes what the controller
     /// actually wrote, which is what the transfer tests are about, and replaces
@@ -205,6 +210,8 @@ impl SnesSystemBus {
         let obc1 = cartridge.enhancement_chip() == Some(EnhancementChip::Obc1);
         let gsu = (cartridge.enhancement_chip() == Some(EnhancementChip::SuperFx))
             .then(|| RefCell::new(Gsu::new(Rc::clone(&rom), Rc::clone(&sram))));
+        let sdd1 = (cartridge.enhancement_chip() == Some(EnhancementChip::Sdd1))
+            .then(|| RefCell::new(Sdd1::new(Rc::clone(&rom))));
         let mut bus = Self {
             _cartridge: cartridge,
             mapping,
@@ -235,6 +242,7 @@ impl SnesSystemBus {
             cx4,
             obc1,
             gsu,
+            sdd1,
             #[cfg(test)]
             b_bus_writes: RefCell::new(Vec::new()),
         };
@@ -298,6 +306,51 @@ impl SnesSystemBus {
         if let Some(cx4) = self.cx4.as_mut() {
             cx4.reset();
         }
+    }
+
+    /// Returns the S-DD1 to its power-on banks with nothing armed on the /RES line (soft and
+    /// hard reset alike, as Mesen2 `Sdd1::Reset`). No-op without an S-DD1.
+    pub fn reset_sdd1(&mut self) {
+        if let Some(sdd1) = self.sdd1.as_mut() {
+            sdd1.get_mut().reset();
+        }
+    }
+
+    /// A read of the cartridge on an S-DD1 board: SRAM, or ROM through the chip (decompressed
+    /// when a DMA from ROM is being decompressed there, unless `peek`), and `open_bus` for
+    /// everything else the board leaves unmapped. `None` for cartridges without an S-DD1.
+    fn sdd1_read(&self, addr: u32, open_bus: u8, peek: bool) -> Option<u8> {
+        let sdd1 = self.sdd1.as_ref()?;
+        if let Some(offset) = Sdd1::sram_offset(addr) {
+            let sram = self.sram.borrow();
+            return Some(if sram.is_empty() {
+                open_bus
+            } else {
+                sram[offset % sram.len()]
+            });
+        }
+        let byte = if peek {
+            sdd1.borrow().peek_rom(addr)
+        } else {
+            sdd1.borrow_mut().read_rom(addr)
+        };
+        Some(byte.unwrap_or(open_bus))
+    }
+
+    /// A write to the cartridge on an S-DD1 board: only SRAM takes it. `false` for cartridges
+    /// without an S-DD1.
+    fn sdd1_write(&self, addr: u32, value: u8) -> bool {
+        if self.sdd1.is_none() {
+            return false;
+        }
+        if let Some(offset) = Sdd1::sram_offset(addr) {
+            let mut sram = self.sram.borrow_mut();
+            let len = sram.len();
+            if len != 0 {
+                sram[offset % len] = value;
+            }
+        }
+        true
     }
 
     /// The CX4's offset for `addr` when this cartridge has one and `addr` is in its window,
@@ -604,6 +657,9 @@ impl SnesSystemBus {
         if let Some(offset) = self.obc1_offset(addr) {
             return obc1::read(&self.sram.borrow(), offset);
         }
+        if let Some(byte) = self.sdd1_read(addr, open_bus, false) {
+            return byte;
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             return iram.borrow().read(offset);
         }
@@ -652,6 +708,10 @@ impl SnesSystemBus {
         }
         if let Some(offset) = self.obc1_offset(addr) {
             return obc1::read(&self.sram.borrow(), offset);
+        }
+
+        if let Some(byte) = self.sdd1_read(addr, self.mdr.get(), true) {
+            return byte;
         }
 
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -712,6 +772,9 @@ impl SnesSystemBus {
         }
         if let Some(offset) = self.obc1_offset(addr) {
             obc1::write(&mut self.sram.borrow_mut(), offset, value);
+            return;
+        }
+        if self.sdd1_write(addr, value) {
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -1101,6 +1164,7 @@ impl SnesSystemBus {
             sa1: self.capture_sa1_state(),
             cx4: self.cx4.as_ref().map(Cx4::capture_state),
             gsu: self.gsu.as_ref().map(|gsu| gsu.borrow().capture_state()),
+            sdd1: self.sdd1.as_ref().map(|sdd1| sdd1.borrow().capture_state()),
             pending_gpdma: self.pending_gpdma,
             pending_hdma: self.pending_hdma,
         }
@@ -1209,6 +1273,9 @@ impl SnesSystemBus {
         // Super FX support) leaves the GSU as it is.
         if let (Some(gsu), Some(gsu_state)) = (&mut self.gsu, &state.gsu) {
             gsu.get_mut().restore_state(gsu_state);
+        }
+        if let (Some(sdd1), Some(sdd1_state)) = (self.sdd1.as_mut(), state.sdd1.as_ref()) {
+            sdd1.get_mut().restore_state(sdd1_state);
         }
         self.pending_gpdma = state.pending_gpdma;
         self.pending_hdma = state.pending_hdma;
@@ -1404,6 +1471,7 @@ impl SnesSystemBus {
             // other SA-1 register's fall-through-to-open-bus behavior.
             0x2300 => self.sa1_registers.as_ref()?.borrow().sfr(),
             0x4300..=0x437F => self.dma.read_register(offset)?,
+            0x4800..=0x4807 => self.sdd1.as_ref()?.borrow().read_register(offset)?,
             _ => return None,
         };
         Some(value)
@@ -1559,7 +1627,17 @@ impl SnesSystemBus {
                 }
                 None => false,
             },
-            0x4300..=0x437F => self.dma.write_register(offset, value),
+            0x4300..=0x437F => {
+                // The S-DD1 watches each channel's source address and byte count.
+                if let Some(sdd1) = self.sdd1.as_mut() {
+                    sdd1.get_mut().snoop_dma_register(offset, value);
+                }
+                self.dma.write_register(offset, value)
+            }
+            0x4800..=0x4807 => match self.sdd1.as_mut() {
+                Some(sdd1) => sdd1.get_mut().write_register(offset, value),
+                None => false,
+            },
             _ => false,
         }
     }
@@ -1753,6 +1831,10 @@ impl SnesBus for SnesSystemBus {
             self.mdr.set(value);
             return value;
         }
+        if let Some(value) = self.sdd1_read(addr, self.mdr.get(), false) {
+            self.mdr.set(value);
+            return value;
+        }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
             let value = iram.borrow().read(offset);
             self.mdr.set(value);
@@ -1833,6 +1915,9 @@ impl SnesBus for SnesSystemBus {
         }
         if let Some(offset) = self.obc1_offset(addr) {
             obc1::write(&mut self.sram.borrow_mut(), offset, value);
+            return;
+        }
+        if self.sdd1_write(addr, value) {
             return;
         }
         if let (Some(iram), Some(offset)) = (&self.sa1_iram, decode_mirror_offset(addr)) {
@@ -2368,6 +2453,124 @@ mod tests {
         restored.restore_state(&saved).expect("restore");
         restored.write(0x00_7FF3, 0xE1);
         assert_eq!(restored.read(0x00_780F), 0xE1, "Attr of object 3 at $7800");
+    }
+
+    /// A 2 MiB S-DD1 cartridge (map mode $32) whose ROM byte at offset `i` is `i ^ (i >> 16)`,
+    /// with a raw-mode compressed stream at offset $1000 (`$CA` then zeros, which Mesen2's
+    /// decoder turns into `51 04 51 04 ...`).
+    fn sdd1_test_cart(chipset: u8, ram_size_field: u8) -> (Cartridge, Vec<u8>) {
+        let mut rom: Vec<u8> = (0..0x20_0000)
+            .map(|i: usize| (i ^ (i >> 16)) as u8)
+            .collect();
+        rom[0x1000..0x1010].fill(0x00);
+        rom[0x1000] = 0xCA;
+        let base = 0x7FC0;
+        rom[base..base + 21].copy_from_slice(b"SYSTEM BUS TEST      ");
+        rom[base + 0x3C] = 0x00;
+        rom[base + 0x3D] = 0x80;
+        rom[base + 0x15] = 0x32;
+        rom[base + 0x16] = chipset;
+        rom[base + 0x17] = 0x0B; // 2 MiB
+        rom[base + 0x18] = ram_size_field;
+        rom[base + 0x1C] = 0x34;
+        rom[base + 0x1D] = 0x12;
+        rom[base + 0x1E] = 0xCB;
+        rom[base + 0x1F] = 0xED;
+        let cart = Cartridge::from_bytes(&rom).expect("valid S-DD1 test cartridge");
+        (cart, rom)
+    }
+
+    #[test]
+    fn sdd1_cart_maps_rom_through_its_bank_registers() {
+        let (cart, rom) = sdd1_test_cart(0x43, 0x00);
+        let mut bus = SnesSystemBus::new(cart);
+        assert_eq!(bus.read(0x00_8123), rom[0x0123]);
+        assert_eq!(bus.read(0x81_8123), rom[0x8123]);
+        assert_eq!(bus.read(0xC1_2345), rom[0x1_2345]);
+        assert_eq!(bus.read(0xD1_2345), rom[0x11_2345]);
+        bus.write(0x00_4804, 0x01);
+        assert_eq!(bus.read(0x80_4804), 0x01, "ports are in every system bank");
+        assert_eq!(bus.read(0xC1_2345), rom[0x11_2345]);
+        assert_eq!(bus.read_for_debugger(0xC1_2345), rom[0x11_2345]);
+        bus.read(0x00_8000);
+        assert_eq!(bus.read(0x40_8000), bus.mdr.get(), "$40-$6F is not mapped");
+        assert_eq!(bus.read(0x00_4802), bus.mdr.get(), "$4802 is open bus");
+    }
+
+    /// Arms DMA channel 2 for `len` bytes from `addr` through the CPU's own register writes,
+    /// which is what the S-DD1 watches.
+    fn arm_sdd1_channel_2(bus: &mut SnesSystemBus, addr: u32, len: u16) {
+        for (port, value) in [
+            (0x4320, 0x08), // A->B, fixed A-bus address
+            (0x4321, 0x80),
+            (0x4322, addr as u8),
+            (0x4323, (addr >> 8) as u8),
+            (0x4324, (addr >> 16) as u8),
+            (0x4325, len as u8),
+            (0x4326, (len >> 8) as u8),
+            (0x4800, 0x04),
+            (0x4801, 0x04),
+        ] {
+            bus.write(port, value);
+        }
+    }
+
+    #[test]
+    fn sdd1_decompresses_dma_reads_at_the_snooped_address() {
+        let (cart, _) = sdd1_test_cart(0x43, 0x00);
+        let mut bus = SnesSystemBus::new(cart);
+        arm_sdd1_channel_2(&mut bus, 0xC0_1000, 4);
+        assert_eq!(
+            bus.read_for_debugger(0xC0_1000),
+            0xCA,
+            "a peek does not decompress"
+        );
+        let data: Vec<u8> = (0..4).map(|_| bus.dma_read_a_bus(0xC0_1000, 0)).collect();
+        assert_eq!(data, [0x51, 0x04, 0x51, 0x04]);
+        assert_eq!(bus.read(0x00_4801), 0x00, "the channel's $4801 bit clears");
+        assert_eq!(bus.dma_read_a_bus(0xC0_1000, 0), 0xCA);
+        // The DMA controller still got the writes.
+        assert_eq!(bus.read(0x00_4322), 0x00);
+        assert_eq!(bus.read(0x00_4324), 0xC0);
+    }
+
+    #[test]
+    fn sdd1_sram_is_at_70_73_and_6000_7fff() {
+        let (cart, _) = sdd1_test_cart(0x45, 0x03); // ROM + RAM + battery, 8 KiB
+        let mut bus = SnesSystemBus::new(cart);
+        bus.write(0x70_0005, 0x42);
+        assert_eq!(bus.read(0x00_6005), 0x42);
+        assert_eq!(bus.read(0xBF_6005), 0x42);
+        assert_eq!(bus.read(0x73_2005), 0x42, "8 KiB mirrors through $70-$73");
+        bus.dma_write_a_bus(0x80_7FFF, 0x24);
+        assert_eq!(bus.dma_read_a_bus(0x70_1FFF, 0), 0x24);
+    }
+
+    #[test]
+    fn sdd1_state_round_trips_and_reset_restores_the_banks() {
+        let (cart, rom) = sdd1_test_cart(0x43, 0x00);
+        let mut bus = SnesSystemBus::new(cart);
+        bus.write(0x00_4804, 0x01);
+        arm_sdd1_channel_2(&mut bus, 0xC0_1000, 4);
+        bus.dma_read_a_bus(0xC0_1000, 0);
+        let saved = bus.capture_state();
+        assert!(saved.sdd1.is_some());
+
+        let (cart, _) = sdd1_test_cart(0x43, 0x00);
+        let mut restored = SnesSystemBus::new(cart);
+        restored.restore_state(&saved).expect("restore");
+        assert_eq!(restored.capture_state().sdd1, saved.sdd1);
+        assert_eq!(restored.read(0x00_4804), 0x01);
+
+        restored.reset_sdd1();
+        assert_eq!(restored.read(0x00_4804), 0x00);
+        assert_eq!(restored.read(0xC1_2345), rom[0x1_2345]);
+        assert!(
+            SnesSystemBus::new(lorom_test_cart())
+                .capture_state()
+                .sdd1
+                .is_none()
+        );
     }
 
     fn lorom_cart_with_battery_sram() -> Cartridge {

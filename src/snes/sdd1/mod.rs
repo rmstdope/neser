@@ -147,8 +147,8 @@ impl Sdd1 {
         let addr = addr & 0xFF_FFFF;
         let active = self.state.dma_enable & self.state.dma_pending;
         if active != 0 && addr >= 0xC0_0000 {
-            let channel = (0..8)
-                .find(|&ch| active & (1 << ch) != 0 && self.state.dma_address[ch] == addr);
+            let channel =
+                (0..8).find(|&ch| active & (1 << ch) != 0 && self.state.dma_address[ch] == addr);
             if let Some(channel) = channel {
                 return Some(self.next_decompressed_byte(channel, addr));
             }
@@ -263,7 +263,12 @@ mod tests {
     #[test]
     fn registers_read_back_and_4802_is_open_bus() {
         let mut chip = chip_with_rom(0x10_0000);
-        for (port, value) in [(0x4800, 0x11), (0x4801, 0x22), (0x4804, 0x33), (0x4807, 0x44)] {
+        for (port, value) in [
+            (0x4800, 0x11),
+            (0x4801, 0x22),
+            (0x4804, 0x33),
+            (0x4807, 0x44),
+        ] {
             assert!(chip.write_register(port, value));
             assert_eq!(chip.read_register(port), Some(value), "${port:04X}");
         }
