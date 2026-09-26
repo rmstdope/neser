@@ -2573,6 +2573,27 @@ mod tests {
         );
     }
 
+    /// The path players use: a mid-stream decompression saved as JSON bytes and loaded into a
+    /// fresh console resumes with the same next byte.
+    #[test]
+    fn sdd1_mid_stream_state_survives_serialization() {
+        let (cart, _) = sdd1_test_cart(0x43, 0x00);
+        let mut bus = SnesSystemBus::new(cart);
+        arm_sdd1_channel_2(&mut bus, 0xC0_1000, 4);
+        bus.dma_read_a_bus(0xC0_1000, 0);
+        let json = serde_json::to_vec(&bus.capture_state()).expect("serialize");
+
+        let (cart, _) = sdd1_test_cart(0x43, 0x00);
+        let mut restored = SnesSystemBus::new(cart);
+        let state: SnesBusState = serde_json::from_slice(&json).expect("deserialize");
+        restored.restore_state(&state).expect("restore");
+        let rest: Vec<u8> = (0..3)
+            .map(|_| restored.dma_read_a_bus(0xC0_1000, 0))
+            .collect();
+        assert_eq!(rest, [0x04, 0x51, 0x04]);
+        assert_eq!(restored.read(0x00_4801), 0x00);
+    }
+
     fn lorom_cart_with_battery_sram() -> Cartridge {
         let mut rom = vec![0u8; 0x20000];
         let base = 0x7FC0;

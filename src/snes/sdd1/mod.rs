@@ -14,6 +14,11 @@
 //!   instead of ROM. The games use fixed-address DMA, so the address does not move. After
 //!   the byte count (0 = 65536) the channel's `$4801` bit clears and the next match starts a
 //!   new stream.
+//!
+//! Everything else on the board is open bus: `$40-$6F:$8000-$FFFF` and `$74-$7D:$0000-$7FFF`
+//! are unmapped, as in bsnes' S-DD1 board map. Mesen2 keeps its base LoROM and SRAM mappings
+//! there instead. Neither game is known to read those ranges, so this choice is deliberate
+//! and not a divergence to "fix".
 
 pub mod decompressor;
 
@@ -367,6 +372,33 @@ mod tests {
         let before = chip.capture_state();
         chip.peek_rom(0xC0_1010);
         assert_eq!(chip.capture_state(), before);
+    }
+
+    /// A compressed stream is fetched through the bank registers: one whose header is the last
+    /// byte of `$C0-$CF` continues at `$D0:0000`, wherever `$4805` points that bank.
+    #[test]
+    fn a_stream_crossing_a_1mib_bank_follows_the_bank_registers() {
+        let mut rom = vec![0u8; 0x40_0000];
+        rom[0x0F_FFFF] = 0x8C; // 4 bitplanes; last byte of MiB 0 (`$CF:FFFF`, bank 0)
+        let tail: Vec<u8> = (0..64u32)
+            .map(|i| (i.wrapping_mul(0x9D) ^ 0x5A) as u8)
+            .collect();
+        rom[0x20_0000..0x20_0040].copy_from_slice(&tail); // MiB 2, mapped at $D0 below
+        rom[0x10_0000..0x10_0040].fill(0xFF); // MiB 1: what a linear fetch would read
+        let mut chip = Sdd1::new(Rc::new(rom));
+        chip.write_register(0x4805, 0x02);
+        arm(&mut chip, 0, 0xCF_FFFF, 16);
+        let actual: Vec<u8> = (0..16)
+            .map(|_| chip.read_rom(0xCF_FFFF).expect("ROM"))
+            .collect();
+
+        let mut contiguous = vec![0x8C];
+        contiguous.extend_from_slice(&tail);
+        let mut read = |addr: u32| contiguous.get(addr as usize).copied().unwrap_or(0);
+        let mut reference = Sdd1Decompressor::default();
+        reference.init(0, &mut read);
+        let expected: Vec<u8> = (0..16).map(|_| reference.next_byte(&mut read)).collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]
