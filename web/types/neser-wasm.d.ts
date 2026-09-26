@@ -94,10 +94,14 @@ declare module "*/pkg/neser" {
     export class WasmGb {
         free(): void;
         [Symbol.dispose](): void;
+        /** F8: next shade palette's name, or "" when no original Game Boy game runs. */
+        cycle_palette(): string;
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
         is_audio_muted(): boolean;
+        /** The LCD filter's palette texture: 2x1 RGBA, background then foreground. */
+        lcd_filter_palette_rgba(): Uint8Array;
         load_rom(rom: Uint8Array, rom_name: string): void;
         constructor();
         render_frame_rgba(): Uint8Array;
@@ -107,6 +111,8 @@ declare module "*/pkg/neser" {
         set_audio_muted(muted: boolean): void;
         set_audio_sample_rate(sample_rate: number): void;
         set_button(controller: number, button: number, pressed: boolean): void;
+        set_lcd_filter_active(active: boolean): void;
+        start_lcd_filter(active: boolean): void;
     }
 
     /**

@@ -42,7 +42,7 @@ it("buildShortcutReferenceText includes H help toggle shortcut", () => {
     expect(text).toMatch(/Ctrl\+R = Soft Reset/);
     expect(text).toMatch(/Shift\+Ctrl\+R = Hard Reset/);
     expect(text).toMatch(/F4 = Cycle Filter/);
-    expect(text).toMatch(/F8 = Cycle Palette \(NES\)/);
+    expect(text).toMatch(/F8 = Cycle Palette \(NES, Game Boy\)/);
 });
 
 it("buildShortcutOverlayText renders multiline list for overlay", () => {

@@ -509,18 +509,43 @@ function loadImageTexture(url: string, linear: boolean): Promise<WebGLTexture | 
 }
 
 async function loadGbAssets() {
-    if (gbAssetsLoaded && gbPaletteTex && gbBackgroundTex) return true;
-    const paletteUrl = new URL("./assets/gb-palette.png", import.meta.url).href;
+    if (gbAssetsLoaded && gbBackgroundTex) return true;
     const bgUrl = new URL("./assets/gb-background.png", import.meta.url).href;
-    const [palette, bg] = await Promise.all([
-        loadImageTexture(paletteUrl, false),
-        loadImageTexture(bgUrl, true),
-    ]);
-    if (!palette || !bg) return false;
-    gbPaletteTex = palette;
+    const bg = await loadImageTexture(bgUrl, true);
+    if (!bg) return false;
     gbBackgroundTex = bg;
     gbAssetsLoaded = true;
     return true;
+}
+
+/**
+ * Upload the Game Boy LCD filter's palette texture: 2x1 RGBA, background
+ * then foreground, as the shader samples it at x = 0.25 and x = 0.75.
+ */
+function uploadGbPaletteTexture(rgba: Uint8Array) {
+    if (!gbPaletteTex) gbPaletteTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, gbPaletteTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 2, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+}
+
+/**
+ * Keep a Game Boy game's shade palette and the LCD filter in step: the game
+ * draws grey under the filter, and the filter draws the chosen palette.
+ * `starting` applies the filter's DMG Green starting palette.
+ */
+function syncGbPaletteWithFilter(starting: boolean) {
+    if (emulator?.kind !== "gb") return;
+    const filterOn = filters[currentFilter]?.type === "gb";
+    if (starting) {
+        emulator.inst.start_lcd_filter(filterOn);
+    } else {
+        emulator.inst.set_lcd_filter_active(filterOn);
+    }
+    uploadGbPaletteTexture(emulator.inst.lcd_filter_palette_rgba());
 }
 
 function setupGbPrograms() {
@@ -1315,6 +1340,7 @@ async function start() {
         }
 
         emulator!.inst.load_rom(romBytes, romName);
+        syncGbPaletteWithFilter(true);
         drainNesToasts(emulator?.inst ?? null, toastOverlay);
 
         // ── NES-only: Autorun setup (playback/extend – after ROM is loaded) ──
@@ -1887,9 +1913,14 @@ function debuggerStepInto() {
 }
 
 function cyclePaletteAction() {
-    if (!nes) return;
-    nes.cycle_palette();
-    drainNesToasts(nes, toastOverlay);
+    if (nes) {
+        nes.cycle_palette();
+        drainNesToasts(nes, toastOverlay);
+    } else if (emulator?.kind === "gb") {
+        // Empty when no original Game Boy game runs: nothing changes, no toast.
+        if (emulator.inst.cycle_palette() !== "") syncGbPaletteWithFilter(false);
+        drainNesToasts(emulator.inst, toastOverlay);
+    }
 }
 
 function debuggerRunToNextFrame() {
@@ -2556,6 +2587,7 @@ function updateFilterToggleButtonLabel() {
 
 function toggleFilterAction() {
     cycleFilter();
+    syncGbPaletteWithFilter(false);
     updateFilterToggleButtonLabel();
 }
 
