@@ -3963,6 +3963,44 @@ mod tests {
     }
 
     #[test]
+    fn test_help_lists_the_gbc_palette_flag() {
+        let help = crate::platform::config::cli::help_text();
+        assert!(
+            help.contains(
+                "Colour palette for original Game Boy games on a Game Boy Color: auto, brown, red, \u{2026} (default: auto)"
+            ),
+            "help text:\n{help}"
+        );
+    }
+
+    #[test]
+    fn test_cli_gbc_palette_invalid_refuses_start() {
+        let result = config_new(vec!["--gbc-palette".to_string(), "bogus".to_string()]);
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid --gbc-palette value: 'bogus'. Valid options are: auto, brown, red, dark-brown, blue, dark-blue, grayscale, pastel-mix, orange, yellow, green, dark-green, reverse"
+        );
+    }
+
+    #[test]
+    fn test_headless_takes_the_cli_gbc_palette() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "--gbc-palette".to_string(),
+            "red".to_string(),
+            "game.gb".to_string(),
+        ]);
+        assert!(config.frontend.headless_capture.is_some());
+        assert_eq!(
+            config.gb.gbc_palette,
+            crate::gb::compat_palettes::GbcPalette::Red
+        );
+    }
+
+    #[test]
     fn test_help_lists_every_nes_palette() {
         let help = crate::platform::config::cli::help_text();
         assert!(

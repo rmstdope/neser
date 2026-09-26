@@ -283,6 +283,9 @@ impl Config {
             "gb_palette" => {
                 self.gb.apply_config_value("gb_palette", value)?;
             }
+            "gbc_palette" => {
+                self.gb.apply_config_value("gbc_palette", value)?;
+            }
             "gba_hardware" => {
                 self.gba.apply_config_value("gba_hardware", value)?;
             }
@@ -1398,6 +1401,22 @@ nes-filter=invalid-shader
         // An unknown value warns but does not stop the config file loading.
         config.apply_config_value("gb-palette", "bogus").unwrap();
         assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
+    }
+
+    #[test]
+    fn test_config_file_gbc_palette_reaches_the_gb_config() {
+        let mut config = Config::default();
+        config.apply_config_value("gbc-palette", "red").unwrap();
+        assert_eq!(
+            config.gb.gbc_palette,
+            crate::gb::compat_palettes::GbcPalette::Red
+        );
+        // An unknown value warns but does not stop the config file loading.
+        config.apply_config_value("gbc-palette", "bogus").unwrap();
+        assert_eq!(
+            config.gb.gbc_palette,
+            crate::gb::compat_palettes::GbcPalette::Red
+        );
     }
 
     #[test]

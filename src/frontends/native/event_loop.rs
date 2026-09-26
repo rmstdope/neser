@@ -831,6 +831,12 @@ impl ApplicationHandler for NativeEventLoop {
                                     crate::gb::ppu::dmg_palette::palette_toast_message(palette);
                                 self.console.app_context().borrow_mut().add_toast(&toast);
                                 self.sync_gb_palette_with_filter(false);
+                            } else if let Some(toast) = self
+                                .console
+                                .as_gameboy_mut()
+                                .and_then(|gb| gb.cycle_gbc_palette())
+                            {
+                                self.console.app_context().borrow_mut().add_toast(&toast);
                             }
                         }
                     }

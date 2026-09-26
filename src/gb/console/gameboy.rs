@@ -10,6 +10,7 @@
 
 use crate::gb::bus::{CgbBus, DmgBus};
 use crate::gb::cartridge::load_cartridge;
+use crate::gb::compat_palettes::{GbcPalette, gbc_palette_toast_message};
 use crate::gb::console::Gb;
 use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
 use crate::gb::model::GbHardware;
@@ -188,6 +189,9 @@ pub struct GameBoy {
     /// the PPU, because a hard reset rebuilds the PPU and a state load
     /// replaces it.
     palette: GbPalette,
+    /// Colourisation chosen for an original Game Boy game on Game Boy Color
+    /// hardware. Held here for the same reason as `palette`.
+    gbc_palette: GbcPalette,
     /// Whether the frontend draws the Game Boy LCD filter, which colours a
     /// grey picture itself.
     lcd_filter_active: bool,
@@ -206,6 +210,7 @@ impl GameBoy {
             app_context: app_context.into_shared(),
             rom_path: None,
             palette: GbPalette::default(),
+            gbc_palette: GbcPalette::default(),
             lcd_filter_active: false,
         }
     }
@@ -266,6 +271,8 @@ impl GameBoy {
             .palette
             .unwrap_or_default();
         self.apply_palette();
+        self.gbc_palette = self.app_context.borrow().config().gb.gbc_palette;
+        self.apply_gbc_palette();
 
         // Load battery-backed save RAM from disk if a .sav file exists.
         self.load_save_ram_from_disk();
@@ -355,6 +362,7 @@ impl GameBoy {
             None => Err("No ROM loaded".into()),
         };
         self.apply_palette();
+        self.apply_gbc_palette();
         result
     }
 
@@ -367,6 +375,7 @@ impl GameBoy {
             gb.reset(soft_reset);
         }
         self.apply_palette();
+        self.apply_gbc_palette();
     }
 
     /// The shade palette chosen for an original Game Boy game.
@@ -418,6 +427,47 @@ impl GameBoy {
             self.palette.lcd_filter_colors()
         } else {
             crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
+        }
+    }
+
+    /// The colourisation chosen for an original Game Boy game on Game Boy
+    /// Color hardware.
+    pub fn gbc_palette(&self) -> GbcPalette {
+        self.gbc_palette
+    }
+
+    /// F8 in an original Game Boy game on Game Boy Color hardware: moves to
+    /// the next colourisation, redraws at once and returns the toast text.
+    /// `None` for any other game (nothing changes, no toast).
+    pub fn cycle_gbc_palette(&mut self) -> Option<String> {
+        let Some(GbConsole::Cgb(gb)) = &self.gb else {
+            return None;
+        };
+        if !gb.cpu.bus.runs_dmg_game() {
+            return None;
+        }
+        let header = gb.cpu.bus.cartridge_header();
+        self.gbc_palette = self.gbc_palette.next();
+        self.apply_gbc_palette();
+        Some(gbc_palette_toast_message(self.gbc_palette, &header))
+    }
+
+    fn apply_gbc_palette(&mut self) {
+        if let Some(GbConsole::Cgb(gb)) = &mut self.gb {
+            gb.cpu.bus.set_gbc_palette(self.gbc_palette);
+        }
+    }
+
+    #[cfg(test)]
+    fn drawn_compat_bg0(&self) -> Option<[u16; 4]> {
+        match &self.gb {
+            Some(GbConsole::Cgb(gb)) => {
+                let ram = gb.cpu.bus.ppu.bg_palette_ram;
+                Some(std::array::from_fn(|i| {
+                    u16::from_le_bytes([ram[i * 2], ram[i * 2 + 1]])
+                }))
+            }
+            _ => None,
         }
     }
 
@@ -2007,5 +2057,99 @@ mod tests {
             unconfigured.lcd_filter_colors(),
             crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
         );
+    }
+
+    // ── gbc-palette (DMG game on Game Boy Color hardware / F8) ─────────────
+
+    use crate::gb::compat_palettes::{self, GbcPalette};
+
+    fn make_cgb_gameboy_with_gbc_palette(palette: GbcPalette) -> GameBoy {
+        let mut config = Config::default();
+        config.gb.hardware = Some(GbHardware::Cgb);
+        config.gb.gbc_palette = palette;
+        let app_context = AppContext::new_with_config(config).into_shared();
+        GameBoy::new(app_context)
+    }
+
+    fn bg0_of(palette: GbcPalette) -> [u16; 4] {
+        compat_palettes::get_palette_colors_by_id(palette.combination_id().unwrap()).bg0
+    }
+
+    #[test]
+    fn test_gbc_palette_from_config_colours_the_dmg_game_from_the_start() {
+        let gb = loaded(
+            make_cgb_gameboy_with_gbc_palette(GbcPalette::Red),
+            &minimal_rom(),
+        );
+        assert_eq!(gb.gbc_palette(), GbcPalette::Red);
+        assert_eq!(gb.drawn_compat_bg0(), Some(bg0_of(GbcPalette::Red)));
+    }
+
+    #[test]
+    fn test_gbc_palette_survives_hard_reset_and_state_load() {
+        let mut gb = loaded(
+            make_cgb_gameboy_with_gbc_palette(GbcPalette::Auto),
+            &minimal_rom(),
+        );
+        let state = gb.save_state_bytes().unwrap();
+        gb.cycle_gbc_palette(); // Brown
+        gb.reset(false);
+        assert_eq!(gb.drawn_compat_bg0(), Some(bg0_of(GbcPalette::Brown)));
+        gb.load_state_bytes(&state).unwrap();
+        assert_eq!(gb.drawn_compat_bg0(), Some(bg0_of(GbcPalette::Brown)));
+    }
+
+    #[test]
+    fn test_state_saved_under_a_chosen_palette_loads_in_auto_when_auto_is_chosen() {
+        let mut gb = loaded(
+            make_cgb_gameboy_with_gbc_palette(GbcPalette::Auto),
+            &minimal_rom(),
+        );
+        let auto = gb.drawn_compat_bg0();
+        for _ in 0..2 {
+            gb.cycle_gbc_palette(); // Brown, Red
+        }
+        let red_state = gb.save_state_bytes().unwrap();
+        for _ in 0..11 {
+            gb.cycle_gbc_palette(); // … Reverse, Auto
+        }
+        assert_eq!(gb.gbc_palette(), GbcPalette::Auto);
+        gb.load_state_bytes(&red_state).unwrap();
+        assert_eq!(gb.drawn_compat_bg0(), auto);
+    }
+
+    #[test]
+    fn test_cycle_gbc_palette_toasts_wraps_to_auto_and_redraws() {
+        let mut gb = loaded(
+            make_cgb_gameboy_with_gbc_palette(GbcPalette::Auto),
+            &minimal_rom(),
+        );
+        let auto = gb.drawn_compat_bg0();
+        assert_eq!(gb.cycle_gbc_palette().as_deref(), Some("Palette: Brown"));
+        assert_eq!(gb.drawn_compat_bg0(), Some(bg0_of(GbcPalette::Brown)));
+        for _ in 0..11 {
+            gb.cycle_gbc_palette();
+        }
+        assert_eq!(gb.gbc_palette(), GbcPalette::Reverse);
+        // The all-zero title is unknown, so Auto picks Dark Green.
+        assert_eq!(
+            gb.cycle_gbc_palette().as_deref(),
+            Some("Palette: Auto (Dark Green)")
+        );
+        assert_eq!(gb.drawn_compat_bg0(), auto);
+    }
+
+    #[test]
+    fn test_cycle_gbc_palette_does_nothing_outside_a_colourised_dmg_game() {
+        // A DMG game on DMG hardware: nr-630's shade palette owns F8.
+        let mut dmg = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        assert_eq!(dmg.cycle_gbc_palette(), None);
+        // A Game Boy Color game.
+        let mut cgb = loaded(
+            make_cgb_gameboy_with_gbc_palette(GbcPalette::Red),
+            &minimal_dual_rom(),
+        );
+        assert_eq!(cgb.cycle_gbc_palette(), None);
+        assert_eq!(cgb.gbc_palette(), GbcPalette::Red);
     }
 }

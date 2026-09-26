@@ -556,6 +556,64 @@ mod tests {
         assert!(colours.is_subset(&greys), "non-grey colours: {colours:?}");
     }
 
+    /// Capture dmg-acid2 on Game Boy Color hardware with `palette` as the
+    /// configured `gbc-palette` (`None`: the key left unset).
+    fn capture_dmg_game_on_cgb(
+        palette: Option<crate::gb::compat_palettes::GbcPalette>,
+        temp: &TempDir,
+    ) -> Vec<u8> {
+        let mut config = Config::default();
+        config.gb.hardware = Some(crate::gb::model::GbHardware::Cgb);
+        if let Some(palette) = palette {
+            config.gb.gbc_palette = palette;
+        }
+        let context = Rc::new(RefCell::new(AppContext::new_with_config(config)));
+        let name = palette.map_or("unset", |p| p.config_id());
+        let output = temp.path().join(format!("gbc-{name}.png"));
+        run(
+            &context,
+            "roms/gb/automated_tests/acid/dmg-acid2.gb",
+            &capture_to(&output, 120),
+        )
+        .expect("capture should succeed");
+        decode_png(&output).2
+    }
+
+    #[test]
+    fn run_colourises_a_dmg_game_on_cgb_in_the_configured_gbc_palette() {
+        use crate::gb::compat_palettes::{GbcPalette, get_palette_colors_by_id};
+        let temp = TempDir::new().expect("create temp dir");
+        let red = capture_dmg_game_on_cgb(Some(GbcPalette::Red), &temp);
+
+        let chosen = get_palette_colors_by_id(GbcPalette::Red.combination_id().unwrap());
+        let expand = |c5: u16| -> u8 {
+            let c5 = (c5 & 0x1F) as u8;
+            (c5 << 3) | (c5 >> 2)
+        };
+        let red_colours: std::collections::BTreeSet<_> = [chosen.bg0, chosen.obj0, chosen.obj1]
+            .into_iter()
+            .flatten()
+            .map(|c| (expand(c), expand(c >> 5), expand(c >> 10)))
+            .collect();
+        let colours = distinct_colours(&red);
+        assert!(colours.len() > 1, "a blank capture proves nothing");
+        assert!(
+            colours.is_subset(&red_colours),
+            "non-Red colours: {colours:?}"
+        );
+    }
+
+    #[test]
+    fn run_colourises_a_dmg_game_on_cgb_with_auto_when_no_gbc_palette_is_configured() {
+        use crate::gb::compat_palettes::GbcPalette;
+        let temp = TempDir::new().expect("create temp dir");
+        let unset = capture_dmg_game_on_cgb(None, &temp);
+        let auto = capture_dmg_game_on_cgb(Some(GbcPalette::Auto), &temp);
+        let red = capture_dmg_game_on_cgb(Some(GbcPalette::Red), &temp);
+        assert_eq!(unset, auto);
+        assert_ne!(unset, red);
+    }
+
     // --- per-system capture ---
     //
     // The runner asks the console for its dimensions, so a capture that assumed

@@ -121,7 +121,8 @@ count produce byte-identical PNGs across runs and across builds.
 
 NES captures use the same palette as the window: --nes-palette (or nes-palette= in the
 config file) applies. Pass --nes-palette mesen to compare against Mesen2. Original Game Boy
-captures likewise use --gb-palette (or gb-palette=), and grey when neither is set.
+captures likewise use --gb-palette (or gb-palette=), and grey when neither is set; on
+Game Boy Color hardware they use --gbc-palette (or gbc-palette=), and auto when neither is set.
 
 Note that a ROM may still be showing a blank screen in its first frames — the
 default of 60 is enough for the test ROMs in `roms/`, but a ROM with a longer
