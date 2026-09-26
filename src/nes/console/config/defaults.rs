@@ -1369,7 +1369,9 @@ nes-filter=invalid-shader
     #[test]
     fn test_config_file_gb_palette_reaches_the_gb_config() {
         let mut config = Config::default();
-        config.apply_config_value("gb-palette", "dmg-green").unwrap();
+        config
+            .apply_config_value("gb-palette", "dmg-green")
+            .unwrap();
         assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
         // An unknown value warns but does not stop the config file loading.
         config.apply_config_value("gb-palette", "bogus").unwrap();

@@ -206,7 +206,10 @@ mod tests {
         for p in GbPalette::ALL {
             assert_eq!(GbPalette::from_config_id(p.config_id()), Some(p));
         }
-        assert_eq!(GbPalette::config_id_list(), "grey, dmg-green, pocket, light");
+        assert_eq!(
+            GbPalette::config_id_list(),
+            "grey, dmg-green, pocket, light"
+        );
     }
 
     #[test]
@@ -264,7 +267,11 @@ mod tests {
             let [bg, fg] = p.lcd_filter_colors();
             let dark = p.shades()[3];
             let product = |f: u8, b: u8| (u32::from(f) * u32::from(b) + 127) / 255;
-            for (f, b, d) in [(fg.0, bg.0, dark.0), (fg.1, bg.1, dark.1), (fg.2, bg.2, dark.2)] {
+            for (f, b, d) in [
+                (fg.0, bg.0, dark.0),
+                (fg.1, bg.1, dark.1),
+                (fg.2, bg.2, dark.2),
+            ] {
                 let got = product(f, b) as i32;
                 assert!((got - i32::from(d)).abs() <= 1, "{p:?}: {got} vs {d}");
             }

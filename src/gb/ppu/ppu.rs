@@ -1578,7 +1578,10 @@ mod tests {
         let mut ppu = Ppu::new();
         ppu.set_dmg_shades(POCKET);
         let restored: Ppu = serde_json::from_str(&serde_json::to_string(&ppu).unwrap()).unwrap();
-        assert_eq!(restored.dmg_shades(), crate::gb::ppu::GbPalette::Grey.shades());
+        assert_eq!(
+            restored.dmg_shades(),
+            crate::gb::ppu::GbPalette::Grey.shades()
+        );
     }
 
     #[test]

@@ -15,6 +15,10 @@ pub struct ShaderManager {
     output_texture: Option<gl::types::GLuint>,
     output_size: Option<Size<u32>>,
     output_texture_owned_by_manager: bool,
+    /// `[background, foreground]` for the Game Boy LCD filter's
+    /// `COLOR_PALETTE` texture, so the filter draws the chosen shade palette.
+    /// `None` keeps the preset's own palette image.
+    gb_filter_colors: Option<[(u8, u8, u8); 2]>,
 }
 
 /// Shader output texture whose GL ownership has moved out of [`ShaderManager`].
@@ -43,6 +47,7 @@ impl ShaderManager {
             output_texture: None,
             output_size: None,
             output_texture_owned_by_manager: true,
+            gb_filter_colors: None,
         }
     }
 
@@ -147,8 +152,15 @@ impl ShaderManager {
         gl_context: Arc<glow::Context>,
     ) -> Result<(), String> {
         // Load the shader preset
-        let preset = ShaderPreset::try_parse_with_driver_context(preset_path, VideoDriver::GlCore)
-            .map_err(|e| format!("Failed to parse shader preset: {}", e))?;
+        let mut preset =
+            ShaderPreset::try_parse_with_driver_context(preset_path, VideoDriver::GlCore)
+                .map_err(|e| format!("Failed to parse shader preset: {}", e))?;
+        if let Some(colors) = self.gb_filter_colors
+            && is_gb_lcd_preset(preset_path)
+        {
+            let palette_path = write_palette_png(colors)?;
+            replace_color_palette(&mut preset, &palette_path);
+        }
 
         // Create filter chain with OpenGL runtime
         let options = FilterChainOptions {
@@ -282,6 +294,30 @@ impl ShaderManager {
         self.current_preset.as_deref()
     }
 
+    /// `true` when the loaded preset is the Game Boy LCD filter.
+    pub fn is_gb_lcd_filter(&self) -> bool {
+        self.current_preset
+            .as_deref()
+            .is_some_and(|p| is_gb_lcd_preset(Path::new(p)))
+    }
+
+    /// Sets the colours the Game Boy LCD filter draws in, reloading it when
+    /// it is the loaded preset and the colours changed.
+    pub fn set_gb_filter_colors(
+        &mut self,
+        colors: [(u8, u8, u8); 2],
+        gl_context: Arc<glow::Context>,
+    ) -> Result<(), String> {
+        if self.gb_filter_colors == Some(colors) {
+            return Ok(());
+        }
+        self.gb_filter_colors = Some(colors);
+        match self.current_preset.clone() {
+            Some(path) if self.is_gb_lcd_filter() => self.load_preset(Path::new(&path), gl_context),
+            _ => Ok(()),
+        }
+    }
+
     pub fn has_shader(&self) -> bool {
         self.filter_chain.is_some()
     }
@@ -305,6 +341,57 @@ impl Drop for ShaderManager {
     }
 }
 
+/// `true` for the Game Boy LCD filter's preset (`gb-filter=dmg`).
+fn is_gb_lcd_preset(path: &Path) -> bool {
+    SHADER_PRESETS
+        .iter()
+        .any(|(name, preset)| *name == "dmg" && Path::new(preset) == path)
+}
+
+/// A 2x1 RGB PNG: background texel, then foreground texel, as the LCD
+/// filter samples `COLOR_PALETTE` at x = 0.25 and x = 0.75.
+fn palette_png(colors: [(u8, u8, u8); 2]) -> Result<Vec<u8>, String> {
+    let [(br, bg, bb), (fr, fg, fb)] = colors;
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer
+        .write_image_data(&[br, bg, bb, fr, fg, fb])
+        .map_err(|e| e.to_string())?;
+    writer.finish().map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+/// Writes the palette image to the temp directory (librashader loads
+/// textures only from files) and returns its path.
+fn write_palette_png(colors: [(u8, u8, u8); 2]) -> Result<PathBuf, String> {
+    let [(br, bg, bb), (fr, fg, fb)] = colors;
+    let path = std::env::temp_dir().join(format!(
+        "neser-gb-lcd-palette-{br:02x}{bg:02x}{bb:02x}-{fr:02x}{fg:02x}{fb:02x}.png"
+    ));
+    std::fs::write(&path, palette_png(colors)?)
+        .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Points the preset's `COLOR_PALETTE` texture at `path`. Returns whether the
+/// preset had one.
+fn replace_color_palette(preset: &mut ShaderPreset, path: &Path) -> bool {
+    match preset
+        .textures
+        .iter_mut()
+        .find(|t| t.meta.name.as_str() == "COLOR_PALETTE")
+    {
+        Some(texture) => {
+            texture.path = path.to_path_buf();
+            true
+        }
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +409,7 @@ mod tests {
                 output_texture: None,
                 output_size: None,
                 output_texture_owned_by_manager: true,
+                gb_filter_colors: None,
             }
         }
 
@@ -481,5 +569,67 @@ mod tests {
         ];
 
         assert_eq!(discovered, expected);
+    }
+
+    // ── Game Boy LCD filter palette ──────────────────────────────────────────
+
+    const DMG_PRESET: &str = "vendor/slang-shaders/handheld/gameboy.slangp";
+    const POCKET_FILTER: [(u8, u8, u8); 2] = [(0xC4, 0xCF, 0xA1), (0x28, 0x26, 0x31)];
+
+    #[test]
+    fn gb_lcd_preset_is_recognised_by_its_path() {
+        assert!(is_gb_lcd_preset(Path::new(DMG_PRESET)));
+        assert!(!is_gb_lcd_preset(Path::new("shaders/stock.slangp")));
+    }
+
+    #[test]
+    fn is_gb_lcd_filter_follows_the_loaded_preset() {
+        let mut manager = ShaderManager::with_presets(Vec::new());
+        assert!(!manager.is_gb_lcd_filter());
+        manager.current_preset = Some(DMG_PRESET.to_string());
+        assert!(manager.is_gb_lcd_filter());
+        manager.current_preset = Some("shaders/stock.slangp".to_string());
+        assert!(!manager.is_gb_lcd_filter());
+    }
+
+    #[test]
+    fn palette_png_is_background_then_foreground() {
+        let bytes = palette_png(POCKET_FILTER).unwrap();
+        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!((info.width, info.height), (2, 1));
+        assert_eq!(info.color_type, png::ColorType::Rgb);
+        assert_eq!(&buf[..6], &[0xC4, 0xCF, 0xA1, 0x28, 0x26, 0x31]);
+    }
+
+    #[test]
+    fn gb_lcd_preset_colour_palette_texture_is_replaced() {
+        let mut preset =
+            ShaderPreset::try_parse_with_driver_context(DMG_PRESET, VideoDriver::GlCore).unwrap();
+        let background_before = preset
+            .textures
+            .iter()
+            .find(|t| t.meta.name.as_str() == "BACKGROUND")
+            .map(|t| t.path.clone());
+
+        assert!(replace_color_palette(
+            &mut preset,
+            Path::new("/tmp/pocket.png")
+        ));
+
+        let palette = preset
+            .textures
+            .iter()
+            .find(|t| t.meta.name.as_str() == "COLOR_PALETTE")
+            .unwrap();
+        assert_eq!(palette.path, PathBuf::from("/tmp/pocket.png"));
+        let background_after = preset
+            .textures
+            .iter()
+            .find(|t| t.meta.name.as_str() == "BACKGROUND")
+            .map(|t| t.path.clone());
+        assert_eq!(background_before, background_after);
     }
 }

@@ -3908,7 +3908,9 @@ mod tests {
     fn test_help_lists_the_gb_palette_flag() {
         let help = crate::platform::config::cli::help_text();
         assert!(
-            help.contains("Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)"),
+            help.contains(
+                "Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)"
+            ),
             "help text:\n{help}"
         );
     }

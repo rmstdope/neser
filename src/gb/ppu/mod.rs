@@ -1,6 +1,6 @@
 pub mod background;
-pub mod dmg_palette;
 mod bg_fifo;
+pub mod dmg_palette;
 mod obj_fifo;
 mod pixel_fifo;
 #[allow(clippy::module_inception)]

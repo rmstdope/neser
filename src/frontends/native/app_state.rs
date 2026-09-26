@@ -292,7 +292,8 @@ F2/F3: Volume up/down\n\
 F4: Cycle visual filter\n\
 F5: Debugger (open/continue)\n\
 F10/F11: Step over/into\n\
-F6/F7: Save/Load state";
+F6/F7: Save/Load state\n\
+F8: Cycle Palette (NES, Game Boy)";
 
     let max_ports: usize = if four_score { 4 } else { 2 };
     let keyboard_ports =
@@ -555,6 +556,21 @@ mod tests {
     }
 
     // ── overlay_text: help overlay ────────────────────────────────────────────
+
+    #[test]
+    fn test_help_overlay_lists_f8_for_nes_and_game_boy() {
+        let state = NativeAppState {
+            help_overlay_visible: true,
+            ..NativeAppState::default()
+        };
+        for console in [make_console(), make_gameboy_console()] {
+            let text = state.overlay_text(&console, None).unwrap();
+            assert!(
+                text.contains("F8: Cycle Palette (NES, Game Boy)"),
+                "help overlay should list F8, got:\n{text}"
+            );
+        }
+    }
 
     #[test]
     fn test_overlay_text_returns_none_when_nothing_visible() {

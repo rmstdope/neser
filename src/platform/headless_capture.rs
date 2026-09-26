@@ -539,7 +539,10 @@ mod tests {
         let shades: std::collections::BTreeSet<_> =
             GbPalette::Pocket.shades().into_iter().collect();
         assert!(colours.len() > 1, "a blank capture proves nothing");
-        assert!(colours.is_subset(&shades), "non-Pocket colours: {colours:?}");
+        assert!(
+            colours.is_subset(&shades),
+            "non-Pocket colours: {colours:?}"
+        );
     }
 
     #[test]

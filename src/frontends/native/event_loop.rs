@@ -366,6 +366,22 @@ impl NativeEventLoop {
     }
 
     /// Loads a new cartridge from the given ROM path and resets the emulator.
+    /// Keeps a Game Boy game's shade palette and the LCD filter in step: the
+    /// console draws grey under the filter, and the filter draws the chosen
+    /// palette. `starting` applies the filter's DMG Green starting palette.
+    fn sync_gb_palette_with_filter(&mut self, starting: bool) {
+        let (Some(gl), Some(gb)) = (self.gl_wrapper.as_mut(), self.console.as_gameboy_mut()) else {
+            return;
+        };
+        let filter_on = gl.is_gb_lcd_filter();
+        if starting {
+            gb.start_lcd_filter(filter_on);
+        } else {
+            gb.set_lcd_filter_active(filter_on);
+        }
+        gl.set_gb_filter_colors(gb.palette().lcd_filter_colors());
+    }
+
     fn switch_to_cartridge(&mut self, rom_path: &str) {
         let Some(_) = self.console.as_nes() else {
             return;
@@ -608,6 +624,7 @@ impl ApplicationHandler for NativeEventLoop {
         ) {
             Ok(gl) => {
                 self.gl_wrapper = Some(gl);
+                self.sync_gb_palette_with_filter(true);
                 if !self.initialized {
                     self.initialize_audio();
                     self.sync_audio_state();
@@ -751,6 +768,7 @@ impl ApplicationHandler for NativeEventLoop {
                                     );
                                 self.console.app_context().borrow_mut().add_toast(toast);
                             }
+                            self.sync_gb_palette_with_filter(false);
                         }
                         KeyOutcome::ToggleDebugger => {
                             if let Some(nes) = self.console.as_nes_mut() {
@@ -804,6 +822,15 @@ impl ApplicationHandler for NativeEventLoop {
                                 let toast =
                                     crate::nes::frontend_toasts::palette_toast_message(palette);
                                 self.console.app_context().borrow_mut().add_toast(&toast);
+                            } else if let Some(palette) = self
+                                .console
+                                .as_gameboy_mut()
+                                .and_then(|gb| gb.cycle_palette())
+                            {
+                                let toast =
+                                    crate::gb::ppu::dmg_palette::palette_toast_message(palette);
+                                self.console.app_context().borrow_mut().add_toast(&toast);
+                                self.sync_gb_palette_with_filter(false);
                             }
                         }
                     }

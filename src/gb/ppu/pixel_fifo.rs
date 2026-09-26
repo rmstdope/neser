@@ -3161,6 +3161,7 @@ impl PixelFifoRenderer {
         !waiting_on_obj_fetch && matches!(self.next_x & 0x07, 0 | 7)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_dmg_pixel(
         &mut self,
         x: u32,
