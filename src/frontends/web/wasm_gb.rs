@@ -107,7 +107,8 @@ impl WasmGb {
         }
     }
 
-    #[cfg(test)]
+    /// Test access to the console, e.g. to choose the hardware.
+    #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn game_boy_mut(&mut self) -> &mut GameBoy {
         &mut self.gb
     }
