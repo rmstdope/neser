@@ -929,6 +929,53 @@ fn wasm_gb_load_rom_returns_success_toast() {
     );
 }
 
+fn drained(gb: &mut WasmGb) -> Vec<String> {
+    gb.drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cycle_palette_queues_the_toast() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
+    drained(&mut gb);
+    assert_eq!(gb.cycle_palette(), "DMG Green");
+    assert_eq!(drained(&mut gb), vec!["Palette: DMG Green".to_string()]);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cycle_palette_without_a_dmg_game_is_silent() {
+    let mut gb = WasmGb::new();
+    assert_eq!(gb.cycle_palette(), "");
+    assert!(drained(&mut gb).is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_lcd_filter_starts_dmg_green_and_reports_its_colours() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
+    gb.start_lcd_filter(true);
+    let [(br, bg, bb), (fr, fg, fb)] = crate::gb::ppu::GbPalette::DmgGreen.lcd_filter_colors();
+    assert_eq!(
+        gb.lcd_filter_palette_rgba(),
+        vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
+    );
+    gb.set_lcd_filter_active(false);
+    assert_eq!(gb.cycle_palette(), "Pocket");
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_lcd_filter_keeps_its_classic_colours_without_a_dmg_game() {
+    let gb = WasmGb::new();
+    let [(br, bg, bb), (fr, fg, fb)] = crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS;
+    assert_eq!(
+        gb.lcd_filter_palette_rgba(),
+        vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
+    );
+}
+
 // ── WasmGba tests ────────────────────────────────────────────────────────────
 
 fn minimal_gba_rom() -> Vec<u8> {

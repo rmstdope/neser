@@ -91,6 +91,9 @@ fn handle_single_joypad_key_pressed(
     match key_code {
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
         KeyCode::F5 => return KeyOutcome::ToggleDebugger,
+        // Cycles the Game Boy shade palette; the event loop ignores it for
+        // systems without palettes.
+        KeyCode::F8 => return KeyOutcome::CyclePalette,
         KeyCode::F6 => {
             crate::nes::console::save_state_io::save_state_to_disk(console);
         }
@@ -177,6 +180,21 @@ mod tests {
             .load_rom(&minimal_gb_rom(), "test.gb")
             .expect("minimal GB ROM should load");
         console
+    }
+
+    #[test]
+    fn gameboy_f8_returns_cycle_palette() {
+        let mut console = make_gameboy_console();
+        let mut state = make_state();
+        assert_eq!(
+            handle_key_pressed(&mut console, KeyCode::F8, &mut state, None),
+            KeyOutcome::CyclePalette
+        );
+        assert_eq!(
+            console.get_joypad_button_states(0),
+            0,
+            "F8 presses no button"
+        );
     }
 
     #[test]

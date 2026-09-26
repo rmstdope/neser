@@ -1,5 +1,6 @@
 pub mod background;
 mod bg_fifo;
+pub mod dmg_palette;
 mod obj_fifo;
 mod pixel_fifo;
 #[allow(clippy::module_inception)]
@@ -13,5 +14,6 @@ pub mod timing;
 mod trace_tests;
 pub mod window;
 
+pub use dmg_palette::GbPalette;
 pub use ppu::Ppu;
 pub(crate) use ppu::StopDisplayMode;
