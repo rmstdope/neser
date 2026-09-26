@@ -385,3 +385,5 @@ mod core_tests;
 mod flow_tests;
 #[cfg(test)]
 mod memory_tests;
+#[cfg(test)]
+mod plot_tests;

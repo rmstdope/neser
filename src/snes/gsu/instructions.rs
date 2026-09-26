@@ -38,7 +38,9 @@ impl Gsu {
             0x3E => self.op_alt(false, true),
             0x3F => self.op_alt(true, true),
             0x40..=0x4B => self.op_ldw_ldb(n),
+            0x4C => self.op_plot_rpix(),
             0x4D => self.op_swap(),
+            0x4E => self.op_color_cmode(),
             0x4F => self.op_not(),
             0x50..=0x5F => self.op_add_adc(n),
             0x60..=0x6F => self.op_sub_sbc_cmp(n),
@@ -66,11 +68,11 @@ impl Gsu {
         }
     }
 
-    fn src(&self) -> u16 {
+    pub(super) fn src(&self) -> u16 {
         self.state.r[usize::from(self.state.sreg)]
     }
 
-    fn write_dest(&mut self, value: u16) {
+    pub(super) fn write_dest(&mut self, value: u16) {
         self.write_reg(self.state.dreg, value);
     }
 
