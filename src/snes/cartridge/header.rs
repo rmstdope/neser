@@ -25,7 +25,16 @@ pub(crate) struct SnesHeader {
     pub checksum_complement: u16,
     pub checksum: u16,
     pub mapping: Mapping,
+    /// The extended header's expansion-RAM size byte (`$FFBD` in LoROM), `Some` only when the
+    /// extended header is present, i.e. the maker code at `$FFDA` is `$33` (fullsnes "SNES
+    /// Cartridge ROM Header"). Coprocessor carts such as the Super FX declare their RAM here.
+    pub expansion_ram_field: Option<u8>,
 }
+
+/// Maker code (`$FFDA`) that says the 16-byte extended header at `$FFB0-$FFBF` is present.
+const EXTENDED_HEADER_MAKER_CODE: u8 = 0x33;
+/// Offset of the expansion-RAM size byte (`$FFBD`) relative to the header base (`$FFC0`).
+const EXPANSION_RAM_BACK_OFFSET: usize = 3;
 
 pub(crate) fn parse_header_at(
     rom: &[u8],
@@ -59,6 +68,14 @@ pub(crate) fn parse_header_at(
         rom[header_offset + HEADER_CHECKSUM_OFFSET + 1],
     ]);
 
+    let expansion_ram_field = if developer_id == EXTENDED_HEADER_MAKER_CODE {
+        header_offset
+            .checked_sub(EXPANSION_RAM_BACK_OFFSET)
+            .map(|idx| rom[idx])
+    } else {
+        None
+    };
+
     Some(SnesHeader {
         title,
         map_mode,
@@ -72,6 +89,7 @@ pub(crate) fn parse_header_at(
         checksum_complement,
         checksum,
         mapping,
+        expansion_ram_field,
     })
 }
 
