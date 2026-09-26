@@ -3,7 +3,7 @@ use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::cartridge::GbCartridge;
-use crate::gb::compat_palettes;
+use crate::gb::compat_palettes::{self, GbcPalette};
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
 use crate::gb::ppu::timing::PpuMode;
@@ -136,6 +136,9 @@ pub struct CgbBus {
     key0: u8,
     /// Whether KEY0 is locked (writes ignored). Set when $FF50 is written.
     key0_locked: bool,
+    /// The player's choice of colourisation for a DMG-only game (not part of
+    /// save states: a display choice owned by the console wrapper).
+    gbc_palette: GbcPalette,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -277,6 +280,7 @@ impl CgbBus {
             // KEY0 value depends on boot mode and cartridge type.
             key0: key0_value,
             key0_locked: skip_boot_rom, // If skipping boot ROM, KEY0 is already locked.
+            gbc_palette: GbcPalette::Auto,
         };
 
         // Set OPRI based on cartridge type when skipping boot ROM.
@@ -297,13 +301,7 @@ impl CgbBus {
                 bus.ppu.seed_cgb_boot_fade_bg_palettes();
             } else {
                 // DMG-only games (bit 7 of $0143 clear) need colorization palettes.
-                let mut header = [0u8; 0x4C];
-                for (i, byte) in header.iter_mut().enumerate() {
-                    *byte = bus.cart.read(0x0100 + i as u16);
-                }
-                let palette = compat_palettes::get_palette_colors(&header);
-                bus.ppu
-                    .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+                bus.apply_dmg_compat_palette(None);
                 // Enable DMG-compat mode for correct OBJ palette selection during rendering.
                 bus.ppu.set_dmg_compat(true);
             }
@@ -405,6 +403,44 @@ impl CgbBus {
     /// - Bit 2 = 1: DMG compatibility mode (for DMG-only cartridges)
     pub fn key0(&self) -> u8 {
         self.key0
+    }
+
+    /// The cartridge header from $0100 up to $014B, as the boot ROM reads it.
+    pub fn cartridge_header(&self) -> [u8; 0x4C] {
+        std::array::from_fn(|i| self.cart.read(0x0100 + i as u16))
+    }
+
+    /// `true` when the cartridge is an original Game Boy game (CGB flag
+    /// clear), which this Game Boy Color colourises.
+    pub fn runs_dmg_game(&self) -> bool {
+        !self.cart.is_cgb()
+    }
+
+    /// Sets the player's colourisation choice for a DMG-only game. When the
+    /// game is already running in DMG compatibility mode the screen changes at
+    /// once; otherwise the choice applies when the boot ROM hands over.
+    /// Re-setting `Auto` leaves the palettes as they are (so a state load or a
+    /// held boot combo keeps its pick).
+    pub fn set_gbc_palette(&mut self, palette: GbcPalette) {
+        let changed = palette != self.gbc_palette;
+        self.gbc_palette = palette;
+        if self.ppu.dmg_compat && (changed || palette != GbcPalette::Auto) {
+            self.apply_dmg_compat_palette(None);
+        }
+    }
+
+    /// Writes the DMG compatibility palettes: the player's choice, or for
+    /// `Auto` the boot ROM's own pick (a valid held button combo, else the
+    /// title checksum).
+    fn apply_dmg_compat_palette(&mut self, held_buttons: Option<u8>) {
+        let palette = match self.gbc_palette.combination_id().or_else(|| {
+            held_buttons.and_then(compat_palettes::button_combo_to_palette_id)
+        }) {
+            Some(id) => compat_palettes::get_palette_colors_by_id(id),
+            None => compat_palettes::get_palette_colors(&self.cartridge_header()),
+        };
+        self.ppu
+            .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
     }
 
     /// Returns `true` if KEY0 is locked (writes ignored).
@@ -847,13 +883,7 @@ impl CgbBus {
                 self.key0 = 0x04;
                 self.ppu.write_cgb_register(0xFF6C, 0x01); // OPRI for DMG mode
                 // Apply DMG compatibility palettes for DMG-only games
-                let mut header = [0u8; 0x4C];
-                for (i, byte) in header.iter_mut().enumerate() {
-                    *byte = self.cart.read(0x0100 + i as u16);
-                }
-                let palette = crate::gb::compat_palettes::get_palette_colors(&header);
-                self.ppu
-                    .apply_dmg_compat_palettes(&palette.bg0, &palette.obj0, &palette.obj1);
+                self.apply_dmg_compat_palette(None);
                 self.ppu.set_dmg_compat(true);
             }
             self.key0_locked = true;
@@ -1209,28 +1239,9 @@ impl GbBus for CgbBus {
                     // Apply DMG compatibility palettes for DMG-only games.
                     // KEY0 = $04 indicates DMG compatibility mode (bit 2 set).
                     if self.key0 == 0x04 {
-                        // Check for manual palette override via button combo.
+                        // A button combo held now may pick the palette (Auto only).
                         let button_state = self.joypad.get_states();
-                        let manual_palette_id =
-                            compat_palettes::button_combo_to_palette_id(button_state);
-
-                        let palette = if let Some(palette_id) = manual_palette_id {
-                            // User held valid button combo: use manual palette selection.
-                            compat_palettes::get_palette_colors_by_id(palette_id)
-                        } else {
-                            // No valid combo: use automatic palette based on title hash.
-                            let mut header = [0u8; 0x4C];
-                            for (i, byte) in header.iter_mut().enumerate() {
-                                *byte = self.cart.read(0x0100 + i as u16);
-                            }
-                            compat_palettes::get_palette_colors(&header)
-                        };
-
-                        self.ppu.apply_dmg_compat_palettes(
-                            &palette.bg0,
-                            &palette.obj0,
-                            &palette.obj1,
-                        );
+                        self.apply_dmg_compat_palette(Some(button_state));
                         self.ppu.set_dmg_compat(true);
                     } else {
                         self.ppu.seed_cgb_boot_fade_bg_palettes();
@@ -2925,5 +2936,97 @@ mod tests {
 
         // Then: KEY0 is unchanged
         assert_eq!(bus.key0(), initial);
+    }
+
+    // ── gbc-palette (player-chosen compatibility palette) ──────────────
+
+    fn compat_bg0(bus: &CgbBus) -> [u16; 4] {
+        std::array::from_fn(|i| {
+            u16::from_le_bytes([bus.ppu.bg_palette_ram[i * 2], bus.ppu.bg_palette_ram[i * 2 + 1]])
+        })
+    }
+
+    fn compat_obj1(bus: &CgbBus) -> [u16; 4] {
+        std::array::from_fn(|i| {
+            u16::from_le_bytes([
+                bus.ppu.obj_palette_ram[8 + i * 2],
+                bus.ppu.obj_palette_ram[8 + i * 2 + 1],
+            ])
+        })
+    }
+
+    fn red() -> compat_palettes::DmgCompatPalette {
+        compat_palettes::get_palette_colors_by_id(GbcPalette::Red.combination_id().unwrap())
+    }
+
+    #[test]
+    fn test_gbc_palette_auto_keeps_the_title_pick() {
+        let bus = make_dmg_compat_bus_post_boot();
+        let mut header = [0u8; 0x4C];
+        for (i, b) in header.iter_mut().enumerate() {
+            *b = bus.cart.read(0x0100 + i as u16);
+        }
+        assert_eq!(
+            compat_bg0(&bus),
+            compat_palettes::get_palette_colors(&header).bg0
+        );
+    }
+
+    #[test]
+    fn test_gbc_palette_chosen_recolours_a_running_dmg_game_at_once() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+        bus.set_gbc_palette(GbcPalette::Red);
+        assert_eq!(compat_bg0(&bus), red().bg0);
+        assert_eq!(compat_obj1(&bus), red().obj1);
+    }
+
+    #[test]
+    fn test_gbc_palette_chosen_survives_hard_reset() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+        bus.set_gbc_palette(GbcPalette::Red);
+        bus.reset();
+        assert_eq!(compat_bg0(&bus), red().bg0);
+    }
+
+    #[test]
+    fn test_gbc_palette_back_to_auto_restores_the_title_pick() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+        let auto = compat_bg0(&bus);
+        bus.set_gbc_palette(GbcPalette::Red);
+        bus.set_gbc_palette(GbcPalette::Auto);
+        assert_eq!(compat_bg0(&bus), auto);
+    }
+
+    #[test]
+    fn test_gbc_palette_chosen_wins_over_a_held_combo_at_boot_rom_exit() {
+        let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbE, false);
+        bus.set_gbc_palette(GbcPalette::Red);
+        bus.set_joypad_button(7, true); // Right: would pick Green
+        bus.key0 = 0x04; // the boot ROM selects DMG compatibility mode
+        bus.write(0xFF50, 0x01);
+        assert_eq!(compat_bg0(&bus), red().bg0);
+    }
+
+    #[test]
+    fn test_gbc_palette_auto_still_honours_a_held_combo_at_boot_rom_exit() {
+        let mut bus = CgbBus::new(dmg_only_rom_cart(), CgbModel::CgbE, false);
+        bus.set_joypad_button(7, true); // Right
+        bus.key0 = 0x04;
+        bus.write(0xFF50, 0x01);
+        assert_eq!(
+            compat_bg0(&bus),
+            compat_palettes::get_palette_colors_by_id(GbcPalette::Green.combination_id().unwrap())
+                .bg0
+        );
+    }
+
+    #[test]
+    fn test_gbc_palette_leaves_a_cgb_game_alone() {
+        let mut bus = make_bus_post_boot();
+        let before = bus.ppu.bg_palette_ram;
+        bus.set_gbc_palette(GbcPalette::Red);
+        assert_eq!(bus.ppu.bg_palette_ram, before);
+        assert!(!bus.runs_dmg_game());
+        assert!(make_dmg_compat_bus_post_boot().runs_dmg_game());
     }
 }
