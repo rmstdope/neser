@@ -16,6 +16,7 @@ impl Gsu {
         match opcode {
             0x00 => self.op_stop(),
             0x01 => self.reset_prefixes(),
+            0x02 => self.op_cache(),
             0x03 => self.op_lsr(),
             0x04 => self.op_rol(),
             0x05 => self.op_branch(true),
@@ -135,6 +136,17 @@ impl Gsu {
     }
 
     // ---- Control flow ---------------------------------------------------------------------
+
+    /// `$02`: CACHE, "IF CBR<>PC&FFF0 then CBR=PC&FFF0" and empty the cache (fullsnes), PC
+    /// being the address after the opcode.
+    fn op_cache(&mut self) {
+        let base = self.state.r[15] & 0xFFF0;
+        if self.state.cbr != base {
+            self.state.cbr = base;
+            self.invalidate_all_code_cache_lines();
+        }
+        self.reset_prefixes();
+    }
 
     /// `$05-$0F`: Bxx, R15 += signed offset relative to the byte after the operand. Branches are
     /// the one opcode family that leaves the prefixes set (fullsnes), so a prefix before the

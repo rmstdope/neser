@@ -378,6 +378,8 @@ mod alu_tests;
 #[cfg(test)]
 mod bus_tests;
 #[cfg(test)]
+mod cache_tests;
+#[cfg(test)]
 mod core_tests;
 #[cfg(test)]
 mod flow_tests;
