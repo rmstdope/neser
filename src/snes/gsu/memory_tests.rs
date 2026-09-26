@@ -165,3 +165,33 @@ fn ram_bank_71_is_the_second_64k() {
     assert_eq!(rig.ram.borrow()[0x1_0010], 0x77);
     assert_eq!(rig.ram.borrow()[0x0010], 0x00);
 }
+
+/// IWT R1,#$1234; STOP; NOP placed in Game Pak RAM at `$70:0400` (outside the cache window, so
+/// every fetch goes to RAM).
+fn rig_with_program_in_ram() -> Rig {
+    let rig = Rig::new(&[]);
+    rig.ram.borrow_mut()[0x400..0x405].copy_from_slice(&[0xF1, 0x34, 0x12, 0x00, 0x01]);
+    rig
+}
+
+#[test]
+fn code_runs_from_game_pak_ram() {
+    let mut rig = rig_with_program_in_ram();
+    rig.gsu.write_register(0x3034, 0x70);
+    rig.start_at(0x0400);
+    rig.run_until_stop();
+    assert_eq!(rig.reg(1), 0x1234);
+}
+
+#[test]
+fn code_in_ram_waits_while_ran_is_clear() {
+    let mut rig = rig_with_program_in_ram();
+    rig.gsu.write_register(0x3034, 0x70);
+    rig.gsu.write_register(0x303A, 0x10); // RON only
+    rig.write16(0x301E, 0x0400);
+    rig.tick(500);
+    assert!(rig.gsu.state.waiting_for_ram);
+    rig.gsu.write_register(0x303A, 0x18);
+    rig.run_until_stop();
+    assert_eq!(rig.reg(1), 0x1234);
+}

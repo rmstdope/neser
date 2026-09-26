@@ -105,3 +105,48 @@ fn ljmp_empties_the_cache() {
     // through it instead.
     assert!(rig.gsu.state.waiting_for_rom, "LJMP emptied the cache");
 }
+
+#[test]
+fn a_stopped_gsu_does_not_latch_a_wait() {
+    // An S-CPU write of R14 with RON clear starts a ROM buffer fill; while the GSU is stopped
+    // that must not leave it halted once started on cached code (fullsnes "Writing to
+    // Code-Cache": cached code runs without RON/RAN).
+    let mut rig = Rig::new(&[]);
+    rig.gsu.write_register(0x303A, 0x00);
+    rig.write16(0x301C, 0x8000);
+    rig.tick(50);
+    inject(&mut rig, &INJECTED_LINE, 16);
+    start_in_cache(&mut rig);
+    rig.run_until_stop();
+    assert_eq!(rig.reg(1), 0x1234);
+}
+
+#[test]
+fn writing_pbr_empties_the_cache() {
+    let mut rig = Rig::new(&[0x02, 0x01, 0x00, 0x01]); // CACHE; NOP; STOP
+    rig.start_at(PROGRAM);
+    rig.run_until_stop();
+    rig.gsu.write_register(0x3034, 0x00); // Same bank, still empties the cache.
+    rig.gsu.write_register(0x303A, 0x08); // RAN only
+    rig.write16(0x301E, PROGRAM + 1);
+    rig.tick(500);
+    assert!(
+        rig.gsu.state.waiting_for_rom,
+        "refetching from ROM, not the cache"
+    );
+}
+
+#[test]
+fn aborting_a_waiting_gsu_does_not_carry_the_wait_into_the_next_start() {
+    // Started from ROM without RON, the GSU waits; the S-CPU aborts it (SFR GO=0), injects
+    // cache code and starts again, still without RON.
+    let mut rig = Rig::new(&[0x01, 0x00, 0x01]);
+    rig.gsu.write_register(0x303A, 0x08); // RAN only
+    rig.write16(0x301E, PROGRAM);
+    rig.tick(200);
+    assert!(rig.gsu.state.waiting_for_rom);
+    inject(&mut rig, &INJECTED_LINE, 16); // Writes SFR = 0 first.
+    start_in_cache(&mut rig);
+    rig.run_until_stop();
+    assert_eq!(rig.reg(1), 0x1234);
+}

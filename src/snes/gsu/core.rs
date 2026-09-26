@@ -178,14 +178,18 @@ impl Gsu {
     /// fullsnes SCMR: clearing RON/RAN "causes the GSU to enter WAIT status (if it accesses ROM
     /// or RAM), and continues when RON/RAN are changed back to 1". As in Mesen2, the access that
     /// found the bus taken still completes and the GSU halts before its next instruction.
+    ///
+    /// Only a running GSU can be made to wait: a buffer operation that completes while the GSU is
+    /// stopped (an S-CPU write of R14, or a store landing after STOP) must not leave it halted,
+    /// or a later start on cached code, which needs neither bus, would never run.
     pub(super) fn wait_for_rom_access(&mut self) {
-        if !self.ron() {
+        if self.state.go && !self.ron() {
             self.state.waiting_for_rom = true;
         }
     }
 
     pub(super) fn wait_for_ram_access(&mut self) {
-        if !self.ran() {
+        if self.state.go && !self.ran() {
             self.state.waiting_for_ram = true;
         }
     }

@@ -133,17 +133,26 @@ fn dither_uses_high_nibble_on_odd_pixels() {
 }
 
 #[test]
-fn dithered_colour_0_half_is_transparent() {
-    // fullsnes: "Dither can mix transparent & non-transparent pixels": COLR $50 dithers to
-    // 0 on even pixels (skipped) and 5 on odd ones (drawn). Transparency is tested after the
-    // dither stage, as in fullsnes' COLOR -> Dither -> Transp diagram.
+fn transparency_tests_colr_before_dithering() {
+    // Mesen2 (`IsTransparentPixel`) and ares (`SuperFX::plot`) both test COLR itself, before the
+    // dither stage. COLR $50: its low nibble is 0, so nothing is plotted at all, though the odd
+    // pixel would dither to 5.
     let program = [
         0xB3, CMODE[0], CMODE[1], COLOR, PLOT, PLOT, RPIX[0], RPIX[1],
     ];
     let rig = run(DEPTH_16, &[(0, 0x0050), (3, 0x0002)], &program, 0x00);
+    assert!(rig.ram.borrow()[..0x20].iter().all(|&b| b == 0));
+
+    // COLR $05: plotted, and the odd pixel dithers to colour 0, which is written as 0 (what
+    // fullsnes calls dither mixing "transparent & non-transparent pixels": colour 0 in a tile
+    // is transparent to the PPU).
+    let rig = run(DEPTH_16, &[(0, 0x0005), (3, 0x0002)], &program, 0xFF);
     let ram = rig.ram.borrow();
-    // Colour 5 = planes 0 and 2 at x=1 (bit 6); x=0 untouched.
-    assert_eq!((ram[0x00], ram[0x01], ram[0x10]), (0x40, 0x00, 0x40));
+    // Colour 5 (planes 0 and 2) at x=0 (bit 7); colour 0 at x=1 (bit 6); x=2..7 untouched.
+    assert_eq!(
+        (ram[0x00], ram[0x01], ram[0x10], ram[0x11]),
+        (0xBF, 0x3F, 0xBF, 0x3F)
+    );
 }
 
 #[test]
@@ -155,11 +164,54 @@ fn color_high_nibble_and_freeze_high() {
         rig.gsu.color_register_input(value)
     };
     assert_eq!(input(0x00, 0x50, 0xAB), 0xAB);
-    // High-nibble: "replace incoming LSB by incoming MSB".
-    assert_eq!(input(0x04, 0x50, 0xAB), 0xAA);
+    // High-nibble: the incoming high nibble becomes COLR's low nibble, and COLR keeps its own
+    // high nibble (Mesen2 `GetColor`, ares `SuperFX::color`).
+    assert_eq!(input(0x04, 0x50, 0xAB), 0x5A);
     // Freeze-high: "Write-protect COLOR.MSB".
     assert_eq!(input(0x08, 0x50, 0xAB), 0x5B);
     assert_eq!(input(0x0C, 0x50, 0xAB), 0x5A);
+}
+
+#[test]
+fn a_row_reaches_ram_when_the_row_after_next_begins() {
+    // PLOT on rows 0, 1 and 2 (R2 = 0, 1, 2) with colour 3 at x=0, then STOP without RPIX.
+    // Row 0 went primary -> secondary when row 1 began and is written out when row 2 begins;
+    // row 1 is still in the secondary cache.
+    #[rustfmt::skip]
+    let program = [
+        COLOR, PLOT,             // (0,0)
+        0xA1, 0x00, 0xA2, 0x01,  // IBT R1,#0; IBT R2,#1
+        PLOT,                    // (0,1)
+        0xA1, 0x00, 0xA2, 0x02,  // IBT R1,#0; IBT R2,#2
+        PLOT,                    // (0,2)
+    ];
+    let rig = run(DEPTH_4, &[(0, 0x0003)], &program, 0x00);
+    let ram = rig.ram.borrow();
+    assert_eq!((ram[0], ram[1]), (0x80, 0x80), "row 0 written");
+    assert_eq!((ram[2], ram[3]), (0x00, 0x00), "row 1 still cached");
+}
+
+#[test]
+fn a_full_row_is_written_without_merging() {
+    // Eight PLOTs of colour 1 fill the row, which then goes out whole: plane 1 becomes 0 even
+    // though RAM held $FF (a merge would have kept it).
+    let mut program = vec![COLOR];
+    program.extend_from_slice(&[PLOT; 8]);
+    program.extend_from_slice(&RPIX);
+    let rig = run(DEPTH_4, &[(0, 0x0001)], &program, 0xFF);
+    let ram = rig.ram.borrow();
+    assert_eq!((ram[0], ram[1]), (0xFF, 0x00));
+}
+
+#[test]
+fn rpix_sees_a_store_still_in_the_ram_write_buffer() {
+    // Run from the code cache (1 master clock per fetch) so the store is still buffered when
+    // RPIX starts reading. STW (R3) with R3 = 1 (odd) writes $8000 as $00 to address 1 and then
+    // $80 to address 0, so the byte still in the buffer is plane 0 of row (0,0), which RPIX
+    // reads first: pixel 0 = colour 1.
+    let program = [0x02, 0x33, RPIX[0], RPIX[1]];
+    let mut rig = run(DEPTH_4, &[(0, 0x8000), (3, 0x0001)], &program, 0x00);
+    assert_eq!(rig.reg(0), 0x0001);
 }
 
 #[test]

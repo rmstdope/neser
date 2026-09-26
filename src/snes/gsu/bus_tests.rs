@@ -263,3 +263,16 @@ fn reset_stops_the_gsu() {
     assert_eq!(bus.read(0x00_3030) & 0x20, 0, "GO cleared");
     assert_eq!(read_r1(&bus), 0, "registers back to power-on");
 }
+
+#[test]
+fn bus_state_without_a_gsu_section_still_loads() {
+    // A state saved before Super FX support has no `gsu` key; it must load and leave the GSU
+    // as it is.
+    let mut bus = gsu_bus(&counting_gsu_rom());
+    let mut json = serde_json::to_value(bus.capture_state()).expect("serialize");
+    json.as_object_mut().expect("object").remove("gsu");
+    let state: crate::snes::console::save_state::SnesBusState =
+        serde_json::from_value(json).expect("deserialize");
+    assert!(state.gsu.is_none());
+    bus.restore_state(&state).expect("restore");
+}

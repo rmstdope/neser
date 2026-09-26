@@ -27,24 +27,21 @@ enum ScreenLayout {
 }
 
 impl Gsu {
-    /// The value COLOR/GETC load into COLR for an incoming byte, following fullsnes' COLOR/GETC
-    /// diagram: the low nibble is the incoming low nibble, or its high nibble with POR bit 2
-    /// (High-Nibble); the high nibble is the incoming high nibble unless POR bit 3 (Freeze-High)
-    /// keeps COLR's own. Mesen2 instead keeps COLR's high nibble under High-Nibble alone; the
-    /// diagram is explicit, so it wins.
+    /// The value COLOR/GETC load into COLR for an incoming byte. POR bit 2 (High-Nibble) puts
+    /// the incoming high nibble into COLR's low nibble, and POR bit 3 (Freeze-High) puts the
+    /// incoming low nibble there; either way COLR keeps its own high nibble. fullsnes' diagram
+    /// could be read as High-Nibble alone also loading the incoming high nibble into COLR's high
+    /// nibble, but its text only says the incoming "LSB" is replaced, and Mesen2 (`GetColor`)
+    /// and ares (`SuperFX::color`) agree on keeping COLR's.
     pub(super) fn color_register_input(&self, value: u8) -> u8 {
         let por = self.state.por;
-        let low = if por & POR_HIGH_NIBBLE != 0 {
-            value >> 4
+        if por & POR_HIGH_NIBBLE != 0 {
+            (self.state.colr & 0xF0) | (value >> 4)
+        } else if por & POR_FREEZE_HIGH != 0 {
+            (self.state.colr & 0xF0) | (value & 0x0F)
         } else {
-            value & 0x0F
-        };
-        let high = if por & POR_FREEZE_HIGH != 0 {
-            self.state.colr & 0xF0
-        } else {
-            value & 0xF0
-        };
-        high | low
+            value
+        }
     }
 
     /// Bits per pixel from SCMR MD0-1: 4, 16, (reserved), 256 colours. The reserved setting
@@ -129,6 +126,13 @@ impl Gsu {
     fn plot_pixel(&mut self, x: u8, y: u8) {
         let bpp = self.plot_bpp();
         let por = self.state.por;
+        // Transparency is decided on COLR itself, before dithering, as in both Mesen2
+        // (`DrawPixel`) and ares (`SuperFX::plot`). A dithered half that comes out as colour 0 is
+        // then written as 0, which is transparent to the PPU: fullsnes' "Dither can mix
+        // transparent & non-transparent pixels".
+        if por & POR_PLOT_COLOR_0 == 0 && Self::is_transparent(self.state.colr, bpp, por) {
+            return;
+        }
         let mut color = self.state.colr;
         if por & POR_DITHER != 0 && bpp != 8 {
             // fullsnes: "if (r1.bit0 XOR r2.bit0)=1 then COLOR/10h is used".
@@ -136,9 +140,6 @@ impl Gsu {
                 color >>= 4;
             }
             color &= 0x0F;
-        }
-        if por & POR_PLOT_COLOR_0 == 0 && Self::is_transparent(color, bpp, por) {
-            return;
         }
         let primary = self.state.primary_pixels;
         if primary.x != x & 0xF8 || primary.y != y {
@@ -203,6 +204,9 @@ impl Gsu {
     }
 
     fn read_pixel(&mut self, x: u8, y: u8) -> u8 {
+        // RPIX reads RAM, so like LDW it first lets a buffered store land and waits for the bus.
+        self.finish_ram_buffer();
+        self.wait_for_ram_access();
         let secondary = self.state.secondary_pixels;
         self.write_pixel_row(secondary);
         self.state.secondary_pixels.valid = 0;
