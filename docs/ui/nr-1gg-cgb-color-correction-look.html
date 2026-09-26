@@ -1,0 +1,38 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Option A — Faithful (as on the Game Boy Color screen)</title><style>
+:root{--bg:#f4f4f2;--fg:#1c1c1c;--dim:#666;--card:#fff;--line:#ddd}
+@media (prefers-color-scheme:dark){:root{--bg:#16171a;--fg:#e8e8e8;--dim:#9a9a9a;--card:#222428;--line:#383a40}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px}
+main{max-width:980px;margin:auto} h1{font-size:22px;margin:0 0 6px} p.lead{color:var(--dim);margin:0 0 20px;max-width:70ch}
+.row{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:28px} .col{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;flex:1 1 300px}
+.col h2{font-size:14px;margin:0 0 8px;font-weight:600} canvas{width:100%;image-rendering:pixelated;border-radius:4px;display:block}
+h3{font-size:16px;margin:8px 0 10px} .sw{display:grid;grid-template-columns:repeat(8,1fr);gap:4px} .sw div{aspect-ratio:1;border-radius:3px}
+.note{color:var(--dim);font-size:13px}
+</style></head><body><main>
+<h1>Option A — Faithful (as on the Game Boy Color screen)</h1><p class="lead">Colours are mixed and lifted the way the real Game Boy Color's screen does it: paler, softer, slightly warm. The closest match to the handheld; strongly saturated colours lose their punch.</p>
+<h3>A Game Boy Color game</h3>
+<div class="row"><div class="col"><h2>Setting off (today, unchanged)</h2><canvas id="s0" width="160" height="144"></canvas></div>
+<div class="col"><h2>Setting on</h2><canvas id="s1" width="160" height="144"></canvas></div></div>
+<h3>The same 32 colours, off (top) and on (bottom)</h3>
+<div class="col"><div class="sw" id="w0"></div><div style="height:8px"></div><div class="sw" id="w1"></div></div>
+<p class="note">Drawing only: the exact shades are approximate. Nothing else on the screen changes; the setting only affects Game Boy Color games.</p>
+</main><script>
+const MODE="a";
+const curve=[0,6,12,20,28,36,45,56,66,76,88,100,113,125,137,149,161,172,182,192,202,210,218,225,232,238,243,247,250,252,254,255];
+function raw(r,g,b){return[r*255/31,g*255/31,b*255/31]}
+function fix(r,g,b){
+ if(MODE=="a"){return[(r*13+g*2+b)/2,(g*3+b)*2,(r*3+g*2+b*11)/2].map(v=>Math.min(255,v*0.93+14))}
+ let R=curve[r],G=curve[g],B=curve[b];let g2=(G*3+B)/4;let b2=(B*7+R)/8+0*G;let r2=(R*15+G)/16;
+ return[r2,g2,b2];
+}
+function col(f,c){const[r,g,b]=f(...c);return`rgb(${r|0},${g|0},${b|0})`}
+const P={sky:[12,20,31],cloud:[31,31,31],grass:[6,26,6],dark:[2,12,4],dirt:[24,14,6],red:[31,4,4],skin:[31,24,18],blue:[4,8,28],yel:[31,28,4],pur:[20,6,26],blk:[1,1,2],sea:[2,18,26]};
+function scene(id,f){const x=document.getElementById(id).getContext("2d");const F=(c,a,b,w,h)=>{x.fillStyle=col(f,P[c]);x.fillRect(a,b,w,h)};
+ F("sky",0,0,160,144);F("cloud",18,18,30,8);F("cloud",24,12,18,6);F("cloud",100,26,36,8);F("yel",130,8,14,14);
+ F("sea",0,84,160,10);F("grass",0,94,160,50);F("dark",0,94,160,3);F("dirt",0,122,160,22);for(let i=0;i<160;i+=16)F("dark",i,122,8,2);
+ F("dark",10,70,8,24);F("grass",0,50,28,24);F("red",70,70,16,6);F("skin",72,76,12,8);F("blue",70,84,16,10);F("blk",74,78,2,2);F("blk",80,78,2,2);
+ F("pur",110,80,14,14);F("yel",113,83,8,8);F("blk",4,4,40,8);F("cloud",6,6,4,4);F("cloud",12,6,4,4);F("yel",20,6,4,4);F("red",26,6,4,4);F("blue",32,6,4,4)}
+scene("s0",raw);scene("s1",fix);
+const L=[[31,0,0],[0,31,0],[0,0,31],[31,31,0],[0,31,31],[31,0,31],[31,31,31],[0,0,0],[31,16,0],[16,31,0],[0,31,16],[0,16,31],[16,0,31],[31,0,16],[16,16,16],[8,8,8],[24,24,24],[31,20,20],[20,31,20],[20,20,31],[31,24,12],[12,24,31],[24,12,31],[4,4,12],[12,4,4],[4,12,4],[20,10,4],[31,28,24],[6,26,6],[12,20,31],[2,18,26],[20,6,26]];
+for(const[id,f]of[["w0",raw],["w1",fix]])for(const c of L){const d=document.createElement("div");d.style.background=col(f,c);document.getElementById(id).appendChild(d)}
+</script></body></html>
