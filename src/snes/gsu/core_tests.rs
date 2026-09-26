@@ -30,7 +30,12 @@ impl Rig {
     }
 
     pub fn with_rom(build: impl FnOnce(&mut Vec<u8>)) -> Self {
-        let mut rom = vec![0u8; 0x2_0000];
+        Self::with_rom_len(0x2_0000, build)
+    }
+
+    /// As [`Rig::with_rom`], over a ROM of `len` bytes.
+    pub fn with_rom_len(len: usize, build: impl FnOnce(&mut Vec<u8>)) -> Self {
+        let mut rom = vec![0u8; len];
         build(&mut rom);
         let rom = Rc::new(rom);
         let ram = Rc::new(RefCell::new(vec![0u8; 0x8000]));

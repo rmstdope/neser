@@ -60,6 +60,31 @@ fn gsu_cart_maps_lorom_and_hirom_views_of_rom() {
 }
 
 #[test]
+fn gsu2_cart_maps_the_second_megabyte() {
+    // fullsnes "GSU2 Memory Map (at SNES Side)": "Game Pak ROM in LoRom mapping (2Mbyte max)" and
+    // its HiROM mirror. ROM `$1F_8123` is LoROM `$3F:8123` and HiROM `$5F:8123`; the `$80`/`$C0`
+    // views are the mirrors NESER keeps for every Super FX cartridge (as Mesen2).
+    let mut rom = gsu2_cart_rom(0x05, |_| 0);
+    rom[0x1F_8123] = 0xC4;
+    let bus = gsu_bus(&rom);
+    for addr in [0x3F_8123, 0xBF_8123, 0x5F_8123, 0xDF_8123] {
+        bus.read(0x00_8000); // `$00` on the bus, so open bus cannot pass.
+        assert_eq!(bus.read(addr), 0xC4, "${addr:06X}");
+    }
+}
+
+#[test]
+fn gsu2_cart_128kb_ram_reaches_bank_71() {
+    // fullsnes: "70-71:0000-FFFF Game Pak RAM (128Kbyte max ...)"; expansion RAM code `$07`.
+    let mut bus = gsu_bus(&gsu2_cart_rom(0x07, |_| 0));
+    bus.write(0x70_4321, 0x11);
+    bus.write(0x71_4321, 0x22);
+    assert_eq!(bus.read(0x70_4321), 0x11);
+    assert_eq!(bus.read(0x71_4321), 0x22);
+    assert_eq!(bus.read(0xF1_4321), 0x22, "mirror at $F1");
+}
+
+#[test]
 fn gsu_cart_ram_at_70_and_first_8k_mirror_at_6000() {
     let mut bus = gsu_bus(&gsu_cart_rom(|_| 0));
 

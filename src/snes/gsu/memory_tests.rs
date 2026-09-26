@@ -80,6 +80,28 @@ fn romb_changes_bank_for_following_reads() {
 }
 
 #[test]
+fn getb_reads_the_second_megabyte_of_a_gsu2_rom() {
+    // fullsnes "GSU2 Memory Map (at GSU Side)": LoROM `$00-$3F` and HiROM `$40-$5F` each reach
+    // all 2 MB. ROM `$1F_8123` is LoROM `$3F:8123` and HiROM `$5F:8123`.
+    for bank in [0x3F, 0x5F] {
+        let mut rig = Rig::with_rom_len(0x20_0000, |rom| {
+            #[rustfmt::skip]
+            rom[..11].copy_from_slice(&[
+                0xA1, bank,       // IBT R1,#bank
+                0xB1, 0x3F, 0xDF, // FROM R1; ROMB
+                0xFE, 0x23, 0x81, // IWT R14,#$8123
+                0xEF,             // GETB
+                0x00, 0x01,
+            ]);
+            rom[0x1F_8123] = 0xC4;
+        });
+        rig.start_at(PROGRAM);
+        rig.run_until_stop();
+        assert_eq!(rig.reg(0), 0xC4, "ROMBR ${bank:02X}");
+    }
+}
+
+#[test]
 fn ramb_selects_bank_71() {
     let mut rig = Rig::new(&[0xA1, 0x01, 0xB1, 0x3E, 0xDF, 0x00, 0x01]); // RAMB from R1
     rig.start_at(PROGRAM);
