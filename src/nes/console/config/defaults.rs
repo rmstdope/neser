@@ -277,6 +277,9 @@ impl Config {
             "gb_boot_animation" => {
                 self.gb.apply_config_value("gb_boot_animation", value)?;
             }
+            "cgb_color_correction" => {
+                self.gb.apply_config_value("cgb_color_correction", value)?;
+            }
             "gba_hardware" => {
                 self.gba.apply_config_value("gba_hardware", value)?;
             }
@@ -1229,6 +1232,25 @@ nes-filter=invalid-shader
         let result = config.apply_config_value("gb-hardware", "dmg-a");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid gb_hardware value"));
+    }
+
+    #[test]
+    fn test_config_file_cgb_color_correction_sets_gb_config() {
+        let mut config = Config::with_defaults();
+        config
+            .apply_config_value("cgb-color-correction", "true")
+            .unwrap();
+        assert!(config.gb.cgb_color_correction);
+    }
+
+    #[test]
+    fn test_config_file_cgb_color_correction_invalid_value_returns_error() {
+        let mut config = Config::with_defaults();
+        let result = config.apply_config_value("cgb-color-correction", "maybe");
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid cgb_color_correction value: 'maybe'"
+        );
     }
 
     #[test]

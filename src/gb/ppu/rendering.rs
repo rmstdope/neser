@@ -153,7 +153,13 @@ mod tests {
         let colours = [(31u8, 0u8, 0u8), (12, 20, 31), (1, 1, 2), (31, 31, 31)];
         let mut rgb: Vec<u8> = colours
             .iter()
-            .flat_map(|&(r, g, b)| [cgb_5bit_to_8bit(r), cgb_5bit_to_8bit(g), cgb_5bit_to_8bit(b)])
+            .flat_map(|&(r, g, b)| {
+                [
+                    cgb_5bit_to_8bit(r),
+                    cgb_5bit_to_8bit(g),
+                    cgb_5bit_to_8bit(b),
+                ]
+            })
             .collect();
         apply_cgb_lcd_correction(&mut rgb);
         let expected: Vec<u8> = colours

@@ -32,6 +32,13 @@ pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[
         help: Some("Game Boy hardware target: dmg, cgb, gba (default: auto-detect from ROM)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--cgb-color-correction",
+        help: Some(
+            "Enable CGB LCD color correction (simulates the Game Boy Color screen: softer, paler colors)",
+        ),
+        has_value: false,
+    },
 ];
 
 /// Valid values for the `gb-dmg-variant` option (used in error messages).
@@ -56,6 +63,11 @@ pub struct GbConfig {
     /// Whether to show the boot ROM animation (logo + chime).
     /// Default is `false` (skip boot animation for faster startup).
     pub boot_animation: bool,
+    /// When true, everything the CGB shows in colour is displayed with the
+    /// CGB-LCD colour correction (see `gb::ppu::rendering::cgb_lcd_correct`).
+    /// A display choice only: not part of save states. Default: `false`
+    /// (raw linear colours).
+    pub cgb_color_correction: bool,
 }
 
 impl Default for GbConfig {
@@ -65,6 +77,7 @@ impl Default for GbConfig {
             cgb_variant: CgbModel::CgbE,
             hardware: None,
             boot_animation: false,
+            cgb_color_correction: false,
         }
     }
 }
@@ -105,12 +118,18 @@ impl GbConfig {
             self.boot_animation = val;
         }
 
+        if let Some(val) = crate::platform::config::parse_bool_arg(args, "--cgb-color-correction")?
+        {
+            self.cgb_color_correction = val;
+        }
+
         Ok(())
     }
 
     /// Apply a config file key-value pair to this config.
     ///
-    /// Accepts `gb-dmg-variant`, `gb-cgb-variant`, and `gb-hardware` keys.
+    /// Accepts `gb-dmg-variant`, `gb-cgb-variant`, `gb-hardware`,
+    /// `gb-boot-animation` and `cgb-color-correction` keys.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {
@@ -142,6 +161,10 @@ impl GbConfig {
                             "Invalid gb_boot_animation value: '{value}'. Valid options are: true, false",
                         )
                     })?;
+            }
+            "cgb_color_correction" => {
+                self.cgb_color_correction = crate::platform::config::parse_bool(value)
+                    .map_err(|_| format!("Invalid cgb_color_correction value: '{value}'"))?;
             }
             _ => {
                 return Err(format!("Unknown GB config key: {key}"));
@@ -429,5 +452,73 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
         assert!(err_msg.contains("Invalid gb_boot_animation value"));
+    }
+
+    #[test]
+    fn test_cgb_color_correction_defaults_to_false() {
+        assert!(!GbConfig::default().cgb_color_correction);
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_color_correction_flag() {
+        let mut config = GbConfig::default();
+        let args = vec!["neser".to_string(), "--cgb-color-correction".to_string()];
+        config.apply_args(&args).unwrap();
+        assert!(config.cgb_color_correction);
+    }
+
+    #[test]
+    fn test_cli_parse_cgb_color_correction_explicit_values() {
+        for (value, expected) in [("true", true), ("false", false)] {
+            let mut config = GbConfig {
+                cgb_color_correction: !expected,
+                ..GbConfig::default()
+            };
+            let args = vec![
+                "neser".to_string(),
+                "--cgb-color-correction".to_string(),
+                value.to_string(),
+            ];
+            config.apply_args(&args).unwrap();
+            assert_eq!(config.cgb_color_correction, expected, "value={value}");
+        }
+    }
+
+    #[test]
+    fn test_config_file_parse_cgb_color_correction() {
+        let mut config = GbConfig::default();
+        config
+            .apply_config_value("cgb-color-correction", "true")
+            .unwrap();
+        assert!(config.cgb_color_correction);
+        config
+            .apply_config_value("cgb-color-correction", "false")
+            .unwrap();
+        assert!(!config.cgb_color_correction);
+    }
+
+    #[test]
+    fn test_config_file_parse_cgb_color_correction_invalid() {
+        let mut config = GbConfig::default();
+        let result = config.apply_config_value("cgb-color-correction", "maybe");
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid cgb_color_correction value: 'maybe'"
+        );
+    }
+
+    #[test]
+    fn test_gb_cli_flags_include_cgb_color_correction_with_agreed_help() {
+        let flag = GB_CLI_FLAGS
+            .iter()
+            .find(|f| f.flag == "--cgb-color-correction")
+            .expect("--cgb-color-correction should be a GB CLI flag");
+        assert_eq!(
+            flag.help,
+            Some(
+                "Enable CGB LCD color correction (simulates the Game Boy Color screen: softer, paler colors)"
+            )
+        );
+        assert!(!flag.has_value);
     }
 }
