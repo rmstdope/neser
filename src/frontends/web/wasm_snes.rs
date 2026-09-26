@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
-/// The key (`"dsp1"`, `"dsp2"`) of the DSP chip whose firmware a SNES ROM image needs before
+/// The key (`"dsp1"` to `"dsp4"`) of the DSP chip whose firmware a SNES ROM image needs before
 /// it can start (see [`WasmSnes::set_dsp_firmware`]), or `None` when it needs none that NESER
 /// emulates.
 #[wasm_bindgen]

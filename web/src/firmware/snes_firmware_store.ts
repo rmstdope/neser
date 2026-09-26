@@ -2,8 +2,8 @@
 // reloads (nr-auv, nr-608).
 //
 // It lives in its own IndexedDB database so the save-state database's schema is untouched. Each
-// chip's file is stored under its chip key ("dsp1", "dsp2", "dsp4"); "dsp1" is the key nr-auv used, so a
-// DSP-1 file stored before per-chip storage is still found.
+// chip's file is stored under its chip key ("dsp1", "dsp2", "dsp3", "dsp4"); "dsp1" is the key
+// nr-auv used, so a DSP-1 file stored before per-chip storage is still found.
 
 const DB_VERSION = 1;
 const STORE = "firmware";

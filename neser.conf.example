@@ -475,7 +475,7 @@ nes-vertical_overscan=8
 #snes-spc-ipl-path=/absolute/path/to/spc_ipl.bin
 #
 # Folder holding SNES coprocessor firmware files.
-# Some SNES cartridges carry a math chip (DSP-1, DSP-2, DSP-4) whose program is
+# Some SNES cartridges carry a math chip (DSP-1, DSP-2, DSP-3, DSP-4) whose program is
 # stored in the chip itself. Game dumps do not contain it, and NESER cannot
 # include it, so these games need a firmware file you supply, placed in this
 # folder under its usual name:
@@ -483,6 +483,7 @@ nes-vertical_overscan=8
 #   dsp1.rom   - original DSP-1 (used instead of dsp1b.rom when present and
 #                the game was built for the original chip)
 #   dsp2.rom   - DSP-2 (Dungeon Master)
+#   dsp3.rom   - DSP-3 (SD Gundam GX)
 #   dsp4.rom   - DSP-4 (Top Gear 3000)
 # Each file must be the genuine firmware for its chip, exactly 8192 bytes.
 # Default: ~/.neser/firmware

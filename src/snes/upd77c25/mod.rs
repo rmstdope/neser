@@ -1,4 +1,4 @@
-//! NEC uPD77C25 digital signal processor, the CPU inside the DSP-1/1A/1B (and DSP-2/3/4).
+//! NEC uPD77C25 digital signal processor, the CPU inside the DSP-1/1A/1B and DSP-2/3/4.
 //!
 //! The chip runs its own mask-ROM program (2048 x 24-bit opcodes) against a 1024 x 16-bit data
 //! ROM and 256 x 16-bit data RAM, and talks to the SNES only through two ports: the data

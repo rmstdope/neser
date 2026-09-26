@@ -420,9 +420,9 @@ impl Emulator for Snes {
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
         // SA-1 (epic #2956), CX4 (nr-t7d), OBC1 (nr-ufb), the Super FX (nr-hab.1), the S-DD1
-        // (nr-10g), the DSP-1 (nr-auv) and the DSP-2 (nr-608) are emulated; other enhancement chips remain
-        // header-detection-only. The header cannot tell a GSU-1 from a GSU-2, so no Super FX
-        // cartridge warns.
+        // (nr-10g) and the DSP-1/2/3/4 (nr-auv, nr-608, nr-72o, nr-tfq) are emulated; other
+        // enhancement chips remain header-detection-only. The header cannot tell a GSU-1 from a
+        // GSU-2, so no Super FX cartridge warns.
         let dsp_model = dsp::identify(&cartridge);
         let dsp_firmware = match dsp_model {
             Some(model) if model.chip().is_emulated(self.firmware_table) => {
@@ -1020,17 +1020,18 @@ mod tests {
 
     #[test]
     fn load_rom_adds_warning_toast_when_enhancement_chip_is_required() {
-        // DSP-3 (SD Gundam GX) is not emulated yet and keeps the warning.
+        // The S-RTC (chipset $55, Daikaijuu Monogatari II) is not emulated yet and keeps the
+        // warning; every DSP chip is emulated since nr-72o.
         let mut snes = make_snes();
-        let rom = crate::snes::test_support::dsp_rom(b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX", false);
+        let rom = valid_lorom_nop_rom_with_header(0x00, 0x55);
 
-        snes.load_rom(&rom, "dsp3.sfc").expect("load ROM");
+        snes.load_rom(&rom, "srtc.sfc").expect("load ROM");
 
         let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
         assert!(
             toasts
                 .iter()
-                .any(|t| t.contains("enhancement hardware (DSP)")),
+                .any(|t| t.contains("enhancement hardware (S-RTC)")),
             "expected unsupported enhancement warning toast, got: {toasts:?}"
         );
     }
@@ -1042,12 +1043,13 @@ mod tests {
     }
 
     /// A table in which `image(0x1B)` is the genuine `dsp1b.rom`, `image(0x22)` the genuine
-    /// `dsp2.rom` and `image(0x44)` the genuine `dsp4.rom`: tests cannot ship Nintendo's
-    /// firmware.
+    /// `dsp2.rom`, `image(0x33)` the genuine `dsp3.rom` and `image(0x44)` the genuine
+    /// `dsp4.rom`: tests cannot ship Nintendo's firmware.
     fn synthetic_table() -> FirmwareTable {
         dsp::test_table(&[
             (DspChip::Dsp1, dsp::DSP1B_FILE, &image(0x1B)),
             (DspChip::Dsp2, "dsp2.rom", &image(0x22)),
+            (DspChip::Dsp3, "dsp3.rom", &image(0x33)),
             (DspChip::Dsp4, "dsp4.rom", &image(0x44)),
         ])
     }
@@ -1220,13 +1222,62 @@ mod tests {
     }
 
     #[test]
-    fn dsp3_rom_still_warns() {
+    fn dsp_rom_whose_chip_has_no_firmware_row_loads_with_the_warning() {
+        // A chip is emulated exactly when the firmware table has a row for it; without one the
+        // game loads as before, with the "not implemented yet" toast.
         let dir = tempfile::tempdir().unwrap();
-        let mut snes = dsp_snes(dir.path());
-        let rom = crate::snes::test_support::dsp_rom(b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX", false);
+        let mut snes = make_snes_with_firmware_dir(dir.path());
+        snes.set_firmware_table_for_test(dsp::test_table(&[(
+            DspChip::Dsp1,
+            dsp::DSP1B_FILE,
+            &image(0x1B),
+        )]));
+        let rom = crate::snes::test_support::dsp_rom(DSP3_TITLE, false);
         snes.load_rom(&rom, "game.sfc")
             .expect("loads without its chip");
-        assert!(warned(&snes), "not emulated yet, so it still warns");
+        assert!(warned(&snes), "no row, so it still warns");
+    }
+
+    /// SD Gundam GX's title, "SD Gundam GX" in half-width katakana.
+    const DSP3_TITLE: &[u8] = b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX";
+
+    #[test]
+    fn dsp3_rom_without_firmware_fails_with_dsp3_cli_words() {
+        let dir = tempfile::tempdir().unwrap();
+        // DSP-1 and DSP-2 firmware in the folder do not start a DSP-3 game.
+        std::fs::write(dir.path().join("dsp1b.rom"), image(0x1B)).unwrap();
+        std::fs::write(dir.path().join("dsp2.rom"), image(0x22)).unwrap();
+        let mut snes = dsp_snes(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(DSP3_TITLE, false);
+
+        let err = snes
+            .load_rom(&rom, "/roms/SD Gundam GX (Japan).sfc")
+            .unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "Error: SD Gundam GX (Japan) needs the SNES DSP-3 firmware, which was not found.\n\
+                 Put dsp3.rom in {}, or point --snes-firmware-dir at the folder holding it.",
+                dir.path().display()
+            )
+        );
+        assert!(snes.cpu.is_none(), "the game does not start");
+    }
+
+    #[test]
+    fn dsp3_rom_with_genuine_folder_firmware_loads_without_warning_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dsp3.rom"), image(0x33)).unwrap();
+        let mut snes = dsp_snes(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(DSP3_TITLE, false);
+
+        snes.load_rom(&rom, "gx.sfc").expect("firmware found");
+
+        assert!(!warned(&snes), "DSP-3 is emulated; no warning expected");
+        // fullsnes: the DSP-3 board (SHVC-1B3B-01) has its ports from bank $20.
+        let bus = snes.cpu.as_ref().unwrap().bus();
+        assert_eq!(bus.dsp_port_for_test(0x20_8000), Some(false));
+        assert_eq!(bus.dsp_port_for_test(0x20_C000), Some(true));
     }
 
     #[test]

@@ -1253,19 +1253,24 @@ fn snes_rom_dsp_chip_names_emulated_chips_only() {
     assert_eq!(snes_rom_dsp_chip(&dsp2), Some("dsp2".to_string()));
     let dsp4 = titled(dsp1_snes_rom(), b"TOP GEAR 3000        ");
     assert_eq!(snes_rom_dsp_chip(&dsp4), Some("dsp4".to_string()));
-    let dsp3 = titled(dsp1_snes_rom(), b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX           ");
-    assert_eq!(snes_rom_dsp_chip(&dsp3), None);
+    let dsp3 = titled(dsp1_snes_rom(), DSP3_TITLE);
+    assert_eq!(snes_rom_dsp_chip(&dsp3), Some("dsp3".to_string()));
     assert_eq!(snes_rom_dsp_chip(&minimal_snes_rom()), None);
     assert_eq!(snes_rom_dsp_chip(&[1, 2, 3]), None);
 }
 
-/// A table in which `[0x1B; 8192]` is the genuine DSP-1 firmware, `[0x22; 8192]` the DSP-2's
-/// and `[0x44; 8192]` the DSP-4's: Nintendo's firmware cannot be shipped with the tests.
+/// SD Gundam GX's header title: "SD Gundam GX" in half-width katakana, space-padded.
+const DSP3_TITLE: &[u8; 21] = b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX           ";
+
+/// A table in which `[0x1B; 8192]` is the genuine DSP-1 firmware, `[0x22; 8192]` the DSP-2's,
+/// `[0x33; 8192]` the DSP-3's and `[0x44; 8192]` the DSP-4's: Nintendo's firmware cannot be
+/// shipped with the tests.
 fn synthetic_firmware_table() -> crate::snes::dsp::FirmwareTable {
     use crate::snes::dsp::{DspChip, test_table};
     test_table(&[
         (DspChip::Dsp1, "dsp1b.rom", &[0x1B; 8192]),
         (DspChip::Dsp2, "dsp2.rom", &[0x22; 8192]),
+        (DspChip::Dsp3, "dsp3.rom", &[0x33; 8192]),
         (DspChip::Dsp4, "dsp4.rom", &[0x44; 8192]),
     ])
 }
@@ -1284,6 +1289,20 @@ fn dsp4_firmware_is_checked_against_the_dsp4_dump_only() {
         "the DSP-2's file"
     );
     assert!(!is_genuine_in("dsp4", &[0x44; 12288], table));
+}
+
+#[wasm_bindgen_test]
+fn dsp3_rom_loads_after_dsp3_firmware_supplied() {
+    let mut snes = WasmSnes::new();
+    snes.set_firmware_table_for_test(synthetic_firmware_table());
+    let dsp3 = titled(dsp1_snes_rom(), DSP3_TITLE);
+    // Another chip's firmware does not start a DSP-3 game, nor is it accepted as the DSP-3's.
+    snes.set_dsp_firmware("dsp2", &[0x22; 8192]).unwrap();
+    assert!(snes.load_rom(&dsp3, "SD Gundam GX (Japan).sfc").is_err());
+    assert!(snes.set_dsp_firmware("dsp3", &[0x22; 8192]).is_err());
+    snes.set_dsp_firmware("dsp3", &[0x33; 8192]).unwrap();
+    snes.load_rom(&dsp3, "SD Gundam GX (Japan).sfc")
+        .expect("loads with firmware");
 }
 
 #[wasm_bindgen_test]
