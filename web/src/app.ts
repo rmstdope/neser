@@ -1,7 +1,21 @@
-import init, { WasmNes, WasmGb, WasmGba, WasmSnes, gamepad_init_toast_message, snes_rom_needs_dsp1 } from "../pkg/neser";
-import { createFirmwareSidebar, obtainDsp1Firmware, requestDsp1Firmware } from "./firmware/dsp1_firmware_dialog";
-import { createDsp1FirmwareStore } from "./firmware/dsp1_firmware_store";
-import { notStartedMessage, notStartedStatus, romDisplayName } from "./firmware/dsp1_firmware_words";
+import init, {
+    WasmNes,
+    WasmGb,
+    WasmGba,
+    WasmSnes,
+    gamepad_init_toast_message,
+    snes_dsp_firmware_is_genuine,
+    snes_rom_dsp_chip
+} from "../pkg/neser";
+import { createFirmwareSidebar, obtainSnesFirmware, requestSnesFirmware } from "./firmware/snes_firmware_dialog";
+import { createSnesFirmwareStore } from "./firmware/snes_firmware_store";
+import {
+    type SnesFirmwareChip,
+    chipByKey,
+    notStartedMessage,
+    notStartedStatus,
+    romDisplayName
+} from "./firmware/snes_firmware_words";
 import { loadRawButtonLayoutsFromDb, mapStandardGamepadState, selectGamepads } from "./input/gamepad";
 
 // Load per-pad raw button layouts for browser-unmapped gamepads from the
@@ -135,35 +149,42 @@ const toastContainer = createToastContainer(screenWrap);
 
 const toastOverlay = createToastOverlay({ container: toastContainer });
 
-// DSP-1 firmware (nr-auv): asked for once, kept in this browser, shown in the sidebar.
-const dsp1FirmwareStore = createDsp1FirmwareStore();
-const dsp1FirmwareSidebar = createFirmwareSidebar({
+// SNES coprocessor firmware (nr-auv, nr-608): asked for once per chip, kept in this browser,
+// listed in the sidebar one row per chip.
+const snesFirmwareStore = createSnesFirmwareStore();
+const snesFirmwareSidebar = createFirmwareSidebar({
     elements: {
         section: document.getElementById("snes-firmware-section") as HTMLElement,
-        replaceButton: document.getElementById("snes-firmware-replace") as HTMLButtonElement,
-        forgetButton: document.getElementById("snes-firmware-forget") as HTMLButtonElement,
+        rows: document.getElementById("snes-firmware-rows") as HTMLElement,
         fileInput: document.getElementById("snes-firmware-replace-file") as HTMLInputElement
     },
-    store: dsp1FirmwareStore,
+    store: snesFirmwareStore,
+    isGenuine: snes_dsp_firmware_is_genuine,
     showMessage: (message) => toastOverlay.show(message)
 });
-void dsp1FirmwareSidebar.refresh();
+void snesFirmwareSidebar.refresh();
 
-/** The stored DSP-1 firmware, or the one the player chooses now (stored at once); `null` if they cancel. */
-function obtainFirmwareForDsp1Game(): Promise<Uint8Array | null> {
-    return obtainDsp1Firmware({
-        store: dsp1FirmwareStore,
+/** The stored firmware for `chip`, or the one the player chooses now (stored at once); `null` if they cancel. */
+function obtainFirmwareForChip(chip: SnesFirmwareChip): Promise<Uint8Array | null> {
+    return obtainSnesFirmware({
+        chip,
+        store: snesFirmwareStore,
+        isGenuine: snes_dsp_firmware_is_genuine,
         request: () =>
-            requestDsp1Firmware({
-                dialog: document.getElementById("dsp1-firmware-modal") as HTMLDialogElement,
-                title: document.getElementById("dsp1-firmware-title") as HTMLElement,
-                text: document.getElementById("dsp1-firmware-text") as HTMLElement,
-                chooseButton: document.getElementById("dsp1-firmware-choose") as HTMLButtonElement,
-                cancelButton: document.getElementById("dsp1-firmware-cancel") as HTMLButtonElement,
-                fileInput: document.getElementById("dsp1-firmware-file") as HTMLInputElement
-            }),
+            requestSnesFirmware(
+                {
+                    dialog: document.getElementById("snes-firmware-modal") as HTMLDialogElement,
+                    title: document.getElementById("snes-firmware-title") as HTMLElement,
+                    text: document.getElementById("snes-firmware-text") as HTMLElement,
+                    chooseButton: document.getElementById("snes-firmware-choose") as HTMLButtonElement,
+                    cancelButton: document.getElementById("snes-firmware-cancel") as HTMLButtonElement,
+                    fileInput: document.getElementById("snes-firmware-file") as HTMLInputElement
+                },
+                chip,
+                snes_dsp_firmware_is_genuine
+            ),
         showMessage: (message) => toastOverlay.show(message),
-        onStored: () => dsp1FirmwareSidebar.refresh()
+        onStored: () => snesFirmwareSidebar.refresh()
     });
 }
 
@@ -1374,18 +1395,19 @@ async function start(): Promise<boolean> {
             }
         }
 
-        // A DSP-1 game needs the player's firmware before it can load.
-        if (consoleKind === "snes" && snes_rom_needs_dsp1(romBytes)) {
-            const firmware = await obtainFirmwareForDsp1Game();
+        // A DSP game needs the player's firmware for its chip before it can load.
+        const firmwareChip = consoleKind === "snes" ? chipByKey(snes_rom_dsp_chip(romBytes) ?? "") : undefined;
+        if (firmwareChip) {
+            const firmware = await obtainFirmwareForChip(firmwareChip);
             if (!firmware) {
                 const game = romDisplayName(romName);
-                setStatus(notStartedStatus(game), true);
-                toastOverlay.show(notStartedMessage(game));
+                setStatus(notStartedStatus(firmwareChip, game), true);
+                toastOverlay.show(notStartedMessage(firmwareChip, game));
                 updateEmulationButtons();
                 romInput.focus();
                 return false;
             }
-            (emulator!.inst as WasmSnes).set_dsp1_firmware(firmware);
+            (emulator!.inst as WasmSnes).set_dsp_firmware(firmwareChip.key, firmware);
         }
 
         emulator!.inst.load_rom(romBytes, romName);

@@ -152,7 +152,7 @@ canvas {
   color: #e6e6e6;
   font-size: 0.9rem;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
-  /* A two-line message (the DSP-1 firmware's wrong-size words) keeps its line break. */
+  /* A two-line message (a refused SNES firmware file's words) keeps its line break. */
   white-space: pre-line;
 }
 

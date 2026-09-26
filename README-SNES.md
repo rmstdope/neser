@@ -17,16 +17,20 @@ Use `neser --help` for the complete current CLI reference.
 Enhancement chips: the SA-1 (Super Mario RPG and others), the Capcom CX4 (Mega Man X2 and
 X3), the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2), the
 Super FX GSU-1 and GSU-2 (Star Fox, Yoshi's Island, Doom), the S-DD1 decompressor (Star
-Ocean, Street Fighter Alpha 2) and the DSP-1 (Super Mario Kart, Pilotwings) are emulated.
+Ocean, Street Fighter Alpha 2), the DSP-1 (Super Mario Kart, Pilotwings) and the DSP-2
+(Dungeon Master) are emulated.
 Cartridges with any other enhancement chip load, but show a warning that the chip is not
 implemented yet, and may not run correctly.
 
-The DSP-1 runs its own program, which game dumps do not contain and NESER cannot include, so a
-DSP-1 game needs a firmware file you supply: put `dsp1b.rom` (8192 bytes; optionally `dsp1.rom`
-for the original chip) in `~/.neser/firmware`, or point `--snes-firmware-dir` at another folder.
-Without it the game does not start: the game browser says why in a strip above the games, and a
-command-line launch prints the reason and exits. The browser version asks for the file once and
-keeps it in the browser; the sidebar's "SNES firmware" block replaces or forgets it.
+The DSP-1 and DSP-2 run their own program, which game dumps do not contain and NESER cannot
+include, so these games need a firmware file you supply: put `dsp1b.rom` (optionally `dsp1.rom`
+for the original chip) or `dsp2.rom` in `~/.neser/firmware`, or point `--snes-firmware-dir` at
+another folder. Each file must be the genuine firmware of its chip (8192 bytes, and a known good
+dump: NESER recognises it by its SHA-256, in either byte order), so another chip's file under the
+wrong name is refused. Without it the game does not start: the game browser says why in a strip
+above the games, and a command-line launch prints the reason and exits. The browser version asks
+for each chip's file once and keeps it in the browser; the sidebar's "SNES firmware" block lists
+one row per stored chip, each with its own Replace… and Forget.
 
 ## SNES configuration (native frontend)
 
@@ -337,11 +341,13 @@ Test suites:
   buffer (all PASS, matching Mesen2's screen pixel for pixel). A hand-built
   fixture DMAs a table into CX4 RAM, runs a CX4 program from ROM (a square,
   a data-ROM lookup, a RAM read) and checks the results from the 65816 side.
-- `dsp1_tests.rs` -- the DSP-1 (nr-auv). Nintendo's firmware cannot be
-  shipped, so a synthetic uPD77C25 program written with the test assembler
-  (`src/snes/upd77c25/asm.rs`) multiplies words from DR, and a hand-built
-  fixture on a DSP LoROM cartridge exchanges them through DR/SR in both
-  LoROM windows. Real-game checks with a player's `dsp1b.rom` stay manual.
+- `dsp_tests.rs` -- the DSP-1 (nr-auv) and DSP-2 (nr-608). Nintendo's
+  firmware cannot be shipped, so a synthetic uPD77C25 program written with
+  the test assembler (`src/snes/upd77c25/asm.rs`) multiplies words from DR,
+  and hand-built fixtures exchange them through DR/SR: a DSP-1 cartridge in
+  both LoROM windows, and a DSP-2 ("DUNGEON MASTER") cartridge in its
+  `20-3F`/`A0-BF` window. The run treats the synthetic image as genuine.
+  Real-game checks with a player's `dsp1b.rom`/`dsp2.rom` stay manual.
 - `obc1_tests.rs` -- the OBC1 OBJ controller (nr-ufb). No OBC1 test ROM is
   known, so a hand-built fixture on an OBC1 cartridge writes objects through
   the `$7FF0-$7FF6` ports at both buffer bases and checks the SRAM buffer

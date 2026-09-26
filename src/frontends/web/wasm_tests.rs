@@ -1159,21 +1159,72 @@ fn dsp1_snes_rom() -> Vec<u8> {
     rom
 }
 
-#[wasm_bindgen_test]
-fn snes_rom_needs_dsp1_true_for_dsp1_header_false_otherwise() {
-    assert!(crate::wasm_snes::snes_rom_needs_dsp1(&dsp1_snes_rom()));
-    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&minimal_snes_rom()));
-    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&[1, 2, 3]));
-    let mut dsp2 = dsp1_snes_rom();
-    dsp2[0x7FC0..0x7FC0 + 21].copy_from_slice(b"DUNGEON MASTER       ");
-    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&dsp2));
+fn titled(mut rom: Vec<u8>, title: &[u8; 21]) -> Vec<u8> {
+    rom[0x7FC0..0x7FC0 + 21].copy_from_slice(title);
+    rom
 }
 
 #[wasm_bindgen_test]
-fn set_dsp1_firmware_rejects_wrong_size() {
+fn snes_rom_dsp_chip_names_emulated_chips_only() {
+    use crate::wasm_snes::snes_rom_dsp_chip;
+    assert_eq!(
+        snes_rom_dsp_chip(&dsp1_snes_rom()),
+        Some("dsp1".to_string())
+    );
+    let dsp2 = titled(dsp1_snes_rom(), b"DUNGEON MASTER       ");
+    assert_eq!(snes_rom_dsp_chip(&dsp2), Some("dsp2".to_string()));
+    let dsp4 = titled(dsp1_snes_rom(), b"TOP GEAR 3000        ");
+    assert_eq!(snes_rom_dsp_chip(&dsp4), None);
+    assert_eq!(snes_rom_dsp_chip(&minimal_snes_rom()), None);
+    assert_eq!(snes_rom_dsp_chip(&[1, 2, 3]), None);
+}
+
+/// A table in which `[0x1B; 8192]` is the genuine DSP-1 firmware and `[0x22; 8192]` the
+/// DSP-2's: Nintendo's firmware cannot be shipped with the tests.
+fn synthetic_firmware_table() -> crate::snes::dsp::FirmwareTable {
+    use crate::snes::dsp::{DspChip, test_table};
+    test_table(&[
+        (DspChip::Dsp1, "dsp1b.rom", &[0x1B; 8192]),
+        (DspChip::Dsp2, "dsp2.rom", &[0x22; 8192]),
+    ])
+}
+
+#[wasm_bindgen_test]
+fn snes_dsp_firmware_is_genuine_rejects_wrong_size_and_non_genuine() {
+    use crate::wasm_snes::{is_genuine_in, snes_dsp_firmware_is_genuine};
+    let table = synthetic_firmware_table();
+    assert!(is_genuine_in("dsp2", &[0x22; 8192], table));
+    assert!(
+        !is_genuine_in("dsp2", &[0x1B; 8192], table),
+        "the DSP-1's file"
+    );
+    assert!(!is_genuine_in("dsp2", &[0x22; 12288], table));
+    assert!(!is_genuine_in("dsp9", &[0x22; 8192], table));
+    // The real table knows only Nintendo's dumps.
+    assert!(!snes_dsp_firmware_is_genuine("dsp1", &[0x1B; 8192]));
+}
+
+#[wasm_bindgen_test]
+fn set_dsp_firmware_rejects_non_genuine_and_unknown_chip() {
     let mut snes = WasmSnes::new();
-    assert!(snes.set_dsp1_firmware(&[0u8; 12288]).is_err());
-    assert!(snes.set_dsp1_firmware(&[0u8; 8192]).is_ok());
+    snes.set_firmware_table_for_test(synthetic_firmware_table());
+    assert!(snes.set_dsp_firmware("dsp1", &[0u8; 12288]).is_err());
+    assert!(snes.set_dsp_firmware("dsp1", &[0x22; 8192]).is_err());
+    assert!(snes.set_dsp_firmware("dsp9", &[0x1B; 8192]).is_err());
+    assert!(snes.set_dsp_firmware("dsp1", &[0x1B; 8192]).is_ok());
+}
+
+#[wasm_bindgen_test]
+fn dsp2_rom_loads_after_firmware_supplied() {
+    let mut snes = WasmSnes::new();
+    snes.set_firmware_table_for_test(synthetic_firmware_table());
+    let dsp2 = titled(dsp1_snes_rom(), b"DUNGEON MASTER       ");
+    // DSP-1 firmware does not start a DSP-2 game.
+    snes.set_dsp_firmware("dsp1", &[0x1B; 8192]).unwrap();
+    assert!(snes.load_rom(&dsp2, "Dungeon Master (Japan).sfc").is_err());
+    snes.set_dsp_firmware("dsp2", &[0x22; 8192]).unwrap();
+    snes.load_rom(&dsp2, "Dungeon Master (Japan).sfc")
+        .expect("loads with firmware");
 }
 
 #[wasm_bindgen_test]
@@ -1183,7 +1234,9 @@ fn dsp1_rom_without_firmware_errors_and_loads_once_supplied() {
         snes.load_rom(&dsp1_snes_rom(), "Super Mario Kart (USA).sfc")
             .is_err()
     );
-    snes.set_dsp1_firmware(&[0u8; 8192]).expect("valid size");
+    snes.set_firmware_table_for_test(synthetic_firmware_table());
+    snes.set_dsp_firmware("dsp1", &[0x1B; 8192])
+        .expect("genuine");
     snes.load_rom(&dsp1_snes_rom(), "Super Mario Kart (USA).sfc")
         .expect("loads with firmware");
     let toasts: Vec<String> = snes

@@ -2,15 +2,36 @@ use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::emulator::Emulator;
 use crate::platform::frontend_toasts::cartridge_load_toast_message;
 use crate::snes::console::Snes;
+use crate::snes::dsp::{self, DspChip, ImageProblem};
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
-/// Whether a SNES ROM image is a DSP-1 game, which needs the player's DSP-1 firmware before it
-/// can start (see [`WasmSnes::set_dsp1_firmware`]).
+/// The key (`"dsp1"`, `"dsp2"`) of the DSP chip whose firmware a SNES ROM image needs before
+/// it can start (see [`WasmSnes::set_dsp_firmware`]), or `None` when it needs none that NESER
+/// emulates.
 #[wasm_bindgen]
-pub fn snes_rom_needs_dsp1(rom: &[u8]) -> bool {
-    crate::snes::dsp::identify_rom(rom).is_some_and(|model| model.is_dsp1())
+pub fn snes_rom_dsp_chip(rom: &[u8]) -> Option<String> {
+    dsp::identify_rom(rom)
+        .map(|model| model.chip())
+        .filter(|chip| chip.is_emulated(dsp::FIRMWARE_FILES))
+        .map(|chip| chip.key().to_string())
+}
+
+/// Whether `image` is a genuine dump of the chip `chip` (a key such as `"dsp2"`): exactly
+/// 8192 bytes and one of the dumps NESER recognises.
+#[wasm_bindgen]
+pub fn snes_dsp_firmware_is_genuine(chip: &str, image: &[u8]) -> bool {
+    is_genuine(chip, image, dsp::FIRMWARE_FILES)
+}
+
+fn is_genuine(chip: &str, image: &[u8], table: dsp::FirmwareTable) -> bool {
+    DspChip::from_key(chip).is_some_and(|chip| chip.check(image, table).is_ok())
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+pub(crate) fn is_genuine_in(chip: &str, image: &[u8], table: dsp::FirmwareTable) -> bool {
+    is_genuine(chip, image, table)
 }
 
 /// Provides a minimal WASM bridge for running the Super Nintendo emulator in the browser.
@@ -112,15 +133,29 @@ impl WasmSnes {
         }
     }
 
-    /// Supplies the DSP-1 firmware for the next DSP-1 game. Fails, naming the size, unless the
-    /// image is exactly 8192 bytes.
+    /// Supplies the firmware of the chip `chip` (a key such as `"dsp2"`) for the next game
+    /// using that chip. Fails unless the key names a chip and the image is a genuine dump.
     #[wasm_bindgen]
-    pub fn set_dsp1_firmware(&mut self, image: &[u8]) -> Result<(), JsValue> {
-        self.snes.set_dsp1_firmware(image).map_err(|size| {
-            JsValue::from_str(&format!(
-                "DSP-1 firmware must be exactly 8192 bytes, not {size}"
-            ))
-        })
+    pub fn set_dsp_firmware(&mut self, chip: &str, image: &[u8]) -> Result<(), JsValue> {
+        let dsp_chip = DspChip::from_key(chip)
+            .ok_or_else(|| JsValue::from_str(&format!("Unknown SNES firmware chip {chip:?}")))?;
+        self.snes
+            .set_dsp_firmware(dsp_chip, image)
+            .map_err(|problem| match problem {
+                ImageProblem::WrongSize(size) => JsValue::from_str(&format!(
+                    "{} firmware must be exactly 8192 bytes, not {size}",
+                    dsp_chip.label()
+                )),
+                ImageProblem::NotGenuine => {
+                    JsValue::from_str(&format!("This is not the {} firmware", dsp_chip.label()))
+                }
+            })
+    }
+
+    /// Replaces the table of genuine dumps, so tests can run synthetic firmware.
+    #[cfg(all(test, target_arch = "wasm32"))]
+    pub(crate) fn set_firmware_table_for_test(&mut self, table: dsp::FirmwareTable) {
+        self.snes.set_firmware_table_for_test(table);
     }
 
     /// Load a SNES ROM from raw bytes.

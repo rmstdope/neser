@@ -94,15 +94,11 @@
             </select>
           </div>
 
-          <!-- SNES firmware: shown once a DSP-1 firmware is stored in this browser (nr-auv) -->
+          <!-- SNES firmware: one row per chip with a file stored in this browser (nr-auv, nr-608) -->
           <div id="snes-firmware-section" class="hidden flex flex-col gap-2">
             <span class="label text-xs font-bold p-0">SNES firmware</span>
-            <span class="text-xs">DSP-1: stored ✓</span>
-            <div class="flex gap-2">
-              <button type="button" id="snes-firmware-replace" class="btn btn-outline btn-sm flex-1">Replace…</button>
-              <button type="button" id="snes-firmware-forget" class="btn btn-outline btn-sm flex-1">Forget</button>
-            </div>
-            <input type="file" id="snes-firmware-replace-file" class="hidden" aria-label="Replacement DSP-1 firmware file" />
+            <div id="snes-firmware-rows" class="flex flex-col gap-1"></div>
+            <input type="file" id="snes-firmware-replace-file" class="hidden" aria-label="Replacement SNES firmware file" />
           </div>
 
           <!-- Autorun controls -->
@@ -167,15 +163,15 @@
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
     </dialog>
 
-    <!-- DSP-1 firmware dialog: asks once for the player's firmware (nr-auv) -->
-    <dialog id="dsp1-firmware-modal" class="modal" aria-labelledby="dsp1-firmware-title" aria-describedby="dsp1-firmware-text">
+    <!-- SNES firmware dialog: asks once for a chip's firmware; the words are set per chip (nr-auv, nr-608) -->
+    <dialog id="snes-firmware-modal" class="modal" aria-labelledby="snes-firmware-title" aria-describedby="snes-firmware-text">
       <div class="modal-box">
-        <h3 class="text-lg font-bold" id="dsp1-firmware-title">This game needs the DSP-1 firmware</h3>
-        <p class="mt-3 text-sm" id="dsp1-firmware-text">Choose your dsp1b.rom file (8 KB). It stays in this browser, so you only do this once.</p>
-        <input type="file" id="dsp1-firmware-file" class="hidden" aria-label="DSP-1 firmware file" />
+        <h3 class="text-lg font-bold" id="snes-firmware-title">This game needs the DSP-1 firmware</h3>
+        <p class="mt-3 text-sm" id="snes-firmware-text">Choose your dsp1b.rom file (8 KB). It stays in this browser, so you only do this once.</p>
+        <input type="file" id="snes-firmware-file" class="hidden" aria-label="SNES firmware file" />
         <div class="modal-action">
-          <button type="button" id="dsp1-firmware-cancel" class="btn btn-ghost">Cancel</button>
-          <button type="button" id="dsp1-firmware-choose" class="btn btn-primary" autofocus>Choose file…</button>
+          <button type="button" id="snes-firmware-cancel" class="btn btn-ghost">Cancel</button>
+          <button type="button" id="snes-firmware-choose" class="btn btn-primary" autofocus>Choose file…</button>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop"><button>close</button></form>
