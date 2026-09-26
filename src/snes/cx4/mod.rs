@@ -33,8 +33,10 @@ const fn master_clock_hz(region: SnesVideoRegion) -> u64 {
 /// Bytes of CX4 data RAM (fullsnes: "6000h..6BFFh R/W CX4RAM (3Kbytes)").
 pub(crate) const DATA_RAM_SIZE: usize = 0xC00;
 
-/// Every piece of CX4 state, saved and restored as one value.
+/// Every piece of CX4 state, saved and restored as one value. Missing fields take their
+/// power-on value, so a state saved before a field existed still loads.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
 pub struct Cx4State {
     /// The chip's 3 KB data RAM.
     pub data_ram: Vec<u8>,
@@ -426,6 +428,12 @@ impl Cx4 {
         }
     }
 
+    /// Measures the 20 MHz clock against another region's master clock, for a save state
+    /// restored from the other region (the APU is retuned the same way).
+    pub(crate) fn set_video_region(&mut self, region: SnesVideoRegion) {
+        self.master_clock_hz = master_clock_hz(region);
+    }
+
     /// The SNES IRQ line the chip drives.
     pub(crate) fn irq_line(&self) -> bool {
         self.state.irq_line
@@ -450,11 +458,14 @@ impl Cx4 {
         self.state.clone()
     }
 
-    /// Restores a captured state. A state whose RAM or cache is the wrong size (a corrupt
-    /// file) is rejected rather than allowed to panic later.
+    /// Restores a captured state. A state whose RAM or cache is the wrong size, or whose cache
+    /// page or stack pointer is out of range (a corrupt file), is rejected rather than allowed
+    /// to panic later.
     pub(crate) fn restore_state(&mut self, state: &Cx4State) -> Result<(), String> {
         if state.data_ram.len() != DATA_RAM_SIZE
             || state.program_ram.iter().any(|page| page.len() != 256)
+            || state.cache_page > 1
+            || usize::from(state.sp) >= state.stack.len()
         {
             return Err("CX4 state size mismatch".to_string());
         }
@@ -918,5 +929,35 @@ mod tests {
             cx4.tick_master_clock();
         }
         assert_eq!(cx4.read(0x7F5E) & 0x01, 0x00);
+    }
+
+    /// A later field must not break earlier CX4 save states: missing fields take power-on
+    /// values.
+    #[test]
+    fn a_state_missing_fields_deserializes_to_power_on() {
+        let state: Cx4State = serde_json::from_str("{}").expect("deserialize");
+        assert_eq!(state, Cx4State::default());
+    }
+
+    #[test]
+    fn restore_rejects_indices_out_of_range() {
+        let mut cx4 = cx4();
+        for corrupt in [
+            Cx4State {
+                cache_page: 2,
+                ..Cx4State::default()
+            },
+            Cx4State {
+                sp: 8,
+                ..Cx4State::default()
+            },
+            Cx4State {
+                data_ram: vec![0; 16],
+                ..Cx4State::default()
+            },
+        ] {
+            assert!(cx4.restore_state(&corrupt).is_err(), "{corrupt:?}");
+        }
+        assert!(cx4.restore_state(&Cx4State::default()).is_ok());
     }
 }

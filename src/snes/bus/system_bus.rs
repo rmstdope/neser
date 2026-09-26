@@ -947,6 +947,15 @@ impl SnesSystemBus {
         self.apu.get_mut().set_video_region(video_region);
     }
 
+    /// Retunes the CX4's clock to the region's master clock. Called beside
+    /// [`Self::apu_set_video_region`], before the state is restored, so the restored
+    /// fractional clock budget is read against the rate it was saved under.
+    pub(crate) fn cx4_set_video_region(&mut self, video_region: SnesVideoRegion) {
+        if let Some(cx4) = self.cx4.as_mut() {
+            cx4.set_video_region(video_region);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn apu_output_sample_rate_for_test(&self) -> f32 {
         self.apu.borrow().output_sample_rate_for_test()
@@ -2072,6 +2081,10 @@ mod tests {
         run_cx4_program(&mut bus);
         assert_eq!(bus.read(0x00_7F80), 0x2A);
         assert!(bus.poll_irq(), "the CX4 raises the SNES IRQ when it stops");
+        assert_eq!(bus.read(0x00_7F5E) & 0x02, 0x02, "its IRQ flag reads set");
+        bus.write(0x00_7F5E, 0x00);
+        assert_eq!(bus.read(0x00_7F5E) & 0x02, 0x00, "$7F5E clears the flag");
+        assert!(bus.poll_irq(), "but leaves the SNES IRQ line high (Mesen2)");
         bus.write(0x00_7F51, 0x01);
         assert!(!bus.poll_irq(), "$7F51 bit 0 releases it");
     }
@@ -2106,6 +2119,16 @@ mod tests {
             0x2A,
             "the restored program finishes"
         );
+    }
+
+    /// A state saved before CX4 support has no `cx4` key; it still loads, as "no CX4 state".
+    #[test]
+    fn bus_state_without_a_cx4_key_deserializes() {
+        let state = SnesSystemBus::new(cx4_test_cart(&[])).capture_state();
+        let mut json = serde_json::to_value(&state).expect("serialize");
+        json.as_object_mut().expect("object").remove("cx4");
+        let restored: SnesBusState = serde_json::from_value(json).expect("deserialize");
+        assert!(restored.cx4.is_none());
     }
 
     #[test]

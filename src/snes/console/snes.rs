@@ -988,6 +988,61 @@ mod tests {
         );
     }
 
+    fn cx4_rom() -> Vec<u8> {
+        let mut rom = valid_lorom_nop_rom_with_header(0x00, 0xF3);
+        rom[0x7FBF] = 0x10; // custom chip subtype: CX4
+        rom
+    }
+
+    /// The /RES button reaches the cartridge: a running CX4 stops, its data RAM survives.
+    #[test]
+    fn soft_reset_stops_the_cx4_and_keeps_its_data_ram() {
+        let mut snes = make_snes();
+        snes.load_rom(&cx4_rom(), "cx4.sfc").expect("load ROM");
+        let bus = snes.bus_mut_for_tests().expect("ROM loaded");
+        bus.write(0x00_6010, 0x5A);
+        bus.write(0x00_7F4F, 0x00); // start: the chip begins filling its program cache
+        assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x40);
+
+        snes.reset(true);
+
+        let bus = snes.bus_mut_for_tests().expect("ROM loaded");
+        assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x00, "the CX4 is stopped");
+        assert_eq!(bus.read(0x00_6010), 0x5A, "data RAM survives a soft reset");
+    }
+
+    /// CX4 cycles run while the bus advances `clocks` master clocks, with the clocks actually
+    /// advanced (DRAM refresh can add a few).
+    fn cx4_cycles_over(snes: &mut Snes, clocks: u64) -> (u64, u64) {
+        let bus = snes.bus_mut_for_tests().expect("ROM loaded");
+        let cycles = |bus: &SnesSystemBus| bus.capture_state().cx4.expect("CX4 cart").cycle_count;
+        let (start_clock, start_cycles) = (bus.master_clock(), cycles(bus));
+        while bus.master_clock() - start_clock < clocks {
+            bus.tick();
+        }
+        (bus.master_clock() - start_clock, cycles(bus) - start_cycles)
+    }
+
+    /// A state carries its region; the CX4's 20 MHz must then be measured against that
+    /// region's master clock, like the APU's.
+    #[test]
+    fn loading_a_pal_state_on_ntsc_hardware_retunes_the_cx4_clock() {
+        let mut pal = make_snes_with_hardware(Some(SnesHardware::Pal));
+        pal.load_rom(&cx4_rom(), "cx4.sfc").expect("load ROM");
+        let state = pal.save_state_bytes().expect("save state");
+
+        let mut snes = make_snes_with_hardware(Some(SnesHardware::Ntsc));
+        snes.load_rom(&cx4_rom(), "cx4.sfc").expect("load ROM");
+        snes.load_state_bytes(&state).expect("load state");
+
+        let (clocks, cycles) = cx4_cycles_over(&mut snes, 2_128_137);
+        let pal_expected = clocks * 20_000_000 / 21_281_370;
+        assert!(
+            cycles.abs_diff(pal_expected) <= 1,
+            "{cycles} CX4 cycles in {clocks} master clocks; PAL rate gives {pal_expected}"
+        );
+    }
+
     #[test]
     fn run_tick_after_rom_load_uses_cpu_step_cycles() {
         let mut snes = make_snes();
