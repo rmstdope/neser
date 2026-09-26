@@ -230,6 +230,17 @@ describe("SNES firmware sidebar block", () => {
         expect(rowTexts(elements.rows)).toEqual(["DSP-2: stored ✓ Replace… Forget"]);
     });
 
+    it("does not list a stored file that is not genuine (stored when only the size was checked)", async () => {
+        const store = memoryStore({ dsp1: new Uint8Array(8192), dsp2: genuine("dsp2") });
+        const { elements, controller } = sidebar(store);
+        await controller.refresh();
+        expect(rowTexts(elements.rows)).toEqual(["DSP-2: stored ✓ Replace… Forget"]);
+
+        store.files.delete("dsp2");
+        await controller.refresh();
+        expect(elements.section.classList.contains("hidden")).toBe(true);
+    });
+
     it("lists one row per stored chip, DSP-1 first whatever the order they were stored in", async () => {
         const store = memoryStore({ dsp2: genuine("dsp2"), dsp1: genuine("dsp1") });
         const { elements, controller } = sidebar(store);
@@ -261,13 +272,15 @@ describe("SNES firmware sidebar block", () => {
     });
 
     it("Replace… on a row stores a genuine file for that chip and says so", async () => {
-        const store = memoryStore({ dsp1: genuine("dsp1"), dsp2: new Uint8Array(8192).fill(9) });
+        const old = genuine("dsp2");
+        const store = memoryStore({ dsp1: genuine("dsp1"), dsp2: old });
         const { elements, controller, messages } = sidebar(store);
         await controller.refresh();
         button(elements.rows, "dsp2", "Replace…").click();
         chooseFile(elements.fileInput, "dsp2.rom", 8192, 0x22);
         await flush();
         await flush();
+        expect(store.files.get("dsp2")).not.toBe(old);
         expect(store.files.get("dsp2")?.[0]).toBe(0x22);
         expect(store.files.get("dsp1")?.[0]).toBe(0x11);
         expect(messages).toEqual(["DSP-2 firmware stored"]);

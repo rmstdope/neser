@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn firmware_problem_preflight_detects_missing_dsp1_firmware() {
+    fn firmware_problem_preflight_detects_missing_and_non_genuine_dsp1_firmware() {
         let dir = TempDir::new().unwrap();
         let context = app_context_with_firmware_dir(dir.path());
         let rom = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", false);

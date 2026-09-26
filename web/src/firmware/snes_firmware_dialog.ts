@@ -144,7 +144,7 @@ export type FirmwareSidebarElements = {
 };
 
 /**
- * Wires the sidebar's "SNES firmware" block: one row per chip with a stored file, in
+ * Wires the sidebar's "SNES firmware" block: one row per chip with a stored genuine file, in
  * `SNES_FIRMWARE_CHIPS` order, each with its own Replace… and Forget; the block is shown only
  * while a row exists. Replace… checks like the dialog (messages at the bottom, since no dialog
  * is open); Forget removes that chip's file at once, without asking.
@@ -195,7 +195,14 @@ export function createFirmwareSidebar({
 
     async function refresh() {
         const keys = new Set(await store.storedKeys().catch(() => [] as string[]));
-        const stored = SNES_FIRMWARE_CHIPS.filter((chip) => keys.has(chip.key));
+        // A file that is not genuine (stored when only the size was checked) counts as not
+        // stored, as it does when a game asks for it, so it gets no row.
+        const stored: SnesFirmwareChip[] = [];
+        for (const chip of SNES_FIRMWARE_CHIPS) {
+            if (!keys.has(chip.key)) continue;
+            const bytes = await store.load(chip.key).catch(() => null);
+            if (bytes && isGenuine(chip.key, bytes)) stored.push(chip);
+        }
         rows.replaceChildren(...stored.map(row));
         section.classList.toggle("hidden", stored.length === 0);
     }
