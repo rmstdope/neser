@@ -19,12 +19,14 @@ import {
 
 const dsp1 = chipByKey("dsp1")!;
 const dsp2 = chipByKey("dsp2")!;
+const dsp4 = chipByKey("dsp4")!;
 
 describe("SNES firmware chips", () => {
-    it("list DSP-1 then DSP-2, with the file each asks for", () => {
+    it("list the chips in chip order, with the file each asks for", () => {
         expect(SNES_FIRMWARE_CHIPS.map((c) => [c.key, c.label, c.file])).toEqual([
             ["dsp1", "DSP-1", "dsp1b.rom"],
-            ["dsp2", "DSP-2", "dsp2.rom"]
+            ["dsp2", "DSP-2", "dsp2.rom"],
+            ["dsp4", "DSP-4", "dsp4.rom"]
         ]);
         expect(chipByKey("dsp9")).toBeUndefined();
     });
@@ -68,6 +70,24 @@ describe("SNES firmware words", () => {
         );
         expect(notStartedMessage(dsp2, "Dungeon Master (Japan)")).toBe(
             "Not started: Dungeon Master (Japan) needs the DSP-2 firmware"
+        );
+    });
+
+    it("are the agreed DSP-4 strings", () => {
+        expect(dialogTitle(dsp4)).toBe("This game needs the DSP-4 firmware");
+        expect(dialogText(dsp4)).toBe(
+            "Choose your dsp4.rom file (8 KB). It stays in this browser, so you only do this once."
+        );
+        expect(wrongFileTitle(dsp4)).toBe("That isn't a DSP-4 firmware file");
+        expect(wrongSizeDetail("mario.zip", 1258291)).toBe("\"mario.zip\" is 1.2 MB; the firmware is exactly 8 KB.");
+        expect(notGenuineDetail(dsp4, "dsp3.rom")).toBe("\"dsp3.rom\" is 8 KB but is not the DSP-4 firmware.");
+        expect(storedMessage(dsp4)).toBe("DSP-4 firmware stored");
+        expect(sidebarStored(dsp4)).toBe("DSP-4: stored ✓");
+        expect(notStartedStatus(dsp4, "Top Gear 3000 (USA)")).toBe(
+            "Failed to load ROM: Top Gear 3000 (USA) needs the DSP-4 firmware"
+        );
+        expect(notStartedMessage(dsp4, "Top Gear 3000 (USA)")).toBe(
+            "Not started: Top Gear 3000 (USA) needs the DSP-4 firmware"
         );
     });
 

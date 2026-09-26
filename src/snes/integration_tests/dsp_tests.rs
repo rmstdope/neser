@@ -1,4 +1,4 @@
-//! ROM-level coverage for the DSP-1 (nr-auv) and the DSP-2 (nr-608).
+//! ROM-level coverage for the DSP-1 (nr-auv), the DSP-2 (nr-608) and the DSP-4 (nr-tfq).
 //!
 //! Nintendo's DSP-1 program cannot be shipped, so this drives the whole path (bus decode, the
 //! uPD77C25 core, its clock and the DR/SR handshake) with a synthetic firmware written in the
@@ -108,5 +108,32 @@ fn dsp2_fixture_exchanges_words_through_the_20_3f_window() {
     assert!(
         result.passed && result.exit_reason == RunExitReason::PassMarker,
         "DSP-2 fixture should pass: {result:?}"
+    );
+}
+
+fn build_dsp4_fixture() -> Vec<u8> {
+    let mut fixture = FixtureRom::new(b"TOP GEAR 3000");
+    fixture.dsp_chipset();
+    // fullsnes "SNES Cart DSP-n": Top Gear 3000's board (SHVC-1B0N-01, LoROM 1 MB, shared with
+    // the DSP-1) has DR at 30-3F:8000-BFFF and SR at 30-3F:C000-FFFF, mirrored at B0-BF.
+    // fullsnes "DSP4 Commands": every DSP-4 transfer is 16-bit, which is what this exchange is.
+    exchange(&mut fixture, 0x30_C000, 0x30_8000, 0x0123, 0x06D2);
+    exchange(&mut fixture, 0xBF_FFFF, 0xB0_BFFF, 0xFFFE, 0xFFF4);
+    exchange(&mut fixture, 0x3F_C000, 0x3F_8000, 0x1000, 0x6000);
+    fixture.pass_marker_and_idle();
+    fixture.build()
+}
+
+#[test]
+fn dsp4_fixture_exchanges_16bit_words_through_the_30_3f_window() {
+    let firmware = multiply_by_six_firmware();
+    let result = run_rom(
+        &build_dsp4_fixture(),
+        "dsp4-fixture.sfc",
+        RunConfig::new(0, 30).with_dsp_firmware(DspChip::Dsp4, &firmware),
+    );
+    assert!(
+        result.passed && result.exit_reason == RunExitReason::PassMarker,
+        "DSP-4 fixture should pass: {result:?}"
     );
 }

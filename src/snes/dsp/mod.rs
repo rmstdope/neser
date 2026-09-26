@@ -168,6 +168,11 @@ pub const FIRMWARE_FILES: FirmwareTable = &[
         name: "dsp2.rom",
         sha256: hex32("03EF4EF26C9F701346708CB5D07847B5203CF1B0818BF2930ACD34510FFDD717"),
     },
+    FirmwareFile {
+        chip: DspChip::Dsp4,
+        name: "dsp4.rom",
+        sha256: hex32("752D03B2D74441E430B7F713001FA241F8BBCFC1A0D890ED4143F174DBE031DA"),
+    },
 ];
 
 /// A 64-digit hex string as 32 bytes, at compile time.
@@ -478,11 +483,11 @@ mod tests {
     }
 
     #[test]
-    fn only_dsp1_and_dsp2_are_emulated() {
+    fn dsp1_dsp2_and_dsp4_are_emulated() {
         assert!(DspChip::Dsp1.is_emulated(FIRMWARE_FILES));
         assert!(DspChip::Dsp2.is_emulated(FIRMWARE_FILES));
         assert!(!DspChip::Dsp3.is_emulated(FIRMWARE_FILES));
-        assert!(!DspChip::Dsp4.is_emulated(FIRMWARE_FILES));
+        assert!(DspChip::Dsp4.is_emulated(FIRMWARE_FILES));
     }
 
     #[test]
@@ -515,6 +520,11 @@ mod tests {
                     "dsp2.rom",
                     "03EF4EF26C9F701346708CB5D07847B5203CF1B0818BF2930ACD34510FFDD717".to_string()
                 ),
+                (
+                    DspChip::Dsp4,
+                    "dsp4.rom",
+                    "752D03B2D74441E430B7F713001FA241F8BBCFC1A0D890ED4143F174DBE031DA".to_string()
+                ),
             ]
         );
     }
@@ -545,6 +555,7 @@ mod tests {
         assert_eq!(names(DspModel::Dsp1B), ["dsp1b.rom", "dsp1.rom"]);
         assert_eq!(names(DspModel::Dsp1), ["dsp1.rom", "dsp1b.rom"]);
         assert_eq!(names(DspModel::Dsp2), ["dsp2.rom"]);
+        assert_eq!(names(DspModel::Dsp4), ["dsp4.rom"]);
         assert!(names(DspModel::Dsp3).is_empty());
     }
 
@@ -786,6 +797,60 @@ mod tests {
         );
     }
 
+    /// [`table`] plus `image(0x44)` as the genuine `dsp4.rom`.
+    fn table_with_dsp4() -> FirmwareTable {
+        test_table(&[
+            (DspChip::Dsp1, DSP1B_FILE, &image(0x1B)),
+            (DspChip::Dsp2, "dsp2.rom", &image(0x22)),
+            (DspChip::Dsp4, "dsp4.rom", &image(0x44)),
+        ])
+    }
+
+    #[test]
+    fn load_from_dir_for_dsp4_reads_dsp4_rom() {
+        let dir = dir_with(&[
+            ("dsp4.rom", image(0x44)),
+            (DSP1B_FILE, image(0x1B)),
+            ("dsp2.rom", image(0x22)),
+        ]);
+        let fw = load_from_dir(dir.path(), DspModel::Dsp4, table_with_dsp4()).unwrap();
+        assert_eq!(fill_of(&fw), 0x44);
+    }
+
+    #[test]
+    fn dsp4_missing_wrong_size_and_not_genuine() {
+        let chip = DspChip::Dsp4;
+        // Other chips' files do not start a DSP-4 game: dsp4.rom has no fallback name.
+        let dir = dir_with(&[(DSP1B_FILE, image(0x1B)), ("dsp2.rom", image(0x22))]);
+        assert_eq!(
+            load_from_dir(dir.path(), DspModel::Dsp4, table_with_dsp4()).err(),
+            Some(FirmwareProblem::Missing {
+                chip,
+                folder: dir.path().to_path_buf()
+            })
+        );
+        let dir = dir_with(&[("dsp4.rom", vec![0; 12288])]);
+        assert_eq!(
+            load_from_dir(dir.path(), DspModel::Dsp4, table_with_dsp4()).err(),
+            Some(FirmwareProblem::WrongSize {
+                chip,
+                path: dir.path().join("dsp4.rom"),
+                size: 12288
+            })
+        );
+        // A renamed dsp1b.rom or dsp2.rom is the right size but not the DSP-4 firmware.
+        for other in [image(0x1B), image(0x22)] {
+            let dir = dir_with(&[("dsp4.rom", other)]);
+            assert_eq!(
+                load_from_dir(dir.path(), DspModel::Dsp4, table_with_dsp4()).err(),
+                Some(FirmwareProblem::NotGenuine {
+                    chip,
+                    path: dir.path().join("dsp4.rom")
+                })
+            );
+        }
+    }
+
     #[test]
     fn a_dsp1b_image_named_dsp2_rom_is_not_genuine() {
         let dir = dir_with(&[("dsp2.rom", image(0x1B))]);
@@ -979,6 +1044,62 @@ mod tests {
         assert_eq!(
             fake.cli_message(game),
             "Error: /Users/henrik/.neser/firmware/dsp2.rom is not valid SNES DSP-2 firmware: it is not the DSP-2 firmware (it may be the firmware of a different chip)."
+        );
+    }
+
+    #[test]
+    fn strip_lines_and_cli_words_for_dsp4() {
+        let folder = PathBuf::from(FOLDER);
+        let chip = DspChip::Dsp4;
+        let game = "Top Gear 3000 (USA)";
+        let missing = FirmwareProblem::Missing {
+            chip,
+            folder: folder.clone(),
+        };
+        assert_eq!(
+            missing.strip_lines(game),
+            (
+                "Top Gear 3000 (USA) can't start: it needs the DSP-4 firmware.".to_string(),
+                "Put dsp4.rom in /Users/henrik/.neser/firmware and try again.".to_string()
+            )
+        );
+        assert_eq!(
+            missing.cli_message(game),
+            "Error: Top Gear 3000 (USA) needs the SNES DSP-4 firmware, which was not found.\n\
+             Put dsp4.rom in /Users/henrik/.neser/firmware, or point --snes-firmware-dir at the folder holding it."
+        );
+        let wrong = FirmwareProblem::WrongSize {
+            chip,
+            path: folder.join("dsp4.rom"),
+            size: 12288,
+        };
+        assert_eq!(
+            wrong.strip_lines(game),
+            (
+                "Top Gear 3000 (USA) can't start: the DSP-4 firmware isn't valid.".to_string(),
+                "/Users/henrik/.neser/firmware/dsp4.rom is 12,288 bytes; it must be exactly 8,192 bytes."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            wrong.cli_message(game),
+            "Error: /Users/henrik/.neser/firmware/dsp4.rom is not valid SNES DSP-4 firmware: it is 12,288 bytes; it must be exactly 8,192 bytes."
+        );
+        let fake = FirmwareProblem::NotGenuine {
+            chip,
+            path: folder.join("dsp4.rom"),
+        };
+        assert_eq!(
+            fake.strip_lines(game),
+            (
+                "Top Gear 3000 (USA) can't start: the DSP-4 firmware isn't valid.".to_string(),
+                "/Users/henrik/.neser/firmware/dsp4.rom is not the DSP-4 firmware (it may be the firmware of a different chip)."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            fake.cli_message(game),
+            "Error: /Users/henrik/.neser/firmware/dsp4.rom is not valid SNES DSP-4 firmware: it is not the DSP-4 firmware (it may be the firmware of a different chip)."
         );
     }
 

@@ -1020,11 +1020,11 @@ mod tests {
 
     #[test]
     fn load_rom_adds_warning_toast_when_enhancement_chip_is_required() {
-        // DSP-4 (Top Gear 3000) is not emulated yet and keeps the warning.
+        // DSP-3 (SD Gundam GX) is not emulated yet and keeps the warning.
         let mut snes = make_snes();
-        let rom = crate::snes::test_support::dsp_rom(b"TOP GEAR 3000", false);
+        let rom = crate::snes::test_support::dsp_rom(b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX", false);
 
-        snes.load_rom(&rom, "dsp4.sfc").expect("load ROM");
+        snes.load_rom(&rom, "dsp3.sfc").expect("load ROM");
 
         let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
         assert!(
@@ -1041,12 +1041,14 @@ mod tests {
         Snes::new(AppContext::new_with_config(config))
     }
 
-    /// A table in which `image(0x1B)` is the genuine `dsp1b.rom` and `image(0x22)` the
-    /// genuine `dsp2.rom`: tests cannot ship Nintendo's firmware.
+    /// A table in which `image(0x1B)` is the genuine `dsp1b.rom`, `image(0x22)` the genuine
+    /// `dsp2.rom` and `image(0x44)` the genuine `dsp4.rom`: tests cannot ship Nintendo's
+    /// firmware.
     fn synthetic_table() -> FirmwareTable {
         dsp::test_table(&[
             (DspChip::Dsp1, dsp::DSP1B_FILE, &image(0x1B)),
             (DspChip::Dsp2, "dsp2.rom", &image(0x22)),
+            (DspChip::Dsp4, "dsp4.rom", &image(0x44)),
         ])
     }
 
@@ -1218,15 +1220,89 @@ mod tests {
     }
 
     #[test]
-    fn dsp3_and_dsp4_roms_still_warn() {
-        for title in [&b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX"[..], b"TOP GEAR 3000"] {
-            let dir = tempfile::tempdir().unwrap();
-            let mut snes = dsp_snes(dir.path());
-            let rom = crate::snes::test_support::dsp_rom(title, false);
-            snes.load_rom(&rom, "game.sfc")
-                .expect("loads without its chip");
-            assert!(warned(&snes), "not emulated yet, so it still warns");
-        }
+    fn dsp3_rom_still_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut snes = dsp_snes(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX", false);
+        snes.load_rom(&rom, "game.sfc")
+            .expect("loads without its chip");
+        assert!(warned(&snes), "not emulated yet, so it still warns");
+    }
+
+    #[test]
+    fn dsp4_rom_without_firmware_fails_with_dsp4_cli_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut snes = dsp_snes(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"TOP GEAR 3000", false);
+
+        let err = snes
+            .load_rom(&rom, "/roms/Top Gear 3000 (USA).sfc")
+            .unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "Error: Top Gear 3000 (USA) needs the SNES DSP-4 firmware, which was not found.\n\
+                 Put dsp4.rom in {}, or point --snes-firmware-dir at the folder holding it.",
+                dir.path().display()
+            )
+        );
+        assert!(snes.cpu.is_none(), "the game does not start");
+    }
+
+    #[test]
+    fn dsp4_rom_with_other_chips_firmware_renamed_fails_with_not_genuine_words() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dsp4.rom"), image(0x1B)).unwrap();
+        let mut snes = dsp_snes(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"PLANETS CHAMP TG3000", false);
+
+        let err = snes.load_rom(&rom, "tg.sfc").unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "Error: {} is not valid SNES DSP-4 firmware: it is not the DSP-4 firmware (it may be the firmware of a different chip).",
+                dir.path().join("dsp4.rom").display()
+            )
+        );
+        assert!(snes.cpu.is_none());
+    }
+
+    #[test]
+    fn dsp4_rom_with_genuine_folder_firmware_loads_without_warning_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dsp4.rom"), image(0x44)).unwrap();
+        let mut snes = dsp_snes(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"TOP GEAR 3000", false);
+
+        snes.load_rom(&rom, "tg.sfc").expect("firmware found");
+
+        assert!(!warned(&snes), "DSP-4 is emulated; no warning expected");
+        // fullsnes: the DSP-4 board (SHVC-1B0N-01) has DR at 30-3F:8000-BFFF and SR at
+        // 30-3F:C000-FFFF; bank $20 stays ROM, unlike the DSP-2/3 boards.
+        let bus = snes.cpu.as_ref().unwrap().bus();
+        assert_eq!(bus.dsp_port_for_test(0x30_8000), Some(false));
+        assert_eq!(bus.dsp_port_for_test(0x3F_C000), Some(true));
+        assert_eq!(bus.dsp_port_for_test(0x20_C000), None);
+    }
+
+    #[test]
+    fn dsp4_rom_uses_supplied_dsp4_firmware_but_not_another_chips() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut snes = dsp_snes(&dir.path().join("absent"));
+        let rom = crate::snes::test_support::dsp_rom(b"TOP GEAR 3000", false);
+        assert_eq!(
+            snes.set_dsp_firmware(DspChip::Dsp4, &image(0x1B)),
+            Err(ImageProblem::NotGenuine)
+        );
+        snes.set_dsp_firmware(DspChip::Dsp1, &image(0x1B)).unwrap();
+        let err = snes.load_rom(&rom, "tg.sfc").unwrap_err();
+        assert!(err.contains("needs the SNES DSP-4 firmware"), "{err}");
+
+        snes.set_dsp_firmware(DspChip::Dsp4, &image(0x44))
+            .expect("genuine");
+        snes.load_rom(&rom, "tg.sfc")
+            .expect("supplied firmware used");
+        assert!(!warned(&snes));
     }
 
     #[test]

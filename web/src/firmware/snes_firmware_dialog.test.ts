@@ -16,10 +16,11 @@ import { chipByKey } from "./snes_firmware_words";
 
 const dsp1 = chipByKey("dsp1")!;
 const dsp2 = chipByKey("dsp2")!;
+const dsp4 = chipByKey("dsp4")!;
 
-/** Tests' stand-in for the wasm check: a file filled with 0x11 is the genuine DSP-1 firmware, one filled with 0x22 the DSP-2's. */
-const isGenuine: IsGenuine = (key, bytes) =>
-    bytes.length === 8192 && bytes[0] === (key === "dsp1" ? 0x11 : key === "dsp2" ? 0x22 : -1);
+/** Tests' stand-in for the wasm check: a file filled with 0x11 is the genuine DSP-1 firmware, 0x22 the DSP-2's, 0x44 the DSP-4's. */
+const FILL: Record<string, number> = { dsp1: 0x11, dsp2: 0x22, dsp4: 0x44 };
+const isGenuine: IsGenuine = (key, bytes) => bytes.length === 8192 && bytes[0] === (FILL[key] ?? -1);
 
 function loadMarkup() {
     document.documentElement.innerHTML = new DOMParser()
@@ -89,7 +90,7 @@ function failingStore(initial: Record<string, Uint8Array> = {}): FirmwareStore {
     };
 }
 
-const genuine = (key: "dsp1" | "dsp2") => new Uint8Array(8192).fill(key === "dsp1" ? 0x11 : 0x22);
+const genuine = (key: "dsp1" | "dsp2" | "dsp4") => new Uint8Array(8192).fill(FILL[key]);
 
 describe("SNES firmware dialog", () => {
     beforeEach(loadMarkup);
@@ -115,6 +116,29 @@ describe("SNES firmware dialog", () => {
             "Choose your dsp2.rom file (8 KB). It stays in this browser, so you only do this once."
         );
         expect(document.activeElement).toBe(el.chooseButton);
+    });
+
+    it("opens with the agreed DSP-4 words", () => {
+        const el = dialogElements();
+        void requestSnesFirmware(el, dsp4, isGenuine);
+        expect(el.title.textContent).toBe("This game needs the DSP-4 firmware");
+        expect(el.text.textContent).toBe(
+            "Choose your dsp4.rom file (8 KB). It stays in this browser, so you only do this once."
+        );
+        expect(document.activeElement).toBe(el.chooseButton);
+    });
+
+    it("keeps the DSP-4 dialog open on another chip's 8 KB file", async () => {
+        const el = dialogElements();
+        let result: Uint8Array | null | undefined;
+        void requestSnesFirmware(el, dsp4, isGenuine).then((r) => (result = r));
+        chooseFile(el.fileInput, "dsp3.rom", 8192, 0x22);
+        await flush();
+        await flush();
+        expect(el.dialog.open).toBe(true);
+        expect(result).toBeUndefined();
+        expect(el.title.textContent).toBe("That isn't a DSP-4 firmware file");
+        expect(el.text.textContent).toBe("\"dsp3.rom\" is 8 KB but is not the DSP-4 firmware.");
     });
 
     it("keeps the dialog open on a wrong-size file and says why", async () => {
@@ -251,6 +275,29 @@ describe("SNES firmware sidebar block", () => {
         ]);
     });
 
+    it("lists DSP-4 after the other chips, in chip order", async () => {
+        const store = memoryStore({ dsp4: genuine("dsp4"), dsp2: genuine("dsp2"), dsp1: genuine("dsp1") });
+        const { elements, controller } = sidebar(store);
+        await controller.refresh();
+        expect(rowTexts(elements.rows)).toEqual([
+            "DSP-1: stored ✓ Replace… Forget",
+            "DSP-2: stored ✓ Replace… Forget",
+            "DSP-4: stored ✓ Replace… Forget"
+        ]);
+    });
+
+    it("Forget on the DSP-4 row removes only the DSP-4 file", async () => {
+        const store = memoryStore({ dsp1: genuine("dsp1"), dsp4: genuine("dsp4") });
+        const { elements, controller } = sidebar(store);
+        await controller.refresh();
+        button(elements.rows, "dsp4", "Forget").click();
+        await flush();
+        await flush();
+        expect(store.files.has("dsp4")).toBe(false);
+        expect(store.files.has("dsp1")).toBe(true);
+        expect(rowTexts(elements.rows)).toEqual(["DSP-1: stored ✓ Replace… Forget"]);
+    });
+
     it("Forget removes only that chip's file at once; the last one hides the block", async () => {
         const store = memoryStore({ dsp1: genuine("dsp1"), dsp2: genuine("dsp2") });
         const { elements, controller } = sidebar(store);
@@ -350,6 +397,23 @@ describe("obtaining the firmware for a game", () => {
         const result = await obtainSnesFirmware({
             chip: dsp2,
             store: memoryStore({ dsp1: genuine("dsp1") }),
+            isGenuine,
+            request: async () => {
+                asked = true;
+                return null;
+            },
+            showMessage: () => {},
+            onStored: async () => {}
+        });
+        expect(asked).toBe(true);
+        expect(result).toBeNull();
+    });
+
+    it("asks for the DSP-4 file even when DSP-1 and DSP-2 firmware are stored", async () => {
+        let asked = false;
+        const result = await obtainSnesFirmware({
+            chip: dsp4,
+            store: memoryStore({ dsp1: genuine("dsp1"), dsp2: genuine("dsp2") }),
             isGenuine,
             request: async () => {
                 asked = true;
