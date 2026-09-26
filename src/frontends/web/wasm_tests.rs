@@ -1237,19 +1237,45 @@ fn snes_rom_dsp_chip_names_emulated_chips_only() {
     let dsp2 = titled(dsp1_snes_rom(), b"DUNGEON MASTER       ");
     assert_eq!(snes_rom_dsp_chip(&dsp2), Some("dsp2".to_string()));
     let dsp4 = titled(dsp1_snes_rom(), b"TOP GEAR 3000        ");
-    assert_eq!(snes_rom_dsp_chip(&dsp4), None);
+    assert_eq!(snes_rom_dsp_chip(&dsp4), Some("dsp4".to_string()));
+    let dsp3 = titled(dsp1_snes_rom(), b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX           ");
+    assert_eq!(snes_rom_dsp_chip(&dsp3), None);
     assert_eq!(snes_rom_dsp_chip(&minimal_snes_rom()), None);
     assert_eq!(snes_rom_dsp_chip(&[1, 2, 3]), None);
 }
 
-/// A table in which `[0x1B; 8192]` is the genuine DSP-1 firmware and `[0x22; 8192]` the
-/// DSP-2's: Nintendo's firmware cannot be shipped with the tests.
+/// A table in which `[0x1B; 8192]` is the genuine DSP-1 firmware, `[0x22; 8192]` the DSP-2's
+/// and `[0x44; 8192]` the DSP-4's: Nintendo's firmware cannot be shipped with the tests.
 fn synthetic_firmware_table() -> crate::snes::dsp::FirmwareTable {
     use crate::snes::dsp::{DspChip, test_table};
     test_table(&[
         (DspChip::Dsp1, "dsp1b.rom", &[0x1B; 8192]),
         (DspChip::Dsp2, "dsp2.rom", &[0x22; 8192]),
+        (DspChip::Dsp4, "dsp4.rom", &[0x44; 8192]),
     ])
+}
+
+#[wasm_bindgen_test]
+fn dsp4_firmware_is_checked_against_the_dsp4_dump_only() {
+    use crate::wasm_snes::is_genuine_in;
+    let table = synthetic_firmware_table();
+    assert!(is_genuine_in("dsp4", &[0x44; 8192], table));
+    assert!(!is_genuine_in("dsp4", &[0x1B; 8192], table), "the DSP-1's file");
+    assert!(!is_genuine_in("dsp4", &[0x22; 8192], table), "the DSP-2's file");
+    assert!(!is_genuine_in("dsp4", &[0x44; 12288], table));
+}
+
+#[wasm_bindgen_test]
+fn dsp4_rom_loads_after_dsp4_firmware_supplied() {
+    let mut snes = WasmSnes::new();
+    snes.set_firmware_table_for_test(synthetic_firmware_table());
+    let dsp4 = titled(dsp1_snes_rom(), b"TOP GEAR 3000        ");
+    // Another chip's firmware does not start a DSP-4 game.
+    snes.set_dsp_firmware("dsp1", &[0x1B; 8192]).unwrap();
+    assert!(snes.load_rom(&dsp4, "Top Gear 3000 (USA).sfc").is_err());
+    snes.set_dsp_firmware("dsp4", &[0x44; 8192]).unwrap();
+    snes.load_rom(&dsp4, "Top Gear 3000 (USA).sfc")
+        .expect("loads with firmware");
 }
 
 #[wasm_bindgen_test]

@@ -1,4 +1,4 @@
-// Every word the browser version shows about SNES coprocessor firmware (nr-auv, nr-608), as
+// Every word the browser version shows about SNES coprocessor firmware (nr-auv, nr-608, nr-tfq), as
 // agreed with the navigator. Kept in one place so the tests can pin them byte for byte.
 
 /** A chip whose firmware the player supplies. `key` matches the wasm chip key and the store key. */
@@ -15,7 +15,8 @@ export type SnesFirmwareChip = {
  */
 export const SNES_FIRMWARE_CHIPS: readonly SnesFirmwareChip[] = [
     { key: "dsp1", label: "DSP-1", file: "dsp1b.rom" },
-    { key: "dsp2", label: "DSP-2", file: "dsp2.rom" }
+    { key: "dsp2", label: "DSP-2", file: "dsp2.rom" },
+    { key: "dsp4", label: "DSP-4", file: "dsp4.rom" }
 ];
 
 export function chipByKey(key: string): SnesFirmwareChip | undefined {
