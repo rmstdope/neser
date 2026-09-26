@@ -15,8 +15,9 @@ cargo run --release --bin neser -- path/to/game.sfc
 Use `neser --help` for the complete current CLI reference.
 
 Enhancement chips: the SA-1 (Super Mario RPG and others), the Capcom CX4 (Mega Man X2 and
-X3), the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2) and the
-Super FX GSU-1 and GSU-2 (Star Fox, Yoshi's Island, Doom) are emulated. Cartridges with any other enhancement chip load, but show a warning that the
+X3), the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2), the
+Super FX GSU-1 and GSU-2 (Star Fox, Yoshi's Island, Doom) and the S-DD1 decompressor (Star
+Ocean, Street Fighter Alpha 2) are emulated. Cartridges with any other enhancement chip load, but show a warning that the
 chip is not implemented yet, and may not run correctly.
 
 ## SNES configuration (native frontend)
@@ -331,6 +332,13 @@ Test suites:
   known, so a hand-built fixture on an OBC1 cartridge writes objects through
   the `$7FF0-$7FF6` ports at both buffer bases and checks the SRAM buffer
   from the 65816 side.
+- `sdd1_tests.rs` -- the S-DD1 decompressor (nr-10g). No S-DD1 test ROM
+  exists, so a hand-built fixture does what the two games do: a fixed-address
+  DMA from the `$C0` bank with `$4800`/`$4801` set, into WRAM through WMDATA.
+  It checks the 64 decompressed bytes against Mesen2's decoder, that the
+  transfer clears its `$4801` bit, and that a re-armed transfer restarts the
+  stream. The decompressor's own unit tests hold 18 Mesen2 vectors covering
+  every plane and context mode and the longest (order 7) runs.
 - `input_standard_controller_tests.rs` -- standard-controller protocol
   fixtures (#2886), assembled in-code via the shared `fixture_rom.rs`
   builder (no on-disk assets): `$4016`/`$4017` serial order incl. the four
