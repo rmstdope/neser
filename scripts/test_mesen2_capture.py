@@ -59,8 +59,7 @@ CASES = [
         120,
     ),
     (
-        "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/"
-        "window-precalculated-single.sfc",
+        "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/window-precalculated-single.sfc",
         [],
         SNES_FLAGS,
         120,
