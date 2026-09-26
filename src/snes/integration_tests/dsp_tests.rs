@@ -1,4 +1,4 @@
-//! ROM-level coverage for the DSP-1 (nr-auv).
+//! ROM-level coverage for the DSP-1 (nr-auv) and the DSP-2 (nr-608).
 //!
 //! Nintendo's DSP-1 program cannot be shipped, so this drives the whole path (bus decode, the
 //! uPD77C25 core, its clock and the DR/SR handshake) with a synthetic firmware written in the
@@ -9,6 +9,7 @@
 
 use super::fixture_rom::FixtureRom;
 use super::rom_runner::{RunConfig, RunExitReason, run_rom};
+use crate::snes::dsp::DspChip;
 use crate::snes::upd77c25::asm::*;
 use crate::snes::upd77c25::{DATA_WORDS, PROGRAM_WORDS};
 
@@ -75,10 +76,37 @@ fn dsp1_fixture_exchanges_words_with_the_firmware_through_dr_and_sr() {
     let result = run_rom(
         &build_dsp1_fixture(),
         "dsp1-fixture.sfc",
-        RunConfig::new(0, 30).with_dsp1_firmware(&firmware),
+        RunConfig::new(0, 30).with_dsp_firmware(DspChip::Dsp1, &firmware),
     );
     assert!(
         result.passed && result.exit_reason == RunExitReason::PassMarker,
         "DSP-1 fixture should pass: {result:?}"
+    );
+}
+
+fn build_dsp2_fixture() -> Vec<u8> {
+    let mut fixture = FixtureRom::new(b"DUNGEON MASTER");
+    fixture.dsp_chipset();
+    // fullsnes "SNES Cart DSP-n": the DSP-2 board (SHVC-1B5B-01, LoROM 1 MB + RAM) has DR at
+    // 20-3F:8000-BFFF and SR at 20-3F:C000-FFFF; ares maps it at 20-3f,a0-bf. Banks $20-$2F
+    // are the part a DSP-1 board does not decode.
+    exchange(&mut fixture, 0x20_C000, 0x20_8000, 0x0123, 0x06D2);
+    exchange(&mut fixture, 0xAF_FFFF, 0xA0_BFFF, 0xFFFE, 0xFFF4);
+    exchange(&mut fixture, 0x3F_C000, 0x3F_8000, 0x1000, 0x6000);
+    fixture.pass_marker_and_idle();
+    fixture.build()
+}
+
+#[test]
+fn dsp2_fixture_exchanges_words_through_the_20_3f_window() {
+    let firmware = multiply_by_six_firmware();
+    let result = run_rom(
+        &build_dsp2_fixture(),
+        "dsp2-fixture.sfc",
+        RunConfig::new(0, 30).with_dsp_firmware(DspChip::Dsp2, &firmware),
+    );
+    assert!(
+        result.passed && result.exit_reason == RunExitReason::PassMarker,
+        "DSP-2 fixture should pass: {result:?}"
     );
 }

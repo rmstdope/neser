@@ -9,7 +9,7 @@ pub mod cartridge;
 pub mod console;
 pub mod cpu;
 pub mod cx4;
-pub mod dsp1;
+pub mod dsp;
 pub mod gsu;
 pub mod input;
 pub mod obc1;

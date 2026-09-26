@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 /// can start (see [`WasmSnes::set_dsp1_firmware`]).
 #[wasm_bindgen]
 pub fn snes_rom_needs_dsp1(rom: &[u8]) -> bool {
-    crate::snes::dsp1::identify_rom(rom).is_some_and(|model| model.is_dsp1())
+    crate::snes::dsp::identify_rom(rom).is_some_and(|model| model.is_dsp1())
 }
 
 /// Provides a minimal WASM bridge for running the Super Nintendo emulator in the browser.

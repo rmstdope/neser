@@ -123,6 +123,19 @@ impl Upd77c25Firmware {
         Ok(Self { program, data })
     }
 
+    /// The image in the little-endian ("newer", fullsnes "ROM-Images") layout, whatever order
+    /// it was read in: the form the published hashes of genuine dumps are taken over.
+    pub fn to_le_image(&self) -> Vec<u8> {
+        let mut image = Vec::with_capacity(DSP_IMAGE_SIZE);
+        for &op in &self.program {
+            image.extend_from_slice(&[op as u8, (op >> 8) as u8, (op >> 16) as u8]);
+        }
+        for &word in &self.data {
+            image.extend_from_slice(&word.to_le_bytes());
+        }
+        image
+    }
+
     /// A data-ROM word, for tests that tell firmware images apart.
     #[cfg(test)]
     pub(crate) fn data_word(&self, index: usize) -> u16 {

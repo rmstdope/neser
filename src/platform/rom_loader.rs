@@ -13,7 +13,7 @@
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::emulator::{Console, SystemType};
 use crate::platform::frontend_toasts::cartridge_load_toast_message;
-use crate::snes::dsp1::{self, FirmwareProblem};
+use crate::snes::dsp::{self, FirmwareProblem};
 use std::path::Path;
 
 /// Why a game launched from a desktop frontend did not run, sorted by what the player is told.
@@ -52,9 +52,10 @@ pub fn firmware_problem(
     if detect_system_type(rom_path) != SystemType::Snes {
         return None;
     }
-    let model = dsp1::identify_rom(rom_bytes).filter(|model| model.is_dsp1())?;
+    let model = dsp::identify_rom(rom_bytes)
+        .filter(|model| model.chip().is_emulated(dsp::FIRMWARE_FILES))?;
     let dir = app_context.borrow().config().snes.resolved_firmware_dir();
-    dsp1::load_from_dir(&dir, model).err()
+    dsp::load_from_dir(&dir, model, dsp::FIRMWARE_FILES).err()
 }
 
 /// The name a message uses for a game: its ROM file name without the extension.
@@ -168,6 +169,7 @@ mod tests {
     use crate::platform::test_roms::{
         minimal_gb_rom, minimal_gba_rom, minimal_nes_rom, minimal_snes_rom,
     };
+    use crate::snes::dsp::DspChip;
     use std::cell::RefCell;
     use std::rc::Rc;
     use tempfile::TempDir;
@@ -198,24 +200,47 @@ mod tests {
         assert_eq!(
             firmware_problem(&context, "Super Mario Kart (USA).sfc", &rom),
             Some(FirmwareProblem::Missing {
+                chip: DspChip::Dsp1,
                 folder: dir.path().to_path_buf()
             })
         );
 
+        // Nintendo's firmware cannot be shipped, so the "found" case is covered by the
+        // `snes::dsp` lookup tests; here an 8 KB file that is not genuine is refused.
         std::fs::write(
             dir.path().join("dsp1b.rom"),
             vec![0u8; crate::snes::upd77c25::DSP_IMAGE_SIZE],
         )
         .unwrap();
-        assert_eq!(firmware_problem(&context, "mk.sfc", &rom), None);
+        assert_eq!(
+            firmware_problem(&context, "mk.sfc", &rom),
+            Some(FirmwareProblem::NotGenuine {
+                chip: DspChip::Dsp1,
+                path: dir.path().join("dsp1b.rom")
+            })
+        );
+    }
+
+    #[test]
+    fn firmware_problem_preflight_detects_missing_dsp2_firmware() {
+        let dir = TempDir::new().unwrap();
+        let context = app_context_with_firmware_dir(dir.path());
+        let rom = crate::snes::test_support::dsp_rom(b"DUNGEON MASTER", false);
+        assert_eq!(
+            firmware_problem(&context, "Dungeon Master (Japan).sfc", &rom),
+            Some(FirmwareProblem::Missing {
+                chip: DspChip::Dsp2,
+                folder: dir.path().to_path_buf()
+            })
+        );
     }
 
     #[test]
     fn firmware_problem_ignores_other_games() {
         let dir = TempDir::new().unwrap();
         let context = app_context_with_firmware_dir(dir.path());
-        let dsp2 = crate::snes::test_support::dsp_rom(b"DUNGEON MASTER", false);
-        assert_eq!(firmware_problem(&context, "dm.sfc", &dsp2), None);
+        let dsp4 = crate::snes::test_support::dsp_rom(b"TOP GEAR 3000", false);
+        assert_eq!(firmware_problem(&context, "tg.sfc", &dsp4), None);
         assert_eq!(
             firmware_problem(&context, "plain.sfc", &minimal_snes_rom()),
             None
@@ -238,10 +263,17 @@ mod tests {
         let folder = std::path::PathBuf::from("/fw");
         assert_eq!(
             LaunchError::Firmware(FirmwareProblem::Missing {
+                chip: DspChip::Dsp1,
                 folder: folder.clone()
             })
             .strip_lines("Super Mario Kart (USA)"),
-            Some(FirmwareProblem::Missing { folder }.strip_lines("Super Mario Kart (USA)"))
+            Some(
+                FirmwareProblem::Missing {
+                    chip: DspChip::Dsp1,
+                    folder
+                }
+                .strip_lines("Super Mario Kart (USA)")
+            )
         );
         assert_eq!(
             LaunchError::Load("Unsupported mapper: 5".to_string())
