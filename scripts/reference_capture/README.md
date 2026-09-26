@@ -1,13 +1,13 @@
 # Reference-emulator screenshot capture
 
 Headless capture recipes for the screenshot reference of each system, verified on
-2026-09-25 on macOS (Apple Silicon), the NES check on 2026-09-26. Each recipe was checked
-end to end: the reference capture and a NESER `--headless` capture of the same ROM matched
-pixel-for-pixel through `python -m scripts.diff_screenshots`
+2026-09-25 on macOS (Apple Silicon), the NES and CGB checks on 2026-09-26. Each recipe was
+checked end to end: the reference capture and a NESER `--headless` capture of the same ROM
+matched pixel-for-pixel through `python -m scripts.diff_screenshots`
 (NES: blargg_ppu_tests power_up_palette frame 120 with --nes-palette mesen; GB:
 dmg-acid2 after 10 s; CGB: cgb-acid2 after 10 s, only against a SameBoy tester built
-without colour correction (see "Colour: DMG and CGB"); GBA: mGBA suite frame 300, and every frame from 1 to 120 but 9
-with `--skip-bios-intro`).
+without colour correction (see "Colour: DMG and CGB"); GBA: mGBA suite frame 300, and
+every frame from 1 to 120 but 9 with `--skip-bios-intro`).
 
 | System | Reference | Tool | Frame-exact |
 |---|---|---|---|
@@ -115,15 +115,28 @@ The CGB difference is colour alone. Every NESER colour maps to exactly one SameB
 (e.g. (255,255,0) → (255,213,0), (0,0,255) → (0,107,255), (107,189,255) → (125,233,255)):
 NESER expands RGB555 as `(c << 3) | (c >> 2)`, the formula cgb-acid2 specifies, while the
 tester hard-codes `GB_set_color_correction_mode(&gb, GB_COLOR_CORRECTION_EMULATE_HARDWARE)`
-(Modern – Balanced) and has no flag for it. With correction disabled the frames are
-identical (0 pixels). To compare a CGB frame pixel for pixel, build a second tester in a
-copy of the source so the stock one stays as the reference:
+(`EMULATE_HARDWARE` is a deprecated alias of `GB_COLOR_CORRECTION_MODERN_BALANCED`) and
+has no flag for it. With correction disabled the frames are identical (0 pixels). To
+compare a CGB frame pixel for pixel, build a second tester in a copy of the source so the
+stock one stays as the reference. The `grep` fails loudly if upstream renamed the line and
+the `sed` matched nothing:
 
 ```bash
 rsync -a --exclude build ~/repos/SameBoy/ ~/repos/SameBoy-nocc/
 cd ~/repos/SameBoy-nocc
-sed -i '' 's/GB_COLOR_CORRECTION_EMULATE_HARDWARE);/GB_COLOR_CORRECTION_DISABLED);/' Tester/main.c
+sed -i '' -E 's/GB_COLOR_CORRECTION_(EMULATE_HARDWARE|MODERN_BALANCED)\);/GB_COLOR_CORRECTION_DISABLED);/' Tester/main.c
+grep -q 'GB_COLOR_CORRECTION_DISABLED);' Tester/main.c || echo "patch did not apply" >&2
 make -k build/bin/tester/sameboy_tester -j8
+```
+
+The CGB capture itself (default model CGB-E; the BMP lands next to the ROM):
+
+```bash
+cp roms/gb/automated_tests/acid/cgb-acid2.gbc work/
+cd work && ~/repos/SameBoy-nocc/build/bin/tester/sameboy_tester \
+  --length 10 --boot /Applications/SameBoy.app/Contents/Resources/cgb_boot.bin cgb-acid2.gbc
+# NESER, from the repo root:
+target/release/neser --headless --frames 600 --output neser.png roms/gb/automated_tests/acid/cgb-acid2.gbc
 ```
 
 DMG output does not pass through the correction, so both testers give the same DMG
