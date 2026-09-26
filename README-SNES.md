@@ -14,8 +14,9 @@ cargo run --release --bin neser -- path/to/game.sfc
 
 Use `neser --help` for the complete current CLI reference.
 
-Enhancement chips: the SA-1 (Super Mario RPG and others) and the Capcom CX4 (Mega Man X2 and
-X3) are emulated. Cartridges with any other enhancement chip load, but show a warning that the
+Enhancement chips: the SA-1 (Super Mario RPG and others), the Capcom CX4 (Mega Man X2 and
+X3) and the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2) are
+emulated. Cartridges with any other enhancement chip load, but show a warning that the
 chip is not implemented yet, and may not run correctly.
 
 ## SNES configuration (native frontend)
@@ -322,6 +323,10 @@ Test suites:
   buffer (all PASS, matching Mesen2's screen pixel for pixel). A hand-built
   fixture DMAs a table into CX4 RAM, runs a CX4 program from ROM (a square,
   a data-ROM lookup, a RAM read) and checks the results from the 65816 side.
+- `obc1_tests.rs` -- the OBC1 OBJ controller (nr-ufb). No OBC1 test ROM is
+  known, so a hand-built fixture on an OBC1 cartridge writes objects through
+  the `$7FF0-$7FF6` ports at both buffer bases and checks the SRAM buffer
+  from the 65816 side.
 - `input_standard_controller_tests.rs` -- standard-controller protocol
   fixtures (#2886), assembled in-code via the shared `fixture_rom.rs`
   builder (no on-disk assets): `$4016`/`$4017` serial order incl. the four
