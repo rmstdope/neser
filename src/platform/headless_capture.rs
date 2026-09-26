@@ -504,6 +504,58 @@ mod tests {
         assert_eq!(decode_png(&output).2, explicit);
     }
 
+    /// Capture dmg-acid2 with `palette` as the configured `gb-palette`.
+    fn capture_game_boy_with_palette(
+        palette: Option<crate::gb::ppu::GbPalette>,
+        temp: &TempDir,
+    ) -> Vec<u8> {
+        let mut config = Config::default();
+        config.gb.palette = palette;
+        let context = Rc::new(RefCell::new(AppContext::new_with_config(config)));
+        let name = palette.map_or("unset", |p| p.config_id());
+        let output = temp.path().join(format!("gb-{name}.png"));
+        run(
+            &context,
+            "roms/gb/automated_tests/acid/dmg-acid2.gb",
+            &capture_to(&output, 120),
+        )
+        .expect("capture should succeed");
+        decode_png(&output).2
+    }
+
+    fn distinct_colours(rgb: &[u8]) -> std::collections::BTreeSet<(u8, u8, u8)> {
+        rgb.chunks(3).map(|c| (c[0], c[1], c[2])).collect()
+    }
+
+    #[test]
+    fn run_draws_a_dmg_game_in_the_configured_gb_palette() {
+        // Given dmg-acid2 captured with gb-palette=pocket
+        use crate::gb::ppu::GbPalette;
+        let temp = TempDir::new().expect("create temp dir");
+        let pocket = capture_game_boy_with_palette(Some(GbPalette::Pocket), &temp);
+
+        // Then every pixel is a Pocket shade, and more than one shade is used
+        let colours = distinct_colours(&pocket);
+        let shades: std::collections::BTreeSet<_> =
+            GbPalette::Pocket.shades().into_iter().collect();
+        assert!(colours.len() > 1, "a blank capture proves nothing");
+        assert!(
+            colours.is_subset(&shades),
+            "non-Pocket colours: {colours:?}"
+        );
+    }
+
+    #[test]
+    fn run_draws_a_dmg_game_in_todays_grey_when_no_gb_palette_is_configured() {
+        use crate::gb::ppu::GbPalette;
+        let temp = TempDir::new().expect("create temp dir");
+        let unset = capture_game_boy_with_palette(None, &temp);
+        let greys: std::collections::BTreeSet<_> = GbPalette::Grey.shades().into_iter().collect();
+        let colours = distinct_colours(&unset);
+        assert!(colours.len() > 1, "a blank capture proves nothing");
+        assert!(colours.is_subset(&greys), "non-grey colours: {colours:?}");
+    }
+
     // --- per-system capture ---
     //
     // The runner asks the console for its dimensions, so a capture that assumed

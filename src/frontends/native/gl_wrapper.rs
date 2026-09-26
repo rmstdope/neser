@@ -200,6 +200,16 @@ impl NativeGlWrapper {
         self.gl_backend.cycle_shader()
     }
 
+    /// `true` when the Game Boy LCD filter is drawn.
+    pub fn is_gb_lcd_filter(&self) -> bool {
+        self.gl_backend.is_gb_lcd_filter()
+    }
+
+    /// Sets the colours the Game Boy LCD filter draws in.
+    pub fn set_gb_filter_colors(&mut self, colors: [(u8, u8, u8); 2]) {
+        self.gl_backend.set_gb_filter_colors(colors);
+    }
+
     /// Updates the breakpoint list used by the debugger UI.
     pub fn update_breakpoints(&mut self, breakpoints: &BreakpointList) {
         self.gl_backend.update_breakpoints(breakpoints);

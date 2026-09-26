@@ -120,7 +120,8 @@ and refuses to combine with the autorun flags or `--tui`. The same ROM and frame
 count produce byte-identical PNGs across runs and across builds.
 
 NES captures use the same palette as the window: --nes-palette (or nes-palette= in the
-config file) applies. Pass --nes-palette mesen to compare against Mesen2.
+config file) applies. Pass --nes-palette mesen to compare against Mesen2. Original Game Boy
+captures likewise use --gb-palette (or gb-palette=), and grey when neither is set.
 
 Note that a ROM may still be showing a blank screen in its first frames — the
 default of 60 is enough for the test ROMs in `roms/`, but a ROM with a longer
@@ -131,6 +132,10 @@ boot or intro sequence needs a larger `--frames`.
 The browser frontend is built from the Rust WASM target and the JavaScript frontend under `web/`.
 
 Supported ROM extensions in the web frontend include `.nes`, `.gb`/`.gbc`/`.cgb`, `.gba`, and SNES `.sfc`/`.smc`.
+
+SNES games with a DSP-1 chip (Super Mario Kart, Pilotwings) need the chip's firmware, which you
+supply: on the desktop put `dsp1b.rom` in `~/.neser/firmware` (or set `snes-firmware-dir`); the
+browser version asks for the file once. See [README-SNES.md](README-SNES.md).
 
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 
@@ -182,7 +187,7 @@ Common hotkeys:
 | `F4` | Cycle shader preset |
 | `F5` | Toggle debugger |
 | `F6` / `F7` | Save/load state |
-| `F8` | Cycle NES system palette (NES only) |
+| `F8` | Cycle the palette (NES system palette, or the original Game Boy's shade palette) |
 | `F10` / `F11` | Debugger step over/into |
 
 System-specific controls and controller options are documented in:

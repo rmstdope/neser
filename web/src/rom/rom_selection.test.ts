@@ -86,3 +86,24 @@ it("handleRomSelection focuses canvas even when no start callback is provided", 
 
     expect(calls).toEqual(["apply", "focus"]);
 });
+
+it("handleRomSelection leaves focus alone when start reports the game did not start", async () => {
+    // A DSP-1 game whose firmware dialog was cancelled returns focus to the ROM chooser itself.
+    const calls: string[] = [];
+    await handleRomSelection({
+        bytes: new Uint8Array([1, 2, 3]),
+        name: "Super Mario Kart (USA).sfc",
+        running: false,
+        stop: () => {},
+        applyRomBytes: async () => {
+            calls.push("apply");
+        },
+        start: async () => {
+            calls.push("start");
+            return false;
+        },
+        focusCanvas: () => calls.push("focus")
+    });
+
+    expect(calls).toEqual(["apply", "start"]);
+});

@@ -94,6 +94,8 @@ fn test_browser(entries: Vec<RomEntry>) -> RomBrowserApp {
         texture_pending: Vec::new(),
         boxart_by_game_id: std::collections::HashMap::new(),
         no_roms_hint: RomBrowserApp::no_roms_hint(&[]),
+        launch_error: None,
+        launch_strip_height: 0.0,
     };
     app.set_catalog(entries);
     app
@@ -995,4 +997,95 @@ fn search_kb_space_inserts_space() {
     app.search_kb_col = 7; // space key
     app.search_kb_confirm();
     assert_eq!(app.search_query, " ");
+}
+
+fn strip(title: &str) -> (String, String) {
+    (title.to_string(), "reason".to_string())
+}
+
+#[test]
+fn set_launch_error_replaces_previous() {
+    let mut app = test_browser(vec![make_entry("A"), make_entry("B")]);
+    app.set_launch_error(strip("A can't start."));
+    app.set_launch_error(strip("B can't start."));
+    assert_eq!(app.launch_error, Some(strip("B can't start.")));
+}
+
+#[test]
+fn clear_launch_error_removes_strip() {
+    let mut app = test_browser(vec![make_entry("A")]);
+    app.set_launch_error(strip("A can't start."));
+    app.launch_strip_height = 52.0;
+    app.clear_launch_error();
+    assert_eq!(app.launch_error, None);
+    assert_eq!(app.launch_strip_height, 0.0);
+}
+
+#[test]
+fn launch_error_keeps_selected_game_and_returns_to_the_grid() {
+    let mut app = test_browser(vec![make_entry("A"), make_entry("B"), make_entry("C")]);
+    app.selected_index = 2;
+    app.detail_view_active = true;
+    app.set_launch_error(strip("C can't start."));
+    assert_eq!(app.selected_index, 2);
+    assert!(!app.detail_view_active);
+}
+
+#[test]
+fn strip_survives_navigation_and_actions() {
+    let mut app = test_browser(vec![make_entry("A"), make_entry("B"), make_entry("C")]);
+    app.set_launch_error(strip("A can't start."));
+    app.navigate_down();
+    app.navigate_up();
+    app.toggle_favorite();
+    app.open_filter_panel();
+    app.rebuild_filtered();
+    assert_eq!(app.launch_error, Some(strip("A can't start.")));
+}
+
+#[test]
+fn a_strip_that_appears_scrolls_the_selected_bottom_row_back_into_view() {
+    // 1280x720 with the sidebar leaves a grid a few rows tall; select a game in the last row
+    // that is fully visible without a strip.
+    let entries: Vec<RomEntry> = (0..40).map(|i| make_entry(&format!("Game {i}"))).collect();
+    let mut app = test_browser(entries);
+    let (w, h) = (1280.0, 720.0);
+    let sidebar_w = theme::sidebar_width(w);
+    let (cols, cover_w) = theme::grid_layout(w - sidebar_w);
+    let cell_h = theme::cell_height(cover_w);
+    let visible_rows = ((h - theme::HEADER_HEIGHT - theme::GRID_PADDING)
+        / (cell_h + theme::GRID_SPACING))
+        .floor() as usize;
+    app.selected_index = (visible_rows - 1) * cols;
+    app.scroll_to_show_selected(w, h);
+    let before = app.scroll_target;
+
+    // A strip one row tall always overlaps the last fully visible row.
+    let strip_h = cell_h + theme::GRID_SPACING;
+    app.apply_launch_strip_height(strip_h, w, h);
+    assert_eq!(app.launch_strip_height, strip_h);
+    assert!(
+        app.scroll_target > before,
+        "the grid scrolls so the selected game stays clear of the strip"
+    );
+    let row = app.selected_index / cols;
+    let cell_bottom = theme::GRID_PADDING + row as f32 * (cell_h + theme::GRID_SPACING) + cell_h;
+    assert!(cell_bottom <= app.scroll_target + app.grid_height(h));
+}
+
+#[test]
+fn an_unchanged_strip_height_leaves_scrolling_alone() {
+    let mut app = test_browser(vec![make_entry("A")]);
+    app.launch_strip_height = 60.0;
+    app.scroll_target = 123.0;
+    app.apply_launch_strip_height(60.0, 1280.0, 720.0);
+    assert_eq!(app.scroll_target, 123.0);
+}
+
+#[test]
+fn grid_height_accounts_for_strip_height() {
+    let mut app = test_browser(vec![make_entry("A")]);
+    assert_eq!(app.grid_height(720.0), 720.0 - theme::HEADER_HEIGHT);
+    app.launch_strip_height = 60.0;
+    assert_eq!(app.grid_height(720.0), 720.0 - theme::HEADER_HEIGHT - 60.0);
 }

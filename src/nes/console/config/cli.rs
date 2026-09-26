@@ -3928,6 +3928,41 @@ mod tests {
     }
 
     #[test]
+    fn test_help_lists_the_gb_palette_flag() {
+        let help = crate::platform::config::cli::help_text();
+        assert!(
+            help.contains(
+                "Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)"
+            ),
+            "help text:\n{help}"
+        );
+    }
+
+    #[test]
+    fn test_cli_gb_palette_invalid_refuses_start() {
+        let result = config_new(vec!["--gb-palette".to_string(), "bogus".to_string()]);
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid --gb-palette value: 'bogus'. Valid options are: grey, dmg-green, pocket, light"
+        );
+    }
+
+    #[test]
+    fn test_headless_takes_the_cli_gb_palette() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "--gb-palette".to_string(),
+            "pocket".to_string(),
+            "game.gb".to_string(),
+        ]);
+        assert!(config.frontend.headless_capture.is_some());
+        assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::Pocket));
+    }
+
+    #[test]
     fn test_help_lists_every_nes_palette() {
         let help = crate::platform::config::cli::help_text();
         assert!(

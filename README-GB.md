@@ -104,6 +104,19 @@ It applies to everything shown in color, including black-and-white games the
 Game Boy Color colorizes. In the web frontend, the "Colors" button in the top
 bar switches it while a color game is running.
 
+## Shade palette
+
+Original Game Boy (DMG) games can be drawn in one of four shade palettes,
+chosen with `--gb-palette` or `gb-palette`, and cycled with F8 while playing
+(desktop and web): `grey` (the default), `dmg-green`, `pocket` and `light`.
+With `gb-filter=dmg` and no palette chosen, games start in `dmg-green`; the
+LCD filter is drawn in whichever palette is chosen. Game Boy Color games are
+not affected.
+
+```bash
+neser --gb-palette pocket path/to/game.gb
+```
+
 ## Boot animation
 
 The Game Boy boot animation can be enabled with:

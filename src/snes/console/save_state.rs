@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::platform::save_state::SaveStateError;
 use crate::snes::apu::SnesApuState;
 use crate::snes::cartridge::Mapping;
+use crate::snes::cx4::Cx4State;
 use crate::snes::input::InputPortsState;
+use crate::snes::sdd1::Sdd1State;
 
 pub const SNES_SAVESTATE_VERSION: u32 = 2;
 
@@ -287,6 +289,22 @@ pub struct SnesBusState {
     /// (`#[serde(default)]` keeps those loadable).
     #[serde(default)]
     pub sa1: Option<SnesSa1State>,
+    /// `None` for cartridges without a CX4, and for save states captured before CX4 support
+    /// existed (`#[serde(default)]` keeps those loadable).
+    #[serde(default)]
+    pub cx4: Option<Cx4State>,
+    /// The DSP-1's uPD77C25 (its firmware is not saved; it is read again at load). `None` for
+    /// other cartridges and for save states captured before DSP-1 support.
+    #[serde(default)]
+    pub dsp: Option<crate::snes::upd77c25::Upd77c25State>,
+    /// The Super FX's whole state; `None` for other cartridges, and for save states captured
+    /// before Super FX support existed (`#[serde(default)]` keeps those loadable).
+    #[serde(default)]
+    pub gsu: Option<crate::snes::gsu::GsuState>,
+    /// `None` for cartridges without an S-DD1, and for save states captured before S-DD1
+    /// support existed (`#[serde(default)]` keeps those loadable).
+    #[serde(default)]
+    pub sdd1: Option<Sdd1State>,
     /// Armed-but-not-started GPDMA as `(cpu_cycle_countdown, mdmaen, fallback_clock)`
     /// (see `SnesSystemBus::pending_gpdma`); `None` when no transfer is pending.
     #[serde(default)]

@@ -13,6 +13,7 @@ use crate::gb::cartridge::load_cartridge;
 use crate::gb::console::Gb;
 use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
 use crate::gb::model::GbHardware;
+use crate::gb::ppu::GbPalette;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::platform::emulator::{Emulator, SystemType};
 use crate::platform::save_state::Stateful;
@@ -64,6 +65,13 @@ impl GbConsole {
         match self {
             Self::Dmg(gb) => gb.reset(),
             Self::Cgb(gb) => gb.reset(soft_reset),
+        }
+    }
+
+    /// Sets the shades a DMG console draws; a CGB console keeps its colours.
+    fn set_dmg_shades(&mut self, shades: [(u8, u8, u8); 4]) {
+        if let Self::Dmg(gb) = self {
+            gb.cpu.bus.ppu.set_dmg_shades(shades);
         }
     }
 
@@ -176,6 +184,13 @@ pub struct GameBoy {
     app_context: SharedAppContext,
     /// Path of the currently loaded ROM; used for deriving the save-state path.
     rom_path: Option<PathBuf>,
+    /// Shade palette chosen for an original Game Boy game. Held here, not in
+    /// the PPU, because a hard reset rebuilds the PPU and a state load
+    /// replaces it.
+    palette: GbPalette,
+    /// Whether the frontend draws the Game Boy LCD filter, which colours a
+    /// grey picture itself.
+    lcd_filter_active: bool,
 }
 
 impl GameBoy {
@@ -190,6 +205,8 @@ impl GameBoy {
             gb: None,
             app_context: app_context.into_shared(),
             rom_path: None,
+            palette: GbPalette::default(),
+            lcd_filter_active: false,
         }
     }
 
@@ -241,6 +258,14 @@ impl GameBoy {
             GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, dmg_variant))))
         });
         self.rom_path = Some(PathBuf::from(name));
+        self.palette = self
+            .app_context
+            .borrow()
+            .config()
+            .gb
+            .palette
+            .unwrap_or_default();
+        self.apply_palette();
 
         // Load battery-backed save RAM from disk if a .sav file exists.
         self.load_save_ram_from_disk();
@@ -325,10 +350,12 @@ impl GameBoy {
 
     /// Restore emulator state from previously serialized bytes (JSON).
     pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
-        match &mut self.gb {
+        let result = match &mut self.gb {
             Some(gb) => gb.load_state_bytes(data),
             None => Err("No ROM loaded".into()),
-        }
+        };
+        self.apply_palette();
+        result
     }
 
     /// Reset the console.
@@ -338,6 +365,78 @@ impl GameBoy {
     pub fn reset(&mut self, soft_reset: bool) {
         if let Some(gb) = &mut self.gb {
             gb.reset(soft_reset);
+        }
+        self.apply_palette();
+    }
+
+    /// The shade palette chosen for an original Game Boy game.
+    pub fn palette(&self) -> GbPalette {
+        self.palette
+    }
+
+    /// `true` when an original Game Boy (DMG) game is running on DMG hardware,
+    /// the only case the shade palette applies to.
+    pub fn is_dmg(&self) -> bool {
+        matches!(self.gb, Some(GbConsole::Dmg(_)))
+    }
+
+    /// F8: moves to the next shade palette and returns it, or `None` when no
+    /// original Game Boy game is running (nothing changes, no toast).
+    pub fn cycle_palette(&mut self) -> Option<GbPalette> {
+        if !self.is_dmg() {
+            return None;
+        }
+        self.palette = self.palette.next();
+        self.apply_palette();
+        Some(self.palette)
+    }
+
+    /// Tells the console whether the frontend draws the LCD filter. The
+    /// filter colours a grey picture in the chosen palette itself, so the
+    /// console draws grey while it is on.
+    pub fn set_lcd_filter_active(&mut self, active: bool) {
+        self.lcd_filter_active = active;
+        self.apply_palette();
+    }
+
+    /// Called once when the frontend starts a game: with the LCD filter on
+    /// and no `gb-palette` configured, the game starts in DMG Green, the
+    /// filter's own colour before palettes existed.
+    pub fn start_lcd_filter(&mut self, active: bool) {
+        let configured = self.app_context.borrow().config().gb.palette;
+        if active && configured.is_none() && self.is_dmg() {
+            self.palette = GbPalette::DmgGreen;
+        }
+        self.set_lcd_filter_active(active);
+    }
+
+    /// The `[background, foreground]` colours the LCD filter draws in: the
+    /// chosen palette's in an original Game Boy game, the filter's own
+    /// classic colours otherwise (Game Boy Color games are not affected).
+    pub fn lcd_filter_colors(&self) -> [(u8, u8, u8); 2] {
+        if self.is_dmg() {
+            self.palette.lcd_filter_colors()
+        } else {
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
+        }
+    }
+
+    fn apply_palette(&mut self) {
+        let shades = if self.lcd_filter_active {
+            GbPalette::Grey.shades()
+        } else {
+            self.palette.shades()
+        };
+        if let Some(gb) = &mut self.gb {
+            gb.set_dmg_shades(shades);
+        }
+    }
+
+    #[cfg(test)]
+    fn drawn_dmg_shades(&self) -> Option<[(u8, u8, u8); 4]> {
+        match &self.gb {
+            Some(GbConsole::Dmg(gb)) => Some(gb.cpu.bus.ppu.dmg_shades()),
+            _ => None,
         }
     }
 
@@ -1763,6 +1862,150 @@ mod tests {
         assert_eq!(
             ram_snapshot[42], 0xCC,
             "save data byte 42 should be restored"
+        );
+    }
+
+    // ── shade palette (gb-palette / F8) ─────────────────────────────────────
+
+    use crate::gb::ppu::GbPalette;
+
+    fn make_gameboy_with_palette(palette: Option<GbPalette>) -> GameBoy {
+        let mut config = Config::default();
+        config.gb.palette = palette;
+        let app_context = AppContext::new_with_config(config).into_shared();
+        GameBoy::new(app_context)
+    }
+
+    fn loaded(mut gb: GameBoy, rom: &[u8]) -> GameBoy {
+        gb.load_rom(rom, "test.gb").unwrap();
+        gb
+    }
+
+    #[test]
+    fn test_dmg_game_starts_grey_when_no_palette_is_configured() {
+        let gb = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        assert_eq!(gb.palette(), GbPalette::Grey);
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Grey.shades()));
+    }
+
+    #[test]
+    fn test_dmg_game_starts_in_the_configured_palette() {
+        let gb = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Pocket)),
+            &minimal_rom(),
+        );
+        assert!(gb.is_dmg());
+        assert_eq!(gb.palette(), GbPalette::Pocket);
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Pocket.shades()));
+    }
+
+    #[test]
+    fn test_palette_survives_hard_reset_and_state_load() {
+        let mut gb = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Light)),
+            &minimal_rom(),
+        );
+        let state = gb.save_state_bytes().unwrap();
+        gb.reset(false);
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Light.shades()));
+        gb.load_state_bytes(&state).unwrap();
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Light.shades()));
+    }
+
+    #[test]
+    fn test_cycle_palette_advances_wraps_and_redraws() {
+        let mut gb = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        assert_eq!(gb.cycle_palette(), Some(GbPalette::DmgGreen));
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::DmgGreen.shades()));
+        assert_eq!(gb.cycle_palette(), Some(GbPalette::Pocket));
+        assert_eq!(gb.cycle_palette(), Some(GbPalette::Light));
+        assert_eq!(gb.cycle_palette(), Some(GbPalette::Grey));
+    }
+
+    #[test]
+    fn test_cycle_palette_does_nothing_in_a_cgb_game() {
+        let mut gb = loaded(make_gameboy_with_palette(None), &minimal_cgb_rom());
+        assert!(!gb.is_dmg());
+        assert_eq!(gb.cycle_palette(), None);
+        assert_eq!(gb.palette(), GbPalette::Grey);
+    }
+
+    #[test]
+    fn test_cycle_palette_does_nothing_for_a_dmg_game_on_cgb_hardware() {
+        let mut gb = loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom());
+        assert_eq!(gb.cycle_palette(), None);
+    }
+
+    #[test]
+    fn test_cycle_palette_without_a_rom_does_nothing() {
+        let mut gb = make_gameboy();
+        assert_eq!(gb.cycle_palette(), None);
+    }
+
+    #[test]
+    fn test_lcd_filter_gets_grey_input_and_keeps_the_chosen_palette() {
+        let mut gb = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Pocket)),
+            &minimal_rom(),
+        );
+        gb.set_lcd_filter_active(true);
+        assert_eq!(gb.palette(), GbPalette::Pocket);
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Grey.shades()));
+        gb.reset(false);
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Grey.shades()));
+        gb.set_lcd_filter_active(false);
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Pocket.shades()));
+    }
+
+    #[test]
+    fn test_lcd_filter_start_picks_dmg_green_only_when_nothing_is_configured() {
+        let mut unconfigured = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        unconfigured.start_lcd_filter(true);
+        assert_eq!(unconfigured.palette(), GbPalette::DmgGreen);
+
+        let mut configured = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Grey)),
+            &minimal_rom(),
+        );
+        configured.start_lcd_filter(true);
+        assert_eq!(configured.palette(), GbPalette::Grey);
+
+        let mut no_filter = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        no_filter.start_lcd_filter(false);
+        assert_eq!(no_filter.palette(), GbPalette::Grey);
+        assert_eq!(no_filter.drawn_dmg_shades(), Some(GbPalette::Grey.shades()));
+    }
+
+    #[test]
+    fn test_lcd_filter_colours_follow_the_palette_in_a_dmg_game() {
+        let mut gb = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Pocket)),
+            &minimal_rom(),
+        );
+        gb.start_lcd_filter(true);
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            GbPalette::Pocket.lcd_filter_colors()
+        );
+    }
+
+    #[test]
+    fn test_lcd_filter_keeps_its_classic_colours_in_a_cgb_game() {
+        let mut gb = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Light)),
+            &minimal_cgb_rom(),
+        );
+        gb.start_lcd_filter(true);
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
+        );
+        let mut unconfigured = loaded(make_gameboy_with_palette(None), &minimal_cgb_rom());
+        unconfigured.start_lcd_filter(true);
+        assert_eq!(unconfigured.palette(), GbPalette::Grey);
+        assert_eq!(
+            unconfigured.lcd_filter_colors(),
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
         );
     }
 }

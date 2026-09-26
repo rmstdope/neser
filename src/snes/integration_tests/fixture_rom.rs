@@ -101,6 +101,42 @@ impl FixtureRom {
         self.rom[HEADER + 0x16] = 0x35;
     }
 
+    /// Marks this fixture as a Capcom CX4 cartridge: chipset `$F3` (ROM + custom chip) with
+    /// custom-chip subtype `$10` at `$FFBF`, the header Mega Man X2/X3 carry (fullsnes "CX4
+    /// Cartridge Header"). The CX4 then answers at `$6000-$7FFF` of the system banks.
+    pub(crate) fn cx4_chipset(&mut self) {
+        self.rom[HEADER + 0x16] = 0xF3;
+        self.rom[HEADER - 1] = 0x10;
+    }
+
+    /// Chipset `$03` (ROM + DSP), a DSP-1B cartridge unless the title says otherwise.
+    pub(crate) fn dsp_chipset(&mut self) {
+        self.rom[HEADER + 0x16] = 0x03;
+    }
+
+    /// Marks this fixture as an OBC1 cartridge with the header Metal Combat: Falcon's Revenge
+    /// carries: chipset `$25` (ROM + RAM + battery + OBC1) and 8 KiB SRAM (RAM-size field
+    /// `$03`). The OBC1's ports and SRAM then answer at `$6000-$7FFF` of the system banks.
+    pub(crate) fn obc1_chipset(&mut self) {
+        self.rom[HEADER + 0x16] = 0x25;
+        self.rom[HEADER + 0x18] = 0x03;
+    }
+
+    /// Marks this fixture as an S-DD1 cartridge: map mode `$32` ("LoROM/32K Banks + S-DD1",
+    /// fullsnes "Cartridge Header") and chipset `$43` (ROM + S-DD1).
+    pub(crate) fn sdd1_chipset(&mut self) {
+        self.rom[HEADER + 0x15] = 0x32;
+        self.rom[HEADER + 0x16] = 0x43;
+    }
+
+    /// Writes `bytes` into the second 32 KiB bank (LoROM `$01:8000-$01:FFFF`, file offset
+    /// `$8000 + offset`), which no emitted program or header touches: room for data another
+    /// processor reads, such as a CX4 program.
+    pub(crate) fn place_in_bank1(&mut self, offset: u16, bytes: &[u8]) {
+        let start = 0x8000 + usize::from(offset);
+        self.rom[start..start + bytes.len()].copy_from_slice(bytes);
+    }
+
     /// Points the emulation-mode NMI vector (`$FFFA/$FFFB`, header offset
     /// `$3A`) at `addr`, the vector a VBlank NMI fetches in the CPU's
     /// post-reset emulation mode.

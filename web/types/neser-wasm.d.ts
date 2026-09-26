@@ -88,16 +88,23 @@ declare module "*/pkg/neser" {
 
     export function gamepad_init_toast_message(gamepads_enabled: boolean, detected_controllers: number): string;
 
+    /** Whether a SNES ROM image is a DSP-1 game, which needs the DSP-1 firmware to start. */
+    export function snes_rom_needs_dsp1(rom: Uint8Array): boolean;
+
     /**
      * Provides a minimal WASM bridge for running the Game Boy emulator in the browser.
      */
     export class WasmGb {
         free(): void;
         [Symbol.dispose](): void;
+        /** F8: next shade palette's name, or "" when no original Game Boy game runs. */
+        cycle_palette(): string;
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
         is_audio_muted(): boolean;
+        /** The LCD filter's palette texture: 2x1 RGBA, background then foreground. */
+        lcd_filter_palette_rgba(): Uint8Array;
         load_rom(rom: Uint8Array, rom_name: string): void;
         constructor();
         render_frame_rgba(): Uint8Array;
@@ -107,6 +114,8 @@ declare module "*/pkg/neser" {
         set_audio_muted(muted: boolean): void;
         set_audio_sample_rate(sample_rate: number): void;
         set_button(controller: number, button: number, pressed: boolean): void;
+        set_lcd_filter_active(active: boolean): void;
+        start_lcd_filter(active: boolean): void;
     }
 
     /**
@@ -151,6 +160,8 @@ declare module "*/pkg/neser" {
         screen_width(): number;
         set_audio_muted(muted: boolean): void;
         set_audio_sample_rate(sample_rate: number): void;
+        /** Supplies the DSP-1 firmware (exactly 8192 bytes) for the next DSP-1 game. */
+        set_dsp1_firmware(image: Uint8Array): void;
         set_button(controller: number, button: number, pressed: boolean): void;
         save_state_bytes(): Uint8Array;
         load_state_bytes(bytes: Uint8Array): void;

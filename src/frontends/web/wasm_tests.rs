@@ -992,6 +992,53 @@ fn wasm_gb_cgb_color_correction_set_before_load_applies_to_the_game() {
     assert_ne!(gb.render_frame_rgba(), raw);
 }
 
+fn drained(gb: &mut WasmGb) -> Vec<String> {
+    gb.drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cycle_palette_queues_the_toast() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
+    drained(&mut gb);
+    assert_eq!(gb.cycle_palette(), "DMG Green");
+    assert_eq!(drained(&mut gb), vec!["Palette: DMG Green".to_string()]);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cycle_palette_without_a_dmg_game_is_silent() {
+    let mut gb = WasmGb::new();
+    assert_eq!(gb.cycle_palette(), "");
+    assert!(drained(&mut gb).is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_lcd_filter_starts_dmg_green_and_reports_its_colours() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
+    gb.start_lcd_filter(true);
+    let [(br, bg, bb), (fr, fg, fb)] = crate::gb::ppu::GbPalette::DmgGreen.lcd_filter_colors();
+    assert_eq!(
+        gb.lcd_filter_palette_rgba(),
+        vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
+    );
+    gb.set_lcd_filter_active(false);
+    assert_eq!(gb.cycle_palette(), "Pocket");
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_lcd_filter_keeps_its_classic_colours_without_a_dmg_game() {
+    let gb = WasmGb::new();
+    let [(br, bg, bb), (fr, fg, fb)] = crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS;
+    assert_eq!(
+        gb.lcd_filter_palette_rgba(),
+        vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
+    );
+}
+
 // ── WasmGba tests ────────────────────────────────────────────────────────────
 
 fn minimal_gba_rom() -> Vec<u8> {
@@ -1166,6 +1213,51 @@ fn minimal_snes_rom() -> Vec<u8> {
     // NOP at $8000 in LoROM bank 0 (ROM file offset 0)
     rom[0x0000] = 0xEA;
     rom
+}
+
+/// A DSP cartridge header on the minimal ROM: chipset `$03`, a DSP-1B game.
+fn dsp1_snes_rom() -> Vec<u8> {
+    let mut rom = minimal_snes_rom();
+    rom[0x7FC0 + 0x16] = 0x03;
+    rom
+}
+
+#[wasm_bindgen_test]
+fn snes_rom_needs_dsp1_true_for_dsp1_header_false_otherwise() {
+    assert!(crate::wasm_snes::snes_rom_needs_dsp1(&dsp1_snes_rom()));
+    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&minimal_snes_rom()));
+    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&[1, 2, 3]));
+    let mut dsp2 = dsp1_snes_rom();
+    dsp2[0x7FC0..0x7FC0 + 21].copy_from_slice(b"DUNGEON MASTER       ");
+    assert!(!crate::wasm_snes::snes_rom_needs_dsp1(&dsp2));
+}
+
+#[wasm_bindgen_test]
+fn set_dsp1_firmware_rejects_wrong_size() {
+    let mut snes = WasmSnes::new();
+    assert!(snes.set_dsp1_firmware(&[0u8; 12288]).is_err());
+    assert!(snes.set_dsp1_firmware(&[0u8; 8192]).is_ok());
+}
+
+#[wasm_bindgen_test]
+fn dsp1_rom_without_firmware_errors_and_loads_once_supplied() {
+    let mut snes = WasmSnes::new();
+    assert!(
+        snes.load_rom(&dsp1_snes_rom(), "Super Mario Kart (USA).sfc")
+            .is_err()
+    );
+    snes.set_dsp1_firmware(&[0u8; 8192]).expect("valid size");
+    snes.load_rom(&dsp1_snes_rom(), "Super Mario Kart (USA).sfc")
+        .expect("loads with firmware");
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .iter()
+        .filter_map(|t| t.as_string())
+        .collect();
+    assert!(
+        !toasts.iter().any(|t| t.contains("enhancement hardware")),
+        "no DSP warning once emulated: {toasts:?}"
+    );
 }
 
 #[wasm_bindgen_test]

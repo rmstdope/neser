@@ -6,6 +6,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
+/// Whether a SNES ROM image is a DSP-1 game, which needs the player's DSP-1 firmware before it
+/// can start (see [`WasmSnes::set_dsp1_firmware`]).
+#[wasm_bindgen]
+pub fn snes_rom_needs_dsp1(rom: &[u8]) -> bool {
+    crate::snes::dsp1::identify_rom(rom).is_some_and(|model| model.is_dsp1())
+}
+
 /// Provides a minimal WASM bridge for running the Super Nintendo emulator in the browser.
 #[wasm_bindgen]
 pub struct WasmSnes {
@@ -103,6 +110,17 @@ impl WasmSnes {
             rom_loaded: false,
             pending_toasts: Vec::new(),
         }
+    }
+
+    /// Supplies the DSP-1 firmware for the next DSP-1 game. Fails, naming the size, unless the
+    /// image is exactly 8192 bytes.
+    #[wasm_bindgen]
+    pub fn set_dsp1_firmware(&mut self, image: &[u8]) -> Result<(), JsValue> {
+        self.snes.set_dsp1_firmware(image).map_err(|size| {
+            JsValue::from_str(&format!(
+                "DSP-1 firmware must be exactly 8192 bytes, not {size}"
+            ))
+        })
     }
 
     /// Load a SNES ROM from raw bytes.

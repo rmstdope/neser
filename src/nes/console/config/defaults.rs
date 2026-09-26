@@ -280,6 +280,9 @@ impl Config {
             "cgb_color_correction" => {
                 self.gb.apply_config_value("cgb_color_correction", value)?;
             }
+            "gb_palette" => {
+                self.gb.apply_config_value("gb_palette", value)?;
+            }
             "gba_hardware" => {
                 self.gba.apply_config_value("gba_hardware", value)?;
             }
@@ -1383,6 +1386,18 @@ nes-filter=invalid-shader
         let msg = result.unwrap_err();
         assert!(msg.contains("bogus"));
         assert!(msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
+    }
+
+    #[test]
+    fn test_config_file_gb_palette_reaches_the_gb_config() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("gb-palette", "dmg-green")
+            .unwrap();
+        assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
+        // An unknown value warns but does not stop the config file loading.
+        config.apply_config_value("gb-palette", "bogus").unwrap();
+        assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
     }
 
     #[test]

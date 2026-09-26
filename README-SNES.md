@@ -14,12 +14,27 @@ cargo run --release --bin neser -- path/to/game.sfc
 
 Use `neser --help` for the complete current CLI reference.
 
+Enhancement chips: the SA-1 (Super Mario RPG and others), the Capcom CX4 (Mega Man X2 and
+X3), the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2), the
+Super FX GSU-1 and GSU-2 (Star Fox, Yoshi's Island, Doom), the S-DD1 decompressor (Star
+Ocean, Street Fighter Alpha 2) and the DSP-1 (Super Mario Kart, Pilotwings) are emulated.
+Cartridges with any other enhancement chip load, but show a warning that the chip is not
+implemented yet, and may not run correctly.
+
+The DSP-1 runs its own program, which game dumps do not contain and NESER cannot include, so a
+DSP-1 game needs a firmware file you supply: put `dsp1b.rom` (8192 bytes; optionally `dsp1.rom`
+for the original chip) in `~/.neser/firmware`, or point `--snes-firmware-dir` at another folder.
+Without it the game does not start: the game browser says why in a strip above the games, and a
+command-line launch prints the reason and exits. The browser version asks for the file once and
+keeps it in the browser; the sidebar's "SNES firmware" block replaces or forgets it.
+
 ## SNES configuration (native frontend)
 
 SNES-specific options:
 
 - `--snes-hardware <snes-ntsc|snes-pal>`
 - `--snes-spc-ipl-path <path>`
+- `--snes-firmware-dir <folder>` (coprocessor firmware such as `dsp1b.rom`; default `~/.neser/firmware`)
 - `--snes-controller-port1 <standard|multitap|mouse|superscope>`
 - `--snes-controller-port2 <standard|multitap|mouse|superscope>`
 
@@ -47,7 +62,7 @@ Notes:
 
 The generic (unprefixed) `ram_init_mode` / `--ram-init-mode` setting also
 applies to the SNES since #3128. It controls the power-on contents of WRAM,
-VRAM, CGRAM, OAM, APU ARAM and SA-1 I-RAM — `random` (the desktop default,
+VRAM, CGRAM, OAM, APU ARAM, SA-1 I-RAM and CX4 data RAM — `random` (the desktop default,
 matching Mesen2's `RamState::Random` and ares), `zero`, or
 `seeded-random:SEED` for a randomised but reproducible machine. Cartridge RAM is
 filled too unless it is battery-backed — a `.sav`-backed save is left alone and
@@ -296,6 +311,10 @@ Test suites:
   rows 9-12 -- the "HDMA during DMA" measurements the ROM records but never
   compares -- out of SRAM; it is the only vector covering HDMA nested inside
   a general-purpose transfer (#3127).
+- `peterlemon_gsu_tests.rs` -- krom's 31 Super FX test ROMs
+  (`roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-CHIP-GSU-GSUTest/`), one per
+  GSU opcode group plus a code-cache injection demo. Every golden is an all-PASS screen that
+  matched both a Mesen2 capture and krom's shipped screenshot at 0 differing pixels.
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
   (`roms/snes/automated_tests/snes_test_roms/absindx/`), verified with
   human-approved screen-CRC goldens. `SA1RamProtectionTest.sfc` passes all 222 sub-tests
@@ -312,6 +331,28 @@ Test suites:
   signed/unsigned division, the 40-bit cumulative sum and its overflow flag,
   and that unit's state across a save state and a hard reset (nr-ps1; Super
   Mario RPG hung on a black screen after its opening without it).
+- `cx4_tests.rs` -- the Capcom CX4 (nr-t7d). Overload's `cx4test.sfc`
+  (`jonasquinn-test-roms/cx4test/`) checks the chip's SNES-side memory map and
+  port bits; the test reads its seven verdicts out of the ROM's WRAM text
+  buffer (all PASS, matching Mesen2's screen pixel for pixel). A hand-built
+  fixture DMAs a table into CX4 RAM, runs a CX4 program from ROM (a square,
+  a data-ROM lookup, a RAM read) and checks the results from the 65816 side.
+- `dsp1_tests.rs` -- the DSP-1 (nr-auv). Nintendo's firmware cannot be
+  shipped, so a synthetic uPD77C25 program written with the test assembler
+  (`src/snes/upd77c25/asm.rs`) multiplies words from DR, and a hand-built
+  fixture on a DSP LoROM cartridge exchanges them through DR/SR in both
+  LoROM windows. Real-game checks with a player's `dsp1b.rom` stay manual.
+- `obc1_tests.rs` -- the OBC1 OBJ controller (nr-ufb). No OBC1 test ROM is
+  known, so a hand-built fixture on an OBC1 cartridge writes objects through
+  the `$7FF0-$7FF6` ports at both buffer bases and checks the SRAM buffer
+  from the 65816 side.
+- `sdd1_tests.rs` -- the S-DD1 decompressor (nr-10g). No S-DD1 test ROM
+  exists, so a hand-built fixture does what the two games do: a fixed-address
+  DMA from the `$C0` bank with `$4800`/`$4801` set, into WRAM through WMDATA.
+  It checks the 64 decompressed bytes against Mesen2's decoder, that the
+  transfer clears its `$4801` bit, and that a re-armed transfer restarts the
+  stream. The decompressor's own unit tests hold 18 Mesen2 vectors covering
+  every plane and context mode and the longest (order 7) runs.
 - `input_standard_controller_tests.rs` -- standard-controller protocol
   fixtures (#2886), assembled in-code via the shared `fixture_rom.rs`
   builder (no on-disk assets): `$4016`/`$4017` serial order incl. the four
@@ -423,6 +464,8 @@ What actually differs between the two consoles:
 | SPC700 clock | ~1.025 MHz | ~1.025 MHz |
 | DSP sample rate | 32 kHz | 32 kHz |
 | SA-1 clock (master / 2) | 10.74 MHz | 10.64 MHz |
+| CX4 clock (own 20 MHz crystal) | 20.00 MHz | 20.00 MHz |
+| DSP-1 clock (own 7.6 MHz crystal) | 7.60 MHz | 7.60 MHz |
 
 PAL's extra 50 scanlines are therefore *all* blanking: the active area, the
 VBlank boundary and the framebuffer are region-independent, and only the
@@ -490,7 +533,7 @@ directory and are never committed. To approve a new or changed golden:
    identical runs is the tell.
 
    Since #3128 NESER's SNES core honours the same `ram_init_mode` setting the
-   NES core uses (WRAM, VRAM, CGRAM, OAM, ARAM, SA-1 I-RAM), and its desktop
+   NES core uses (WRAM, VRAM, CGRAM, OAM, ARAM, SA-1 I-RAM, CX4 data RAM), and its desktop
    default is `random` too — so the *NESER* side needs pinning as well. The
    automated suites already do it: `RunConfig` defaults to
    `RamInitMode::Zero` (`rom_runner.rs`), and `--headless` capture forces

@@ -1,4 +1,4 @@
-use crate::snes::cartridge::header::parse_header_at;
+use crate::snes::cartridge::header::{TITLE_LEN, parse_header_at};
 use crate::snes::cartridge::mapping::{Mapping, detect_mapping};
 use std::fmt;
 // A 32 KiB single-bank LoROM has its header flush against the end of the
@@ -72,6 +72,7 @@ pub struct Cartridge {
     has_battery: bool,
     speed: RomSpeed,
     title: String,
+    title_bytes: [u8; TITLE_LEN],
     country: u8,
     enhancement_chip: Option<EnhancementChip>,
 }
@@ -91,10 +92,17 @@ impl Cartridge {
         let header = parse_header_at(stripped, candidate.mapping, candidate.header_offset)
             .ok_or(CartridgeError::HeaderNotFound)?;
 
+        let enhancement_chip = detect_enhancement_chip(header.chipset, header.chipset_subtype);
+        let sram_size = if enhancement_chip == Some(EnhancementChip::SuperFx) {
+            super_fx_ram_size(header.expansion_ram_field)
+        } else {
+            decode_sram_size(header.ram_size_field)
+        };
+
         Ok(Self {
             rom: stripped.to_vec(),
             mapping: candidate.mapping,
-            sram_size: decode_sram_size(header.ram_size_field),
+            sram_size,
             has_battery: has_battery(header.chipset),
             speed: if header.map_mode & 0x10 != 0 {
                 RomSpeed::Fast
@@ -102,8 +110,9 @@ impl Cartridge {
                 RomSpeed::Slow
             },
             title: header.title,
+            title_bytes: header.title_bytes,
             country: header.country,
-            enhancement_chip: detect_enhancement_chip(header.chipset, header.chipset_subtype),
+            enhancement_chip,
         })
     }
 
@@ -129,6 +138,11 @@ impl Cartridge {
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    /// The header title's raw bytes, spaces and all.
+    pub fn title_bytes(&self) -> &[u8] {
+        &self.title_bytes
     }
 
     pub fn country(&self) -> u8 {
@@ -159,6 +173,19 @@ fn decode_sram_size(ram_size_field: u8) -> usize {
     };
     let size = kib.saturating_mul(1024);
     if size > 1024 * 1024 { 0 } else { size }
+}
+
+/// Size of a Super FX cartridge's Game Pak RAM. fullsnes ("SNES Cart GSU-n Memory Map", "GSU
+/// Cartridge Header"): GSU carts leave the normal RAM-size byte at 0 and declare their RAM in the
+/// extended header's expansion-RAM byte (32 KB and 64 KB exist). Star Fox has no extended header
+/// and 32 KB, which is also used for any other cart that does not declare a size. Mesen2 picks
+/// 64 KB in that case instead; fullsnes names the size, so it wins.
+fn super_fx_ram_size(expansion_ram_field: Option<u8>) -> usize {
+    const UNDECLARED: usize = 32 * 1024;
+    match expansion_ram_field.map(decode_sram_size) {
+        Some(size) if size > 0 => size,
+        _ => UNDECLARED,
+    }
 }
 
 fn has_battery(chipset: u8) -> bool {
@@ -231,6 +258,21 @@ mod tests {
         let cart = Cartridge::from_bytes(&rom).expect("cart");
         assert_eq!(cart.rom().len(), 0x10000);
         assert_eq!(cart.rom()[0], 0x55);
+    }
+
+    /// Street Fighter Alpha 2 carries the same header at $7FC0 and $FFC0, map mode $32.
+    /// fullsnes "Cartridge Header": map mode 2 is "LoROM/32K Banks + S-DD1", so the LoROM
+    /// candidate must win rather than the HiROM tie-break.
+    #[test]
+    fn from_bytes_detects_sdd1_map_mode_32_as_lorom_when_both_headers_match() {
+        let mut rom = vec![0u8; 0x20000];
+        for base in [0x7FC0, 0xFFC0] {
+            write_header(&mut rom, base, 0x32, 0x43, 0x00, b"SDD1 TEST           ");
+        }
+
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.mapping(), Mapping::LoRom);
+        assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::Sdd1));
     }
 
     #[test]
@@ -417,6 +459,52 @@ mod tests {
         rom[0x7FBF] = 0x10;
         let cart = Cartridge::from_bytes(&rom).expect("cart");
         assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::Cx4));
+    }
+
+    /// A Super FX cartridge's Game Pak RAM is declared by the extended header's expansion-RAM
+    /// byte `$FFBD`, not the normal `$FFD8` field, which GSU carts leave at 0 (fullsnes "SNES
+    /// Cart GSU-n Memory Map", "GSU Cartridge Header"). The extended header is present when the
+    /// maker code `$FFDA` is `$33`.
+    #[test]
+    fn super_fx_cart_ram_size_comes_from_expansion_ram_field() {
+        let mut rom = vec![0u8; 0x10000];
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0x15,
+            0x00,
+            b"GSU EXT HEADER     \0\0",
+        );
+        rom[0x7FC0 + 0x1A] = 0x33; // Maker code $33: extended header present.
+        rom[0x7FBD] = 0x06; // Expansion RAM: 1 << 6 KB = 64 KB.
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.enhancement_chip(), Some(EnhancementChip::SuperFx));
+        assert_eq!(cart.sram_size(), 64 * 1024);
+        assert!(
+            cart.has_battery(),
+            "chipset $15 = co-processor + RAM + battery"
+        );
+    }
+
+    /// Star Fox has no extended header; fullsnes gives its RAM as 32 KB, and treats that as the
+    /// size of every GSU cartridge that does not declare one.
+    #[test]
+    fn super_fx_cart_without_extended_header_has_32kb_ram() {
+        let mut rom = vec![0u8; 0x10000];
+        write_header(
+            &mut rom,
+            0x7FC0,
+            0x20,
+            0x13,
+            0x00,
+            b"GSU NO EXT HEADER  \0\0",
+        );
+        rom[0x7FC0 + 0x1A] = 0x01; // Maker code other than $33: no extended header.
+        rom[0x7FBD] = 0xFF; // Not an expansion-RAM field without the extended header.
+        let cart = Cartridge::from_bytes(&rom).expect("cart");
+        assert_eq!(cart.sram_size(), 32 * 1024);
+        assert!(!cart.has_battery());
     }
 
     #[test]

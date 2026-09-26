@@ -1,16 +1,9 @@
-/// DMG grey shades indexed by colour index (0=white, 3=black).
-const DMG_GREY: [u8; 4] = [0xFF, 0xAA, 0x55, 0x00];
-
 /// Extract a 2-bit palette colour from a DMG palette register.
 ///
 /// `palette_reg` — raw BGP / OBP0 / OBP1 value
 /// `colour_index` — 2-bit index (0–3)
 pub(crate) fn dmg_palette_index(palette_reg: u8, colour_index: u8) -> u8 {
     (palette_reg >> (colour_index * 2)) & 0x03
-}
-
-pub(crate) fn dmg_grey(shade: u8) -> u8 {
-    DMG_GREY[shade as usize]
 }
 
 /// Convert a 5-bit CGB palette component to 8-bit.
@@ -84,26 +77,26 @@ mod tests {
     #[test]
     fn test_palette_index_0_maps_to_white_with_default_bgp() {
         // BGP = 0xE4 (0b11100100): colour 0→0 (white), 1→1, 2→2, 3→3
-        assert_eq!(dmg_grey(dmg_palette_index(0xE4, 0)), DMG_GREY[0]);
+        assert_eq!(dmg_palette_index(0xE4, 0), 0);
     }
 
     #[test]
     fn test_palette_index_3_maps_to_black_with_default_bgp() {
         // BGP = 0xE4: colour 3 maps to shade 3 (black)
-        assert_eq!(dmg_grey(dmg_palette_index(0xE4, 3)), DMG_GREY[3]);
+        assert_eq!(dmg_palette_index(0xE4, 3), 3);
     }
 
     #[test]
     fn test_palette_inverted_bgp_maps_0_to_black() {
         // BGP = 0x1B (0b00011011): colour 0→3 (black)
-        assert_eq!(dmg_grey(dmg_palette_index(0x1B, 0)), DMG_GREY[3]);
+        assert_eq!(dmg_palette_index(0x1B, 0), 3);
     }
 
     #[test]
     fn test_palette_all_white_bgp_maps_every_index_to_white() {
         // BGP = 0x00: all colours map to shade 0 (white)
         for i in 0..4 {
-            assert_eq!(dmg_grey(dmg_palette_index(0x00, i)), DMG_GREY[0]);
+            assert_eq!(dmg_palette_index(0x00, i), 0);
         }
     }
 

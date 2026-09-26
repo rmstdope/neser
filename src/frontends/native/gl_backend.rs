@@ -1042,6 +1042,22 @@ impl GlBackend {
         ));
         short_name
     }
+
+    /// `true` when the Game Boy LCD filter (`gb-filter=dmg`) is drawn.
+    pub fn is_gb_lcd_filter(&self) -> bool {
+        self.shader_manager.is_gb_lcd_filter()
+    }
+
+    /// Sets the `[background, foreground]` colours the Game Boy LCD filter
+    /// draws in.
+    pub fn set_gb_filter_colors(&mut self, colors: [(u8, u8, u8); 2]) {
+        if let Err(e) = self
+            .shader_manager
+            .set_gb_filter_colors(colors, self.glow_context.clone())
+        {
+            log_info(format!("Error applying the Game Boy filter palette: {e}"));
+        }
+    }
 }
 
 /// Returns the toast message to display when the visual filter changes.
