@@ -14,6 +14,7 @@ pub mod input;
 pub mod obc1;
 pub mod ppu;
 pub mod sa1;
+pub mod sdd1;
 
 #[cfg(test)]
 mod integration_tests;
