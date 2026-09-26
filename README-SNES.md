@@ -15,8 +15,8 @@ cargo run --release --bin neser -- path/to/game.sfc
 Use `neser --help` for the complete current CLI reference.
 
 Enhancement chips: the SA-1 (Super Mario RPG and others), the Capcom CX4 (Mega Man X2 and
-X3) and the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2) are
-emulated. Cartridges with any other enhancement chip load, but show a warning that the
+X3), the OBC1 (Metal Combat: Falcon's Revenge, played with the Super Scope on port 2) and the
+Super FX GSU-1 and GSU-2 (Star Fox, Yoshi's Island, Doom) are emulated. Cartridges with any other enhancement chip load, but show a warning that the
 chip is not implemented yet, and may not run correctly.
 
 ## SNES configuration (native frontend)

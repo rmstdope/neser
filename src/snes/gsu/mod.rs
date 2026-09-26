@@ -1,4 +1,4 @@
-//! Super FX (GSU-1) coprocessor, built against fullsnes "SNES Cart GSU-n" (Graphic Support Unit).
+//! Super FX (GSU-1 and GSU-2) coprocessor, built against fullsnes "SNES Cart GSU-n" (Graphic Support Unit).
 //!
 //! The GSU is a 16-bit RISC CPU on the cartridge with sixteen registers, its own view of the Game
 //! Pak ROM and RAM, a 512-byte code cache, and a PLOT unit that draws pixels straight into SNES
@@ -22,9 +22,40 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-/// Version code register (`$303B`). fullsnes knows `$01` for the MC1 ("Black Blob") and `$04`
-/// for the GSU2; the MC1 is the only GSU-1-family value it records, and it is Star Fox's chip.
-const VERSION_CODE: u8 = 0x01;
+/// Which Super FX a cartridge carries. fullsnes "Memory Map": "There is no info in the header
+/// (nor extended header) whether the game uses a GSU1 or GSU2. Games with 2MByte ROM are
+/// typically using GSU2", so the ROM size decides. (The unreleased Star Fox 2, 1 MB on a GSU2, is
+/// the known exception and reads as a GSU-1 here.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GsuVersion {
+    /// The Mario Chip 1 and the GSU-1/1A: Star Fox, Stunt Race FX, Vortex and others.
+    Gsu1,
+    /// The GSU-2/2-SP1: Yoshi's Island, Doom, Winter Gold.
+    Gsu2,
+}
+
+impl GsuVersion {
+    /// The largest ROM a GSU-1 cartridge carries (fullsnes: "1Mbyte max").
+    const GSU1_MAX_ROM: usize = 0x10_0000;
+
+    pub(crate) fn for_rom_size(len: usize) -> Self {
+        if len > Self::GSU1_MAX_ROM {
+            Self::Gsu2
+        } else {
+            Self::Gsu1
+        }
+    }
+
+    /// The version code register (`$303B`). fullsnes knows `$01` for the MC1 ("Black Blob") and
+    /// `$04` for the GSU2; the MC1 is the only GSU-1-family value it records, and it is Star Fox's
+    /// chip.
+    fn version_code(self) -> u8 {
+        match self {
+            Self::Gsu1 => 0x01,
+            Self::Gsu2 => 0x04,
+        }
+    }
+}
 
 /// Opcode `NOP`, which fills the program prefetch at power-on and after STOP so that the first
 /// instruction a (re)started GSU executes is a harmless one (Mesen2 `ProgramReadBuffer = 0x01`).
@@ -179,6 +210,8 @@ pub struct Gsu {
     state: GsuState,
     rom: Rc<Vec<u8>>,
     ram: Rc<RefCell<Vec<u8>>>,
+    /// Fixed by the cartridge, so neither reset nor a save state changes it.
+    version: GsuVersion,
     /// Set by an instruction that wrote R15, so the pipeline does not also advance it. Only
     /// meaningful within one `exec`.
     r15_changed: bool,
@@ -190,6 +223,7 @@ impl Gsu {
     pub fn new(rom: Rc<Vec<u8>>, ram: Rc<RefCell<Vec<u8>>>) -> Self {
         Self {
             state: GsuState::power_on(),
+            version: GsuVersion::for_rom_size(rom.len()),
             rom,
             ram,
             r15_changed: false,
@@ -245,7 +279,7 @@ impl Gsu {
     /// effectively does (its read guard never fires for a non-FX3 chip).
     pub fn read_register(&mut self, offset: u16) -> Option<u8> {
         let value = self.peek_register(offset)?;
-        if register_offset(offset) == Some(0x31) {
+        if register_offset(self.version, offset) == Some(0x31) {
             // fullsnes: SFR bit 15 "IRQ ... reset on read".
             self.state.irq = false;
         }
@@ -259,7 +293,7 @@ impl Gsu {
             return Some(self.state.code_cache[slot]);
         }
         let s = &self.state;
-        let value = match register_offset(offset)? {
+        let value = match register_offset(self.version, offset)? {
             reg @ 0x00..=0x1F => {
                 let word = s.r[usize::from(reg >> 1)];
                 if reg & 1 == 0 {
@@ -286,7 +320,7 @@ impl Gsu {
             }
             0x34 => s.pbr,
             0x36 => s.rombr,
-            0x3B => VERSION_CODE,
+            0x3B => self.version.version_code(),
             0x3C => s.rambr,
             0x3E => s.cbr as u8,
             0x3F => (s.cbr >> 8) as u8,
@@ -299,7 +333,7 @@ impl Gsu {
 
     /// An S-CPU write to `$3000-$34FF` (offset within the bank).
     pub fn write_register(&mut self, offset: u16, value: u8) {
-        let Some(reg) = register_offset(offset) else {
+        let Some(reg) = register_offset(self.version, offset) else {
             if let Some(slot) = code_cache_window_slot(offset) {
                 self.write_code_cache_window(slot, value);
             }
@@ -381,15 +415,24 @@ impl Gsu {
 /// The register a `$3000-$34FF` offset addresses, as `$00-$3F` of the `$3000-$303F` block, with
 /// `$3100-$32FF` being the code cache.
 ///
-/// The decode is Mesen2's (`addr & $33FF`, fullsnes' GSU2 map without its `$3020-$302F` SFR
-/// mirror): the `$3000-$303F` block repeats through `$3040-$30FF` and `$3300-$34FF`, and
-/// `$3020-$302F` reads 0. It is used although VCR reports the MC1: fullsnes' MC1 "Black Blob"
-/// map would make `$3032-$303F` mirrors of SFR, leaving PBR, ROMBR, RAMBR and CBR unreadable,
-/// which contradicts its own general I/O map that lists them readable; nothing is recorded for
-/// the SMD MC1 or the GSU-1 proper. Games are not known to read these mirrors.
-fn register_offset(offset: u16) -> Option<u8> {
+/// Both chips repeat the `$3000-$303F` block through `$3040-$30FF` and `$3300-$34FF`. On a GSU-2,
+/// `$3020-$302F` also mirrors `$3030-$303F` (fullsnes "Full I/O Map with Mirrors for GSU2").
+///
+/// On a GSU-1 the decode is Mesen2's (`addr & $33FF`), so `$3020-$302F` reads 0. It is used
+/// although VCR reports the MC1: fullsnes' MC1 "Black Blob" map would make `$3032-$303F` mirrors
+/// of SFR, leaving PBR, ROMBR, RAMBR and CBR unreadable, which contradicts its own general I/O map
+/// that lists them readable; nothing is recorded for the SMD MC1 or the GSU-1 proper. Games are not
+/// known to read these mirrors.
+fn register_offset(version: GsuVersion, offset: u16) -> Option<u8> {
     match offset {
-        0x3000..=0x30FF | 0x3300..=0x34FF => Some((offset & 0x3F) as u8),
+        0x3000..=0x30FF | 0x3300..=0x34FF => {
+            let reg = (offset & 0x3F) as u8;
+            if version == GsuVersion::Gsu2 && reg & 0x30 == 0x20 {
+                Some(reg | 0x10)
+            } else {
+                Some(reg)
+            }
+        }
         _ => None,
     }
 }
@@ -402,6 +445,13 @@ fn code_cache_window_slot(offset: u16) -> Option<usize> {
 
 #[cfg(test)]
 mod alu_tests;
+#[cfg(test)]
+#[test]
+fn gsu_version_follows_rom_size() {
+    assert_eq!(GsuVersion::for_rom_size(0x10_0000), GsuVersion::Gsu1);
+    assert_eq!(GsuVersion::for_rom_size(0x10_0001), GsuVersion::Gsu2);
+    assert_eq!(GsuVersion::for_rom_size(0x20_0000), GsuVersion::Gsu2);
+}
 #[cfg(test)]
 #[test]
 fn gsu_state_missing_fields_deserializes_to_power_on() {

@@ -9,15 +9,27 @@ use crate::snes::cartridge::Cartridge;
 /// Builds a 128 KB LoROM Super FX cartridge (chipset `$14`, 32 KB Game Pak RAM declared in the
 /// extended header) whose ROM holds `fill(offset)` at every byte outside the header.
 pub(super) fn gsu_cart_rom(fill: impl Fn(usize) -> u8) -> Vec<u8> {
-    let mut rom: Vec<u8> = (0..0x2_0000).map(fill).collect();
+    sized_gsu_cart_rom(0x2_0000, 0x05, fill)
+}
+
+/// Builds a 2 MB LoROM Super FX cartridge, the size fullsnes gives for GSU2 games ("Games with
+/// 2MByte ROM are typically using GSU2"), declaring `ram_size_code` (`1 << n` KB) as its Game Pak
+/// RAM.
+pub(super) fn gsu2_cart_rom(ram_size_code: u8, fill: impl Fn(usize) -> u8) -> Vec<u8> {
+    sized_gsu_cart_rom(0x20_0000, ram_size_code, fill)
+}
+
+fn sized_gsu_cart_rom(len: usize, ram_size_code: u8, fill: impl Fn(usize) -> u8) -> Vec<u8> {
+    let mut rom: Vec<u8> = (0..len).map(fill).collect();
     let base = 0x7FC0;
     rom[0x7FB0..0x8000].fill(0);
     rom[base..base + 21].copy_from_slice(b"GSU BUS TEST         ");
     rom[base + 0x15] = 0x20; // Slow LoROM.
     rom[base + 0x16] = 0x14; // Chipset: GSU + RAM.
-    rom[base + 0x17] = 0x07; // 128 KB.
+    // ROM size, `1 << n` KB (fullsnes "Cartridge Header"): $07 = 128 KB, $0B = 2 MB.
+    rom[base + 0x17] = (len >> 10).trailing_zeros() as u8;
     rom[base + 0x1A] = 0x33; // Extended header present.
-    rom[0x7FBD] = 0x05; // Expansion RAM: 32 KB.
+    rom[0x7FBD] = ram_size_code; // Expansion RAM size.
     rom[base + 0x3C] = 0x00; // Reset vector $8000.
     rom[base + 0x3D] = 0x80;
     rom
@@ -45,6 +57,37 @@ fn gsu_cart_maps_lorom_and_hirom_views_of_rom() {
     for addr in [0x41_8123, 0xC1_8123] {
         assert_eq!(probe(addr), 0xAB, "HiROM view at ${addr:06X}");
     }
+}
+
+#[test]
+fn gsu2_cart_maps_the_second_megabyte() {
+    // fullsnes "GSU2 Memory Map (at SNES Side)": "Game Pak ROM in LoRom mapping (2Mbyte max)" and
+    // its HiROM mirror. ROM `$1F_8123` is LoROM `$3F:8123` and HiROM `$5F:8123`; the `$80`/`$C0`
+    // views are the mirrors NESER keeps for every Super FX cartridge (as Mesen2).
+    let mut rom = gsu2_cart_rom(0x05, |_| 0);
+    rom[0x1F_8123] = 0xC4;
+    let bus = gsu_bus(&rom);
+    for addr in [0x3F_8123, 0xBF_8123, 0x5F_8123, 0xDF_8123] {
+        bus.read(0x00_8000); // `$00` on the bus, so open bus cannot pass.
+        assert_eq!(bus.read(addr), 0xC4, "${addr:06X}");
+    }
+}
+
+#[test]
+fn gsu2_cart_128kb_ram_reaches_bank_71() {
+    // fullsnes: "70-71:0000-FFFF Game Pak RAM (128Kbyte max ...)"; expansion RAM code `$07`.
+    let mut bus = gsu_bus(&gsu2_cart_rom(0x07, |_| 0));
+    bus.write(0x70_4321, 0x11);
+    bus.write(0x71_4321, 0x22);
+    assert_eq!(bus.read(0x70_4321), 0x11);
+    assert_eq!(bus.read(0x71_4321), 0x22);
+    // fullsnes' GSU2 map lists `$F0-$F1` only among its optional extra CPU ROM (`C0-FF`); the
+    // RAM mirror there is its GSU1 map's, kept for every Super FX cart as Mesen2 does.
+    assert_eq!(
+        bus.read(0xF1_4321),
+        0x22,
+        "mirror at $F1 (Mesen2, GSU1 map)"
+    );
 }
 
 #[test]
@@ -88,6 +131,69 @@ fn gsu_register_write_latches_low_byte_until_odd_write() {
 fn gsu_version_code_register_reads_gsu1() {
     let bus = gsu_bus(&gsu_cart_rom(|_| 0));
     assert_eq!(bus.read(0x00_303B), 0x01);
+}
+
+#[test]
+fn gsu2_cart_version_code_reads_04() {
+    // fullsnes "General I/O Ports", VCR: "4=GSU2"; at `$303B` and its mirror `$333B`.
+    let bus = gsu_bus(&gsu2_cart_rom(0x05, |_| 0));
+    assert_eq!(bus.read(0x00_303B), 0x04);
+    assert_eq!(bus.read(0x80_333B), 0x04);
+}
+
+#[test]
+fn gsu2_status_registers_mirror_at_3020() {
+    // fullsnes "Full I/O Map with Mirrors for GSU2 (VCR=04h)": "3020h..302Fh mirror of
+    // 3030h..303Fh".
+    let mut rom = gsu2_cart_rom(0x05, |_| 0);
+    rom[..3].copy_from_slice(&[0x05, 0xFE, 0x01]); // BRA to itself; NOP.
+    let mut bus = gsu_bus(&rom);
+    assert_eq!(bus.read(0x00_302B), 0x04, "VCR");
+    bus.write(0x00_3034, 0x5A);
+    assert_eq!(bus.read(0x00_3024), 0x5A, "PBR");
+    bus.write(0x00_3024, 0x00); // PBR back to bank 0, through the mirror.
+    assert_eq!(bus.read(0x00_3034), 0x00, "PBR written via $3024");
+
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80); // GO
+    assert_eq!(bus.read(0x00_3020) & 0x20, 0x20, "SFR GO via $3020");
+    bus.write(0x00_3020, 0x00); // GO=0 through the mirror stops the GSU.
+    assert_eq!(bus.read(0x00_3030) & 0x20, 0x00, "stopped");
+}
+
+#[test]
+fn gsu2_reading_3021_clears_irq() {
+    // fullsnes SFR bit 15: "IRQ ... reset on read"; on a GSU2 `$3021` is `$3031`.
+    let mut rom = gsu2_cart_rom(0x05, |_| 0);
+    rom[..2].copy_from_slice(&[0x00, 0x01]); // STOP; NOP.
+    let mut bus = gsu_bus(&rom);
+    bus.write(0x00_303A, 0x18); // RON | RAN
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80); // GO
+    for _ in 0..200 {
+        bus.tick();
+    }
+    assert_eq!(bus.read(0x00_3030) & 0x20, 0x00, "stopped");
+    assert_eq!(
+        bus.read(0x00_3021) & 0x80,
+        0x80,
+        "IRQ set by STOP, read via $3021"
+    );
+    assert_eq!(
+        bus.read(0x00_3031) & 0x80,
+        0x00,
+        "the $3021 read cleared it"
+    );
+}
+
+#[test]
+fn gsu1_cart_3020_reads_zero_and_ignores_writes() {
+    // nr-hab.1's register map for the GSU-1 (Mesen2's decode): `$3020-$302F` is unused.
+    let mut bus = gsu_bus(&gsu_cart_rom(|_| 0));
+    bus.write(0x00_3034, 0x5A);
+    assert_eq!(bus.read(0x00_3024), 0x00);
+    bus.write(0x00_3024, 0x11);
+    assert_eq!(bus.read(0x00_3034), 0x5A);
 }
 
 #[test]
