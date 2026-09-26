@@ -27,6 +27,10 @@ FAMILY_ORDER = (
     "shift_rotate",
     "flag_control",
     "block_move",
+    # MVN gets its own family so the committed corpus carries both block-move directions:
+    # since nr-ve3 their vectors are compared cycle by cycle, and within one family only
+    # the smaller file (MVP) would be selected.
+    "block_move_increment",
     # Cycle-exact families: one opcode per direct-page addressing mode and per
     # read-modify-write form. These back the per-cycle bus assertions in
     # `processor_tests_65816.rs` (`CYCLE_EXACT_OPCODES`), which pin where the CPU spends its
@@ -84,7 +88,7 @@ OPCODE_FAMILY: dict[int, str] = {
     0x58: "flag_control",
     0x78: "flag_control",
     0x44: "block_move",
-    0x54: "block_move",
+    0x54: "block_move_increment",
     # One representative opcode per direct-page addressing mode.
     0xA5: "dp_direct",
     0xB5: "dp_indexed_x",

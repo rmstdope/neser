@@ -20,6 +20,16 @@
         "44"
       ]
     },
+    "block_move_increment": {
+      "files": [
+        "54.e.json",
+        "54.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "54"
+      ]
+    },
     "branch": {
       "files": [
         "d0.e.json",
@@ -222,12 +232,12 @@
     }
   },
   "integrity": {
-    "file_count": 44,
+    "file_count": 46,
     "kind": "tree_sha256",
-    "sha256": "bf562cee06942fbaa8a1f54b3d9d3c3116fdc9eb470dd3755b975e0c2a9f8400",
-    "total_size_bytes": 837369
+    "sha256": "c979a5e1c2f00d71fe2e1c10bdca137cd23ea8524853b7c1e690ed9146bf9065",
+    "total_size_bytes": 1057186
   },
-  "selected_file_count": 44,
+  "selected_file_count": 46,
   "selected_files": [
     "ea.e.json",
     "ea.n.json",
@@ -245,6 +255,8 @@
     "58.n.json",
     "44.e.json",
     "44.n.json",
+    "54.e.json",
+    "54.n.json",
     "a5.e.json",
     "a5.n.json",
     "b5.e.json",

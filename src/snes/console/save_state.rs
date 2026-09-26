@@ -140,6 +140,10 @@ pub struct SnesCpuState {
     /// See Cpu::irq_i_shadow; defaults to true (I-set at reset) for older saves.
     #[serde(default = "default_irq_i_shadow")]
     pub irq_i_shadow: bool,
+    /// Only saves from before nr-ve3 carry this: a block move then kept its banks here with PC
+    /// on the source-bank operand. Since nr-ve3 an in-progress MVN/MVP is described by PC
+    /// (on the opcode), A, X and Y alone, so this is always saved as `None`, and restoring a
+    /// `Some` only rewinds PC to the opcode (`Cpu::restore_state_inner`).
     #[serde(default)]
     pub block_move_state: Option<SnesBlockMoveState>,
 }

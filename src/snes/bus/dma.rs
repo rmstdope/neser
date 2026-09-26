@@ -110,7 +110,8 @@ impl DmaController {
         // fullsnes ("SNES I/O Map", CPU DMA ports): `$43x0-$43xB` and `$43xF` hold `FFh` at
         // power-up and keep their value across reset (A1Bx is listed as "xxh"; Mesen2 writes
         // `$FF` there as well). A channel enabled mid-frame without an HDMA init runs on these
-        // values (nr-ve3). `$43xC-$43xE` are open bus and stay out of it.
+        // values (nr-ve3). fullsnes gives `$43xC-$43xE` no power-up value (open bus on
+        // hardware), so they keep the zero this store has always held for them.
         let mut regs = [0; DMA_REG_BYTES];
         for channel in regs.as_chunks_mut::<16>().0 {
             channel[0x0..=0xB].fill(0xFF);
