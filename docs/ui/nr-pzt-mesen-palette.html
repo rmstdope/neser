@@ -1,0 +1,49 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>Mesen NES palette</title><style>body{font-family:-apple-system,Segoe UI,sans-serif;background:#f4f4f2;color:#1b1b1b;margin:0;padding:24px;max-width:980px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:#555;margin:0 0 20px}
+.row{display:flex;gap:20px;flex-wrap:wrap}.card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px;flex:1;min-width:280px}
+.card h2{font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.05em;color:#666}
+.screen{position:relative;width:256px;height:240px;background:#000;border-radius:4px;overflow:hidden;image-rendering:pixelated}
+.toast{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,.75);color:#fff;font:12px monospace;padding:4px 8px;border-radius:3px}
+.term{background:#111;color:#ddd;font:12.5px/1.5 Menlo,monospace;padding:12px;border-radius:6px;white-space:pre-wrap}
+.term .p{color:#7ec27e}.term .e{color:#ff8080}.term .d{color:#888}
+.sw{display:inline-block;width:56px;height:40px;border:1px solid #999;vertical-align:middle;margin-right:6px}
+.cyc{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font:13px monospace}.cyc span{padding:4px 8px;border:1px solid #bbb;border-radius:4px;background:#fafafa}.cyc .new{border:2px solid #d07a00;background:#fff4e0}.cyc .def{font-weight:bold}
+.note{font-size:13px;color:#444;margin-top:10px}.bad{color:#b00}.good{color:#070}
+@media(max-width:600px){body{padding:16px}.screen{width:100%}} section{margin-bottom:36px;border-bottom:1px solid #ccc;padding-bottom:24px}</style><h1 style='font-size:24px'>nr-pzt — Mesen2's colours as an NES palette choice (agreed)</h1><section><h1>Option A — add Mesen2's colours as a new choice</h1><p class=sub>Nothing changes for a player who does nothing. Mesen2's colours are one more F8 choice and one more nes-palette value.</p><div class=row><div class=card><h2>First start, nothing configured</h2><div class=screen style='background:#ECEEEC'><div style='position:absolute;top:90px;left:40px;right:40px;height:50px;background:#1030a0'></div><div style='position:absolute;top:100px;left:52px;color:#ECEEEC;font:bold 14px monospace'>PUSH START</div></div><p><span class=sw style='background:#ECEEEC'></span>NESER's own white #ECEEEC &nbsp; <span class=sw style='background:#FFFEFF'></span>Mesen2's white #FFFEFF</p><p class=note>Picture looks exactly as today (NESER's own white).</p></div><div class=card><h2>After pressing F8 until it appears</h2><div class=screen style='background:#FFFEFF'><div style='position:absolute;top:90px;left:40px;right:40px;height:50px;background:#1030a0'></div><div style='position:absolute;top:100px;left:52px;color:#FFFEFF;font:bold 14px monospace'>PUSH START</div><div class=toast>Palette: Mesen</div></div><p class=note>Chosen colours are kept for the rest of the session; set <code>nes-palette=mesen</code> to start with them.</p></div></div><div class=card style='margin-top:20px'><h2>F8 cycle</h2><div class=cyc><span class=' def'>Default</span> → <span class=' '>NesDev</span> → <span class=' '>Smooth</span> → <span class=' '>Classic</span> → <span class=' '>Composite Direct</span> → <span class='new '>Mesen</span> ↺</div><p class=note>Bold = what you get with no setting.</p></div></section><section><h1>Option A — a capture uses the same colour setting as the window</h1><p class=sub>--nes-palette (or nes-palette= in the config file) now works with --headless too. No setting: NESER's starting colours, same as the window.</p><div class=term><span class=p>$</span> neser --headless --frames 120 --nes-palette mesen --output neser.png power_up_palette.nes
+<span class=p>$</span> python -m scripts.diff_screenshots neser.png mesen.png --shift-search 1
+<span class=d>0 px differ</span>
+
+<span class=p>$</span> neser --headless --frames 120 --output neser.png power_up_palette.nes     <span class=d># no palette given</span>
+<span class=d>→ NESER's starting colours, exactly like the window; a Mesen2 diff shows the white difference</span>
+
+<span class=p>$</span> neser --headless --nes-palette bogus --output x.png rom.nes
+<span class=e>Invalid --nes-palette value: 'bogus'. Valid options are: default, nesdev, smooth, classic, composite-direct, mesen</span></div><p class=note>Reference-capture guide: the NESER line gains <code>--nes-palette mesen</code> for NES and states why.</p></section><section><h1>Option A — new choice goes last in the F8 cycle</h1><p class=sub>Existing F8 order untouched; people who count presses from Default keep their muscle memory.</p><div class=cyc><span class=' def'>Default</span> → <span class=' '>NesDev</span> → <span class=' '>Smooth</span> → <span class=' '>Classic</span> → <span class=' '>Composite Direct</span> → <span class='new '>Mesen</span> ↺</div><p class=note>Default → … → Composite Direct → Mesen → back to Default.</p></section><section><h1>Option A — called "Mesen"</h1><p class=sub>Short; names where the colours come from, like "NesDev".</p><div class=row><div class=card><h2>What F8 shows</h2><div class=screen style='background:#FFFEFF'><div style='position:absolute;top:90px;left:40px;right:40px;height:50px;background:#1030a0'></div><div style='position:absolute;top:100px;left:52px;color:#FFFEFF;font:bold 14px monospace'>PUSH START</div><div class=toast>Palette: Mesen</div></div></div><div class=card><h2>Config file / command line</h2><div class=term>nes-palette=mesen
+
+<span class=p>$</span> neser --nes-palette mesen game.nes
+
+<span class=d># neser.conf.example list:</span>
+#   mesen            - Mesen2's default NES palette.</div></div></div></section><section><h1>Option A — guide proves the match on a lit frame</h1><p class=sub>The claim about the black frame is replaced by a check that has white in it.</p><div class=term><span class=d># neser.conf.example</span>
+# Allowed values (case-insensitive):
+#   default          - Neser's built-in palette (preserves prior behavior).
+#   nesdev           - NESdev wiki 2C02 reference palette.
+#   smooth           - FBX "Smooth" NTSC palette.
+#   classic          - FBX "Classic" palette.
+#   composite-direct - FBX "Composite Direct" palette.
+#   mesen            - Mesen2's default palette; use it to compare captures with Mesen2.
+# An unknown value is ignored with a warning and the default palette is kept.
+# At runtime, press F8 (NES only) to cycle through these palettes.
+# Headless capture (--headless) uses this palette too.
+
+<span class=d># neser --help</span>
+  --nes-palette  NES preset palette: default, nesdev, smooth, classic, composite-direct, mesen (default: default)
+
+<span class=d># bad value</span>
+<span class=e>Invalid --nes-palette value: 'bogus'. Valid options are: default, nesdev, smooth, classic, composite-direct, mesen</span>
+
+<span class=d># README, Headless frame capture</span>
+NES captures use the same palette as the window: --nes-palette (or nes-palette= in the
+config file) applies. Pass --nes-palette mesen to compare against Mesen2.
+
+<span class=d># F8 on screen</span>
+Palette: Mesen</div><div class=card style='margin-top:16px'><h2>Capture guide, opening paragraph</h2><p>…matched pixel-for-pixel through <code>python -m scripts.diff_screenshots</code> (NES: blargg_ppu_tests power_up_palette frame 120 with <code>--nes-palette mesen</code>; GB: …).</p><h2>NESER side, for every system</h2><div class=term>target/release/neser --headless --frames &lt;N&gt; --output neser.png &lt;rom&gt;
+# NES: add --nes-palette mesen (Mesen2's colours; without it whites differ)</div></div></section>
