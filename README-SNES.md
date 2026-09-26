@@ -301,6 +301,10 @@ Test suites:
   rows 9-12 -- the "HDMA during DMA" measurements the ROM records but never
   compares -- out of SRAM; it is the only vector covering HDMA nested inside
   a general-purpose transfer (#3127).
+- `peterlemon_gsu_tests.rs` -- krom's 31 Super FX test ROMs
+  (`roms/snes/automated_tests/snes_test_roms/PeterLemon/SNES-CHIP-GSU-GSUTest/`), one per
+  GSU opcode group plus a code-cache injection demo. Every golden is an all-PASS screen that
+  matched both a Mesen2 capture and krom's shipped screenshot at 0 differing pixels.
 - `sa1_absindx_tests.rs` -- absindx SA-1 conformance ROMs
   (`roms/snes/automated_tests/snes_test_roms/absindx/`), verified with
   human-approved screen-CRC goldens. `SA1RamProtectionTest.sfc` passes all 222 sub-tests
