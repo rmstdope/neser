@@ -88,8 +88,11 @@ declare module "*/pkg/neser" {
 
     export function gamepad_init_toast_message(gamepads_enabled: boolean, detected_controllers: number): string;
 
-    /** Whether a SNES ROM image is a DSP-1 game, which needs the DSP-1 firmware to start. */
-    export function snes_rom_needs_dsp1(rom: Uint8Array): boolean;
+    /** The key ("dsp1", "dsp2") of the DSP chip whose firmware a SNES ROM needs to start, or undefined. */
+    export function snes_rom_dsp_chip(rom: Uint8Array): string | undefined;
+
+    /** Whether `image` is a genuine dump of the chip `chip` (a key such as "dsp2"). */
+    export function snes_dsp_firmware_is_genuine(chip: string, image: Uint8Array): boolean;
 
     /**
      * Provides a minimal WASM bridge for running the Game Boy emulator in the browser.
@@ -160,8 +163,8 @@ declare module "*/pkg/neser" {
         screen_width(): number;
         set_audio_muted(muted: boolean): void;
         set_audio_sample_rate(sample_rate: number): void;
-        /** Supplies the DSP-1 firmware (exactly 8192 bytes) for the next DSP-1 game. */
-        set_dsp1_firmware(image: Uint8Array): void;
+        /** Supplies a chip's genuine firmware (the chip a key such as "dsp2") for the next game using it. */
+        set_dsp_firmware(chip: string, image: Uint8Array): void;
         set_button(controller: number, button: number, pressed: boolean): void;
         save_state_bytes(): Uint8Array;
         load_state_bytes(bytes: Uint8Array): void;

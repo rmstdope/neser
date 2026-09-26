@@ -76,6 +76,26 @@ fn from_image_detects_big_endian_by_jrqm() {
 }
 
 #[test]
+fn to_le_image_round_trips_both_orders() {
+    // The little-endian ("newer") layout: 2048 opcodes of 3 bytes LSB first, then 1024 data
+    // words LSB first. A big-endian image converts to exactly the little-endian one.
+    let program = [NOP, jp(JRQM, 1), 0x00ABCD];
+    let mut le = Vec::new();
+    let mut be = Vec::new();
+    for i in 0..PROGRAM_WORDS {
+        let op = program.get(i).copied().unwrap_or(0);
+        le.extend_from_slice(&[op as u8, (op >> 8) as u8, (op >> 16) as u8]);
+        be.extend_from_slice(&[(op >> 16) as u8, (op >> 8) as u8, op as u8]);
+    }
+    for i in 0..DATA_WORDS {
+        le.extend_from_slice(&(i as u16 * 3).to_le_bytes());
+        be.extend_from_slice(&(i as u16 * 3).to_be_bytes());
+    }
+    assert_eq!(Upd77c25Firmware::from_image(&le).unwrap().to_le_image(), le);
+    assert_eq!(Upd77c25Firmware::from_image(&be).unwrap().to_le_image(), le);
+}
+
+#[test]
 fn from_image_rejects_other_sizes_reporting_size() {
     assert_eq!(
         Upd77c25Firmware::from_image(&[0u8; 12288]).err(),

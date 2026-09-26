@@ -3,6 +3,7 @@ use crate::platform::config::RamInitMode;
 use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
 use crate::snes::console::config::SnesHardware;
+use crate::snes::dsp::{self, DspChip};
 use crate::snes::input::{SnesButton, SnesControllerType};
 use std::path::Path;
 use std::path::PathBuf;
@@ -140,9 +141,10 @@ pub(crate) struct RunConfig<'a> {
     /// that state, and the run continues on it. Proves a save state survives a
     /// change of the `snes-hardware` setting between save and load.
     pub save_state_restore: Option<(u32, SnesHardware)>,
-    /// A DSP-1 firmware image handed to the console before the ROM loads, as the browser
-    /// version does; tests use synthetic firmware, never Nintendo's.
-    pub dsp1_firmware: Option<&'a [u8]>,
+    /// A DSP firmware image, and its chip, handed to the console before the ROM loads, as the
+    /// browser version does; tests use synthetic firmware, never Nintendo's, and the run
+    /// treats that image as the chip's genuine dump.
+    pub dsp_firmware: Option<(DspChip, &'a [u8])>,
 }
 
 impl<'a> RunConfig<'a> {
@@ -157,13 +159,13 @@ impl<'a> RunConfig<'a> {
             hardware: None,
             ram_init_mode: RamInitMode::Zero,
             save_state_restore: None,
-            dsp1_firmware: None,
+            dsp_firmware: None,
         }
     }
 
-    /// Supplies a DSP-1 firmware image (see [`RunConfig::dsp1_firmware`]).
-    pub(crate) const fn with_dsp1_firmware(mut self, image: &'a [u8]) -> Self {
-        self.dsp1_firmware = Some(image);
+    /// Supplies a DSP firmware image (see [`RunConfig::dsp_firmware`]).
+    pub(crate) const fn with_dsp_firmware(mut self, chip: DspChip, image: &'a [u8]) -> Self {
+        self.dsp_firmware = Some((chip, image));
         self
     }
 
@@ -370,9 +372,11 @@ fn runner_console(
     app_config.snes.hardware = hardware;
     app_config.frontend.ram_init_mode = config.ram_init_mode;
     let mut snes = Snes::new(AppContext::new_with_config(app_config));
-    if let Some(image) = config.dsp1_firmware {
-        snes.set_dsp1_firmware(image)
-            .unwrap_or_else(|size| panic!("DSP-1 firmware image is {size} bytes, not 8192"));
+    if let Some((chip, image)) = config.dsp_firmware {
+        let name = chip.message_file();
+        snes.set_firmware_table_for_test(dsp::test_table(&[(chip, name, image)]));
+        snes.set_dsp_firmware(chip, image)
+            .unwrap_or_else(|problem| panic!("{} firmware refused: {problem:?}", chip.label()));
     }
     snes.load_rom(rom, name)
         .unwrap_or_else(|err| panic!("failed to load SNES runner ROM {name}: {err}"));

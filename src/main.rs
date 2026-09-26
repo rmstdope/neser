@@ -325,8 +325,9 @@ fn run_native_emulator(
     use frontends::native::{NativeAudio, NativeEventLoop};
     use platform::audio::EmulatorAudio;
 
-    // A DSP-1 game without its firmware is refused before anything else (no audio device, no
-    // window), so the frontend can word the refusal for where the player is.
+    // A DSP game without its genuine firmware (missing, wrong size or not genuine) is refused
+    // before anything else (no audio device, no window), so the frontend can word the refusal
+    // for where the player is.
     if let Ok(rom_bytes) = std::fs::read(rom_path)
         && let Some(problem) =
             platform::rom_loader::firmware_problem(&app_context, rom_path, &rom_bytes)

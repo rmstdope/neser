@@ -7,6 +7,7 @@ use crate::snes::cartridge::EnhancementChip;
 use crate::snes::cartridge::Mapping;
 use crate::snes::console::save_state::{SnesBusState, SnesPpuState, SnesRomIdentity, SnesSa1State};
 use crate::snes::cx4::Cx4;
+use crate::snes::dsp::{self, DspModel};
 use crate::snes::gsu::Gsu;
 use crate::snes::gsu::memory::{self as gsu_memory, SnesTarget as GsuTarget};
 use crate::snes::input::{InputPorts, SnesButton};
@@ -123,10 +124,13 @@ pub struct SnesSystemBus {
     /// answers `$4800-$4807`. A `RefCell` because DMA reads advance its decompression on the
     /// `&self` read paths. `None` for cartridges without one.
     sdd1: Option<RefCell<Sdd1>>,
-    /// The DSP-1's uPD77C25, present when the cartridge has a DSP and firmware was supplied.
+    /// The DSP's uPD77C25, present when the cartridge has a DSP and firmware was supplied.
     /// A `RefCell` because reading its DR port advances the transfer while the bus read path
     /// takes `&self`.
     dsp: Option<RefCell<Upd77c25>>,
+    /// The first bank of the LoROM `xx:8000-FFFF` DSP window, which depends on the board
+    /// ([`DspModel::lorom_port_first_bank`]): `$20` for the DSP-2, `$30` for the DSP-1.
+    dsp_lorom_first_bank: u32,
     /// Every `(b_addr, value)` pair a DMA/HDMA A->B transfer has driven onto the
     /// B-bus, in order. Test-only instrument: it observes what the controller
     /// actually wrote, which is what the transfer tests are about, and replaces
@@ -226,6 +230,9 @@ impl SnesSystemBus {
             .as_ref()
             .filter(|_| cartridge.enhancement_chip() == Some(EnhancementChip::Dsp))
             .map(|firmware| RefCell::new(Upd77c25::new(Rc::clone(firmware), video_region)));
+        let dsp_lorom_first_bank = dsp::identify(&cartridge)
+            .map_or(0x30, DspModel::lorom_port_first_bank)
+            .into();
         let mut bus = Self {
             _cartridge: cartridge,
             mapping,
@@ -258,6 +265,7 @@ impl SnesSystemBus {
             gsu,
             sdd1,
             dsp,
+            dsp_lorom_first_bank,
             #[cfg(test)]
             b_bus_writes: RefCell::new(Vec::new()),
         };
@@ -405,21 +413,25 @@ impl SnesSystemBus {
         }
     }
 
-    /// Whether `addr` is one of the DSP-1's ports, and if so whether it is SR (`true`) or DR.
+    /// Whether `addr` is one of the DSP's ports, and if so whether it is SR (`true`) or DR.
     ///
     /// fullsnes "SNES Cart DSP-n/ST010/ST011" lists, per board, DR/SR at
-    /// `30-3F:8000-BFFF`/`C000-FFFF` (LoROM 1 MB), `60-6F:0000-3FFF`/`4000-7FFF` (LoROM 2 MB) and
+    /// `30-3F:8000-BFFF`/`C000-FFFF` (LoROM 1 MB), `20-3F` for the same on the 1 MB+RAM boards
+    /// of the DSP-2/3, `60-6F:0000-3FFF`/`4000-7FFF` (LoROM 2 MB) and
     /// `00-1F:6000-6FFF`/`7000-7FFF` (HiROM), all mirrored at `$80-$FF`. This decodes Mesen2's
-    /// union of them (`NecDsp` constructor): both LoROM windows with A14 choosing SR, and the
-    /// HiROM window with A12. fullsnes' `20-3F` LoROM range (DSP-2/3 boards with RAM) and the
-    /// `00-0F,20-2F` MAD-2 HiROM range are not decoded: no DSP-1 game uses them.
+    /// union of them (`NecDsp` constructor), both LoROM windows with A14 choosing SR and the
+    /// HiROM window with A12, except that the first LoROM bank follows the board
+    /// (`dsp_lorom_first_bank`): Mesen2 maps the DSP-2 at `30-3F` only, while fullsnes and
+    /// ares (`SHVC-1B5B-02`: `20-3f,a0-bf:8000-ffff`) put it at `20-3F`. The `00-0F,20-2F`
+    /// MAD-2 HiROM range is not decoded: no emulated DSP game uses it.
     fn dsp_port(&self, addr: u32) -> Option<bool> {
         self.dsp.as_ref()?;
         let bank = (addr >> 16) & 0x7F;
         let offset = addr & 0xFFFF;
         match self.mapping {
             Mapping::LoRom => {
-                let window = ((0x30..=0x3F).contains(&bank) && offset >= 0x8000)
+                let window = ((self.dsp_lorom_first_bank..=0x3F).contains(&bank)
+                    && offset >= 0x8000)
                     || ((0x60..=0x6F).contains(&bank) && offset < 0x8000);
                 window.then_some(offset & 0x4000 != 0)
             }
@@ -2336,12 +2348,17 @@ mod tests {
     /// A DSP-1 bus whose synthetic firmware sets SR's user flags to `$60`, outputs `$1234` on DR
     /// and waits for the SNES to take it.
     fn dsp_test_bus(hirom: bool) -> SnesSystemBus {
+        dsp_test_bus_titled(b"SUPER MARIOKART", hirom)
+    }
+
+    /// As [`dsp_test_bus`], for the DSP the header `title` identifies.
+    fn dsp_test_bus_titled(title: &[u8], hirom: bool) -> SnesSystemBus {
         use crate::snes::upd77c25::asm::{DST_DR, DST_SR, JRQM, NOP, jp, ld};
         use crate::snes::upd77c25::{DATA_WORDS, PROGRAM_WORDS};
         let mut program = vec![NOP; PROGRAM_WORDS];
         program[..3].copy_from_slice(&[ld(DST_SR, 0x6000), ld(DST_DR, 0x1234), jp(JRQM, 2)]);
         let firmware = Upd77c25Firmware::from_words(program, vec![0; DATA_WORDS]);
-        let rom = crate::snes::test_support::dsp_rom(b"SUPER MARIOKART", hirom);
+        let rom = crate::snes::test_support::dsp_rom(title, hirom);
         let mut bus = SnesSystemBus::new_with_options(
             Cartridge::from_bytes(&rom).unwrap(),
             &SnesBusOptions {
@@ -2378,6 +2395,36 @@ mod tests {
         ] {
             assert_eq!(bus.dsp_port(addr), None, "{addr:06X} is not a DSP port");
         }
+    }
+
+    #[test]
+    fn dsp2_lorom_ports_at_20_3f_and_a0_bf() {
+        let bus = dsp_test_bus_titled(b"DUNGEON MASTER", false);
+        for addr in [
+            0x20_C000, 0x2F_FFFF, 0x3F_C000, 0xA0_C000, 0xAF_E000, 0x60_4000,
+        ] {
+            assert_eq!(bus.dsp_port(addr), Some(true), "SR at {addr:06X}");
+        }
+        for addr in [0x20_8000, 0x2A_BFFF, 0xA0_8000] {
+            assert_eq!(bus.dsp_port(addr), Some(false), "DR at {addr:06X}");
+        }
+        assert_eq!(bus.read(0x20_C000), 0xE0);
+        for addr in [0x1F_C000, 0x9F_8000, 0x20_7FFF, 0x40_C000] {
+            assert_eq!(bus.dsp_port(addr), None, "{addr:06X} is not a DSP port");
+        }
+    }
+
+    #[test]
+    fn dsp1_lorom_keeps_30_3f_with_20_2f_as_rom() {
+        let bus = dsp_test_bus(false);
+        for addr in [0x20_C000, 0x2F_8000, 0xA0_C000, 0xAF_FFFF] {
+            assert_eq!(
+                bus.dsp_port(addr),
+                None,
+                "{addr:06X} is ROM on a DSP-1 board"
+            );
+        }
+        assert_eq!(bus.dsp_port(0x30_C000), Some(true));
     }
 
     #[test]
