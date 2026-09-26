@@ -966,6 +966,16 @@ fn wasm_gb_lcd_filter_starts_dmg_green_and_reports_its_colours() {
     assert_eq!(gb.cycle_palette(), "Pocket");
 }
 
+#[wasm_bindgen_test]
+fn wasm_gb_lcd_filter_keeps_its_classic_colours_without_a_dmg_game() {
+    let gb = WasmGb::new();
+    let [(br, bg, bb), (fr, fg, fb)] = crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS;
+    assert_eq!(
+        gb.lcd_filter_palette_rgba(),
+        vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
+    );
+}
+
 // ── WasmGba tests ────────────────────────────────────────────────────────────
 
 fn minimal_gba_rom() -> Vec<u8> {

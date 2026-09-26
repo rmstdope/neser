@@ -117,7 +117,7 @@ impl WasmGb {
     /// The LCD filter's palette texture as 2x1 RGBA: background, foreground.
     #[wasm_bindgen]
     pub fn lcd_filter_palette_rgba(&self) -> Vec<u8> {
-        let [(br, bg, bb), (fr, fg, fb)] = self.gb.palette().lcd_filter_colors();
+        let [(br, bg, bb), (fr, fg, fb)] = self.gb.lcd_filter_colors();
         vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
     }
 

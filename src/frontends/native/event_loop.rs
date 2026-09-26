@@ -379,7 +379,7 @@ impl NativeEventLoop {
         } else {
             gb.set_lcd_filter_active(filter_on);
         }
-        gl.set_gb_filter_colors(gb.palette().lcd_filter_colors());
+        gl.set_gb_filter_colors(gb.lcd_filter_colors());
     }
 
     fn switch_to_cartridge(&mut self, rom_path: &str) {

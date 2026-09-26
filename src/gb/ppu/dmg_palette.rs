@@ -124,6 +124,10 @@ impl GbPalette {
     }
 }
 
+/// The LCD filter's own `[background, foreground]` colours (its original
+/// `palette.png`), kept for games the shade palette does not apply to.
+pub const CLASSIC_LCD_FILTER_COLORS: [(u8, u8, u8); 2] = [(0xA0, 0xAA, 0x05), (0x1D, 0x6A, 0x6B)];
+
 /// Toast shown when F8 changes the Game Boy palette.
 pub fn palette_toast_message(palette: GbPalette) -> String {
     format!("Palette: {}", palette.display_name())

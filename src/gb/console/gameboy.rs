@@ -395,10 +395,21 @@ impl GameBoy {
     /// filter's own colour before palettes existed.
     pub fn start_lcd_filter(&mut self, active: bool) {
         let configured = self.app_context.borrow().config().gb.palette;
-        if active && configured.is_none() {
+        if active && configured.is_none() && self.is_dmg() {
             self.palette = GbPalette::DmgGreen;
         }
         self.set_lcd_filter_active(active);
+    }
+
+    /// The `[background, foreground]` colours the LCD filter draws in: the
+    /// chosen palette's in an original Game Boy game, the filter's own
+    /// classic colours otherwise (Game Boy Color games are not affected).
+    pub fn lcd_filter_colors(&self) -> [(u8, u8, u8); 2] {
+        if self.is_dmg() {
+            self.palette.lcd_filter_colors()
+        } else {
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
+        }
     }
 
     fn apply_palette(&mut self) {
@@ -1829,5 +1840,38 @@ mod tests {
         no_filter.start_lcd_filter(false);
         assert_eq!(no_filter.palette(), GbPalette::Grey);
         assert_eq!(no_filter.drawn_dmg_shades(), Some(GbPalette::Grey.shades()));
+    }
+
+    #[test]
+    fn test_lcd_filter_colours_follow_the_palette_in_a_dmg_game() {
+        let mut gb = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Pocket)),
+            &minimal_rom(),
+        );
+        gb.start_lcd_filter(true);
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            GbPalette::Pocket.lcd_filter_colors()
+        );
+    }
+
+    #[test]
+    fn test_lcd_filter_keeps_its_classic_colours_in_a_cgb_game() {
+        let mut gb = loaded(
+            make_gameboy_with_palette(Some(GbPalette::Light)),
+            &minimal_cgb_rom(),
+        );
+        gb.start_lcd_filter(true);
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
+        );
+        let mut unconfigured = loaded(make_gameboy_with_palette(None), &minimal_cgb_rom());
+        unconfigured.start_lcd_filter(true);
+        assert_eq!(unconfigured.palette(), GbPalette::Grey);
+        assert_eq!(
+            unconfigured.lcd_filter_colors(),
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS
+        );
     }
 }
