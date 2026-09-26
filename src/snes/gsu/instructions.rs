@@ -18,8 +18,20 @@ impl Gsu {
             0x01 => self.reset_prefixes(),
             0x03 => self.op_lsr(),
             0x04 => self.op_rol(),
+            0x05 => self.op_branch(true),
+            0x06 => self.op_branch(self.state.sign == self.state.overflow),
+            0x07 => self.op_branch(self.state.sign != self.state.overflow),
+            0x08 => self.op_branch(!self.state.zero),
+            0x09 => self.op_branch(self.state.zero),
+            0x0A => self.op_branch(!self.state.sign),
+            0x0B => self.op_branch(self.state.sign),
+            0x0C => self.op_branch(!self.state.carry),
+            0x0D => self.op_branch(self.state.carry),
+            0x0E => self.op_branch(!self.state.overflow),
+            0x0F => self.op_branch(self.state.overflow),
             0x10..=0x1F => self.op_to_move(n),
             0x20..=0x2F => self.op_with(n),
+            0x3C => self.op_loop(),
             0x3D => self.op_alt(true, false),
             0x3E => self.op_alt(false, true),
             0x3F => self.op_alt(true, true),
@@ -30,9 +42,11 @@ impl Gsu {
             0x70 => self.op_merge(),
             0x71..=0x7F => self.op_and_bic(n),
             0x80..=0x8F => self.op_mult_umult(n),
+            0x91..=0x94 => self.op_link(n),
             0x95 => self.op_sex(),
             0x96 => self.op_asr_div2(),
             0x97 => self.op_ror(),
+            0x98..=0x9D => self.op_jmp_ljmp(n),
             0x9E => self.op_lob(),
             0x9F => self.op_fmult_lmult(),
             0xA0..=0xAF => self.op_ibt_lms_sms(n),
@@ -113,6 +127,52 @@ impl Gsu {
         } else {
             self.state.sreg = n;
         }
+    }
+
+    // ---- Control flow ---------------------------------------------------------------------
+
+    /// `$05-$0F`: Bxx, R15 += signed offset relative to the byte after the operand. Branches are
+    /// the one opcode family that leaves the prefixes set (fullsnes), so a prefix before the
+    /// branch applies to the delay-slot opcode after it.
+    fn op_branch(&mut self, taken: bool) {
+        let offset = self.read_operand() as i8;
+        if taken {
+            self.write_reg(15, self.state.r[15].wrapping_add_signed(i16::from(offset)));
+        }
+    }
+
+    /// `$98-$9D`: JMP Rn; with ALT1 LJMP Rn (PBR = Rn, R15 = Sreg), which also moves the code
+    /// cache to the target and empties it (fullsnes "Code-Cache": "LJMP sets CBR to R15 AND
+    /// FFF0h").
+    fn op_jmp_ljmp(&mut self, n: u8) {
+        let target_reg = self.state.r[usize::from(n)];
+        if self.state.alt1 {
+            self.state.pbr = target_reg as u8;
+            let target = self.src();
+            self.write_reg(15, target);
+            self.state.cbr = target & 0xFFF0;
+            self.invalidate_all_code_cache_lines();
+        } else {
+            self.write_reg(15, target_reg);
+        }
+        self.reset_prefixes();
+    }
+
+    /// `$3C`: LOOP, R12 -= 1 and jump to R13 unless it reached zero.
+    fn op_loop(&mut self) {
+        let counter = self.state.r[12].wrapping_sub(1);
+        self.state.r[12] = counter;
+        self.set_sz(counter);
+        if counter != 0 {
+            self.write_reg(15, self.state.r[13]);
+        }
+        self.reset_prefixes();
+    }
+
+    /// `$91-$94`: LINK #n, R11 = R15 + n (R15 already the next opcode's address).
+    fn op_link(&mut self, n: u8) {
+        self.state.r[11] = self.state.r[15].wrapping_add(u16::from(n));
+        self.reset_prefixes();
     }
 
     // ---- Arithmetic -----------------------------------------------------------------------
