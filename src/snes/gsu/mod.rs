@@ -373,6 +373,8 @@ fn code_cache_window_slot(offset: u16) -> Option<usize> {
 }
 
 #[cfg(test)]
+mod alu_tests;
+#[cfg(test)]
 mod bus_tests;
 #[cfg(test)]
 mod core_tests;

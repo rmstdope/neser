@@ -16,10 +16,287 @@ impl Gsu {
         match opcode {
             0x00 => self.op_stop(),
             0x01 => self.reset_prefixes(),
+            0x03 => self.op_lsr(),
+            0x04 => self.op_rol(),
+            0x10..=0x1F => self.op_to_move(n),
+            0x20..=0x2F => self.op_with(n),
+            0x3D => self.op_alt(true, false),
+            0x3E => self.op_alt(false, true),
+            0x3F => self.op_alt(true, true),
+            0x4D => self.op_swap(),
+            0x4F => self.op_not(),
+            0x50..=0x5F => self.op_add_adc(n),
+            0x60..=0x6F => self.op_sub_sbc_cmp(n),
+            0x70 => self.op_merge(),
+            0x71..=0x7F => self.op_and_bic(n),
+            0x80..=0x8F => self.op_mult_umult(n),
+            0x95 => self.op_sex(),
+            0x96 => self.op_asr_div2(),
+            0x97 => self.op_ror(),
+            0x9E => self.op_lob(),
+            0x9F => self.op_fmult_lmult(),
             0xA0..=0xAF => self.op_ibt_lms_sms(n),
+            0xB0..=0xBF => self.op_from_moves(n),
+            0xC0 => self.op_hib(),
+            0xC1..=0xCF => self.op_or_xor(n),
+            0xD0..=0xDE => self.op_inc(n),
+            0xE0..=0xEE => self.op_dec(n),
             0xF0..=0xFF => self.op_iwt_lm_sm(n),
             _ => self.reset_prefixes(),
         }
+    }
+
+    fn src(&self) -> u16 {
+        self.state.r[usize::from(self.state.sreg)]
+    }
+
+    fn write_dest(&mut self, value: u16) {
+        self.write_reg(self.state.dreg, value);
+    }
+
+    /// The second operand of the `$5n-$Cn` ALU opcodes: the constant `n` with ALT2, else Rn.
+    fn alu_operand(&self, n: u8) -> u16 {
+        if self.state.alt2 {
+            u16::from(n)
+        } else {
+            self.state.r[usize::from(n)]
+        }
+    }
+
+    fn set_sz(&mut self, value: u16) {
+        self.state.sign = value & 0x8000 != 0;
+        self.state.zero = value == 0;
+    }
+
+    /// Writes Dreg with a result whose S and Z flags follow it, and ends the opcode.
+    fn finish_sz(&mut self, value: u16) {
+        self.write_dest(value);
+        self.set_sz(value);
+        self.reset_prefixes();
+    }
+
+    // ---- Prefixes -------------------------------------------------------------------------
+
+    /// ALT1/ALT2/ALT3. They clear B, so a WITH before them no longer turns `1n`/`Bn` into
+    /// MOVE/MOVES (Mesen2 `ALT1`/`ALT2`/`ALT3`); Sreg/Dreg survive.
+    fn op_alt(&mut self, alt1: bool, alt2: bool) {
+        self.state.b_prefix = false;
+        self.state.alt1 |= alt1;
+        self.state.alt2 |= alt2;
+    }
+
+    /// `$1n`: TO Rn, or MOVE Rn,Rs after WITH.
+    fn op_to_move(&mut self, n: u8) {
+        if self.state.b_prefix {
+            self.write_reg(n, self.src());
+            self.reset_prefixes();
+        } else {
+            self.state.dreg = n;
+        }
+    }
+
+    /// `$2n`: WITH Rn selects Rn as both Sreg and Dreg and sets B.
+    fn op_with(&mut self, n: u8) {
+        self.state.sreg = n;
+        self.state.dreg = n;
+        self.state.b_prefix = true;
+    }
+
+    /// `$Bn`: FROM Rn, or MOVES Rd,Rn after WITH (flags from the value, OV = bit 7).
+    fn op_from_moves(&mut self, n: u8) {
+        if self.state.b_prefix {
+            let value = self.state.r[usize::from(n)];
+            self.write_dest(value);
+            self.state.overflow = value & 0x80 != 0;
+            self.set_sz(value);
+            self.reset_prefixes();
+        } else {
+            self.state.sreg = n;
+        }
+    }
+
+    // ---- Arithmetic -----------------------------------------------------------------------
+
+    /// `$5n`: ADD Rn; ALT1 ADC Rn; ALT2 ADD #n; ALT3 ADC #n.
+    fn op_add_adc(&mut self, n: u8) {
+        let a = self.src();
+        let b = self.alu_operand(n);
+        let carry_in = u32::from(self.state.alt1 && self.state.carry);
+        let result = u32::from(a) + u32::from(b) + carry_in;
+        let value = result as u16;
+        self.state.carry = result > 0xFFFF;
+        self.state.overflow = !(a ^ b) & (b ^ value) & 0x8000 != 0;
+        self.finish_sz(value);
+    }
+
+    /// `$6n`: SUB Rn; ALT1 SBC Rn; ALT2 SUB #n; ALT3 CMP Rn (flags only).
+    fn op_sub_sbc_cmp(&mut self, n: u8) {
+        let (alt1, alt2) = (self.state.alt1, self.state.alt2);
+        let a = self.src();
+        let b = if alt2 && !alt1 {
+            u16::from(n)
+        } else {
+            self.state.r[usize::from(n)]
+        };
+        let borrow_in = i32::from(alt1 && !alt2 && !self.state.carry);
+        let result = i32::from(a) - i32::from(b) - borrow_in;
+        let value = result as u16;
+        self.state.carry = result >= 0;
+        self.state.overflow = (a ^ b) & (a ^ value) & 0x8000 != 0;
+        self.set_sz(value);
+        if !(alt1 && alt2) {
+            self.write_dest(value);
+        }
+        self.reset_prefixes();
+    }
+
+    /// `$7n` (n = 1..15): AND Rn; ALT1 BIC Rn; ALT2 AND #n; ALT3 BIC #n.
+    fn op_and_bic(&mut self, n: u8) {
+        let b = self.alu_operand(n);
+        let value = if self.state.alt1 {
+            self.src() & !b
+        } else {
+            self.src() & b
+        };
+        self.finish_sz(value);
+    }
+
+    /// `$Cn` (n = 1..15): OR Rn; ALT1 XOR Rn; ALT2 OR #n; ALT3 XOR #n.
+    fn op_or_xor(&mut self, n: u8) {
+        let b = self.alu_operand(n);
+        let value = if self.state.alt1 {
+            self.src() ^ b
+        } else {
+            self.src() | b
+        };
+        self.finish_sz(value);
+    }
+
+    fn op_not(&mut self) {
+        self.finish_sz(!self.src());
+    }
+
+    /// `$Dn` (n = 0..14): INC Rn. Rn itself, not Dreg.
+    fn op_inc(&mut self, n: u8) {
+        let value = self.state.r[usize::from(n)].wrapping_add(1);
+        self.write_reg(n, value);
+        self.set_sz(value);
+        self.reset_prefixes();
+    }
+
+    /// `$En` (n = 0..14): DEC Rn.
+    fn op_dec(&mut self, n: u8) {
+        let value = self.state.r[usize::from(n)].wrapping_sub(1);
+        self.write_reg(n, value);
+        self.set_sz(value);
+        self.reset_prefixes();
+    }
+
+    // ---- Shifts and rotates ---------------------------------------------------------------
+
+    fn op_lsr(&mut self) {
+        let a = self.src();
+        self.state.carry = a & 1 != 0;
+        self.finish_sz(a >> 1);
+    }
+
+    /// `$96`: ASR; with ALT1 DIV2, which is ASR except that -1 gives 0 (fullsnes).
+    fn op_asr_div2(&mut self) {
+        let a = self.src();
+        self.state.carry = a & 1 != 0;
+        let value = if self.state.alt1 && a == 0xFFFF {
+            0
+        } else {
+            ((a as i16) >> 1) as u16
+        };
+        self.finish_sz(value);
+    }
+
+    fn op_rol(&mut self) {
+        let a = self.src();
+        let value = a << 1 | u16::from(self.state.carry);
+        self.state.carry = a & 0x8000 != 0;
+        self.finish_sz(value);
+    }
+
+    fn op_ror(&mut self) {
+        let a = self.src();
+        let value = a >> 1 | u16::from(self.state.carry) << 15;
+        self.state.carry = a & 1 != 0;
+        self.finish_sz(value);
+    }
+
+    // ---- Byte operations ------------------------------------------------------------------
+
+    fn op_swap(&mut self) {
+        self.finish_sz(self.src().rotate_right(8));
+    }
+
+    fn op_sex(&mut self) {
+        self.finish_sz(self.src() as u8 as i8 as u16);
+    }
+
+    /// LOB and HIB set SF from bit 7 of their byte result (fullsnes "SF=Bit7").
+    fn finish_byte(&mut self, value: u8) {
+        self.write_dest(u16::from(value));
+        self.state.sign = value & 0x80 != 0;
+        self.state.zero = value == 0;
+        self.reset_prefixes();
+    }
+
+    fn op_lob(&mut self) {
+        self.finish_byte(self.src() as u8);
+    }
+
+    fn op_hib(&mut self) {
+        self.finish_byte((self.src() >> 8) as u8);
+    }
+
+    /// `$70`: MERGE, Dreg = R7.hi:R8.hi with fullsnes' own flag rules.
+    fn op_merge(&mut self) {
+        let value = (self.state.r[7] & 0xFF00) | (self.state.r[8] >> 8);
+        self.write_dest(value);
+        self.state.sign = value & 0x8080 != 0;
+        self.state.overflow = value & 0xC0C0 != 0;
+        self.state.carry = value & 0xE0E0 != 0;
+        self.state.zero = value & 0xF0F0 != 0;
+        self.reset_prefixes();
+    }
+
+    // ---- Multiplies -----------------------------------------------------------------------
+
+    /// `$8n`: MULT Rn; ALT1 UMULT Rn; ALT2 MULT #n; ALT3 UMULT #n. 8x8 bits, 16-bit result.
+    fn op_mult_umult(&mut self, n: u8) {
+        let a = self.src() as u8;
+        let b = self.alu_operand(n) as u8;
+        let value = if self.state.alt1 {
+            u16::from(a) * u16::from(b)
+        } else {
+            (i16::from(a as i8) * i16::from(b as i8)) as u16
+        };
+        self.finish_sz(value);
+        // fullsnes lists 1 or 2 cycles by CFGR MS0; the extra is Mesen2's `Step(HighSpeedMode ?
+        // 1 : 2)` in master clocks.
+        let extra = if self.state.cfgr & 0x20 != 0 { 1 } else { 2 };
+        self.step(extra);
+    }
+
+    /// `$9F`: FMULT (Dreg = high word of Sreg * R6); ALT1 LMULT (also R4 = low word). CY is bit
+    /// 15 of the 32-bit product. R4 is written before Dreg, so LMULT with Dreg=R4 leaves the high
+    /// word there, as fullsnes reports.
+    fn op_fmult_lmult(&mut self) {
+        let product = i32::from(self.src() as i16) * i32::from(self.state.r[6] as i16);
+        if self.state.alt1 {
+            self.write_reg(4, product as u16);
+        }
+        let value = (product >> 16) as u16;
+        self.state.carry = product & 0x8000 != 0;
+        self.finish_sz(value);
+        // fullsnes: 4 or 8 cycles (FMULT), by CFGR MS0; Mesen2 charges
+        // `(HighSpeedMode ? 3 : 7) * (ClockSelect ? 1 : 2)` master clocks on top of the fetch.
+        let cycles = if self.state.cfgr & 0x20 != 0 { 3 } else { 7 };
+        let per_cycle = if self.state.clock_21mhz { 1 } else { 2 };
+        self.step(cycles * per_cycle);
     }
 
     /// Resets B, ALT1, ALT2, Sreg and Dreg after an opcode.
