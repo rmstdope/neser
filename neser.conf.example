@@ -108,6 +108,24 @@ nes-palette=default
 # Default: grey (dmg-green when gb-filter=dmg)
 #gb-palette=grey
 
+# Colour palette for original Game Boy (DMG) games running on a Game Boy Color
+# (gb-hardware=cgb). The Game Boy Color tints these games itself; by default it
+# picks the tint from the game's title, as the real console does.
+# Allowed values (case-insensitive):
+#   auto       - The tint the Game Boy Color picks for this game (preserves prior behavior).
+#   brown      - Up         dark-blue  - Left + A   orange     - Down + A   dark-green - Right + A
+#   red        - Up + A     grayscale  - Left + B   yellow     - Down + B   reverse    - Right + B
+#   dark-brown - Up + B     pastel-mix - Down       green      - Right
+#   blue       - Left
+# (The button combination is the one held at start-up on a real Game Boy Color.)
+# "greyscale" is accepted as another spelling of grayscale.
+# An unknown value is ignored with a warning and the default palette is kept.
+# At runtime, press F8 in such a game to cycle through these palettes.
+# Game Boy Color games and original Game Boy games on a Game Boy are not affected.
+# Headless capture (--headless) uses this palette too.
+# Default: auto
+#gbc-palette=auto
+
 # -----------------------------------------------------------------------------
 # Audio Settings
 # -----------------------------------------------------------------------------

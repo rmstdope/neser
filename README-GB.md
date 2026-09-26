@@ -117,6 +117,21 @@ not affected.
 neser --gb-palette pocket path/to/game.gb
 ```
 
+## Game Boy Color palette for original Game Boy games
+
+When an original Game Boy game runs on Game Boy Color hardware
+(`gb-hardware=cgb`), the Game Boy Color tints it, by default with the tint its
+boot ROM picks from the game's title (`auto`). `--gbc-palette` or `gbc-palette`
+chooses one of the twelve tints a real Game Boy Color offers through button
+combinations at start-up instead: `brown`, `red`, `dark-brown`, `blue`,
+`dark-blue`, `grayscale`, `pastel-mix`, `orange`, `yellow`, `green`,
+`dark-green` and `reverse`. F8 cycles them while playing. Game Boy Color games
+are not affected.
+
+```bash
+neser --gb-hardware cgb --gbc-palette red path/to/game.gb
+```
+
 ## Boot animation
 
 The Game Boy boot animation can be enabled with:
