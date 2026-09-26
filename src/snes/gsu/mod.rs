@@ -279,7 +279,7 @@ impl Gsu {
     /// effectively does (its read guard never fires for a non-FX3 chip).
     pub fn read_register(&mut self, offset: u16) -> Option<u8> {
         let value = self.peek_register(offset)?;
-        if register_offset(offset) == Some(0x31) {
+        if register_offset(self.version, offset) == Some(0x31) {
             // fullsnes: SFR bit 15 "IRQ ... reset on read".
             self.state.irq = false;
         }
@@ -293,7 +293,7 @@ impl Gsu {
             return Some(self.state.code_cache[slot]);
         }
         let s = &self.state;
-        let value = match register_offset(offset)? {
+        let value = match register_offset(self.version, offset)? {
             reg @ 0x00..=0x1F => {
                 let word = s.r[usize::from(reg >> 1)];
                 if reg & 1 == 0 {
@@ -333,7 +333,7 @@ impl Gsu {
 
     /// An S-CPU write to `$3000-$34FF` (offset within the bank).
     pub fn write_register(&mut self, offset: u16, value: u8) {
-        let Some(reg) = register_offset(offset) else {
+        let Some(reg) = register_offset(self.version, offset) else {
             if let Some(slot) = code_cache_window_slot(offset) {
                 self.write_code_cache_window(slot, value);
             }
@@ -415,15 +415,24 @@ impl Gsu {
 /// The register a `$3000-$34FF` offset addresses, as `$00-$3F` of the `$3000-$303F` block, with
 /// `$3100-$32FF` being the code cache.
 ///
-/// The decode is Mesen2's (`addr & $33FF`, fullsnes' GSU2 map without its `$3020-$302F` SFR
-/// mirror): the `$3000-$303F` block repeats through `$3040-$30FF` and `$3300-$34FF`, and
-/// `$3020-$302F` reads 0. It is used although VCR reports the MC1: fullsnes' MC1 "Black Blob"
-/// map would make `$3032-$303F` mirrors of SFR, leaving PBR, ROMBR, RAMBR and CBR unreadable,
-/// which contradicts its own general I/O map that lists them readable; nothing is recorded for
-/// the SMD MC1 or the GSU-1 proper. Games are not known to read these mirrors.
-fn register_offset(offset: u16) -> Option<u8> {
+/// Both chips repeat the `$3000-$303F` block through `$3040-$30FF` and `$3300-$34FF`. On a GSU-2,
+/// `$3020-$302F` also mirrors `$3030-$303F` (fullsnes "Full I/O Map with Mirrors for GSU2").
+///
+/// On a GSU-1 the decode is Mesen2's (`addr & $33FF`), so `$3020-$302F` reads 0. It is used
+/// although VCR reports the MC1: fullsnes' MC1 "Black Blob" map would make `$3032-$303F` mirrors
+/// of SFR, leaving PBR, ROMBR, RAMBR and CBR unreadable, which contradicts its own general I/O map
+/// that lists them readable; nothing is recorded for the SMD MC1 or the GSU-1 proper. Games are not
+/// known to read these mirrors.
+fn register_offset(version: GsuVersion, offset: u16) -> Option<u8> {
     match offset {
-        0x3000..=0x30FF | 0x3300..=0x34FF => Some((offset & 0x3F) as u8),
+        0x3000..=0x30FF | 0x3300..=0x34FF => {
+            let reg = (offset & 0x3F) as u8;
+            if version == GsuVersion::Gsu2 && reg & 0x30 == 0x20 {
+                Some(reg | 0x10)
+            } else {
+                Some(reg)
+            }
+        }
         _ => None,
     }
 }

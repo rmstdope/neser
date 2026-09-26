@@ -111,6 +111,36 @@ fn gsu2_cart_version_code_reads_04() {
 }
 
 #[test]
+fn gsu2_status_registers_mirror_at_3020() {
+    // fullsnes "Full I/O Map with Mirrors for GSU2 (VCR=04h)": "3020h..302Fh mirror of
+    // 3030h..303Fh".
+    let mut rom = gsu2_cart_rom(0x05, |_| 0);
+    rom[..3].copy_from_slice(&[0x05, 0xFE, 0x01]); // BRA to itself; NOP.
+    let mut bus = gsu_bus(&rom);
+    assert_eq!(bus.read(0x00_302B), 0x04, "VCR");
+    bus.write(0x00_3034, 0x5A);
+    assert_eq!(bus.read(0x00_3024), 0x5A, "PBR");
+    bus.write(0x00_3024, 0x00); // PBR back to bank 0, through the mirror.
+    assert_eq!(bus.read(0x00_3034), 0x00, "PBR written via $3024");
+
+    bus.write(0x00_301E, 0x00);
+    bus.write(0x00_301F, 0x80); // GO
+    assert_eq!(bus.read(0x00_3020) & 0x20, 0x20, "SFR GO via $3020");
+    bus.write(0x00_3020, 0x00); // GO=0 through the mirror stops the GSU.
+    assert_eq!(bus.read(0x00_3030) & 0x20, 0x00, "stopped");
+}
+
+#[test]
+fn gsu1_cart_3020_reads_zero_and_ignores_writes() {
+    // nr-hab.1's register map for the GSU-1 (Mesen2's decode): `$3020-$302F` is unused.
+    let mut bus = gsu_bus(&gsu_cart_rom(|_| 0));
+    bus.write(0x00_3034, 0x5A);
+    assert_eq!(bus.read(0x00_3024), 0x00);
+    bus.write(0x00_3024, 0x11);
+    assert_eq!(bus.read(0x00_3034), 0x5A);
+}
+
+#[test]
 fn gsu_cache_window_reads_back_snes_writes() {
     let mut bus = gsu_bus(&gsu_cart_rom(|_| 0));
     bus.write(0x00_3100, 0x77);
