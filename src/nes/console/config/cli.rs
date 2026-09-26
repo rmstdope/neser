@@ -3679,6 +3679,29 @@ mod tests {
     }
 
     #[test]
+    fn test_cgb_color_correction_arg_with_value_keeps_rom_path() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--cgb-color-correction".to_string(),
+            "true".to_string(),
+            "game.gbc".to_string(),
+        ]);
+        assert!(config.gb.cgb_color_correction);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.gbc"));
+    }
+
+    #[test]
+    fn test_cgb_color_correction_bare_flag_keeps_rom_path() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--cgb-color-correction".to_string(),
+            "game.gbc".to_string(),
+        ]);
+        assert!(config.gb.cgb_color_correction);
+        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.gbc"));
+    }
+
+    #[test]
     fn test_old_hardware_arg_is_rejected() {
         let args = vec![
             "neser".to_string(),

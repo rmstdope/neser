@@ -383,6 +383,14 @@ nes-vertical_overscan=8
 # Valid values: true, false
 #gb-boot-animation=false
 
+# Game Boy Color LCD color correction.
+# When enabled, colors are mixed and brightened the way the Game Boy Color
+# screen showed them: softer and paler than the raw colors. Applies to
+# everything shown in color, including black-and-white games the Game Boy
+# Color colorizes. Screenshots and captures use it too.
+# Default: false (raw colors).
+#cgb-color-correction=false
+
 # -----------------------------------------------------------------------------
 # Game Boy Advance Settings
 # -----------------------------------------------------------------------------
