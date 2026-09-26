@@ -14,6 +14,7 @@
 //! - `Smooth`: "Smooth V2 (FBX)" palette by FirebrandX.
 //! - `Classic`: "Classic (FBX)" palette by FirebrandX.
 //! - `CompositeDirect`: "Composite Direct (FBX)" palette by FirebrandX.
+//! - `Mesen`: Mesen2's default palette, for comparing captures with Mesen2.
 
 /// A selectable preset NES system palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -29,16 +30,19 @@ pub enum NesPalette {
     Classic,
     /// "Composite Direct (FBX)" palette by FirebrandX.
     CompositeDirect,
+    /// Mesen2's default palette.
+    Mesen,
 }
 
 impl NesPalette {
     /// All presets in cycle order.
-    pub const ALL: [NesPalette; 5] = [
+    pub const ALL: [NesPalette; 6] = [
         NesPalette::Default,
         NesPalette::NesDev,
         NesPalette::Smooth,
         NesPalette::Classic,
         NesPalette::CompositeDirect,
+        NesPalette::Mesen,
     ];
 
     /// Returns the 64-entry RGB lookup table for this preset.
@@ -49,6 +53,7 @@ impl NesPalette {
             NesPalette::Smooth => &PALETTE_SMOOTH,
             NesPalette::Classic => &PALETTE_CLASSIC,
             NesPalette::CompositeDirect => &PALETTE_COMPOSITE_DIRECT,
+            NesPalette::Mesen => &PALETTE_MESEN,
         }
     }
 
@@ -60,6 +65,7 @@ impl NesPalette {
             NesPalette::Smooth => "Smooth",
             NesPalette::Classic => "Classic",
             NesPalette::CompositeDirect => "Composite Direct",
+            NesPalette::Mesen => "Mesen",
         }
     }
 
@@ -71,6 +77,7 @@ impl NesPalette {
             NesPalette::Smooth => "smooth",
             NesPalette::Classic => "classic",
             NesPalette::CompositeDirect => "composite-direct",
+            NesPalette::Mesen => "mesen",
         }
     }
 
@@ -80,6 +87,13 @@ impl NesPalette {
     pub fn from_config_id(id: &str) -> Option<NesPalette> {
         let id = id.trim().to_ascii_lowercase();
         NesPalette::ALL.into_iter().find(|p| p.config_id() == id)
+    }
+
+    /// Every config/CLI identifier in cycle order, joined with ", ".
+    ///
+    /// Used by the invalid-value messages so they never drift from [`Self::ALL`].
+    pub fn config_id_list() -> String {
+        NesPalette::ALL.map(NesPalette::config_id).join(", ")
     }
 
     /// Returns the next preset in cycle order, wrapping around.
@@ -194,6 +208,28 @@ pub const PALETTE_COMPOSITE_DIRECT: [(u8, u8, u8); 64] = [
     (0xBF, 0xF1, 0xF1), (0xB9, 0xB9, 0xB9), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
 ];
 
+/// Mesen2's default NES palette: the `UserPalette` default in Mesen2
+/// `UI/Config/NesConfig.cs` (<https://github.com/SourMesen/Mesen2>).
+#[rustfmt::skip]
+pub const PALETTE_MESEN: [(u8, u8, u8); 64] = [
+    (0x66, 0x66, 0x66), (0x00, 0x2A, 0x88), (0x14, 0x12, 0xA7), (0x3B, 0x00, 0xA4),
+    (0x5C, 0x00, 0x7E), (0x6E, 0x00, 0x40), (0x6C, 0x06, 0x00), (0x56, 0x1D, 0x00),
+    (0x33, 0x35, 0x00), (0x0B, 0x48, 0x00), (0x00, 0x52, 0x00), (0x00, 0x4F, 0x08),
+    (0x00, 0x40, 0x4D), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
+    (0xAD, 0xAD, 0xAD), (0x15, 0x5F, 0xD9), (0x42, 0x40, 0xFF), (0x75, 0x27, 0xFE),
+    (0xA0, 0x1A, 0xCC), (0xB7, 0x1E, 0x7B), (0xB5, 0x31, 0x20), (0x99, 0x4E, 0x00),
+    (0x6B, 0x6D, 0x00), (0x38, 0x87, 0x00), (0x0C, 0x93, 0x00), (0x00, 0x8F, 0x32),
+    (0x00, 0x7C, 0x8D), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
+    (0xFF, 0xFE, 0xFF), (0x64, 0xB0, 0xFF), (0x92, 0x90, 0xFF), (0xC6, 0x76, 0xFF),
+    (0xF3, 0x6A, 0xFF), (0xFE, 0x6E, 0xCC), (0xFE, 0x81, 0x70), (0xEA, 0x9E, 0x22),
+    (0xBC, 0xBE, 0x00), (0x88, 0xD8, 0x00), (0x5C, 0xE4, 0x30), (0x45, 0xE0, 0x82),
+    (0x48, 0xCD, 0xDE), (0x4F, 0x4F, 0x4F), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
+    (0xFF, 0xFE, 0xFF), (0xC0, 0xDF, 0xFF), (0xD3, 0xD2, 0xFF), (0xE8, 0xC8, 0xFF),
+    (0xFB, 0xC2, 0xFF), (0xFE, 0xC4, 0xEA), (0xFE, 0xCC, 0xC5), (0xF7, 0xD8, 0xA5),
+    (0xE4, 0xE5, 0x94), (0xCF, 0xEF, 0x96), (0xBD, 0xF4, 0xAB), (0xB3, 0xF3, 0xCC),
+    (0xB5, 0xEB, 0xF2), (0xB8, 0xB8, 0xB8), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,7 +241,7 @@ mod tests {
 
     #[test]
     fn all_contains_every_preset_once() {
-        assert_eq!(NesPalette::ALL.len(), 5);
+        assert_eq!(NesPalette::ALL.len(), 6);
         for p in NesPalette::ALL {
             assert_eq!(NesPalette::ALL.iter().filter(|&&q| q == p).count(), 1);
         }
@@ -247,7 +283,8 @@ mod tests {
         assert_eq!(NesPalette::NesDev.next(), NesPalette::Smooth);
         assert_eq!(NesPalette::Smooth.next(), NesPalette::Classic);
         assert_eq!(NesPalette::Classic.next(), NesPalette::CompositeDirect);
-        assert_eq!(NesPalette::CompositeDirect.next(), NesPalette::Default);
+        assert_eq!(NesPalette::CompositeDirect.next(), NesPalette::Mesen);
+        assert_eq!(NesPalette::Mesen.next(), NesPalette::Default);
     }
 
     #[test]
@@ -275,5 +312,34 @@ mod tests {
         assert_eq!(PALETTE_SMOOTH[0x00], (0x6A, 0x6A, 0x6A));
         assert_eq!(PALETTE_CLASSIC[0x00], (0x61, 0x61, 0x61));
         assert_eq!(PALETTE_COMPOSITE_DIRECT[0x00], (0x65, 0x65, 0x65));
+    }
+
+    #[test]
+    fn mesen_is_selected_by_its_id_in_any_case() {
+        assert_eq!(NesPalette::from_config_id("mesen"), Some(NesPalette::Mesen));
+        assert_eq!(NesPalette::from_config_id("MESEN"), Some(NesPalette::Mesen));
+        assert_eq!(NesPalette::from_config_id("Mesen"), Some(NesPalette::Mesen));
+        assert_eq!(NesPalette::Mesen.config_id(), "mesen");
+        assert_eq!(NesPalette::Mesen.display_name(), "Mesen");
+    }
+
+    #[test]
+    fn mesen_table_matches_mesen2_default_anchor_colors() {
+        // Mesen2 UI/Config/NesConfig.cs, UserPalette default.
+        assert_eq!(PALETTE_MESEN[0x00], (0x66, 0x66, 0x66));
+        assert_eq!(PALETTE_MESEN[0x01], (0x00, 0x2A, 0x88));
+        assert_eq!(PALETTE_MESEN[0x0D], (0x00, 0x00, 0x00));
+        assert_eq!(PALETTE_MESEN[0x16], (0xB5, 0x31, 0x20));
+        assert_eq!(PALETTE_MESEN[0x20], (0xFF, 0xFE, 0xFF));
+        assert_eq!(PALETTE_MESEN[0x30], (0xFF, 0xFE, 0xFF));
+        assert_eq!(PALETTE_MESEN[0x3D], (0xB8, 0xB8, 0xB8));
+    }
+
+    #[test]
+    fn config_id_list_names_every_preset_in_cycle_order() {
+        assert_eq!(
+            NesPalette::config_id_list(),
+            "default, nesdev, smooth, classic, composite-direct, mesen"
+        );
     }
 }

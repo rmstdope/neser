@@ -73,6 +73,7 @@ mod tests {
             palette_toast_message(NesPalette::CompositeDirect),
             "Palette: Composite Direct"
         );
+        assert_eq!(palette_toast_message(NesPalette::Mesen), "Palette: Mesen");
     }
 
     #[test]

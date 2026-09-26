@@ -114,12 +114,7 @@ impl NesConfig {
                 if let Some(palette) = NesPalette::from_config_id(value) {
                     self.palette = palette;
                 } else {
-                    eprintln!(
-                        "Warning: invalid value '{}' for 'nes-palette'; keeping default ('{}'). \
-                         Valid values: default, nesdev, smooth, classic, composite-direct",
-                        value,
-                        self.palette.config_id()
-                    );
+                    eprintln!("{}", invalid_nes_palette_warning(value, self.palette));
                 }
             }
             _ => {}
@@ -302,6 +297,16 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// The warning printed for an unknown `nes-palette` config-file value.
+fn invalid_nes_palette_warning(value: &str, kept: NesPalette) -> String {
+    format!(
+        "Warning: invalid value '{value}' for 'nes-palette'; keeping default ('{}'). \
+         Valid values: {}",
+        kept.config_id(),
+        NesPalette::config_id_list()
+    )
 }
 
 #[cfg(test)]
@@ -1381,5 +1386,21 @@ nes-filter=invalid-shader
         // Invalid value should not error from the config-file path; it keeps the current value.
         config.apply_config_value("nes-palette", "bogus").unwrap();
         assert_eq!(config.nes.palette, NesPalette::Classic);
+    }
+
+    #[test]
+    fn test_config_file_nes_palette_mesen() {
+        let mut config = Config::default();
+        config.apply_config_value("nes-palette", "Mesen").unwrap();
+        assert_eq!(config.nes.palette, NesPalette::Mesen);
+    }
+
+    #[test]
+    fn test_config_file_nes_palette_warning_names_every_preset() {
+        assert_eq!(
+            super::invalid_nes_palette_warning("bogus", NesPalette::Default),
+            "Warning: invalid value 'bogus' for 'nes-palette'; keeping default ('default'). \
+             Valid values: default, nesdev, smooth, classic, composite-direct, mesen"
+        );
     }
 }

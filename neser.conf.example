@@ -86,8 +86,10 @@ nes-hardware=nes-ntsc
 #   smooth           - FBX "Smooth" NTSC palette.
 #   classic          - FBX "Classic" palette.
 #   composite-direct - FBX "Composite Direct" palette.
+#   mesen            - Mesen2's default palette; use it to compare captures with Mesen2.
 # An unknown value is ignored with a warning and the default palette is kept.
 # At runtime, press F8 (NES only) to cycle through these palettes.
+# Headless capture (--headless) uses this palette too.
 # Default: default
 nes-palette=default
 

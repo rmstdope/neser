@@ -119,6 +119,9 @@ Captures are reproducible: the mode forces zero-initialised RAM, takes no input,
 and refuses to combine with the autorun flags or `--tui`. The same ROM and frame
 count produce byte-identical PNGs across runs and across builds.
 
+NES captures use the same palette as the window: --nes-palette (or nes-palette= in the
+config file) applies. Pass --nes-palette mesen to compare against Mesen2.
+
 Note that a ROM may still be showing a blank screen in its first frames — the
 default of 60 is enough for the test ROMs in `roms/`, but a ROM with a longer
 boot or intro sequence needs a larger `--frames`.

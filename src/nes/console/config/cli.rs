@@ -33,7 +33,7 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--nes-palette",
         help: Some(
-            "NES preset palette: default, nesdev, smooth, classic, composite-direct (default: default)",
+            "NES preset palette: default, nesdev, smooth, classic, composite-direct, mesen (default: default)",
         ),
         has_value: true,
     },
@@ -511,7 +511,8 @@ impl Config {
         if let Some(palette) = Self::parse_string_arg(args, "--nes-palette") {
             self.nes.palette = NesPalette::from_config_id(&palette).ok_or_else(|| {
                 format!(
-                    "Invalid --nes-palette value: '{palette}'. Valid options are: default, nesdev, smooth, classic, composite-direct"
+                    "Invalid --nes-palette value: '{palette}'. Valid options are: {}",
+                    NesPalette::config_id_list()
                 )
             })?;
         }
@@ -3884,5 +3885,80 @@ mod tests {
         let result = config_new(vec!["--nes-palette".to_string(), "bogus".to_string()]);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("bogus"));
+    }
+
+    #[test]
+    fn test_cli_nes_palette_invalid_names_every_preset() {
+        let result = config_new(vec!["--nes-palette".to_string(), "bogus".to_string()]);
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid --nes-palette value: 'bogus'. Valid options are: default, nesdev, smooth, classic, composite-direct, mesen"
+        );
+    }
+
+    #[test]
+    fn test_cli_nes_palette_mesen_any_case() {
+        for value in ["mesen", "MESEN", "Mesen"] {
+            let config = parse_config(vec!["--nes-palette".to_string(), value.to_string()]);
+            assert_eq!(config.nes.palette, NesPalette::Mesen, "{value}");
+        }
+    }
+
+    #[test]
+    fn test_help_lists_every_nes_palette() {
+        let help = crate::platform::config::cli::help_text();
+        assert!(
+            help.contains(
+                "NES preset palette: default, nesdev, smooth, classic, composite-direct, mesen (default: default)"
+            ),
+            "help text:\n{help}"
+        );
+    }
+
+    /// Headless capture has no palette of its own: a config file's
+    /// `nes-palette=` reaches a `--headless` run exactly as it reaches the window.
+    #[test]
+    fn test_headless_keeps_the_config_file_nes_palette() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"nes-palette=smooth\n").unwrap();
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert!(config.frontend.headless_capture.is_some());
+        assert_eq!(config.nes.palette, NesPalette::Smooth);
+    }
+
+    #[test]
+    fn test_headless_takes_the_cli_nes_palette() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "--nes-palette".to_string(),
+            "mesen".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert!(config.frontend.headless_capture.is_some());
+        assert_eq!(config.nes.palette, NesPalette::Mesen);
+    }
+
+    #[test]
+    fn test_headless_without_a_palette_uses_default() {
+        let config = parse_config(vec![
+            "neser".to_string(),
+            "--headless".to_string(),
+            "--output".to_string(),
+            "shot.png".to_string(),
+            "game.nes".to_string(),
+        ]);
+        assert_eq!(config.nes.palette, NesPalette::Default);
     }
 }

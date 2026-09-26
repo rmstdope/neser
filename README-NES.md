@@ -35,6 +35,7 @@ the `nes-palette` config key or `--nes-palette` flag (case-insensitive):
 - `smooth` — FBX "Smooth" NTSC palette
 - `classic` — FBX "Classic" palette
 - `composite-direct` — FBX "Composite Direct" palette
+- `mesen` — Mesen2's default palette; use it to compare captures with Mesen2
 
 ```bash
 neser --nes-palette smooth path/to/game.nes

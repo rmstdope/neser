@@ -3453,6 +3453,7 @@ mod tests {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
         assert_eq!(ppu.cycle_system_palette(), NesPalette::NesDev);
         ppu.set_system_palette(NesPalette::CompositeDirect);
+        assert_eq!(ppu.cycle_system_palette(), NesPalette::Mesen);
         assert_eq!(ppu.cycle_system_palette(), NesPalette::Default);
     }
 
