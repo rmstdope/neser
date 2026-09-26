@@ -33,7 +33,7 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--nes-palette",
         help: Some(
-            "NES preset palette: default, nesdev, smooth, classic, composite-direct (default: default)",
+            "NES preset palette: default, nesdev, smooth, classic, composite-direct, mesen (default: default)",
         ),
         has_value: true,
     },
@@ -511,7 +511,8 @@ impl Config {
         if let Some(palette) = Self::parse_string_arg(args, "--nes-palette") {
             self.nes.palette = NesPalette::from_config_id(&palette).ok_or_else(|| {
                 format!(
-                    "Invalid --nes-palette value: '{palette}'. Valid options are: default, nesdev, smooth, classic, composite-direct"
+                    "Invalid --nes-palette value: '{palette}'. Valid options are: {}",
+                    NesPalette::config_id_list()
                 )
             })?;
         }
@@ -3884,5 +3885,33 @@ mod tests {
         let result = config_new(vec!["--nes-palette".to_string(), "bogus".to_string()]);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("bogus"));
+    }
+
+    #[test]
+    fn test_cli_nes_palette_invalid_names_every_preset() {
+        let result = config_new(vec!["--nes-palette".to_string(), "bogus".to_string()]);
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid --nes-palette value: 'bogus'. Valid options are: default, nesdev, smooth, classic, composite-direct, mesen"
+        );
+    }
+
+    #[test]
+    fn test_cli_nes_palette_mesen_any_case() {
+        for value in ["mesen", "MESEN", "Mesen"] {
+            let config = parse_config(vec!["--nes-palette".to_string(), value.to_string()]);
+            assert_eq!(config.nes.palette, NesPalette::Mesen, "{value}");
+        }
+    }
+
+    #[test]
+    fn test_help_lists_every_nes_palette() {
+        let help = crate::platform::config::cli::help_text();
+        assert!(
+            help.contains(
+                "NES preset palette: default, nesdev, smooth, classic, composite-direct, mesen (default: default)"
+            ),
+            "help text:\n{help}"
+        );
     }
 }
