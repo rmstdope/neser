@@ -10164,8 +10164,9 @@ impl Cpu<SnesSystemBus> {
         // self-consistent alongside that console's denominator. Retuning after
         // the restore would instead discard the restored resampler state and
         // reverse-compute the output rate against the wrong denominator.
-        self.bus
-            .apu_set_video_region(SnesVideoRegion::from_state_byte(state.ppu.video_region));
+        let video_region = SnesVideoRegion::from_state_byte(state.ppu.video_region);
+        self.bus.apu_set_video_region(video_region);
+        self.bus.cx4_set_video_region(video_region);
         self.bus
             .restore_state(&state.bus)
             .map_err(SaveStateError::RestoreFailed)?;

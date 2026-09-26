@@ -368,9 +368,10 @@ impl Emulator for Snes {
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cartridge = Cartridge::from_bytes(bytes).map_err(|e| format!("{e:?}"))?;
-        // SA-1 is emulated (epic #2956); other enhancement chips remain header-detection-only.
+        // SA-1 (epic #2956) and CX4 (nr-t7d) are emulated; other enhancement chips remain
+        // header-detection-only.
         if let Some(chip) = cartridge.enhancement_chip()
-            && chip != EnhancementChip::Sa1
+            && !matches!(chip, EnhancementChip::Sa1 | EnhancementChip::Cx4)
         {
             let warning = format!(
                 "Warning: ROM requires SNES enhancement hardware ({chip}) which is not implemented yet; gameplay may be incorrect"
@@ -543,6 +544,9 @@ impl Emulator for Snes {
             // /RES resets the S-SMP alongside the 65816 (ports, timers, SPC
             // clock anchor, reset vector fetch); ARAM survives a soft reset.
             cpu.bus_mut().reset_apu();
+            // It also reaches the cartridge: the CX4 stops and its registers clear, while its
+            // data RAM, like ARAM, keeps its contents (Mesen2 `BaseCartridge::Reset`).
+            cpu.bus_mut().reset_cx4();
             cpu.do_reset();
         }
         self.pending_render_frames = 0;
@@ -966,6 +970,76 @@ mod tests {
         assert!(
             !toasts.iter().any(|t| t.contains("enhancement hardware")),
             "SA-1 is implemented; no warning expected, got: {toasts:?}"
+        );
+    }
+
+    #[test]
+    fn load_rom_does_not_warn_for_cx4_which_is_implemented() {
+        let mut snes = make_snes();
+        let mut rom = valid_lorom_nop_rom_with_header(0x00, 0xF3);
+        rom[0x7FBF] = 0x10; // custom chip subtype: CX4 (nr-t7d)
+
+        snes.load_rom(&rom, "cx4.sfc").expect("load ROM");
+
+        let toasts = snes.app_context.borrow_mut().visible_toasts(Instant::now());
+        assert!(
+            !toasts.iter().any(|t| t.contains("enhancement hardware")),
+            "CX4 is implemented; no warning expected, got: {toasts:?}"
+        );
+    }
+
+    fn cx4_rom() -> Vec<u8> {
+        let mut rom = valid_lorom_nop_rom_with_header(0x00, 0xF3);
+        rom[0x7FBF] = 0x10; // custom chip subtype: CX4
+        rom
+    }
+
+    /// The /RES button reaches the cartridge: a running CX4 stops, its data RAM survives.
+    #[test]
+    fn soft_reset_stops_the_cx4_and_keeps_its_data_ram() {
+        let mut snes = make_snes();
+        snes.load_rom(&cx4_rom(), "cx4.sfc").expect("load ROM");
+        let bus = snes.bus_mut_for_tests().expect("ROM loaded");
+        bus.write(0x00_6010, 0x5A);
+        bus.write(0x00_7F4F, 0x00); // start: the chip begins filling its program cache
+        assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x40);
+
+        snes.reset(true);
+
+        let bus = snes.bus_mut_for_tests().expect("ROM loaded");
+        assert_eq!(bus.read(0x00_7F5E) & 0x40, 0x00, "the CX4 is stopped");
+        assert_eq!(bus.read(0x00_6010), 0x5A, "data RAM survives a soft reset");
+    }
+
+    /// CX4 cycles run while the bus advances `clocks` master clocks, with the clocks actually
+    /// advanced (DRAM refresh can add a few).
+    fn cx4_cycles_over(snes: &mut Snes, clocks: u64) -> (u64, u64) {
+        let bus = snes.bus_mut_for_tests().expect("ROM loaded");
+        let cycles = |bus: &SnesSystemBus| bus.capture_state().cx4.expect("CX4 cart").cycle_count;
+        let (start_clock, start_cycles) = (bus.master_clock(), cycles(bus));
+        while bus.master_clock() - start_clock < clocks {
+            bus.tick();
+        }
+        (bus.master_clock() - start_clock, cycles(bus) - start_cycles)
+    }
+
+    /// A state carries its region; the CX4's 20 MHz must then be measured against that
+    /// region's master clock, like the APU's.
+    #[test]
+    fn loading_a_pal_state_on_ntsc_hardware_retunes_the_cx4_clock() {
+        let mut pal = make_snes_with_hardware(Some(SnesHardware::Pal));
+        pal.load_rom(&cx4_rom(), "cx4.sfc").expect("load ROM");
+        let state = pal.save_state_bytes().expect("save state");
+
+        let mut snes = make_snes_with_hardware(Some(SnesHardware::Ntsc));
+        snes.load_rom(&cx4_rom(), "cx4.sfc").expect("load ROM");
+        snes.load_state_bytes(&state).expect("load state");
+
+        let (clocks, cycles) = cx4_cycles_over(&mut snes, 2_128_137);
+        let pal_expected = clocks * 20_000_000 / 21_281_370;
+        assert!(
+            cycles.abs_diff(pal_expected) <= 1,
+            "{cycles} CX4 cycles in {clocks} master clocks; PAL rate gives {pal_expected}"
         );
     }
 

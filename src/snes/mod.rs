@@ -8,6 +8,7 @@ pub mod bus;
 pub mod cartridge;
 pub mod console;
 pub mod cpu;
+pub mod cx4;
 pub mod input;
 pub mod ppu;
 pub mod sa1;
