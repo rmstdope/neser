@@ -472,10 +472,12 @@ mod tests {
         for (d, m) in default.chunks(3).zip(mesen.chunks(3)) {
             let d = (d[0], d[1], d[2]);
             let m = (m[0], m[1], m[2]);
-            let matches = (0..64).any(|i| {
-                NesPalette::Default.table()[i] == d && NesPalette::Mesen.table()[i] == m
-            });
-            assert!(matches, "Default pixel {d:?} and Mesen pixel {m:?} share no colour index");
+            let matches = (0..64)
+                .any(|i| NesPalette::Default.table()[i] == d && NesPalette::Mesen.table()[i] == m);
+            assert!(
+                matches,
+                "Default pixel {d:?} and Mesen pixel {m:?} share no colour index"
+            );
         }
     }
 
