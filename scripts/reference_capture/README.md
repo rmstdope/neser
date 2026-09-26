@@ -77,10 +77,11 @@ cd ~/repos/SameBoy && git apply <neser>/scripts/reference_capture/sameboy-tester
 make -k build/bin/tester/sameboy_tester -j8
 ```
 
-`git apply` refuses loudly if upstream moved the line; the patch replaces the tester's
-hard-coded `GB_set_color_correction_mode(&gb, GB_COLOR_CORRECTION_EMULATE_HARDWARE)` with
-`GB_COLOR_CORRECTION_DISABLED` (checked against upstream 213a12c). The tester has no
-command-line flag for it.
+On an existing clone, run `git checkout Tester/main.c && git pull` first. `git apply`
+refuses loudly if upstream moved the line (or if the patch is already applied). The patch
+replaces the tester's hard-coded `GB_COLOR_CORRECTION_EMULATE_HARDWARE` in
+`GB_set_color_correction_mode` with `GB_COLOR_CORRECTION_DISABLED` (checked against
+upstream 213a12c); the tester has no command-line flag for it.
 
 Without rgbds the boot-ROM step fails; `-k` and the binary as target let the tester link
 anyway (plain `make tester -j8` stops at the boot-ROM error on a fresh tree).
@@ -139,13 +140,12 @@ target/release/neser --headless --frames 600 --output neser.png roms/gb/automate
 
 **Why the reference is patched rather than NESER.** NESER's CGB output stays the raw
 expansion: it is the formula cgb-acid2 specifies for its reference image, so NESER's
-captures stay comparable against the test ROM's own expectation. The optional CGB colour correction
-being added in nr-1gg (`cgb-color-correction`, off by default, the "Faithful"
-Gambatte/higan curve) is a different curve from SameBoy's, and its design rejected
-SameBoy's "modern balanced" look, so NESER does not imitate it. Leave that setting off for
-reference captures: when on, it applies to headless captures too. Turning the correction
-off on the reference side is the one change that makes both sides agree (decided by the
-navigator, nr-y3e).
+captures stay comparable against the test ROM's own expectation. NESER's optional CGB
+colour correction (nr-1gg) is a different curve from SameBoy's, and nr-1gg's design
+rejected SameBoy's "modern balanced" look, so NESER does not imitate it. Leave any CGB
+colour correction off for reference captures: headless captures apply it when it is on.
+Turning the correction off on the reference side is the one change that makes both sides
+agree (decided by the navigator, nr-y3e).
 
 ## mGBA (GBA)
 
