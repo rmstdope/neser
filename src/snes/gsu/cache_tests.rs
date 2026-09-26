@@ -150,3 +150,18 @@ fn aborting_a_waiting_gsu_does_not_carry_the_wait_into_the_next_start() {
     rig.run_until_stop();
     assert_eq!(rig.reg(1), 0x1234);
 }
+
+#[test]
+fn a_rom_fill_while_stopped_does_not_block_a_restart_in_cache() {
+    // Warm the cache, stop, take RON away, then have the S-CPU write R14 (a ROM buffer fill that
+    // lands while the GSU is stopped) and restart on the cached code with an R15 write alone: no
+    // SFR write in between to clear anything.
+    let mut rig = Rig::new(&[0x02, 0x01, 0x00, 0x01]); // CACHE; NOP; STOP; NOP
+    rig.start_at(PROGRAM);
+    rig.run_until_stop();
+    rig.gsu.write_register(0x303A, 0x00);
+    rig.write16(0x301C, 0x8000);
+    rig.tick(50);
+    rig.write16(0x301E, PROGRAM);
+    rig.run_until_stop();
+}
