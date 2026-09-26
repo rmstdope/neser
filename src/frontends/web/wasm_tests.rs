@@ -929,6 +929,69 @@ fn wasm_gb_load_rom_returns_success_toast() {
     );
 }
 
+/// A ROM that idles in `JR -2` at the entry point, with the given CGB flag
+/// byte at $0143 (0x00 = DMG-only, 0xC0 = CGB-only).
+fn idling_gb_rom(cgb_flag: u8) -> Vec<u8> {
+    let mut rom = vec![0u8; 0x8000];
+    rom[0x0100] = 0x18; // JR
+    rom[0x0101] = 0xFE; // -2
+    rom[0x0143] = cgb_flag;
+    let chk = rom[0x0134..=0x014C]
+        .iter()
+        .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+    rom[0x014D] = chk;
+    rom
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_is_color_is_false_without_a_rom() {
+    let gb = WasmGb::new();
+    assert!(!gb.is_color());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_is_color_is_false_for_a_black_and_white_game() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    assert!(!gb.is_color());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_is_color_is_true_for_a_colour_game() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
+    assert!(gb.is_color());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cgb_color_correction_changes_the_next_frame_and_back() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
+    gb.render_frame_rgba();
+    let raw = gb.render_frame_rgba();
+
+    gb.set_cgb_color_correction(true);
+    let corrected = gb.render_frame_rgba();
+    assert_ne!(corrected, raw, "correction should change a colour frame");
+
+    gb.set_cgb_color_correction(false);
+    assert_eq!(gb.render_frame_rgba(), raw);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cgb_color_correction_set_before_load_applies_to_the_game() {
+    let mut raw_gb = WasmGb::new();
+    raw_gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
+    raw_gb.render_frame_rgba();
+    let raw = raw_gb.render_frame_rgba();
+
+    let mut gb = WasmGb::new();
+    gb.set_cgb_color_correction(true);
+    gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
+    gb.render_frame_rgba();
+    assert_ne!(gb.render_frame_rgba(), raw);
+}
+
 // ── WasmGba tests ────────────────────────────────────────────────────────────
 
 fn minimal_gba_rom() -> Vec<u8> {

@@ -816,7 +816,11 @@ mod tests {
         gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
         run_frames(&mut gb, 2);
         let raw = raw_frame(&gb);
-        assert_ne!(raw, corrected(&raw), "test frame must change under correction");
+        assert_ne!(
+            raw,
+            corrected(&raw),
+            "test frame must change under correction"
+        );
         assert_eq!(gb.screen_snapshot(), corrected(&raw));
     }
 
@@ -834,14 +838,19 @@ mod tests {
         gb.load_rom(&idling(minimal_rom()), "test.gb").unwrap();
         run_frames(&mut gb, 2);
         let raw = raw_frame(&gb);
-        assert_ne!(raw, corrected(&raw), "test frame must change under correction");
+        assert_ne!(
+            raw,
+            corrected(&raw),
+            "test frame must change under correction"
+        );
         assert_eq!(gb.screen_snapshot(), corrected(&raw));
     }
 
     #[test]
     fn test_color_correction_applies_under_gba_hardware() {
         let mut gb = make_gameboy_with_color_correction(Some(GbHardware::Gba));
-        gb.load_rom(&idling(minimal_dual_rom()), "test.gbc").unwrap();
+        gb.load_rom(&idling(minimal_dual_rom()), "test.gbc")
+            .unwrap();
         run_frames(&mut gb, 2);
         assert_eq!(gb.screen_snapshot(), corrected(&raw_frame(&gb)));
     }

@@ -101,6 +101,27 @@ impl WasmGb {
         Self::rgb_to_rgba(&rgb)
     }
 
+    /// Returns `true` when a game is loaded and shown in colour (a Game Boy
+    /// Color game, or a black-and-white game the Game Boy Color colourises).
+    #[wasm_bindgen]
+    pub fn is_color(&self) -> bool {
+        self.rom_loaded && self.gb.is_cgb_mode()
+    }
+
+    /// Turn the Game Boy Color LCD colour correction on or off.
+    ///
+    /// Takes effect from the next rendered frame, and stays set for any game
+    /// later loaded into this instance.
+    #[wasm_bindgen]
+    pub fn set_cgb_color_correction(&mut self, enabled: bool) {
+        self.gb
+            .app_context()
+            .borrow_mut()
+            .config_mut()
+            .gb
+            .cgb_color_correction = enabled;
+    }
+
     /// Returns the display width in pixels (always 160 for Game Boy).
     #[wasm_bindgen]
     pub fn screen_width(&self) -> u32 {
