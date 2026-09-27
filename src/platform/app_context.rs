@@ -69,7 +69,7 @@ impl AppContext {
 
     /// Queues a toast. It reads no clock: `Instant::now()` panics on wasm32-unknown-unknown,
     /// and this is reached from load paths the browser build takes (nr-6sm). The toast's
-    /// lifetime starts at the first [`Self::visible_toasts`] that shows it.
+    /// lifetime starts at the first [`Self::visible_toasts`] call after it is added.
     pub fn add_toast(&mut self, text: impl Into<String>) {
         self.toast_manager.push(text.into(), None);
     }
@@ -86,7 +86,7 @@ impl AppContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Toast {
     text: String,
-    /// `None` until the toast is first shown; see [`AppContext::add_toast`].
+    /// `None` until the first `visible_toasts` call after it is added; see [`AppContext::add_toast`].
     created_at: Option<Instant>,
 }
 

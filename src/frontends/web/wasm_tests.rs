@@ -1469,10 +1469,11 @@ fn chipset_snes_rom(chipset: u8, subtype: Option<u8>) -> Vec<u8> {
 
 /// nr-6sm: a load on the web must never reach `std::time::Instant::now()`, which panics on
 /// wasm32-unknown-unknown. Every enhancement-chip header goes through the chip check in
-/// `Snes::load_rom`; the S-RTC and SPC7110 are the ones it still warns about.
+/// `Snes::load_rom`; the unknown custom chip (`$F5`/`$7F`, never emulated) is the one that is
+/// sure to keep reaching its warning toast however many chips become emulated.
 #[wasm_bindgen_test]
 fn every_enhancement_chip_header_loads_on_the_web_without_panicking() {
-    let chips: [(&str, u8, Option<u8>); 7] = [
+    let chips: [(&str, u8, Option<u8>); 8] = [
         ("SA-1", 0x34, None),
         ("Cx4", 0xF3, Some(0x10)),
         ("OBC1", 0x25, None),
@@ -1480,6 +1481,7 @@ fn every_enhancement_chip_header_loads_on_the_web_without_panicking() {
         ("S-DD1", 0x43, None),
         ("S-RTC", 0x55, None),
         ("SPC7110", 0xF5, Some(0x00)),
+        ("unknown custom", 0xF5, Some(0x7F)),
     ];
     for (chip, chipset, subtype) in chips {
         let mut snes = WasmSnes::new();
