@@ -45,12 +45,13 @@ import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
 import { handleRomSelection } from "./rom/rom_selection";
 import { shouldCreateFreshEmulatorForRomStart } from "./rom/emulator_lifecycle";
-import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName, type WebRomConsoleKind } from "./rom/rom_extensions";
+import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName } from "./rom/rom_extensions";
+import { CONSOLES, type ConsoleKind } from "./console/consoles";
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
 import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio/audio_profiles";
-import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio/audio_normalizer";
+import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normalizer";
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
@@ -787,7 +788,7 @@ let emulator: ActiveEmulator | null = null;
 let nes: WasmNes | null = null;
 
 function frameTextureFormat(): number {
-    return emulator?.kind === "gba" ? gl.RGB : gl.RGBA;
+    return emulator && CONSOLES[emulator.kind].frameFormat === "rgb" ? gl.RGB : gl.RGBA;
 }
 
 function allocateFrameTextureStorage() {
@@ -959,7 +960,7 @@ function updateEmulationButtons() {
 }
 
 /** Create a fresh emulator instance and update kind-dependent UI. */
-function createEmulatorInstance(kind: WebRomConsoleKind): void {
+function createEmulatorInstance(kind: ConsoleKind): void {
     resetGamepadState();
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
@@ -1420,18 +1421,11 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
             channelData[i] = normalizeGbaSample(samples[i * 2]);
             rightChannelData[i] = normalizeGbaSample(samples[i * 2 + 1]);
         }
-    } else if (emulator?.kind === "gb" || emulator?.kind === "gba" || emulator?.kind === "snes") {
-        // GB, GBA, and SNES APUs all output bipolar samples in [-1.0, 1.0].
-        // GBA and SNES share normalizeGbaSample (clamp to [-1, 1]); GB uses its own normalizer.
-        for (let i = 0; i < frameCount; i++) {
-            channelData[i] = emulator?.kind === "gb"
-                ? normalizeGbSample(samples[i])
-                : normalizeGbaSample(samples[i]);
-        }
     } else {
-        // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path
+        // NES APU output (0.0 to ~1.177) stays unipolar in 0.0 to 1.0; the other cores are bipolar in [-1.0, 1.0].
+        const normalize = monoSampleNormalizer(emulator?.kind ?? "nes", NES_APU_MAX);
         for (let i = 0; i < frameCount; i++) {
-            channelData[i] = normalizeNesSample(samples[i], NES_APU_MAX);
+            channelData[i] = normalize(samples[i]);
         }
     }
 

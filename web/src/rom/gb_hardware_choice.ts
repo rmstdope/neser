@@ -1,4 +1,4 @@
-import type { WebRomConsoleKind } from "./rom_extensions";
+import type { ConsoleKind } from "../console/consoles";
 
 /**
  * "Game Boy games run on" (nr-zdy.4): the console original Game Boy games
@@ -41,7 +41,7 @@ export function writeGbHardwareChoice(storage: Pick<Storage, "setItem"> | null, 
  * runs on a different console from the one chosen.
  */
 export function gbHardwareNoteVisible(state: {
-    kind: WebRomConsoleKind | null;
+    kind: ConsoleKind | null;
     running: boolean;
     isOriginalGame: boolean;
     runsOnColor: boolean;
