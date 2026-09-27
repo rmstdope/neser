@@ -11,5 +11,6 @@ rm -f dist/roms
 ln -s ../web/roms dist/roms
 
 cd dist
-python3 -m http.server 8000
+# NESER_WEB_PORT is set per session by .cerebro/cerebro/scripts/smoke-port; 8000 otherwise.
+python3 -m http.server "${NESER_WEB_PORT:-8000}"
 
