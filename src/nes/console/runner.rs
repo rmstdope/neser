@@ -18,8 +18,8 @@ const MAX_SCANLINE_STEPS: usize = 100_000;
 
 impl Nes {
     /// The one NES frame loop: calls `step` until the PPU has finished a frame or `step`
-    /// breaks. `step` executes at most one instruction per call. Returns whether the frame
-    /// is ready; the ready flag is left for the caller to clear.
+    /// breaks. `step` makes at most one `run_cpu_tick` (or `run`) call per invocation.
+    /// Returns whether the frame is ready; the ready flag is left for the caller to clear.
     pub fn run_until_frame_ready(
         &mut self,
         mut step: impl FnMut(&mut Nes) -> ControlFlow<()>,
@@ -257,6 +257,7 @@ mod tests {
     fn run_to_interrupt_entry_gives_up_on_a_jammed_cpu() {
         let mut nes = nes_jammed_at_reset();
         let pc = nes.cpu_ref().pc();
+        let ppu_cycles = nes.ppu().borrow().total_cycles();
 
         nes.run_to_interrupt_entry(0xFFFA, InterruptKind::Nmi);
 
@@ -265,6 +266,11 @@ mod tests {
             nes.cpu_ref().pc(),
             pc,
             "a jammed CPU never reaches a handler"
+        );
+        assert_eq!(
+            nes.ppu().borrow().total_cycles(),
+            ppu_cycles,
+            "it stops at once instead of running out its step budget"
         );
     }
 }
