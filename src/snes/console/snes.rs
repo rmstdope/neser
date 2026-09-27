@@ -337,6 +337,8 @@ impl Snes {
     /// The controller ports of the loaded game, or `None` when no game is loaded. Every
     /// frontend-facing input query (what is plugged in, a peripheral's state) is an
     /// `InputPorts` method reached through here, so a new one is written once, in `InputPorts`.
+    /// The returned `Ref` borrows the ports' `RefCell`, which the CPU's joypad reads borrow
+    /// mutably: drop it before `run_tick`, or the next `$4016`/`$4218` read panics.
     pub fn input_ports(&self) -> Option<std::cell::Ref<'_, InputPorts>> {
         self.cpu.as_ref().map(|cpu| cpu.bus().input_ports())
     }

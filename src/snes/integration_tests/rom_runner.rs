@@ -358,14 +358,14 @@ fn run_rom_with_capture(
     )
 }
 
-/// A console configured as `config` asks, with `hardware` as its
-/// `snes-hardware` setting, with `rom` loaded.
 /// The loaded game's controller ports, which a scripted input event feeds.
 fn ports(snes: &mut Snes) -> &mut InputPorts {
     snes.input_ports_mut()
         .expect("the runner loads a game before scripting input")
 }
 
+/// A console configured as `config` asks, with `hardware` as its
+/// `snes-hardware` setting, with `rom` loaded.
 fn runner_console(
     rom: &[u8],
     name: &str,

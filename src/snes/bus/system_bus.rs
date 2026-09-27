@@ -1099,6 +1099,8 @@ impl SnesSystemBus {
     /// The controller ports, for a frontend or test to query what is plugged in and its state.
     /// Frontend-facing input queries and setters live on `InputPorts` alone; the bus does not
     /// forward them.
+    /// The returned `Ref` borrows the ports' `RefCell`, which the CPU's joypad reads borrow
+    /// mutably: drop it before the CPU steps, or the next `$4016`/`$4218` read panics.
     pub fn input_ports(&self) -> std::cell::Ref<'_, InputPorts> {
         self.input.borrow()
     }
