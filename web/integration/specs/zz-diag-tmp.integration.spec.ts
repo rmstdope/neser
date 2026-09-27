@@ -47,3 +47,35 @@ test("diag: what covers Save State on CI", async ({ page }) => {
     await expect(page.locator("#save-state-section")).toHaveAttribute("data-save-state", "saved", { timeout: 10_000 });
     await diag(page, "after-js-click");
 });
+
+test("diag: zoom on CI", async ({ page }) => {
+    await openApp(page);
+    await page.evaluate(() => {
+        (window as any).__diagEvents = [];
+        for (const type of ["pointerdown", "mousedown", "mouseup", "click", "pointerlockchange"]) {
+            window.addEventListener(type, (e: Event) => {
+                const t = e.target as Element; const me = e as MouseEvent;
+                (window as any).__diagEvents.push(`${type}@${me.clientX},${me.clientY}->${t && (t.id || t.tagName)}@${Math.round(performance.now())}`);
+            }, true);
+        }
+    });
+    const zdiag = async (label: string) => {
+        const info = await page.evaluate(() => ({
+            lock: document.pointerLockElement ? document.pointerLockElement.id : null, active: document.activeElement ? document.activeElement.id || document.activeElement.tagName : null,
+            events: (window as any).__diagEvents, screen: (() => { const r = document.getElementById("screen")!.getBoundingClientRect(); return [Math.round(r.y), Math.round(r.width), Math.round(r.height)]; })(),
+            minus: (() => { const r = document.getElementById("screen-minus")!.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; })(),
+            filter: document.getElementById("filter-toggle")!.textContent, scrollY: window.scrollY, now: Math.round(performance.now())
+        }));
+        console.log(`ZDIAG ${label} ${JSON.stringify(info)}`);
+    };
+    await zdiag("start");
+    const t0 = Date.now();
+    await page.locator("#screen-plus").click({ timeout: 8000 });
+    console.log(`ZDIAG plus-click-ms ${Date.now() - t0}`);
+    await page.waitForTimeout(100);
+    await zdiag("after-plus");
+    const t1 = Date.now();
+    const ok = await page.locator("#screen-minus").click({ timeout: 8000 }).then(() => true).catch((e) => { console.log("ZDIAG minus click failed: " + String(e).split("\n")[0]); return false; });
+    console.log(`ZDIAG minus-click-ms ${Date.now() - t1} ok=${ok}`);
+    await zdiag("after-minus");
+});
