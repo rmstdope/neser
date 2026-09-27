@@ -45,6 +45,26 @@ test.describe("Phase 1 critical path lifecycle", () => {
         await waitForRunningState(page);
     });
 
+    test("Given emulator is running, when the emulation controls are hit-tested, then nothing covers them", async ({ page }) => {
+        await startFromBundledRom(page);
+
+        // The DaisyUI drawer once intercepted pointer events here; a player's press lands on the button.
+        for (const selector of [START_BUTTON_SELECTOR, PAUSE_BUTTON_SELECTOR, RESET_BUTTON_SELECTOR, STOP_BUTTON_SELECTOR, SAVE_STATE_BUTTON_SELECTOR, LOAD_STATE_BUTTON_SELECTOR]) {
+            const button = page.locator(selector);
+            await button.scrollIntoViewIfNeeded();
+            const hitsItself = await button.evaluate((el) => {
+                const box = el.getBoundingClientRect();
+                const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+                if (hit === null) return false;
+                if (hit === el || el.contains(hit)) return true;
+                // A disabled DaisyUI button has pointer-events: none, so the hit falls through to its own
+                // container; anything else on top of it is a cover.
+                return (el as HTMLButtonElement).disabled && hit.contains(el);
+            });
+            expect(hitsItself, `${selector} is covered by another element`).toBe(true);
+        }
+    });
+
     test("Given emulator is running, when Stop is clicked, then app returns to idle-safe state", async ({ page }) => {
         await startFromBundledRom(page);
 
