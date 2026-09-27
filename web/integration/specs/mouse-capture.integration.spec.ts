@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openApp, waitForPausedState, waitForRunningState } from "../helpers/lifecycle.helpers";
+import { openApp, releaseCapturedMouse, waitForPausedState, waitForRunningState } from "../helpers/lifecycle.helpers";
 import { makeMinimalSnesRomBytes } from "../helpers/snes_rom.helpers";
 
 // The web frontend captures the mouse for the game (pointer lock on the canvas) when a ROM is
@@ -20,6 +20,8 @@ test.describe("Mouse capture", () => {
         // A player clicks the game to play it; that captures the mouse where the browser allows.
         await page.locator("#screen").click();
 
+        // Escape gives the pointer back; only then can the sidebar be clicked.
+        await releaseCapturedMouse(page);
         await page.locator("#pause").click({ timeout: 5_000 });
         await waitForPausedState(page);
     });

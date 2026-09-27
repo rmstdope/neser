@@ -116,6 +116,9 @@ test.describe("Phase 2 runtime controls", () => {
         await waitForRunningState(page);
     });
 
+    // A zoom click reallocates the WebGL drawing buffer once per probed size, which takes seconds
+    // on CI's software GL (a Zoom - measured at 4.97 s, nr-dv5), so the clicks get the test's own
+    // timeout rather than a 5 s one of their own.
     test("Given zoom controls exist, when clicked, then canvas presentation bounds change safely", async ({ page }) => {
         await openApp(page);
 
@@ -136,7 +139,7 @@ test.describe("Phase 2 runtime controls", () => {
         const initialHeight = initialBox!.height;
 
         // Click zoom in
-        await screenPlus.click({ timeout: 5000 });
+        await screenPlus.click();
         await page.waitForTimeout(100);
 
         const zoomedInBox = await screen.boundingBox();
@@ -147,7 +150,7 @@ test.describe("Phase 2 runtime controls", () => {
         expect(zoomedInHeight).toBeGreaterThanOrEqual(initialHeight);
 
         // Click zoom out
-        await screenMinus.click({ timeout: 5000 });
+        await screenMinus.click();
         await page.waitForTimeout(100);
 
         const zoomedOutBox = await screen.boundingBox();
