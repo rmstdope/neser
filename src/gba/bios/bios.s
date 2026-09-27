@@ -1090,10 +1090,13 @@ swi_cpu_set:
     bic     r3, r2, #0xFF000000
     bic     r3, r3, #0x00E00000  @ r3 = count (bits 0-20)
 
-    @ 16-bit CpuSet preserves an odd source byte lane but aligns the
-    @ destination. 32-bit mode moves words with single-register LDM/STM, which
-    @ never rotate: the bus aligns each access itself (and keeps the byte lane
-    @ on the 8-bit cart RAM bus), so no address is aligned here.
+    @ 16-bit CpuSet preserves an odd source byte lane and clears bit 0 of the
+    @ destination. The bus already aligns STRH in normal memory, so that bic
+    @ only changes an odd cart-RAM destination (stores land on lane 0); it is
+    @ kept as it was, since changing SRAM behaviour is out of scope here.
+    @ 32-bit mode moves words with single-register LDM/STM, which never
+    @ rotate: the bus aligns each access itself (and keeps the byte lane on
+    @ the 8-bit cart RAM bus), so no 32-bit address is aligned here.
     tst     r2, #(1 << 26)      @ 16-bit mode?
     biceq   r1, r1, #1
 

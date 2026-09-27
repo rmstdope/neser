@@ -1692,9 +1692,18 @@ mod tests {
                 }
 
                 let mut bus = GbaBus::new();
+                for other in 0..4u32 {
+                    bus.write8(base + other, 0);
+                }
                 bus.write16(base + lane, 0x2211);
-                let expected = if lane & 1 == 0 { 0x11 } else { 0x22 };
-                assert_eq!(bus.read8(base + lane), expected, "write16 lane {lane}");
+                for other in 0..4u32 {
+                    let expected = match (other == lane, lane & 1) {
+                        (true, 0) => 0x11,
+                        (true, _) => 0x22,
+                        (false, _) => 0,
+                    };
+                    assert_eq!(bus.read8(base + other), expected, "write16 lane {lane}");
+                }
             }
         }
     }

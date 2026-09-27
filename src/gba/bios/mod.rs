@@ -850,7 +850,7 @@ mod tests {
     // assembly routine itself. The source starts past word 0, which the embedded
     // BIOS reads as zero for its own copy routines.
     #[test]
-    fn bios_cpu_fast_set_assembly_path_leaves_alignment_to_the_bus() {
+    fn bios_cpu_fast_set_assembly_path_copies_and_fills_unaligned_endpoints() {
         let mut gba = run_copy_swi(0x0C, 0x0000_0012, 0x0200_0201, 8, &[]);
         for i in 0u32..8 {
             let got = gba.bus_mut().read32(0x0200_0200 + i * 4);
