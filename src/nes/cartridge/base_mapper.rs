@@ -109,15 +109,14 @@ fn resolve_banked_index(offset: usize, page_size: usize, pages: &[usize]) -> usi
 impl BaseMapper {
     /// Create a new `BaseMapper` from a `MapperContext`.
     ///
-    /// PRG-RAM is created only when the header explicitly specifies a non-zero size.
+    /// PRG-RAM is created at the size `MapperContext::header_prg_ram_banks_8k` gives, when the
+    /// capabilities declare any; the header-sizing rule lives there, not here.
     /// CHR memory is ROM when `chr_rom` is non-empty, otherwise CHR-RAM is allocated.
     pub fn new(ctx: &MapperContext, capabilities: MapperCapabilities) -> Self {
-        let prg_ram = if capabilities.max_prg_ram_kb > 0
-            && ctx.prg_ram_size_specified
-            && ctx.prg_ram_banks_8k > 0
-        {
+        let prg_ram_banks_8k = ctx.header_prg_ram_banks_8k();
+        let prg_ram = if capabilities.max_prg_ram_kb > 0 && prg_ram_banks_8k > 0 {
             Some(PrgRam::new(
-                ctx.prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
+                prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
             ))
         } else {
             None
@@ -766,6 +765,34 @@ mod tests {
         // Out of range
         assert_eq!(base.try_read_prg_ram(0x5FFF), None);
         assert_eq!(base.try_read_prg_ram(0x8000), None);
+    }
+
+    #[test]
+    fn base_mapper_allocates_the_header_prg_ram_size() {
+        let mut base = make_base_mapper_with_prg_ram(4);
+
+        assert_eq!(base.wram_size(), 4 * DEFAULT_PRG_RAM_SIZE);
+        base.write_prg_ram_at_offset(4 * DEFAULT_PRG_RAM_SIZE - 1, 0x5A);
+        assert_eq!(
+            base.read_prg_ram_at_offset(4 * DEFAULT_PRG_RAM_SIZE - 1),
+            0x5A
+        );
+    }
+
+    #[test]
+    fn base_mapper_allocates_no_prg_ram_when_header_leaves_size_unspecified() {
+        let ctx = MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        )
+        .with_unspecified_prg_ram_size();
+        let capabilities = MapperCapabilities {
+            max_prg_ram_kb: 8,
+            ..MapperCapabilities::default()
+        };
+        assert!(!BaseMapper::new(&ctx, capabilities).has_prg_ram());
     }
 
     #[test]
