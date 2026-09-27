@@ -952,7 +952,6 @@ function updateEmulatorKindUI() {
         autorunSection.style.display = isNes ? "" : "none";
     }
     // Save-state buttons are shown for consoles with browser save/load support.
-    const saveStateSection = document.getElementById("save-state-section");
     if (saveStateSection) {
         saveStateSection.style.display = supportsWebSaveState(emulator?.kind ?? null) ? "" : "none";
     }
@@ -3240,6 +3239,7 @@ const fullscreenBtn = document.getElementById("fullscreen") as HTMLButtonElement
 const filterToggleBtn = document.getElementById("filter-toggle") as HTMLButtonElement;
 const saveStateBtn = document.getElementById("save-state") as HTMLButtonElement | null;
 const loadStateBtn = document.getElementById("load-state") as HTMLButtonElement | null;
+const saveStateSection = document.getElementById("save-state-section");
 
 // NES native resolution is 256x240 pixels; aspect ratio updated after NES init.
 let NES_ASPECT_RATIO = width / height;
@@ -3501,7 +3501,7 @@ function updateSaveStateButtons() {
     });
     if (saveStateBtn) saveStateBtn.disabled = !saveEnabled;
     if (loadStateBtn) loadStateBtn.disabled = !loadEnabled;
-    document.getElementById("save-state-section")?.setAttribute("data-save-state", saveSlot);
+    if (saveStateSection) saveStateSection.dataset.saveState = saveSlot;
 }
 
 // Set initial canvas size and button text

@@ -45,24 +45,34 @@ test.describe("Phase 1 critical path lifecycle", () => {
         await waitForRunningState(page);
     });
 
-    test("Given emulator is running, when the emulation controls are hit-tested, then nothing covers them", async ({ page }) => {
-        await startFromBundledRom(page);
-
-        // The DaisyUI drawer once intercepted pointer events here; a player's press lands on the button.
-        for (const selector of [START_BUTTON_SELECTOR, PAUSE_BUTTON_SELECTOR, RESET_BUTTON_SELECTOR, STOP_BUTTON_SELECTOR, SAVE_STATE_BUTTON_SELECTOR, LOAD_STATE_BUTTON_SELECTOR]) {
+    test("Given a ROM is loaded, when each emulation control is hit-tested while enabled, then nothing covers it", async ({ page }) => {
+        // The DaisyUI drawer once intercepted pointer events here. Each button is checked while it is
+        // enabled, so the element at its centre must be the button itself: a disabled DaisyUI button
+        // has pointer-events: none and would let any cover pass as its container.
+        const expectUncovered = async (selector: string) => {
             const button = page.locator(selector);
+            await expect(button).toBeEnabled();
             await button.scrollIntoViewIfNeeded();
             const hitsItself = await button.evaluate((el) => {
                 const box = el.getBoundingClientRect();
                 const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-                if (hit === null) return false;
-                if (hit === el || el.contains(hit)) return true;
-                // A disabled DaisyUI button has pointer-events: none, so the hit falls through to its own
-                // container; anything else on top of it is a cover.
-                return (el as HTMLButtonElement).disabled && hit.contains(el);
+                return hit !== null && (hit === el || el.contains(hit));
             });
             expect(hitsItself, `${selector} is covered by another element`).toBe(true);
+        };
+
+        await startFromBundledRom(page);
+        for (const selector of [PAUSE_BUTTON_SELECTOR, RESET_BUTTON_SELECTOR, STOP_BUTTON_SELECTOR, SAVE_STATE_BUTTON_SELECTOR]) {
+            await expectUncovered(selector);
         }
+
+        await page.locator(SAVE_STATE_BUTTON_SELECTOR).click();
+        await expect(page.locator("#save-state-section")).toHaveAttribute("data-save-state", "saved", { timeout: 5000 });
+        await expectUncovered(LOAD_STATE_BUTTON_SELECTOR);
+
+        await page.locator(STOP_BUTTON_SELECTOR).click();
+        await waitForIdleState(page);
+        await expectUncovered(START_BUTTON_SELECTOR);
     });
 
     test("Given emulator is running, when Stop is clicked, then app returns to idle-safe state", async ({ page }) => {
