@@ -24,5 +24,7 @@ pub mod wasm_snes;
 #[cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 #[path = "frontends/web/wasm_tests.rs"]
 mod wasm_tests;
+#[path = "frontends/web/web_console.rs"]
+pub mod web_console;
 
 pub mod frontends;
