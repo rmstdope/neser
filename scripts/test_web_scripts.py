@@ -55,9 +55,7 @@ class FindWasmBindgenTest(unittest.TestCase):
 
     def _run(self, path: str) -> subprocess.CompletedProcess[str]:
         env = {"PATH": path, "HOME": str(self.tmp), "WASM_PACK_CACHE": str(self.cache)}
-        return subprocess.run(
-            ["sh", str(FIND_WASM_BINDGEN)], env=env, capture_output=True, text=True, check=False
-        )
+        return subprocess.run(["sh", str(FIND_WASM_BINDGEN)], env=env, capture_output=True, text=True, check=False)
 
     def test_prefers_wasm_bindgen_on_path(self) -> None:
         on_path = _fake_wasm_bindgen(self.tmp / "bin", self.version)
@@ -70,9 +68,7 @@ class FindWasmBindgenTest(unittest.TestCase):
 
     def test_falls_back_to_wasm_pack_cache_with_locked_version(self) -> None:
         _fake_wasm_bindgen(self.cache / "wasm-bindgen-cargo-install-0.0.1", "0.0.1")
-        cached = _fake_wasm_bindgen(
-            self.cache / f"wasm-bindgen-cargo-install-{self.version}", self.version
-        )
+        cached = _fake_wasm_bindgen(self.cache / f"wasm-bindgen-cargo-install-{self.version}", self.version)
 
         result = self._run(self.bare_path)
 
