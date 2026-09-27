@@ -63,6 +63,12 @@ impl Snes {
     /// SNES display height in pixels.
     pub const SCREEN_HEIGHT: u32 = SCREEN_HEIGHT;
 
+    /// What F8 does: nothing yet on the Super Nintendo, so no corner message.
+    /// Kept so every frontend asks each console the same question.
+    pub fn f8_action(&mut self) -> Option<String> {
+        None
+    }
+
     /// Create a new SNES emulator instance.
     pub fn new(app_context: impl IntoSharedAppContext) -> Self {
         Self {
@@ -691,6 +697,12 @@ mod tests {
     use crate::snes::input::SnesControllerType;
     use crate::snes::test_support::{snes_test_app_context, snes_test_config};
     use std::time::Instant;
+
+    #[test]
+    fn test_f8_action_does_nothing() {
+        let mut snes = Snes::new(snes_test_app_context());
+        assert_eq!(snes.f8_action(), None);
+    }
 
     fn valid_lorom_nop_rom() -> Vec<u8> {
         valid_lorom_nop_rom_with_country(0x00)

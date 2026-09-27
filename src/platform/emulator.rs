@@ -337,6 +337,19 @@ impl Console {
         }
     }
 
+    /// F8 (and the web Palette and Colors buttons): whatever it means for the
+    /// console running now, returning the corner message to show, or `None`
+    /// when nothing changed. Frontends call this and nothing else, so a
+    /// console's F8 is decided in its own core.
+    pub fn f8_action(&mut self) -> Option<String> {
+        match self {
+            Console::Nes(nes) => nes.f8_action(),
+            Console::GameBoy(gb) => gb.f8_action(),
+            Console::GameBoyAdvance(gba) => gba.f8_action(),
+            Console::Snes(snes) => snes.f8_action(),
+        }
+    }
+
     /// Mutable access to the NES emulator, if present.
     pub fn as_nes_mut(&mut self) -> Option<&mut Nes> {
         match self {
@@ -1188,6 +1201,22 @@ mod tests_console_abstraction {
         config.nes.horizontal_overscan = h;
         config.nes.vertical_overscan = v;
         AppContext::new_with_config(config).into_shared()
+    }
+
+    // --- Console::f8_action() ---
+
+    #[test]
+    fn test_f8_action_forwards_to_the_running_console() {
+        assert_eq!(
+            make_nes_console_with_overscan(0, 0).f8_action().as_deref(),
+            Some("Palette: NesDev")
+        );
+        assert_eq!(
+            make_gba_console().f8_action().as_deref(),
+            Some("Colors: GBA screen")
+        );
+        assert_eq!(make_gb_console().f8_action(), None, "no game loaded");
+        assert_eq!(make_snes_console().f8_action(), None);
     }
 
     // --- Console::overscan() ---
