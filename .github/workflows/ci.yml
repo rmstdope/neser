@@ -252,7 +252,8 @@ jobs:
             else
               # Rust changed but no area filter matched (e.g. frontends):
               # run all unit tests but skip every console's integration tests,
-              # mirroring scripts/test-dir.sh --skip-integration.
+              # the list scripts/test-dir.sh --skip-integration skips, which the
+              # script prints as a nextest filter (it is written only there).
               echo "mode=unit" >> "$GITHUB_OUTPUT"
               echo "filter=" >> "$GITHUB_OUTPUT"
               echo "Running all unit tests (excluding NES/GB/GBA/SNES integration)"
@@ -273,7 +274,7 @@ jobs:
             cargo nextest run $ARCHIVE --partition "$PARTITION" $FILTER
           else
             cargo nextest run $ARCHIVE --partition "$PARTITION" \
-              -E 'not (test(nes::integration_tests) | test(gb::integration_tests) | test(gba::integration_tests) | test(snes::integration_tests))'
+              -E "$(./scripts/test-dir.sh --print-nextest-skip-expr)"
           fi
 
   # One lint job for every event. This deliberately has no `if:` and no
