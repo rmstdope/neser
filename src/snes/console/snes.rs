@@ -49,6 +49,10 @@ pub struct Snes {
     /// a single CPU step, and each must be rendered/counted separately so
     /// frame numbering matches hardware and Mesen2 (issue #2990).
     pending_render_frames: u32,
+    /// True from loading a ROM until the CPU first steps or a save state is restored: the
+    /// console is still exactly in its power-on state, so a hard reset has nothing to undo
+    /// (see [`Emulator::reset`]).
+    at_power_on: bool,
     active_hardware: SnesHardware,
     /// DSP-1 firmware handed over by a frontend (the browser version), used before the
     /// `snes-firmware-dir` folder is looked at.
@@ -70,6 +74,7 @@ impl Snes {
             cpu: None,
             rom_path: None,
             pending_render_frames: 0,
+            at_power_on: false,
             active_hardware: SnesHardware::Ntsc,
             supplied_dsp_firmware: None,
             firmware_table: FIRMWARE_FILES,
@@ -195,6 +200,8 @@ impl Snes {
 
     #[cfg(test)]
     pub(crate) fn bus_mut_for_tests(&mut self) -> Option<&mut SnesSystemBus> {
+        // Whatever the caller writes, the console is no longer as it powered on.
+        self.at_power_on = false;
         self.cpu.as_mut().map(|cpu| cpu.bus_mut())
     }
 
@@ -469,6 +476,7 @@ impl Emulator for Snes {
         self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
         self.pending_render_frames = 0;
+        self.at_power_on = true;
 
         // Load battery-backed save RAM from disk if a .sav file exists.
         self.load_save_ram_from_disk();
@@ -482,6 +490,7 @@ impl Emulator for Snes {
         };
 
         let cycles = cpu.step();
+        self.at_power_on = false;
         self.pending_render_frames = self
             .pending_render_frames
             .saturating_add(cpu.take_completed_frames());
@@ -585,6 +594,9 @@ impl Emulator for Snes {
 
         let state = SnesSaveState::from_bytes(data)
             .map_err(|e| format!("save state deserialization failed: {e}"))?;
+        // Cleared before restoring: a restore that fails partway has already changed the
+        // console.
+        self.at_power_on = false;
         cpu.restore_save_state(&state).map_err(|e| e.to_string())?;
         // The state carries its console's region and has already retuned the
         // PPU and APU to it; frame pacing must follow the same region.
@@ -601,6 +613,14 @@ impl Emulator for Snes {
         // core (`nes/bus/bus.rs::reset`). Note this is a RAM-level distinction
         // only: neither path re-initialises the PPU, DMA or input registers, so
         // a hard reset here is not yet a full power cycle.
+        //
+        // A hard reset straight after loading, which the desktop and headless paths both
+        // do, changes nothing: the console is already in its power-on state. Resetting the
+        // CPU again would run its 186-clock startup delay a second time while the PPU
+        // keeps counting, and start the first instruction 186 clocks late (nr-phv).
+        if !soft_reset && self.at_power_on {
+            return;
+        }
         let ram_init_mode = (!soft_reset).then(|| self.ram_init_mode());
         if let Some(cpu) = self.cpu.as_mut() {
             // The GSU stops first, on either kind of reset, so it is not running while RAM is
@@ -1542,6 +1562,94 @@ mod tests {
         assert!(snes.is_ready_to_render());
         snes.load_rom(&rom, "test.sfc").unwrap();
         assert!(!snes.is_ready_to_render());
+    }
+
+    fn master_clock(snes: &Snes) -> u64 {
+        use crate::snes::bus::SnesBus as _;
+        snes.bus_for_tests().expect("ROM loaded").master_clock()
+    }
+
+    /// The first instruction starts 186 master clocks after power-on, as in Mesen2
+    /// (`SnesMemoryManager::IncMasterClockStartup`), also when the frontend hard-resets the
+    /// console straight after loading it, as the desktop and headless paths do. Running
+    /// the startup delay a second time left the CPU 186 clocks behind the PPU for the
+    /// whole run, and Street Fighter Alpha 2 then reached its Capcom logo a frame early:
+    /// its RDNMI polling loop read the NMI flag before the NMI was taken (nr-phv).
+    #[test]
+    fn hard_reset_straight_after_load_keeps_the_power_on_clock() {
+        let rom = valid_lorom_nop_rom();
+        let mut loaded = make_snes();
+        loaded.load_rom(&rom, "test.sfc").unwrap();
+        let mut loaded_then_reset = make_snes();
+        loaded_then_reset.load_rom(&rom, "test.sfc").unwrap();
+
+        loaded_then_reset.reset(false);
+
+        assert_eq!(
+            master_clock(&loaded),
+            186,
+            "Mesen2's power-on startup delay"
+        );
+        assert_eq!(master_clock(&loaded_then_reset), master_clock(&loaded));
+    }
+
+    /// A restored save state is no longer the power-on state, so a hard reset straight
+    /// after restoring one must still take the CPU back to its reset vector.
+    #[test]
+    fn hard_reset_after_restoring_a_state_still_resets_the_cpu() {
+        let rom = valid_lorom_nop_rom();
+        let mut running = make_snes();
+        running.load_rom(&rom, "test.sfc").unwrap();
+        let reset_pc = running.cpu_pc_for_tests();
+        for _ in 0..100 {
+            running.run_tick();
+        }
+        let state = running.save_state_bytes().unwrap();
+        let mut restored = make_snes();
+        restored.load_rom(&rom, "test.sfc").unwrap();
+        restored.load_state_bytes(&state).unwrap();
+        assert_ne!(
+            restored.cpu_pc_for_tests(),
+            reset_pc,
+            "the state moved the PC"
+        );
+
+        restored.reset(false);
+
+        assert_eq!(restored.cpu_pc_for_tests(), reset_pc);
+    }
+
+    /// A restore that fails partway has already overwritten WRAM, so the console is no
+    /// longer as it powered on and a hard reset straight after must still wipe it.
+    #[test]
+    fn hard_reset_after_a_failed_state_restore_still_resets_ram() {
+        const WRAM_START: u32 = 0x7E_0000;
+        let rom = valid_lorom_nop_rom();
+        let mut source = make_snes();
+        source.load_rom(&rom, "test.sfc").unwrap();
+        let mut state = SnesSaveState::from_bytes(&source.save_state_bytes().unwrap()).unwrap();
+        state.bus.wram[0] ^= 0xFF;
+        state.bus.apu.aram = vec![0; 1]; // rejected after WRAM has been copied
+        let mut restored = make_snes();
+        restored.load_rom(&rom, "test.sfc").unwrap();
+        let power_on_byte = restored.read_bus_for_debugger_for_tests(WRAM_START);
+        assert!(
+            restored
+                .load_state_bytes(&state.to_bytes().unwrap())
+                .is_err()
+        );
+        assert_ne!(
+            restored.read_bus_for_debugger_for_tests(WRAM_START),
+            power_on_byte,
+            "the failed restore changed WRAM, or the test proves nothing"
+        );
+
+        restored.reset(false);
+
+        assert_eq!(
+            restored.read_bus_for_debugger_for_tests(WRAM_START),
+            power_on_byte
+        );
     }
 
     #[test]
