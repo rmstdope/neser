@@ -10,6 +10,7 @@ The test compiles build.rs on its own with the host ``rustc`` and runs it in an 
 """
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -80,6 +81,19 @@ class BuildScriptRerunHintsTest(unittest.TestCase):
             hints = run_build_script(self.exe, cwd)
             self.assertIn("roms/games/mappers", hints)
             self.assertIn("roms/games/mappers/mmc1/a.autorun", hints)
+
+
+class CiRunsTheBuildScriptTestsTest(unittest.TestCase):
+    """A PR touching only build.rs runs this file's tests and the Rust suite in CI."""
+
+    def test_python_and_rust_filters_include_build_rs(self) -> None:
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        for name in ("python", "rust"):
+            with self.subTest(filter=name):
+                block = re.search(rf"^ {{12}}{name}:\n((?: {{14}}.*\n)+)", ci, re.MULTILINE)
+                self.assertIsNotNone(block, f"no {name} path filter in ci.yml")
+                assert block is not None
+                self.assertIn("- 'build.rs'", block.group(1))
 
 
 if __name__ == "__main__":

@@ -86,7 +86,8 @@ fi
 
 # Convert directory paths to Rust module filters.
 # src/nes/cartridge/ → nes::cartridge::
-# Trailing :: ensures the filter matches only that module (avoids "gb" matching "rgb").
+# Trailing :: stops "gb" matching "rgb::", but libtest filters are substrings, so "nes::" also
+# matches every "snes::" test (and the zero-match check below can pass on them).
 FILTERS=()
 for dir in "${DIRS[@]}"; do
     # Strip src/ prefix and trailing slashes
@@ -112,17 +113,17 @@ fi
 # A directory whose module is not compiled under $CARGO_FLAGS (src/frontends/native under
 # --no-default-features, say) would otherwise pass as "0 passed; N filtered out" (nr-5ku). List
 # each directory's tests first and stop, naming it, if it has none. The list reuses the build the
-# run needs, so it costs only libtest's listing.
+# run needs, so it costs only libtest's listing. Passthrough args stay out of it: one like
+# `--format json` changes what --list prints. The output is captured before it is counted, so a
+# build that fails stops here under `set -e` with cargo's own error, not as "matches no test".
 for i in "${!DIRS[@]}"; do
     LIST_CMD=(cargo test $CARGO_FLAGS --lib -- "${FILTERS[$i]}")
     if [ ${#SKIPS[@]} -gt 0 ]; then
         LIST_CMD+=("${SKIPS[@]}")
     fi
-    if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-        LIST_CMD+=("${EXTRA_ARGS[@]}")
-    fi
     LIST_CMD+=(--list)
-    COUNT=$("${LIST_CMD[@]}" | grep -c ': test$' || true)
+    LISTED=$("${LIST_CMD[@]}")
+    COUNT=$(printf '%s\n' "$LISTED" | grep -c ': test$' || true)
     if [ "$COUNT" -eq 0 ]; then
         echo "test-dir: ${DIRS[$i]} matches no test under 'cargo test $CARGO_FLAGS --lib'" >&2
         exit 1

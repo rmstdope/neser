@@ -227,8 +227,16 @@ def sort_collection(
     rom_db_csv_path: Path,
     *,
     dry_run: bool = False,
+    build_script: Path | None = None,
 ) -> int:
-    """Copy ROMs into mapper/submapper directories and return count."""
+    """Copy ROMs into mapper/submapper directories and return count.
+
+    ``build.rs`` watches ``roms/games/mappers`` only once it exists (Cargo would otherwise rebuild
+    on every call), so when this run creates ``destination_root`` it touches ``build_script`` to
+    make the next build regenerate the autorun tests.
+    """
+
+    creates_destination = not dry_run and not destination_root.exists()
 
     overrides = load_rom_db_overrides(rom_db_csv_path)
     copied = 0
@@ -257,6 +265,9 @@ def sort_collection(
 
     if dry_run:
         _print_projected_hierarchy(destination_root, projected_files)
+
+    if creates_destination and destination_root.exists() and build_script is not None and build_script.exists():
+        build_script.touch()
 
     return copied
 
@@ -311,6 +322,7 @@ def main(argv: list[str] | None = None) -> None:
         destination_root,
         rom_db_csv_path,
         dry_run=args.dry_run,
+        build_script=repo_root / "build.rs",
     )
     if args.dry_run:
         print(f"Dry run: would copy {copied} ROM(s)")

@@ -537,7 +537,7 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | `src/nes/integration_tests/romtest_harness.rs` | Shared infrastructure for ROM-based test assertions. |
 | `src/nes/integration_tests/manual_test_cartridges.rs` | Programmatically generated minimal test ROMs for specific hardware scenarios. |
 | `src/nes/integration_tests/miscellaneous_tests.rs` | Miscellaneous integration tests. |
-| `build.rs` | Build script that scans `roms/games/mappers/` for `.autorun` files and generates per-ROM regression tests at compile time. It watches that gitignored directory only when it exists, since Cargo counts a missing watched path as changed and would rebuild the crate on every call; after creating it the first time, `touch build.rs`. |
+| `build.rs` | Build script that scans `roms/games/mappers/` for `.autorun` files and generates per-ROM regression tests at compile time. It watches that gitignored directory only when it exists, since Cargo counts a missing watched path as changed and would rebuild the crate on every call; `scripts/sort_roms.py` touches `build.rs` when it creates the directory, and anyone creating it by hand runs `touch build.rs`. |
 
 ### `web/` — Browser Frontend
 

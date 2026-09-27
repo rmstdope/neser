@@ -9,8 +9,8 @@ fn main() {
     let root = Path::new("roms/games/mappers");
     // Cargo counts a missing rerun-if-changed path as changed on every build, and roms/games is
     // gitignored and absent from most checkouts, so watching it unconditionally rebuilt the crate
-    // on every cargo call (nr-5ku). Watch it only once it exists; after creating it for the first
-    // time, `touch build.rs` so the autorun tests are generated.
+    // on every cargo call (nr-5ku). Watch it only once it exists. scripts/sort_roms.py touches
+    // build.rs when it creates the directory; if you create it any other way, `touch build.rs`.
     if root.exists() {
         emit_rerun_hints(root);
     }

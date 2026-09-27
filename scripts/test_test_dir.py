@@ -54,12 +54,15 @@ class NextestSkipExpressionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
-# A stand-in for cargo: a ``--list`` call answers one test unless the filter is
-# ``empty::``; any other call prints its arguments, one per line, and records that it ran.
+# A stand-in for cargo: a ``--list`` call answers one test unless the filter is ``empty::`` (none)
+# or ``broken::`` (a compile error, exit 101), or ``--format`` reached it (JSON, which the check
+# cannot read); any other call prints its arguments, one per line, and records that it ran.
 FAKE_CARGO = """#!/bin/sh
 case " $* " in
   *" --list "*)
     case " $* " in
+      *" --format "*) echo '{ "type": "suite", "event": "started", "test_count": 1 }' ;;
+      *" broken::"*) echo "error[E0308]: mismatched types" >&2; exit 101 ;;
       *" empty::"*) echo "0 tests, 0 benchmarks" ;;
       *) echo "some::module::a_test: test"; echo "1 test, 0 benchmarks" ;;
     esac ;;
@@ -111,6 +114,19 @@ class ZeroMatchTest(unittest.TestCase):
         self.assertIn("src/empty/", result.stderr)
         self.assertNotIn("src/nes ", result.stderr)
         self.assertFalse(ran)
+
+    def test_compile_failure_is_not_reported_as_no_match(self) -> None:
+        result, ran = run_with_fake_cargo("src/broken")
+        self.assertEqual(result.returncode, 101)
+        self.assertNotIn("matches no test", result.stderr)
+        self.assertIn("error[E0308]", result.stderr)
+        self.assertFalse(ran)
+
+    def test_passthrough_args_do_not_reach_the_check(self) -> None:
+        result, ran = run_with_fake_cargo("src/nes", "--", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(ran)
+        self.assertIn("json", result.stdout.splitlines())
 
     def test_directory_with_tests_runs(self) -> None:
         result, ran = run_with_fake_cargo("src/nes")

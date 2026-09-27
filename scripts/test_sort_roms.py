@@ -1,6 +1,7 @@
 """Unit tests for scripts.sort_roms sorting and CLI parsing behavior."""
 
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -185,6 +186,36 @@ class TestSortRoms(unittest.TestCase):
             self.assertEqual(copied, 1)
             expected = destination_root / "7" / rom_path.name
             self.assertTrue(expected.exists())
+
+    def _sort_one_rom(self, temp_dir: Path, destination_root: Path, build_script: Path) -> None:
+        collection_root = temp_dir / "collection"
+        collection_root.mkdir()
+        (collection_root / "Game.nes").write_bytes(make_ines_rom(mapper=7, submapper=None))
+        rom_db_path = temp_dir / "rom_db.csv"
+        rom_db_path.write_text("# header\n", encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            sort_collection(collection_root, destination_root, rom_db_path, build_script=build_script)
+
+    def test_creating_the_destination_marks_build_rs_stale(self) -> None:
+        """build.rs watches roms/games/mappers only once it exists, so its creation must rerun it."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            build_script = temp_dir / "build.rs"
+            build_script.write_text("", encoding="utf-8")
+            os.utime(build_script, (1_000_000, 1_000_000))
+            self._sort_one_rom(temp_dir, temp_dir / "mappers", build_script)
+            self.assertGreater(build_script.stat().st_mtime, 1_000_000)
+
+    def test_an_existing_destination_leaves_build_rs_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            build_script = temp_dir / "build.rs"
+            build_script.write_text("", encoding="utf-8")
+            os.utime(build_script, (1_000_000, 1_000_000))
+            (temp_dir / "mappers").mkdir()
+            self._sort_one_rom(temp_dir, temp_dir / "mappers", build_script)
+            self.assertEqual(build_script.stat().st_mtime, 1_000_000)
 
     def test_sort_collection_dry_run_does_not_copy_files(self) -> None:
         """Dry-run mode reports matches without writing destination files."""
