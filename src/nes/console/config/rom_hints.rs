@@ -235,6 +235,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::cartridge::{VsHardwareType, VsPpuType};
     use crate::nes::console::NesConfig;
     use crate::platform::test_roms::minimal_nes_rom;
 
@@ -281,6 +282,42 @@ mod tests {
         let hints = RomHints::resolve(&cartridge(&rom), &RomDb::default());
         assert!(hints.playchoice10);
         assert!(!hints.vs_system);
+    }
+
+    #[test]
+    fn resolve_reads_vs_system_from_an_nes2_vs_header() {
+        let mut rom = minimal_nes_rom(false);
+        rom[7] = 0x09; // flags7: NES 2.0 identifier, VS System console
+        rom[13] = 0x10; // VS hardware type 1, VS PPU type 0
+        let hints = RomHints::resolve(&cartridge(&rom), &RomDb::default());
+        assert!(hints.vs_system);
+        assert!(!hints.playchoice10);
+    }
+
+    #[test]
+    fn resolve_reads_vs_system_from_the_vs_ppu_type_alone() {
+        let mut cartridge = cartridge(&minimal_nes_rom(false));
+        cartridge.set_vs_ppu_type_for_test(Some(VsPpuType::Rp2c03b));
+        assert!(RomHints::resolve(&cartridge, &RomDb::default()).vs_system);
+    }
+
+    #[test]
+    fn resolve_reads_vs_system_from_the_vs_hardware_type_alone() {
+        let mut cartridge = cartridge(&minimal_nes_rom(false));
+        cartridge.set_vs_hardware_type_for_test(Some(VsHardwareType::Unisystem));
+        assert!(RomHints::resolve(&cartridge, &RomDb::default()).vs_system);
+    }
+
+    #[test]
+    fn resolve_reads_swapped_vs_controllers_from_the_database() {
+        let hints = RomHints::resolve(&cartridge(&minimal_nes_rom(false)), &db_with_row("", "5"));
+        assert_eq!(
+            hints,
+            RomHints {
+                vs_controllers_swapped: true,
+                ..RomHints::default()
+            }
+        );
     }
 
     #[test]

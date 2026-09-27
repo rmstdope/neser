@@ -3267,17 +3267,22 @@ mod tests {
     }
 
     #[test]
-    fn insert_cartridge_keeps_the_audio_sample_rate() {
+    fn insert_cartridge_keeps_the_audio_sample_rate_across_a_timing_change() {
+        // 48 kHz, not the APU's 44.1 kHz default, so a rebuilt APU that forgot the rate fails.
         let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        nes.set_audio_sample_rate(44_100.0);
+        nes.set_audio_sample_rate(48_000.0);
+        nes.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_timing_mode(TimingMode::Pal);
 
         nes.insert_cartridge(load_test_cartridge(&create_minimal_rom()));
 
         assert_eq!(
             nes.apu.borrow().capture_state().cycles_per_sample,
-            apu_cycles_per_sample(TimingMode::Ntsc, Some(44_100.0))
+            apu_cycles_per_sample(TimingMode::Pal, Some(48_000.0))
         );
     }
 
