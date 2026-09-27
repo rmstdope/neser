@@ -10,7 +10,7 @@ use crate::snes::cx4::Cx4;
 use crate::snes::dsp::{self, DspModel};
 use crate::snes::gsu::Gsu;
 use crate::snes::gsu::memory::{self as gsu_memory, SnesTarget as GsuTarget};
-use crate::snes::input::{InputPorts, SnesButton};
+use crate::snes::input::InputPorts;
 use crate::snes::obc1;
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
 use crate::snes::sa1::{
@@ -2145,7 +2145,7 @@ impl SnesBus for SnesSystemBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snes::input::SnesControllerType;
+    use crate::snes::input::{SnesButton, SnesControllerType};
     use crate::snes::ppu::{
         CGRAM_SIZE, DOTS_PER_SCANLINE, HDMA_TRANSFER_POSITION, MASTER_CYCLES_PER_DOT,
         NTSC_SCANLINES_PER_FRAME, OAM_SIZE, VRAM_SIZE,
