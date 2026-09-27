@@ -89,6 +89,13 @@ pub trait MouseInputCapability {
     fn has_zapper(&self) -> bool;
     fn has_snes_mouse(&self) -> bool;
     fn has_snes_mouse_on_port(&self, port: u8) -> bool;
+    /// Whether a Super Scope is plugged into either port. It aims with the absolute mouse
+    /// position (`set_mouse_position`) and fires/cursors with the buttons, but is not one of
+    /// the devices [`has_any_mouse_controller`](Self::has_any_mouse_controller) reports: those
+    /// capture the mouse automatically, and the scope only on a click.
+    fn has_super_scope(&self) -> bool {
+        false
+    }
     fn set_mouse_position(&mut self, x: u8, y: u8);
     fn set_paddle_position(&mut self, x: u8);
     fn add_mouse_delta(&mut self, dx: i16, dy: i16);
@@ -165,8 +172,17 @@ impl MouseInputCapability for Snes {
         self.has_mouse_on_port(port)
     }
 
-    fn set_mouse_position(&mut self, _x: u8, _y: u8) {
-        // SNES mouse uses relative motion only.
+    fn has_super_scope(&self) -> bool {
+        self.has_superscope()
+    }
+
+    fn set_mouse_position(&mut self, x: u8, y: u8) {
+        // The SNES mouse uses relative motion only; the Super Scope aims absolutely.
+        for port in 0..=1u8 {
+            if self.has_superscope_on_port(port) {
+                self.set_superscope_position(port, i16::from(x), i16::from(y));
+            }
+        }
     }
 
     fn set_paddle_position(&mut self, _x: u8) {
@@ -187,6 +203,12 @@ impl MouseInputCapability for Snes {
                 match button {
                     MouseInputButton::Left => self.set_mouse_left_button(port, pressed),
                     MouseInputButton::Right => self.set_mouse_right_button(port, pressed),
+                }
+            }
+            if self.has_superscope_on_port(port) {
+                match button {
+                    MouseInputButton::Left => self.set_superscope_trigger(port, pressed),
+                    MouseInputButton::Right => self.set_superscope_cursor(port, pressed),
                 }
             }
         }

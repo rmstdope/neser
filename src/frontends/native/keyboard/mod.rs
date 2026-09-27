@@ -110,6 +110,9 @@ pub fn handle_key_released(
             }
         }
         SystemType::Snes => {
+            if console_keyboard::handle_super_scope_key(console, key_code, false) {
+                return;
+            }
             if let Some(btn_id) = controller_mapping::snes_key_to_button_id(key_code) {
                 console.set_button(0, btn_id, false);
             }

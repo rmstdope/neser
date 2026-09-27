@@ -387,6 +387,12 @@ impl Snes {
         self.cpu.as_mut()?.toggle_superscope_turbo(port)
     }
 
+    /// The Super Scope's state on the given port (aim, buttons, Turbo), or `None` when no game
+    /// is loaded or no scope is on that port.
+    pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
+        self.cpu.as_ref()?.superscope_state(port)
+    }
+
     /// Set the Super Scope pause button state for the given port.
     pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
         if let Some(cpu) = self.cpu.as_mut() {

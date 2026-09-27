@@ -695,6 +695,17 @@ impl InputPorts {
         }
     }
 
+    /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
+    /// `None` when that port has no Super Scope.
+    pub fn superscope_state(&self, port: u8) -> Option<SnesControllerState> {
+        let device = match port {
+            0 => &self.port1,
+            1 => &self.port2,
+            _ => return None,
+        };
+        device.is_superscope().then(|| device.capture_state())
+    }
+
     /// Returns true if the given physical SNES port currently hosts a multitap.
     pub fn is_multitap_on_port(&self, port: u8) -> bool {
         match port {
