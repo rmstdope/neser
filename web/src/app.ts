@@ -669,7 +669,7 @@ function setupGbPrograms() {
     return true;
 }
 
-function renderFrameWithCurrentPipeline(frame: Uint8Array, sourceFormat = gl.RGBA): boolean {
+function renderFrameWithCurrentPipeline(frame: Uint8Array, sourceFormat: number = gl.RGBA): boolean {
     const pipeline = selectRenderPipeline({
         filterType: filters[currentFilter]?.type,
         gbAssetsLoaded,
@@ -2448,7 +2448,7 @@ function renderGbPass(frame: Uint8Array): boolean {
     return true;
 }
 
-function renderSinglePass(frame: Uint8Array, sourceFormat = gl.RGBA) {
+function renderSinglePass(frame: Uint8Array, sourceFormat: number = gl.RGBA) {
     if (!shaderProgram) {
         console.error("Shader program is null, cannot render");
         return false;
