@@ -292,6 +292,13 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--capture-every",
+        help: Some(
+            "With --headless, also write <output-stem>_<N>.png at every frame N that is a multiple of this",
+        ),
+        has_value: true,
+    },
+    CliFlag {
         flag: "--output",
         help: Some("Destination PNG path for --headless capture"),
         has_value: true,

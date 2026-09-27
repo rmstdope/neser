@@ -37,6 +37,10 @@ pub struct HeadlessCapture {
     pub frames: u32,
     /// Destination PNG path, from `--output`.
     pub output: PathBuf,
+    /// Checkpoint interval from `--capture-every`: every frame that is a
+    /// multiple of it is also written next to `output`, as
+    /// `<stem>_<frame>.png`. `None` writes the final frame only.
+    pub every: Option<u32>,
 }
 
 /// Default frame count when `--frames` is omitted (one NTSC second).

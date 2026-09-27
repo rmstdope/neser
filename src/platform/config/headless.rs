@@ -8,7 +8,7 @@ use super::{DEFAULT_CAPTURE_FRAMES, FrontendConfig, HeadlessCapture, RamInitMode
 use crate::platform::autorun::AutorunMode;
 use std::path::PathBuf;
 
-/// Apply the `--headless`, `--frames` and `--output` flags.
+/// Apply the `--headless`, `--frames`, `--capture-every` and `--output` flags.
 ///
 /// Must run after [`super::autorun::apply_args`], which is what populates the
 /// `autorun_mode` this checks against, and it needs the raw `--ram-init-mode`
@@ -21,6 +21,7 @@ pub(super) fn apply_args(
     let headless = args.iter().any(|arg| arg == "--headless");
     let frames = parse_u32_arg(args, "--frames")?;
     let output = parse_cli_string_arg(args, "--output");
+    let every = parse_u32_arg(args, "--capture-every")?;
 
     if !headless {
         // Accepting these silently would let a mistyped capture command open a
@@ -30,6 +31,9 @@ pub(super) fn apply_args(
         }
         if output.is_some() {
             return Err("--output requires --headless".to_string());
+        }
+        if every.is_some() {
+            return Err("--capture-every requires --headless".to_string());
         }
         return Ok(());
     }
@@ -44,6 +48,15 @@ pub(super) fn apply_args(
     let frames = frames.unwrap_or(DEFAULT_CAPTURE_FRAMES);
     if frames == 0 {
         return Err("--frames must be at least 1".to_string());
+    }
+    match every {
+        Some(0) => return Err("--capture-every must be at least 1".to_string()),
+        // A silent run that writes no checkpoint is a mistyped command, not a
+        // request for none.
+        Some(every) if every > frames => {
+            return Err("--capture-every must not exceed --frames".to_string());
+        }
+        _ => {}
     }
 
     let output = output.ok_or_else(|| "--headless requires --output <path>".to_string())?;
@@ -63,6 +76,7 @@ pub(super) fn apply_args(
     cfg.headless_capture = Some(HeadlessCapture {
         frames,
         output: PathBuf::from(output),
+        every,
     });
 
     Ok(())
@@ -110,6 +124,7 @@ mod tests {
             Some(HeadlessCapture {
                 frames: DEFAULT_CAPTURE_FRAMES,
                 output: PathBuf::from("shot.png"),
+                every: None,
             })
         );
     }
@@ -131,6 +146,93 @@ mod tests {
             .expect("capture should be configured");
         assert_eq!(capture.frames, 30);
         assert_eq!(capture.output, PathBuf::from("shot.png"));
+        assert_eq!(capture.every, None);
+    }
+
+    #[test]
+    fn headless_accepts_a_capture_interval() {
+        let config = parse_config(args(&[
+            "--headless",
+            "--frames",
+            "600",
+            "--capture-every",
+            "300",
+            "--output",
+            "shot.png",
+            "game.nes",
+        ]));
+
+        assert_eq!(
+            config.frontend.headless_capture,
+            Some(HeadlessCapture {
+                frames: 600,
+                output: PathBuf::from("shot.png"),
+                every: Some(300),
+            })
+        );
+    }
+
+    #[test]
+    fn capture_interval_may_equal_the_frame_count() {
+        let config = parse_config(args(&[
+            "--headless",
+            "--frames",
+            "300",
+            "--capture-every",
+            "300",
+            "--output",
+            "shot.png",
+            "game.nes",
+        ]));
+
+        let capture = config
+            .frontend
+            .headless_capture
+            .expect("capture should be configured");
+        assert_eq!(capture.every, Some(300));
+    }
+
+    #[test]
+    fn capture_interval_requires_headless() {
+        let error = error_for(&["--capture-every", "300", "game.nes"]);
+        assert!(
+            error.contains("--capture-every") && error.contains("--headless"),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn capture_interval_rejects_zero() {
+        let error = error_for(&[
+            "--headless",
+            "--capture-every",
+            "0",
+            "--output",
+            "shot.png",
+            "game.nes",
+        ]);
+        assert!(
+            error.contains("--capture-every"),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn capture_interval_rejects_more_than_the_frame_count() {
+        let error = error_for(&[
+            "--headless",
+            "--frames",
+            "100",
+            "--capture-every",
+            "101",
+            "--output",
+            "shot.png",
+            "game.nes",
+        ]);
+        assert!(
+            error.contains("--capture-every") && error.contains("--frames"),
+            "unexpected error: {error:?}"
+        );
     }
 
     #[test]
