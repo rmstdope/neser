@@ -293,7 +293,7 @@ F4: Cycle visual filter\n\
 F5: Debugger (open/continue)\n\
 F10/F11: Step over/into\n\
 F6/F7: Save/Load state\n\
-F8: Cycle Palette (NES, Game Boy)";
+F8: Cycle Palette / Colors";
 
     let max_ports: usize = if four_score { 4 } else { 2 };
     let keyboard_ports =
@@ -566,7 +566,7 @@ mod tests {
         for console in [make_console(), make_gameboy_console()] {
             let text = state.overlay_text(&console, None).unwrap();
             assert!(
-                text.contains("F8: Cycle Palette (NES, Game Boy)"),
+                text.contains("F8: Cycle Palette / Colors"),
                 "help overlay should list F8, got:\n{text}"
             );
         }

@@ -189,7 +189,7 @@ Common hotkeys:
 | `F4` | Cycle shader preset |
 | `F5` | Toggle debugger |
 | `F6` / `F7` | Save/load state |
-| `F8` | Cycle the palette (NES system palette, or the original Game Boy's shade palette) |
+| `F8` | Cycle the palette (NES system palette, or the original Game Boy's shade palette), or switch Game Boy Advance colour correction |
 | `F10` / `F11` | Debugger step over/into |
 
 System-specific controls and controller options are documented in:

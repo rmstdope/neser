@@ -186,6 +186,10 @@ impl Gba {
         let bus = self.bus_mut();
         bus.keypad.set_pressed_mask(current_input, &mut bus.ic);
         self.restore_cpu_state(&state.cpu);
+        // The colour correction is the player's choice (setting, F8 or web
+        // button), not machine state: keep it rather than the saved one.
+        let color_correction = self.color_correction();
+        self.bus_mut().ppu.set_color_correction(color_correction);
         Ok(())
     }
 }
@@ -209,6 +213,23 @@ mod tests {
         rom[FIXED_BYTE_OFFSET] = FIXED_BYTE_VALUE;
         rom[COMPLEMENT_CHECK_OFFSET] = compute_complement_check(&rom);
         rom
+    }
+
+    #[test]
+    fn test_load_state_keeps_current_color_correction_choice() {
+        let mut gba = make_gba();
+        gba.set_color_correction(true);
+        let saved_corrected = gba.save_state();
+        gba.set_color_correction(false);
+
+        gba.load_state(&saved_corrected)
+            .expect("load should succeed");
+
+        assert!(!gba.color_correction());
+        assert!(
+            !gba.bus().ppu.color_correction(),
+            "loading a state must not switch the player's colour choice"
+        );
     }
 
     // ── Version checks ─────────────────────────────────────────────────────

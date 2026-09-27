@@ -90,6 +90,7 @@ import {
 import { computeButtonStates } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
 import { cgbColorButtonLabel, cgbColorButtonVisible } from "./display/cgb_color_correction";
+import { gbaColorButtonLabel } from "./display/gba_color_correction";
 import { selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
@@ -782,9 +783,11 @@ let paused = false;
 let romFromFile = false; // true only when ROM was loaded from the file input
 /** Game Boy Color LCD colour correction; lives for the page, not across reloads (like Filter). */
 let cgbColorCorrection = false;
+/** Game Boy Advance LCD colour correction; its own choice, kept for the page like the one above. */
+let gbaColorCorrection = false;
 const cgbColorToggleBtn = document.getElementById("cgb-color-toggle") as HTMLButtonElement | null;
 
-/** Show the Colors button only while a colour Game Boy game is running (not paused). */
+/** Show the Colors button only while a colour Game Boy or a Game Boy Advance game is running (not paused). */
 function updateCgbColorButton() {
     if (!cgbColorToggleBtn) return;
     const visible = cgbColorButtonVisible({
@@ -794,10 +797,24 @@ function updateCgbColorButton() {
         paused,
     });
     cgbColorToggleBtn.style.display = visible ? "" : "none";
-    cgbColorToggleBtn.textContent = cgbColorButtonLabel(cgbColorCorrection);
+    cgbColorToggleBtn.textContent =
+        emulator?.kind === "gba" ? gbaColorButtonLabel(gbaColorCorrection) : cgbColorButtonLabel(cgbColorCorrection);
+}
+
+/** F8 and the Colors button in a Game Boy Advance game: switch, relabel, show the corner message. */
+function toggleGbaColorCorrection() {
+    if (emulator?.kind !== "gba") return;
+    emulator.inst.cycle_palette();
+    gbaColorCorrection = emulator.inst.color_correction();
+    drainNesToasts(emulator.inst, toastOverlay);
+    updateCgbColorButton();
 }
 
 cgbColorToggleBtn?.addEventListener("click", () => {
+    if (emulator?.kind === "gba") {
+        toggleGbaColorCorrection();
+        return;
+    }
     cgbColorCorrection = !cgbColorCorrection;
     if (emulator?.kind === "gb") {
         emulator.inst.set_cgb_color_correction(cgbColorCorrection);
@@ -881,6 +898,7 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
         emulator = { kind: "gb", inst: gb };
     } else if (kind === "gba") {
         const gba = new WasmGba();
+        gba.set_color_correction(gbaColorCorrection);
         emulator = { kind: "gba", inst: gba };
     } else if (kind === "snes") {
         const snes = new WasmSnes();
@@ -2019,6 +2037,8 @@ function cyclePaletteAction() {
         // Empty when no original Game Boy game runs: nothing changes, no toast.
         if (emulator.inst.cycle_palette() !== "") syncGbPaletteWithFilter(false);
         drainNesToasts(emulator.inst, toastOverlay);
+    } else if (emulator?.kind === "gba") {
+        toggleGbaColorCorrection();
     }
 }
 

@@ -1147,6 +1147,41 @@ fn wasm_gba_load_rom_returns_success_toast() {
     );
 }
 
+fn drained_gba(gba: &mut WasmGba) -> Vec<String> {
+    gba.drain_toasts()
+        .into_iter()
+        .filter_map(|v| v.as_string())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_cycle_palette_switches_color_correction_with_toast() {
+    let mut gba = WasmGba::new();
+    gba.load_rom(&minimal_gba_rom(), "suite.gba").unwrap();
+    drained_gba(&mut gba);
+    assert!(!gba.color_correction(), "a page starts at Raw");
+
+    assert_eq!(gba.cycle_palette(), "Colors: GBA screen");
+    assert!(gba.color_correction());
+    assert_eq!(
+        drained_gba(&mut gba),
+        vec!["Colors: GBA screen".to_string()]
+    );
+
+    assert_eq!(gba.cycle_palette(), "Colors: Raw");
+    assert!(!gba.color_correction());
+    assert_eq!(drained_gba(&mut gba), vec!["Colors: Raw".to_string()]);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_set_color_correction_before_load_is_kept_for_the_game() {
+    let mut gba = WasmGba::new();
+    gba.set_color_correction(true);
+    gba.load_rom(&minimal_gba_rom(), "suite.gba").unwrap();
+    assert!(gba.color_correction());
+    assert_eq!(gba.cycle_palette(), "Colors: Raw");
+}
+
 #[wasm_bindgen_test]
 fn wasm_gba_load_rom_rejects_invalid_data() {
     let mut gba = WasmGba::new();
