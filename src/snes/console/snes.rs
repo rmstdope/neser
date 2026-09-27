@@ -1184,8 +1184,7 @@ mod tests {
         let mut snes = make_snes();
         snes.load_rom(&crate::snes::test_support::minimal_lorom(title), "game.sfc")
             .expect("load ROM");
-        let toasts = snes.app_context.borrow_mut().take_toasts();
-        toasts
+        snes.app_context.borrow_mut().take_toasts()
     }
 
     #[test]
