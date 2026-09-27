@@ -71,6 +71,9 @@
 .ifdef HAS_TEST_FOUR_SCREEN
     .import run_four_screen
 .endif
+.ifdef HAS_TEST_MMC6_PRG_RAM
+    .import run_mmc6_prg_ram
+.endif
 
 .segment "RODATA"
 test_title_string:
@@ -252,6 +255,15 @@ test_title_string:
     jsr console_flush
     jsr console_newline
     jsr run_four_screen
+    jsr console_show
+.endif
+
+.ifdef HAS_TEST_MMC6_PRG_RAM
+    jsr console_print_inline
+    .byte "-- MMC6 PRG-RAM --", 0
+    jsr console_flush
+    jsr console_newline
+    jsr run_mmc6_prg_ram
     jsr console_show
 .endif
 

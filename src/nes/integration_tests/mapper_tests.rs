@@ -796,18 +796,19 @@ mod tests {
     );
 
     // ================================================================
-    // Mapper 4, Submapper 1 (NEC IRQ)
+    // Mapper 4, Submapper 1 (MMC6)
+    // Console-verified: the MMC6 has no RAM at $6000 for the status byte.
     // ================================================================
 
-    setup_rom_test!(
+    setup_rom_console_test!(
         test_mv_m004_1_irq,
         "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.1_irq.nes"
     );
-    setup_rom_test!(
-        test_mv_m004_1_write_protect,
-        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.1_write_protect.nes"
+    setup_rom_console_test!(
+        test_mv_m004_1_mmc6_prg_ram,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m004.1_mmc6_prg_ram.nes"
     );
-    setup_rom_test!(
+    setup_rom_console_test!(
         test_mv_m004_1_combined,
         "roms/nes/automated_tests/mapper_verification/bin/m004.1.nes"
     );
