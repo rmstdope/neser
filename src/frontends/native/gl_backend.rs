@@ -117,6 +117,16 @@ pub struct GlBackend {
 pub struct Crosshair {
     pub x: f32,
     pub y: f32,
+    pub style: CrosshairStyle,
+}
+
+/// How a light gun's aim is drawn over the picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrosshairStyle {
+    /// The NES Zapper's small red plus.
+    Plus,
+    /// The Super Scope's white ring sight with a black outline.
+    Ring,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,8 +293,12 @@ fn draw_egui_toasts(
     let bottom_margin = 12.0;
 
     for (stack_index, toast_text) in visible_toasts.iter().rev().enumerate() {
-        let galley =
-            painter.layout_no_wrap(toast_text.to_owned(), overlay_egui_font_id(), text_color);
+        let galley = painter.layout(
+            toast_text.to_owned(),
+            overlay_egui_font_id(),
+            text_color,
+            crate::frontends::native::ui_geometry::toast_wrap_width(draw_w, padding[0]),
+        );
         let text_size = [galley.size().x, galley.size().y];
         let layout = crate::frontends::native::ui_geometry::bottom_center_text_panel(
             [x0, y0],
@@ -316,6 +330,33 @@ fn draw_egui_crosshair(ui: &mut egui::Ui, crosshair: Crosshair, draw_ctx: &Cross
     let painter = ui.painter();
     let color = egui_color_from_rgba(crosshair_rgba());
     let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
+    if crosshair.style == CrosshairStyle::Ring {
+        let sight = crate::frontends::native::ui_geometry::super_scope_sight_shapes(
+            [draw_ctx.x0, draw_ctx.y0],
+            [draw_ctx.draw_w, draw_ctx.draw_h],
+            crate::frontends::native::ui_geometry::super_scope_sight_picture([
+                draw_ctx.cropped_w,
+                draw_ctx.cropped_h,
+            ]),
+            [ix, iy],
+        );
+        let center = egui::pos2(sight.center[0], sight.center[1]);
+        // Black first, white on top: the black shows as an outline on any background.
+        for (width, color) in [
+            (sight.outline_width, egui::Color32::BLACK),
+            (sight.line_width, egui::Color32::WHITE),
+        ] {
+            let stroke = egui::Stroke::new(width, color);
+            painter.circle_stroke(center, sight.radius, stroke);
+            for [from, to] in sight.ticks {
+                painter.line_segment(
+                    [egui::pos2(from[0], from[1]), egui::pos2(to[0], to[1])],
+                    stroke,
+                );
+            }
+        }
+        return;
+    }
     let rects = crate::frontends::native::ui_geometry::crosshair_marker_rects(
         [draw_ctx.x0, draw_ctx.y0],
         [draw_ctx.draw_w, draw_ctx.draw_h],
@@ -1102,7 +1143,9 @@ mod tests_letterbox {
 
 #[cfg(test)]
 mod tests_crosshair_projection {
-    use super::{Crosshair, CrosshairDrawContext, project_crosshair_to_cropped_indices};
+    use super::{
+        Crosshair, CrosshairDrawContext, CrosshairStyle, project_crosshair_to_cropped_indices,
+    };
 
     #[test]
     fn test_crosshair_projection_without_overscan() {
@@ -1116,8 +1159,14 @@ mod tests_crosshair_projection {
             h_overscan: 0,
             v_overscan: 0,
         };
-        let (ix, iy) =
-            project_crosshair_to_cropped_indices(Crosshair { x: 10.0, y: 20.0 }, &draw_ctx);
+        let (ix, iy) = project_crosshair_to_cropped_indices(
+            Crosshair {
+                x: 10.0,
+                y: 20.0,
+                style: CrosshairStyle::Plus,
+            },
+            &draw_ctx,
+        );
         assert_eq!(ix, 10.0);
         assert_eq!(iy, 20.0);
     }
@@ -1134,8 +1183,14 @@ mod tests_crosshair_projection {
             h_overscan: 0,
             v_overscan: 8,
         };
-        let (ix, iy) =
-            project_crosshair_to_cropped_indices(Crosshair { x: 100.0, y: 40.0 }, &draw_ctx);
+        let (ix, iy) = project_crosshair_to_cropped_indices(
+            Crosshair {
+                x: 100.0,
+                y: 40.0,
+                style: CrosshairStyle::Plus,
+            },
+            &draw_ctx,
+        );
         assert_eq!(ix, 100.0);
         assert_eq!(iy, 32.0);
     }
@@ -1152,8 +1207,14 @@ mod tests_crosshair_projection {
             h_overscan: 8,
             v_overscan: 16,
         };
-        let (ix, iy) =
-            project_crosshair_to_cropped_indices(Crosshair { x: 255.0, y: 239.0 }, &draw_ctx);
+        let (ix, iy) = project_crosshair_to_cropped_indices(
+            Crosshair {
+                x: 255.0,
+                y: 239.0,
+                style: CrosshairStyle::Plus,
+            },
+            &draw_ctx,
+        );
         assert_eq!(ix, 239.0);
         assert_eq!(iy, 207.0);
     }

@@ -298,9 +298,10 @@ impl NativeEventLoop {
     /// Called once per frame to ensure grab/visibility stay in sync after
     /// cartridge switches, focus changes, or controller hot-swaps.
     fn sync_mouse_grab_state(&mut self) {
-        let has_mouse = mouse::has_any_mouse_controller(&self.console);
-        let should_grab = crate::nes::input::mouse_mapping::should_grab_mouse_input(
-            has_mouse,
+        let should_grab = mouse::desired_mouse_grab(
+            mouse::has_any_mouse_controller(&self.console),
+            mouse::has_super_scope(&self.console),
+            self.state.mouse_grabbed,
             self.state.window_focused,
             self.state.mouse_released_by_escape,
         );
@@ -684,8 +685,20 @@ impl ApplicationHandler for NativeEventLoop {
                 self.state.window_focused = focused;
                 self.sync_audio_state();
                 if !focused {
-                    // Release grab on focus loss, but do NOT set
-                    // mouse_released_by_escape — that flag is only for
+                    // A captured Super Scope treats focus loss like Escape: the next
+                    // click recaptures without firing, and the player is told how.
+                    // (A Super Scope is never captured automatically, so macOS's
+                    // start-up Focused(false) cannot reach this: it needs a capture.)
+                    if let Some(toast) = mouse::super_scope_release_toast(
+                        mouse::has_super_scope(&self.console),
+                        self.state.mouse_grabbed,
+                    ) {
+                        self.state.mouse_released_by_escape = true;
+                        self.console.app_context().borrow_mut().add_toast(toast);
+                    }
+                    mouse::release_super_scope_buttons(&mut self.console);
+                    // For the NES-style devices, release grab on focus loss but do NOT
+                    // set mouse_released_by_escape — for them that flag is only for
                     // explicit Escape key presses. Keeping it clear means
                     // auto-grab resumes when focus returns, which is the
                     // right behaviour. (On macOS, Focused(false) also fires
@@ -857,12 +870,18 @@ impl ApplicationHandler for NativeEventLoop {
                 }
 
                 // If keyboard handler released the mouse grab (Escape), apply it.
-                if mouse_grabbed_before
-                    && !self.state.mouse_grabbed
-                    && let Some(ref mut gl) = self.gl_wrapper
-                {
-                    let _ = gl.set_mouse_grab(false);
-                    gl.window().set_cursor_visible(true);
+                if mouse_grabbed_before && !self.state.mouse_grabbed {
+                    mouse::release_super_scope_buttons(&mut self.console);
+                    if let Some(toast) = mouse::super_scope_release_toast(
+                        mouse::has_super_scope(&self.console),
+                        true,
+                    ) {
+                        self.console.app_context().borrow_mut().add_toast(toast);
+                    }
+                    if let Some(ref mut gl) = self.gl_wrapper {
+                        let _ = gl.set_mouse_grab(false);
+                        gl.window().set_cursor_visible(true);
+                    }
                 }
             }
 
@@ -874,6 +893,15 @@ impl ApplicationHandler for NativeEventLoop {
                 // When grabbed, all position input comes via DeviceEvent::MouseMotion
                 // (accumulated into virtual_cursor). CursorMoved is unreliable in
                 // Locked grab mode — the reported position is always the lock point.
+                // Before a capture it is where the player sees the pointer, which is
+                // where a Super Scope's capturing shot lands.
+                if !self.state.mouse_grabbed
+                    && let Some(ref gl) = self.gl_wrapper
+                {
+                    // Physical pixels in; the virtual cursor works in logical ones.
+                    let logical = position.to_logical::<f32>(gl.window().scale_factor());
+                    self.state.pointer_position = Some((logical.x, logical.y));
+                }
             }
 
             WindowEvent::MouseInput { button, state, .. } => {
@@ -883,6 +911,12 @@ impl ApplicationHandler for NativeEventLoop {
                 }
 
                 let has_mouse = mouse::has_any_mouse_controller(&self.console);
+                let has_scope = mouse::has_super_scope(&self.console);
+                let clicked = match button {
+                    winit::event::MouseButton::Left => Some(mouse::MouseButton::Left),
+                    winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
+                    _ => None,
+                };
 
                 // Left-click grabs immediately so the same click is also forwarded
                 // as a button press (unlike deferring to the next frame, which
@@ -890,10 +924,9 @@ impl ApplicationHandler for NativeEventLoop {
                 // Exception: if the mouse was released by Escape, the click only
                 // re-grabs and must NOT be forwarded to the NES controller.
                 let mut should_discard_grab_click = false;
-                if has_mouse
-                    && !self.state.mouse_grabbed
+                if !self.state.mouse_grabbed
                     && state == ElementState::Pressed
-                    && button == winit::event::MouseButton::Left
+                    && clicked.is_some_and(|btn| mouse::click_captures(has_mouse, has_scope, btn))
                 {
                     let was_released_by_escape = self.state.mouse_released_by_escape;
                     self.state.mouse_released_by_escape = false;
@@ -907,9 +940,13 @@ impl ApplicationHandler for NativeEventLoop {
                             let _ = gl.set_mouse_grab_locked();
                             gl.window().set_cursor_visible(false);
                             // Centre virtual cursor and immediately sync NES coords.
+                            // A Super Scope starts where the player saw the pointer.
                             let (w, h) = gl.window_size();
-                            let cx = w as f32 / 2.0;
-                            let cy = h as f32 / 2.0;
+                            let (cx, cy) = self
+                                .state
+                                .pointer_position
+                                .filter(|_| has_scope)
+                                .unwrap_or((w as f32 / 2.0, h as f32 / 2.0));
                             self.state.virtual_cursor = (cx, cy);
                             self.state.last_zapper_position = mouse::update_mouse_motion(
                                 &mut self.console,
@@ -928,19 +965,16 @@ impl ApplicationHandler for NativeEventLoop {
 
                 // Route button to NES controller if grabbed (but not for the
                 // re-grab click itself, which is silently discarded).
-                if has_mouse && self.state.mouse_grabbed && !should_discard_grab_click {
-                    let btn = match button {
-                        winit::event::MouseButton::Left => Some(mouse::MouseButton::Left),
-                        winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
-                        _ => None,
-                    };
-                    if let Some(btn) = btn {
-                        mouse::update_mouse_button(
-                            &mut self.console,
-                            btn,
-                            state == ElementState::Pressed,
-                        );
-                    }
+                if (has_mouse || has_scope)
+                    && self.state.mouse_grabbed
+                    && !should_discard_grab_click
+                    && let Some(btn) = clicked
+                {
+                    mouse::update_mouse_button(
+                        &mut self.console,
+                        btn,
+                        state == ElementState::Pressed,
+                    );
                 }
             }
 
@@ -1013,7 +1047,14 @@ impl ApplicationHandler for NativeEventLoop {
                         gl.update_gb_breakpoints(self.gb_debugger_controller.breakpoints());
                     }
                     let crosshair =
-                        mouse::zapper_crosshair(&self.console, self.state.last_zapper_position);
+                        mouse::zapper_crosshair(&self.console, self.state.last_zapper_position)
+                            .or_else(|| {
+                                mouse::super_scope_sight(
+                                    &self.console,
+                                    self.state.mouse_grabbed,
+                                    self.state.last_zapper_position,
+                                )
+                            });
                     let overlay = self
                         .state
                         .overlay_text(&self.console, self.autorun_state.as_ref());

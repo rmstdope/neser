@@ -49,6 +49,24 @@ neser --snes-hardware snes-pal path/to/game.sfc
 neser --snes-controller-port1 mouse --snes-controller-port2 standard path/to/game.sfc
 ```
 
+### Playing a Super Scope game
+
+Loading a recognised Super Scope game (Super Scope 6 / Nintendo Scope 6, Yoshi's Safari, Battle
+Clash / Space Bazooka, Metal Combat, T2: The Arcade Game, Bazooka Blitzkrieg / Destructive,
+Operation Thunderbolt, Tin Star, X-Zone) plugs the Super Scope into port 2 for that game, on
+desktop and web; port 1 stays a controller. Setting `snes-controller-port2` yourself wins over
+this. Click the game to capture the mouse (that click also fires), then:
+
+| Super Scope | Press |
+|---|---|
+| Aim | Move the mouse |
+| Fire | Left click |
+| Cursor | Right click |
+| Pause | `5` (the Start key) |
+| Turbo switch | `4` (the Select key); off each time a game loads |
+
+Escape (or leaving the window) releases the mouse; the next click recaptures it without firing.
+
 Equivalent config keys in `neser.conf`:
 
 ```text

@@ -52,6 +52,9 @@ pub(super) fn handle_snes_key_pressed(
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
+    if !app_state.modifiers.control_key() && handle_super_scope_key(console, key_code, true) {
+        return KeyOutcome::Continue;
+    }
     handle_single_joypad_key_pressed(
         console,
         key_code,
@@ -59,6 +62,38 @@ pub(super) fn handle_snes_key_pressed(
         audio,
         controller_mapping::snes_key_to_button_id,
     )
+}
+
+/// With a Super Scope connected, the Select key (4) flips its Turbo switch and the Start
+/// key (5) is its Pause button; neither then reaches port 1's Select/Start, so one press
+/// never pauses twice. Returns `true` when the key was the scope's.
+pub(super) fn handle_super_scope_key(
+    console: &mut Console,
+    key_code: KeyCode,
+    pressed: bool,
+) -> bool {
+    let Some(snes) = console.as_snes_mut() else {
+        return false;
+    };
+    let Some(port) = (0..=1u8).find(|&port| snes.has_superscope_on_port(port)) else {
+        return false;
+    };
+    match key_code {
+        KeyCode::Digit4 => {
+            if pressed && let Some(on) = snes.toggle_superscope_turbo(port) {
+                console
+                    .app_context()
+                    .borrow_mut()
+                    .add_toast(crate::snes::frontend_toasts::super_scope_turbo_toast(on));
+            }
+            true
+        }
+        KeyCode::Digit5 => {
+            snes.set_superscope_pause(port, pressed);
+            true
+        }
+        _ => false,
+    }
 }
 
 fn handle_single_joypad_key_pressed(
@@ -279,6 +314,82 @@ mod tests {
             handle_key_pressed(&mut console, KeyCode::KeyR, &mut state, None),
             KeyOutcome::Continue,
             "Ctrl+Shift+R should return Continue in GB mode"
+        );
+    }
+
+    fn make_snes_scope_console() -> Console {
+        let mut console = Console::new_snes(crate::snes::test_support::snes_test_app_context());
+        console
+            .load_rom(
+                &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
+                "metal-combat.sfc",
+            )
+            .expect("load snes rom");
+        console
+    }
+
+    fn scope(console: &Console) -> crate::snes::input::SnesControllerState {
+        console
+            .as_snes()
+            .and_then(|snes| snes.superscope_state(1))
+            .expect("scope on port 2")
+    }
+
+    fn latest_toast(console: &Console) -> Option<String> {
+        console
+            .app_context()
+            .borrow_mut()
+            .visible_toasts(std::time::Instant::now())
+            .last()
+            .cloned()
+    }
+
+    #[test]
+    fn snes_key4_flips_the_scope_turbo_and_says_so() {
+        let mut console = make_snes_scope_console();
+        let mut state = make_state();
+
+        handle_key_pressed(&mut console, KeyCode::Digit4, &mut state, None);
+        handle_key_released(&mut console, KeyCode::Digit4, 0, false);
+        assert!(scope(&console).superscope_turbo_enabled);
+        assert_eq!(latest_toast(&console).as_deref(), Some("Turbo on"));
+
+        handle_key_pressed(&mut console, KeyCode::Digit4, &mut state, None);
+        assert!(!scope(&console).superscope_turbo_enabled);
+        assert_eq!(latest_toast(&console).as_deref(), Some("Turbo off"));
+        assert_eq!(
+            console.get_joypad_button_states(0),
+            0,
+            "Select on port 1 is not pressed"
+        );
+    }
+
+    #[test]
+    fn snes_key5_is_the_scope_pause_and_not_port1_start() {
+        let mut console = make_snes_scope_console();
+        let mut state = make_state();
+
+        handle_key_pressed(&mut console, KeyCode::Digit5, &mut state, None);
+        assert!(scope(&console).superscope_pause);
+        assert_eq!(
+            console.get_joypad_button_states(0),
+            0,
+            "port 1 Start untouched"
+        );
+
+        handle_key_released(&mut console, KeyCode::Digit5, 0, false);
+        assert!(!scope(&console).superscope_pause);
+    }
+
+    #[test]
+    fn snes_key5_is_start_without_a_scope() {
+        let mut console = make_snes_console("no-scope.sfc");
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::Digit5, &mut state, None);
+        assert_ne!(
+            console.get_joypad_button_states(0),
+            0,
+            "Start pressed on port 1"
         );
     }
 

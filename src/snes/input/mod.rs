@@ -18,6 +18,7 @@ mod mouse_controller;
 mod multitap;
 mod standard_controller;
 mod super_scope;
+mod super_scope_games;
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,7 @@ pub use mouse_controller::MouseController;
 pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
 pub use super_scope::SuperScopeController;
+pub use super_scope_games::is_super_scope_game;
 
 /// The 12 logical buttons of a standard SNES controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +244,12 @@ pub trait SnesController {
     /// Set the Super Scope pause button state.
     fn set_superscope_pause(&mut self, _pressed: bool) -> bool {
         false
+    }
+
+    /// Super Scope only: flip the Turbo switch and return its new position
+    /// (`true` = on). Other devices return `None`.
+    fn toggle_superscope_turbo(&mut self) -> Option<bool> {
+        None
     }
 
     /// Whether this device is a Super Scope.
@@ -627,6 +635,16 @@ impl InputPorts {
         }
     }
 
+    /// Flip the Turbo switch of the Super Scope on the given port and return its new
+    /// position, or `None` when that port has no Super Scope.
+    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
+        match port {
+            0 => self.port1.toggle_superscope_turbo(),
+            1 => self.port2.toggle_superscope_turbo(),
+            _ => None,
+        }
+    }
+
     /// Set Super Scope pause button state on the configured device.
     pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
         match port {
@@ -675,6 +693,17 @@ impl InputPorts {
             1 => self.port2.is_superscope(),
             _ => false,
         }
+    }
+
+    /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
+    /// `None` when that port has no Super Scope.
+    pub fn superscope_state(&self, port: u8) -> Option<SnesControllerState> {
+        let device = match port {
+            0 => &self.port1,
+            1 => &self.port2,
+            _ => return None,
+        };
+        device.is_superscope().then(|| device.capture_state())
     }
 
     /// Returns true if the given physical SNES port currently hosts a multitap.
@@ -943,6 +972,15 @@ mod tests {
         let mut ports = InputPorts::new();
         ports.configure(SnesControllerType::SuperScope, SnesControllerType::Standard);
         assert!(ports.has_superscope_on_port(0));
+    }
+
+    #[test]
+    fn toggle_superscope_turbo_reaches_the_scope_port_only() {
+        let mut ports = InputPorts::new();
+        ports.configure(SnesControllerType::Standard, SnesControllerType::SuperScope);
+        assert_eq!(ports.toggle_superscope_turbo(0), None);
+        assert_eq!(ports.toggle_superscope_turbo(1), Some(true));
+        assert_eq!(ports.toggle_superscope_turbo(1), Some(false));
     }
 
     #[test]

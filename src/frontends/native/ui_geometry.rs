@@ -154,6 +154,69 @@ pub(crate) fn crosshair_marker_rects(
     })
 }
 
+/// Margin kept between a toast and the picture's left and right edges.
+pub(crate) const TOAST_SIDE_MARGIN: f32 = 12.0;
+
+/// The width a toast's text wraps at so the panel, with its horizontal `padding`, stays
+/// inside a picture `draw_w` wide.
+pub(crate) fn toast_wrap_width(draw_w: f32, padding: f32) -> f32 {
+    (draw_w - 2.0 * TOAST_SIDE_MARGIN - 2.0 * padding).max(1.0)
+}
+
+/// The picture size, in native pixels, that the ring sight's aim and sizes are measured in
+/// for a frame `cropped_size` large: hi-res/interlaced frames double both axes.
+pub(crate) fn super_scope_sight_picture(cropped_size: [u32; 2]) -> [u32; 2] {
+    let height = if cropped_size[1] > 239 {
+        cropped_size[1] / 2
+    } else {
+        cropped_size[1]
+    };
+    [256, height]
+}
+
+/// The Super Scope's ring sight, in window coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SightShapes {
+    pub center: [f32; 2],
+    pub radius: f32,
+    /// Left, right, top and bottom ticks, each from its outer to its inner end.
+    pub ticks: [[[f32; 2]; 2]; 4],
+    /// Width of the white strokes.
+    pub line_width: f32,
+    /// Width of the black strokes drawn beneath them, which outline them.
+    pub outline_width: f32,
+}
+
+/// The ring sight over picture pixel `index` of a picture `cropped_size` pixels large drawn
+/// at `origin` with `size`. Measured in picture pixels as in the agreed mockup (ring radius
+/// 9, ticks from 4 to 14 off centre, white 1.5 wide on a black 3.5 outline), then scaled
+/// with the picture.
+pub(crate) fn super_scope_sight_shapes(
+    origin: [f32; 2],
+    size: [f32; 2],
+    cropped_size: [u32; 2],
+    index: [f32; 2],
+) -> SightShapes {
+    let pixel_w = size[0] / cropped_size[0].max(1) as f32;
+    let pixel_h = size[1] / cropped_size[1].max(1) as f32;
+    let scale = (pixel_w + pixel_h) * 0.5;
+    let cx = origin[0] + (index[0] + 0.5) * pixel_w;
+    let cy = origin[1] + (index[1] + 0.5) * pixel_h;
+    let (inner, outer) = (4.0 * scale, 14.0 * scale);
+    SightShapes {
+        center: [cx, cy],
+        radius: 9.0 * scale,
+        ticks: [
+            [[cx - outer, cy], [cx - inner, cy]],
+            [[cx + inner, cy], [cx + outer, cy]],
+            [[cx, cy - outer], [cx, cy - inner]],
+            [[cx, cy + inner], [cx, cy + outer]],
+        ],
+        line_width: 1.5 * scale,
+        outline_width: 3.5 * scale,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +378,42 @@ mod tests {
         assert_eq!(third_layout.rect_min, [432.0, 514.0]);
         assert_eq!(third_layout.rect_max, [568.0, 550.0]);
         assert_eq!(third_layout.text_pos, [440.0, 520.0]);
+    }
+
+    #[test]
+    fn super_scope_sight_scales_the_mockup_ring_with_the_picture() {
+        // Given a picture drawn at twice its native size, aiming at pixel (10, 20).
+        let sight =
+            super_scope_sight_shapes([100.0, 50.0], [512.0, 448.0], [256, 224], [10.0, 20.0]);
+
+        // Then the ring is centred on that pixel and every mockup size doubles.
+        assert_eq!(sight.center, [100.0 + 10.5 * 2.0, 50.0 + 20.5 * 2.0]);
+        assert_eq!(sight.radius, 18.0);
+        assert_eq!(sight.line_width, 3.0);
+        assert_eq!(sight.outline_width, 7.0);
+        let [cx, cy] = sight.center;
+        assert_eq!(
+            sight.ticks,
+            [
+                [[cx - 28.0, cy], [cx - 8.0, cy]],
+                [[cx + 8.0, cy], [cx + 28.0, cy]],
+                [[cx, cy - 28.0], [cx, cy - 8.0]],
+                [[cx, cy + 8.0], [cx, cy + 28.0]],
+            ]
+        );
+    }
+
+    #[test]
+    fn the_sight_is_measured_in_native_pixels_when_the_frame_is_hi_res() {
+        assert_eq!(super_scope_sight_picture([256, 224]), [256, 224]);
+        assert_eq!(super_scope_sight_picture([512, 448]), [256, 224]);
+        assert_eq!(super_scope_sight_picture([256, 239]), [256, 239]);
+    }
+
+    #[test]
+    fn toasts_wrap_inside_the_picture() {
+        assert_eq!(toast_wrap_width(400.0, 8.0), 400.0 - 2.0 * 12.0 - 2.0 * 8.0);
+        assert_eq!(toast_wrap_width(10.0, 8.0), 1.0, "never zero or negative");
     }
 
     #[test]

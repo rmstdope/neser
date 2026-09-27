@@ -4,7 +4,7 @@
 //! (Zapper, Arkanoid paddle, SNES Mouse) and manages the cursor
 //! grab/release state machine.
 
-use crate::frontends::native::gl_backend::Crosshair;
+use crate::frontends::native::gl_backend::{Crosshair, CrosshairStyle};
 use crate::nes::input::mouse_mapping;
 use crate::platform::emulator::{Console, MouseInputButton};
 
@@ -40,6 +40,13 @@ pub fn has_snes_mouse(console: &Console) -> bool {
         .is_some_and(|mouse| mouse.has_snes_mouse())
 }
 
+/// Returns `true` when a Super Scope is plugged into either SNES port.
+pub fn has_super_scope(console: &Console) -> bool {
+    console
+        .as_mouse_input()
+        .is_some_and(|mouse| mouse.has_super_scope())
+}
+
 fn snes_mouse_ports(console: &Console) -> [bool; 2] {
     let Some(mouse) = console.as_mouse_input() else {
         return [false, false];
@@ -67,8 +74,16 @@ pub fn update_mouse_motion(
     window_width: u32,
     window_height: u32,
 ) -> Option<(u8, u8)> {
+    let picture_height = super_scope_picture_height(console.screen_height());
     let mouse = console.as_mouse_input_mut()?;
-    if mouse.has_zapper() || mouse.has_snes_mouse() {
+    if mouse.has_super_scope() {
+        // The scope aims at a picture pixel: the whole window spans the 256-pixel-wide
+        // picture and its visible lines, like the NES light gun's mapping.
+        let x_pos = mouse_mapping::map_mouse_axis_to_range(x, window_width, 256);
+        let y_pos = mouse_mapping::map_mouse_axis_to_range(y, window_height, picture_height);
+        mouse.set_mouse_position(x_pos, y_pos);
+        Some((x_pos, y_pos))
+    } else if mouse.has_zapper() || mouse.has_snes_mouse() {
         let x_pos = mouse_mapping::map_mouse_axis_to_zapper_position(x, window_width);
         let y_pos = mouse_mapping::map_mouse_axis_to_zapper_position(y, window_height);
         mouse.set_mouse_position(x_pos, y_pos);
@@ -108,7 +123,7 @@ pub fn update_mouse_button(console: &mut Console, button: MouseButton, pressed: 
     let Some(mouse) = console.as_mouse_input_mut() else {
         return;
     };
-    if !mouse.has_any_mouse_controller() && !mouse.has_snes_mouse() {
+    if !mouse.has_any_mouse_controller() && !mouse.has_snes_mouse() && !mouse.has_super_scope() {
         return;
     }
     let capability_button = match button {
@@ -130,8 +145,85 @@ pub fn zapper_crosshair(console: &Console, last_position: Option<(u8, u8)>) -> O
         last_position.map(|(x, y)| Crosshair {
             x: x as f32,
             y: y as f32,
+            style: CrosshairStyle::Plus,
         })
     }
+}
+
+/// The Super Scope's ring sight at the last aimed picture pixel, drawn only while the
+/// mouse is captured (`grabbed`). `None` without a scope or before the first aim.
+pub fn super_scope_sight(
+    console: &Console,
+    grabbed: bool,
+    last_position: Option<(u8, u8)>,
+) -> Option<Crosshair> {
+    if !grabbed || !has_super_scope(console) {
+        return None;
+    }
+    last_position.map(|(x, y)| Crosshair {
+        x: f32::from(x),
+        y: f32::from(y),
+        style: CrosshairStyle::Ring,
+    })
+}
+
+/// The scanlines the Super Scope aims over for a frame `frame_height` rows tall: hi-res and
+/// interlaced output double the frame's rows, not the picture's lines.
+pub fn super_scope_picture_height(frame_height: u32) -> u32 {
+    if frame_height > 239 {
+        frame_height / 2
+    } else {
+        frame_height
+    }
+}
+
+/// Let go of the Super Scope's Fire and Cursor. Called whenever the capture ends (Escape,
+/// focus loss), since the button-up of a press held across it never reaches the scope.
+pub fn release_super_scope_buttons(console: &mut Console) {
+    if !has_super_scope(console) {
+        return;
+    }
+    if let Some(mouse) = console.as_mouse_input_mut() {
+        mouse.set_mouse_button(MouseInputButton::Left, false);
+        mouse.set_mouse_button(MouseInputButton::Right, false);
+    }
+}
+
+// ── Capture policy ───────────────────────────────────────────────────────────
+
+/// Whether the mouse should be captured this frame.
+///
+/// NES-style devices (`has_mouse_device`: Zapper, Arkanoid, SNES mouse) are captured
+/// automatically while the window is focused, unless Escape released them. A Super Scope
+/// is captured only by a click (see [`click_captures`]), so it merely keeps a capture it
+/// already has while the window stays focused.
+pub fn desired_mouse_grab(
+    has_mouse_device: bool,
+    has_super_scope: bool,
+    grabbed: bool,
+    window_focused: bool,
+    released_by_escape: bool,
+) -> bool {
+    if has_mouse_device {
+        mouse_mapping::should_grab_mouse_input(true, window_focused, released_by_escape)
+    } else if has_super_scope {
+        grabbed && window_focused
+    } else {
+        false
+    }
+}
+
+/// Whether a press of `button` on the game captures the mouse: either button for the
+/// Super Scope (fire or cursor), the left one for the NES-style devices.
+pub fn click_captures(has_mouse_device: bool, has_super_scope: bool, button: MouseButton) -> bool {
+    has_super_scope || (has_mouse_device && button == MouseButton::Left)
+}
+
+/// The message shown when the mouse stops aiming a Super Scope: only when a scope is
+/// connected and the mouse had actually been captured.
+pub fn super_scope_release_toast(has_super_scope: bool, was_grabbed: bool) -> Option<&'static str> {
+    (has_super_scope && was_grabbed)
+        .then_some(crate::snes::frontend_toasts::SUPER_SCOPE_MOUSE_RELEASED)
 }
 
 // ── NES-specific internal helpers ─────────────────────────────────────────────
@@ -428,6 +520,138 @@ mod tests {
         let ch = ch.unwrap();
         assert_eq!(ch.x, 100.0);
         assert_eq!(ch.y, 200.0);
+    }
+
+    // ── Super Scope ──────────────────────────────────────────────────────
+
+    fn make_snes_console_with_scope() -> Console {
+        let mut console = Console::new_snes(crate::snes::test_support::snes_test_app_context());
+        console
+            .load_rom(
+                &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
+                "metal-combat.sfc",
+            )
+            .expect("load snes rom");
+        console
+    }
+
+    fn scope_state(console: &Console) -> crate::snes::input::SnesControllerState {
+        console
+            .as_snes()
+            .and_then(|snes| snes.superscope_state(1))
+            .expect("scope on port 2")
+    }
+
+    #[test]
+    fn detects_super_scope_without_calling_it_a_mouse() {
+        let console = make_snes_console_with_scope();
+        assert!(has_super_scope(&console));
+        assert!(
+            !has_any_mouse_controller(&console),
+            "the scope must not trigger the NES-style automatic grab"
+        );
+        assert!(!has_super_scope(&make_console()));
+    }
+
+    #[test]
+    fn motion_aims_the_super_scope_across_the_picture() {
+        let mut console = make_snes_console_with_scope();
+        let aim = update_mouse_motion(&mut console, 160, 120, 320, 240);
+        // x: 160/319 * 255 = 128; y: 120/239 * 223 = 112 (the picture is 224 lines).
+        assert_eq!(aim, Some((128, 112)));
+        let state = scope_state(&console);
+        assert_eq!((state.superscope_x, state.superscope_y), (128, 112));
+
+        assert_eq!(
+            update_mouse_motion(&mut console, 319, 239, 320, 240),
+            Some((255, 223)),
+            "the bottom-right corner is the last picture pixel"
+        );
+    }
+
+    #[test]
+    fn left_fires_and_right_is_the_cursor_button() {
+        let mut console = make_snes_console_with_scope();
+        update_mouse_button(&mut console, MouseButton::Left, true);
+        assert!(scope_state(&console).superscope_trigger);
+        update_mouse_button(&mut console, MouseButton::Left, false);
+        assert!(!scope_state(&console).superscope_trigger);
+
+        update_mouse_button(&mut console, MouseButton::Right, true);
+        assert!(scope_state(&console).superscope_cursor);
+        update_mouse_button(&mut console, MouseButton::Right, false);
+        assert!(!scope_state(&console).superscope_cursor);
+    }
+
+    #[test]
+    fn releasing_the_capture_lets_go_of_fire_and_cursor() {
+        let mut console = make_snes_console_with_scope();
+        update_mouse_button(&mut console, MouseButton::Left, true);
+        update_mouse_button(&mut console, MouseButton::Right, true);
+
+        release_super_scope_buttons(&mut console);
+
+        let state = scope_state(&console);
+        assert!(!state.superscope_trigger && !state.superscope_cursor);
+    }
+
+    #[test]
+    fn the_scope_aims_over_the_picture_lines_even_in_hi_res_output() {
+        assert_eq!(super_scope_picture_height(224), 224);
+        assert_eq!(super_scope_picture_height(239), 239);
+        // Hi-res/interlaced output doubles the frame's rows; the aim stays in scanlines.
+        assert_eq!(super_scope_picture_height(448), 224);
+        assert_eq!(super_scope_picture_height(478), 239);
+    }
+
+    #[test]
+    fn the_sight_is_a_ring_shown_only_while_the_mouse_is_captured() {
+        let console = make_snes_console_with_scope();
+        assert_eq!(super_scope_sight(&console, false, Some((10, 20))), None);
+        assert_eq!(super_scope_sight(&console, true, None), None);
+        assert_eq!(
+            super_scope_sight(&console, true, Some((10, 20))),
+            Some(Crosshair {
+                x: 10.0,
+                y: 20.0,
+                style: CrosshairStyle::Ring,
+            })
+        );
+        assert_eq!(super_scope_sight(&make_console(), true, Some((1, 2))), None);
+    }
+
+    #[test]
+    fn a_scope_is_captured_only_by_a_click_and_kept_until_released() {
+        // Never grabbed automatically, even when focused and never released.
+        assert!(!desired_mouse_grab(false, true, false, true, false));
+        // Kept while grabbed and focused.
+        assert!(desired_mouse_grab(false, true, true, true, false));
+        // Dropped when focus goes.
+        assert!(!desired_mouse_grab(false, true, true, false, false));
+        // NES-style devices keep their automatic grab.
+        assert!(desired_mouse_grab(true, false, false, true, false));
+        assert!(!desired_mouse_grab(true, false, true, true, true));
+        // Nothing to grab for.
+        assert!(!desired_mouse_grab(false, false, true, true, false));
+    }
+
+    #[test]
+    fn either_button_captures_for_the_scope_but_only_left_for_other_devices() {
+        assert!(click_captures(false, true, MouseButton::Left));
+        assert!(click_captures(false, true, MouseButton::Right));
+        assert!(click_captures(true, false, MouseButton::Left));
+        assert!(!click_captures(true, false, MouseButton::Right));
+        assert!(!click_captures(false, false, MouseButton::Left));
+    }
+
+    #[test]
+    fn the_release_message_is_for_a_captured_scope_only() {
+        assert_eq!(
+            super_scope_release_toast(true, true),
+            Some("Mouse released — click the game to aim again")
+        );
+        assert_eq!(super_scope_release_toast(true, false), None);
+        assert_eq!(super_scope_release_toast(false, true), None);
     }
 
     // ── Virtual cursor accumulation ───────────────────────────────────────

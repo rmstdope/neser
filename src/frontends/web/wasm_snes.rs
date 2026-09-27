@@ -168,6 +168,13 @@ impl WasmSnes {
                 self.snes.set_audio_sample_rate(44_100.0);
                 self.pending_toasts
                     .push(cartridge_load_toast_message(rom_name, true));
+                // The core raises no toasts on load (they need a clock the browser build
+                // lacks), so the web says this itself, as `rom_loader::load_console` does on
+                // desktop.
+                if self.snes.has_superscope() {
+                    self.pending_toasts
+                        .push(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED.to_string());
+                }
                 web_sys::console::log_1(&JsValue::from_str("SNES ROM loaded successfully"));
                 Ok(())
             }
@@ -358,6 +365,13 @@ impl WasmSnes {
     #[wasm_bindgen]
     pub fn has_superscope_on_port(&self, port: u8) -> bool {
         Self::physical_port(port).is_some_and(|port| self.snes.has_superscope_on_port(port))
+    }
+
+    /// Flip the Turbo switch of the Super Scope on the given 1-based port and return its new
+    /// position (`true` = on), or `undefined` when that port has no Super Scope.
+    #[wasm_bindgen]
+    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
+        Self::physical_port(port).and_then(|port| self.snes.toggle_superscope_turbo(port))
     }
 
     /// Set the Super Scope aiming coordinates for the given 1-based port.

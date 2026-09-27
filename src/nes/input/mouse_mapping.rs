@@ -19,6 +19,18 @@ pub fn map_mouse_axis_to_zapper_position(axis: i32, window_extent: u32) -> u8 {
     (normalized * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
+/// Maps a mouse position on one window axis onto `0..=range-1` (a picture axis `range`
+/// pixels long), clamping positions outside the window. `range` is at most 256.
+pub fn map_mouse_axis_to_range(axis: i32, window_extent: u32, range: u32) -> u8 {
+    let last = range.clamp(1, 256) - 1;
+    if window_extent <= 1 {
+        return 0;
+    }
+    let max_axis = window_extent.saturating_sub(1) as i32;
+    let normalized = axis.clamp(0, max_axis) as f32 / max_axis as f32;
+    (normalized * last as f32).round().clamp(0.0, last as f32) as u8
+}
+
 /// Maps an SDL mouse X position into an Arkanoid paddle position (0x62..=0xF2).
 ///
 /// The input is normalized to `[-1.0, 1.0]` across the current window width,

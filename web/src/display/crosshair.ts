@@ -1,9 +1,17 @@
 /**
- * Crosshair rendering for Zapper light gun controller.
- * Creates an overlay canvas for drawing the crosshair cursor.
+ * Crosshair rendering for the light guns: the NES Zapper's plus and the Super Scope's ring
+ * sight. Creates an overlay canvas for drawing the crosshair cursor.
  */
 
-export function createCrosshair(targetCanvas: HTMLCanvasElement) {
+/** Picture width in console pixels, which the ring sight's sizes are measured in. */
+const PICTURE_WIDTH = 256;
+
+export type CrosshairStyle = "plus" | "ring";
+
+export function createCrosshair(
+    targetCanvas: HTMLCanvasElement,
+    { style = "plus" }: { style?: CrosshairStyle } = {},
+) {
     const parent = targetCanvas.parentElement;
     if (!parent) {
         throw new Error("Crosshair requires a parent element for the target canvas");
@@ -63,6 +71,35 @@ export function createCrosshair(targetCanvas: HTMLCanvasElement) {
         drawCrosshair(currentX, currentY);
     }
     
+    /**
+     * The Super Scope's sight, as agreed in docs/ui/nr-yvv-super-scope.html: in picture
+     * pixels a ring of radius 9 and ticks from 4 to 14 off centre, white 1.5 wide over a
+     * black 3.5 outline, scaled with the picture.
+     */
+    function drawRing(cx: number, cy: number) {
+        const scale = overlayCanvas.width / PICTURE_WIDTH;
+        const inner = 4 * scale;
+        const outer = 14 * scale;
+        for (const [color, width] of [["#000", 3.5], ["#fff", 1.5]] as const) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width * scale;
+            ctx.lineCap = "butt";
+            ctx.beginPath();
+            ctx.arc(cx, cy, 9 * scale, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx - outer, cy);
+            ctx.lineTo(cx - inner, cy);
+            ctx.moveTo(cx + inner, cy);
+            ctx.lineTo(cx + outer, cy);
+            ctx.moveTo(cx, cy - outer);
+            ctx.lineTo(cx, cy - inner);
+            ctx.moveTo(cx, cy + inner);
+            ctx.lineTo(cx, cy + outer);
+            ctx.stroke();
+        }
+    }
+
     function drawCrosshair(x: number, y: number) {
         ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         
@@ -73,6 +110,11 @@ export function createCrosshair(targetCanvas: HTMLCanvasElement) {
         const dpr = window.devicePixelRatio || 1;
         const scaledX = x * dpr;
         const scaledY = y * dpr;
+
+        if (style === "ring") {
+            drawRing(scaledX, scaledY);
+            return;
+        }
         
         // Crosshair dimensions
         const lineLength = 20 * dpr;

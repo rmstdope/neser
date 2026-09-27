@@ -183,6 +183,7 @@ declare module "*/pkg/neser" {
         set_superscope_trigger(port: number, pressed: boolean): void;
         set_superscope_cursor(port: number, pressed: boolean): void;
         set_superscope_turbo(port: number, pressed: boolean): void;
+        toggle_superscope_turbo(port: number): boolean | undefined;
         set_superscope_pause(port: number, pressed: boolean): void;
         // Multitap
         is_multitap_on_port(port: number): boolean;

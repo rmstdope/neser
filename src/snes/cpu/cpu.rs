@@ -10061,6 +10061,14 @@ impl Cpu<SnesSystemBus> {
         self.bus.set_superscope_turbo(port, pressed);
     }
 
+    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
+        self.bus.toggle_superscope_turbo(port)
+    }
+
+    pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
+        self.bus.superscope_state(port)
+    }
+
     pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
         self.bus.set_superscope_pause(port, pressed);
     }

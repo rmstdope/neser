@@ -127,6 +127,14 @@ impl SnesController for SuperScopeController {
         true
     }
 
+    fn toggle_superscope_turbo(&mut self) -> Option<bool> {
+        // The real Turbo control is a switch, so the frontend sets it directly rather
+        // than holding a button across a latch (a tap shorter than one latch would
+        // otherwise be lost while the player is told it changed).
+        self.turbo_enabled = !self.turbo_enabled;
+        Some(self.turbo_enabled)
+    }
+
     fn is_superscope(&self) -> bool {
         true
     }
@@ -262,6 +270,20 @@ mod tests {
         // Aimed off-screen: no latch even with a button held.
         scope.set_superscope_position(-1, 80);
         assert_eq!(scope.superscope_latch_request(), None);
+    }
+
+    #[test]
+    fn toggle_turbo_flips_the_switch_and_reports_it_in_bit_2() {
+        let mut scope = SuperScopeController::new();
+        assert_eq!(scope.toggle_superscope_turbo(), Some(true));
+        latch(&mut scope);
+        let bits: Vec<bool> = (0..3).map(|_| scope.read().0).collect();
+        assert!(bits[2], "turbo bit must read 1 once the switch is on");
+
+        assert_eq!(scope.toggle_superscope_turbo(), Some(false));
+        latch(&mut scope);
+        let bits: Vec<bool> = (0..3).map(|_| scope.read().0).collect();
+        assert!(!bits[2], "turbo bit must read 0 once the switch is off");
     }
 
     #[test]

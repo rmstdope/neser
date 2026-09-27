@@ -195,6 +195,10 @@ pub struct NativeAppState {
     /// Whether the window currently has focus.
     pub window_focused: bool,
 
+    /// The pointer's last position in the window while the mouse is not captured, so a
+    /// Super Scope's capturing click aims where the player saw the pointer.
+    pub pointer_position: Option<(f32, f32)>,
+
     /// Virtual cursor position in logical pixels, accumulated from raw
     /// `DeviceEvent::MouseMotion` deltas when the cursor is locked.
     /// Used for Zapper and Arkanoid absolute-position mapping while
