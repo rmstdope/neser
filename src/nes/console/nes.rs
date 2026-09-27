@@ -123,10 +123,61 @@ pub struct Nes {
     /// When false, CPU trace capture is skipped for performance.
     /// Enable only when the debugger is open.
     cpu_trace_enabled: bool,
+    /// The audio output rate the frontend asked for, kept so a rebuilt APU uses it too.
+    audio_sample_rate: Option<f32>,
     /// Effective controller types for the current cartridge.
     /// May differ from config when auto-detection overrides user defaults.
     active_controller_port1: ControllerType,
     active_controller_port2: ControllerType,
+}
+
+/// The console's chips, wired together.
+struct Hardware {
+    ppu: SharedPpu,
+    apu: SharedApu,
+    bus: SharedBus,
+    cpu: Cpu,
+}
+
+/// Build the console's chips from the configuration in `app_context`: the one place that
+/// reads the configuration into the hardware, so a setting resolved before this call needs
+/// no later re-sync.
+fn build_hardware(app_context: &SharedAppContext) -> Hardware {
+    let config = app_context.borrow().config().clone();
+    let tv_system = config.nes.hardware_model.timing_mode();
+    let ram_init_mode = config.frontend.ram_init_mode;
+    let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
+    {
+        let mut ppu = ppu.borrow_mut();
+        ppu.set_oam_dram_decay_enabled(config.nes.oam_dram_decay_enabled);
+        ppu.set_famicom_emphasis(
+            config.nes.hardware_mode == crate::nes::console::HardwareMode::Famicom,
+        );
+        ppu.set_system_palette(config.nes.palette);
+    }
+    let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
+    {
+        let channels = config.nes.apu_channels;
+        let mut apu = apu.borrow_mut();
+        apu.set_pulse1_enabled(channels.contains(ApuChannels::PULSE1));
+        apu.set_pulse2_enabled(channels.contains(ApuChannels::PULSE2));
+        apu.set_triangle_enabled(channels.contains(ApuChannels::TRIANGLE));
+        apu.set_noise_enabled(channels.contains(ApuChannels::NOISE));
+        apu.set_dmc_enabled(channels.contains(ApuChannels::DMC));
+    }
+    let bus = Rc::new(RefCell::new(Bus::new(
+        ppu.clone(),
+        apu.clone(),
+        app_context.clone(),
+    )));
+    let cpu = Cpu::new(tv_system, bus.clone(), ppu.clone(), apu.clone());
+
+    // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
+    // This creates a one-cycle offset where PPU state changes become
+    // visible to the CPU one cycle later, matching hardware behavior
+    ppu.borrow_mut().run_ppu_cycles(1);
+
+    Hardware { ppu, apu, bus, cpu }
 }
 
 impl Nes {
@@ -137,52 +188,46 @@ impl Nes {
 
     pub fn new<C: IntoSharedAppContext>(app_context: C) -> Self {
         let app_context = app_context.into_shared();
-        let config = app_context.borrow().config().clone();
-        let tv_system = config.nes.hardware_model.timing_mode();
-        let ram_init_mode = config.frontend.ram_init_mode;
-        let oam_dram_decay_enabled = config.nes.oam_dram_decay_enabled;
-        let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
-        ppu.borrow_mut()
-            .set_oam_dram_decay_enabled(oam_dram_decay_enabled);
-        ppu.borrow_mut().set_famicom_emphasis(
-            config.nes.hardware_mode == crate::nes::console::HardwareMode::Famicom,
-        );
-        ppu.borrow_mut().set_system_palette(config.nes.palette);
-        let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
-        {
-            let channels = config.nes.apu_channels;
-            let mut apu = apu.borrow_mut();
-            apu.set_pulse1_enabled(channels.contains(ApuChannels::PULSE1));
-            apu.set_pulse2_enabled(channels.contains(ApuChannels::PULSE2));
-            apu.set_triangle_enabled(channels.contains(ApuChannels::TRIANGLE));
-            apu.set_noise_enabled(channels.contains(ApuChannels::NOISE));
-            apu.set_dmc_enabled(channels.contains(ApuChannels::DMC));
-        }
-        let memory = Rc::new(RefCell::new(Bus::new(
-            ppu.clone(),
-            apu.clone(),
-            app_context.clone(),
-        )));
-        let cpu = Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
-
-        // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
-        // This creates a one-cycle offset where PPU state changes become
-        // visible to the CPU one cycle later, matching hardware behavior
-        ppu.borrow_mut().run_ppu_cycles(1);
+        let Hardware { ppu, apu, bus, cpu } = build_hardware(&app_context);
+        let (controller_port1, controller_port2) = {
+            let context = app_context.borrow();
+            let nes = &context.config().nes;
+            (nes.controller_port1, nes.controller_port2)
+        };
 
         Self {
             app_context,
             rom_db: load_rom_db(),
             ppu,
             apu,
-            bus: memory,
+            bus,
             cpu,
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
             recent_cpu_trace: VecDeque::with_capacity(MAX_CPU_TRACE_LINES),
             cpu_trace_enabled: false,
-            active_controller_port1: config.nes.controller_port1,
-            active_controller_port2: config.nes.controller_port2,
+            audio_sample_rate: None,
+            active_controller_port1: controller_port1,
+            active_controller_port2: controller_port2,
+        }
+    }
+
+    /// Replace the hardware with a board built from the configuration as it stands now,
+    /// keeping what the player chose on this console: the cycled palette and the audio rate.
+    fn rebuild_hardware(&mut self) {
+        let palette = self.current_palette();
+        let Hardware { ppu, apu, bus, cpu } = build_hardware(&self.app_context);
+        self.ppu = ppu;
+        self.apu = apu;
+        self.bus = bus;
+        self.cpu = cpu;
+        self.fractional_ppu_cycles = 0.0;
+        self.ready_to_render = false;
+        self.recent_cpu_trace.clear();
+
+        self.ppu.borrow_mut().set_system_palette(palette);
+        if let Some(rate) = self.audio_sample_rate {
+            self.apu.borrow_mut().set_sample_rate(rate);
         }
     }
 
@@ -224,23 +269,14 @@ impl Nes {
             .borrow_mut()
             .config_mut()
             .apply_rom_hints(&hints);
-
-        // Propagate any hardware-mode change from ROM DB hint to the live PPU
-        let is_famicom = self.app_context.borrow().config().nes.hardware_mode
-            == crate::nes::console::HardwareMode::Famicom;
-        self.ppu.borrow_mut().set_famicom_emphasis(is_famicom);
+        // The hardware is built from the configuration with every hint resolved into it.
+        self.rebuild_hardware();
 
         // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
         let ram_init_mode = self.app_context.borrow().config().frontend.ram_init_mode;
         cartridge.initialize_ram(ram_init_mode);
 
-        {
-            let mut bus = self.bus.borrow_mut();
-            bus.map_cartridge(cartridge);
-            // Sync controller modes so the bus reflects any config changes from ROM DB
-            // auto-detection.
-            bus.sync_controller_modes_from_config();
-        } // bus borrow released here
+        self.bus.borrow_mut().map_cartridge(cartridge);
 
         // Update cached mapper capability flags so the CPU hot path can skip
         // unnecessary per-cycle RefCell borrows for non-IRQ / non-expansion-audio mappers.
@@ -367,6 +403,7 @@ impl Nes {
 
     /// Set the audio output sample rate (Hz) for the APU's resampler.
     pub fn set_audio_sample_rate(&mut self, rate: f32) {
+        self.audio_sample_rate = Some(rate);
         self.apu.borrow_mut().set_sample_rate(rate);
     }
 
@@ -3194,6 +3231,66 @@ mod tests {
             binary_bytes.len(),
             json_bytes.len()
         );
+    }
+
+    /// The APU sample step a fresh `tv_system` APU uses at `sample_rate` Hz.
+    fn apu_cycles_per_sample(tv_system: TimingMode, sample_rate: Option<f32>) -> f32 {
+        let mut apu = Apu::new_with_tv_system(tv_system);
+        if let Some(rate) = sample_rate {
+            apu.set_sample_rate(rate);
+        }
+        apu.capture_state().cycles_per_sample
+    }
+
+    #[test]
+    fn insert_cartridge_builds_the_hardware_from_the_resolved_timing() {
+        // The desktop cartridge switch writes the new header's timing into the config of a
+        // console that was built for the previous game.
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_timing_mode(TimingMode::Pal);
+
+        nes.insert_cartridge(load_test_cartridge(&create_minimal_rom()));
+
+        assert!(std::ptr::eq(
+            nes.ppu.borrow().timing().region(),
+            TimingMode::Pal.region()
+        ));
+        assert_eq!(
+            nes.apu.borrow().capture_state().cycles_per_sample,
+            apu_cycles_per_sample(TimingMode::Pal, None)
+        );
+    }
+
+    #[test]
+    fn insert_cartridge_keeps_the_audio_sample_rate() {
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.set_audio_sample_rate(44_100.0);
+
+        nes.insert_cartridge(load_test_cartridge(&create_minimal_rom()));
+
+        assert_eq!(
+            nes.apu.borrow().capture_state().cycles_per_sample,
+            apu_cycles_per_sample(TimingMode::Ntsc, Some(44_100.0))
+        );
+    }
+
+    #[test]
+    fn insert_cartridge_keeps_the_cycled_palette() {
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let cycled = nes.cycle_palette();
+
+        nes.insert_cartridge(load_test_cartridge(&create_minimal_rom()));
+
+        assert_eq!(nes.current_palette(), cycled);
     }
 
     /// A cartridge the console's ROM database lists with the Famicom four-players adapter.
