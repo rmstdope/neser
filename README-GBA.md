@@ -98,6 +98,10 @@ Or in `neser.conf`:
 gba-color-correction=true
 ```
 
+It applies to everything the Game Boy Advance shows. F8 switches it while a Game Boy
+Advance game is running (desktop and web). In the web frontend, the "Colors"
+button in the top bar switches it too.
+
 ## Diagnostics
 
 GBA trace channels are available for emulator diagnostics:

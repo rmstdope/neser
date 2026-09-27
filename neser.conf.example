@@ -436,13 +436,12 @@ nes-vertical_overscan=8
 #skip-bios-intro=false
 
 # GBA LCD color correction.
-# When enabled, BGR555 → RGB888 conversion uses a gamma ≈ 4 lookup table
-# that simulates the GBA TFT LCD's physical non-linear response. Per GBATek,
-# values 0–14 appear nearly black on the GBA TFT display; the correction
-# concentrates most visible output in the upper half of the intensity range
-# (15–31). This is an optional post-processing step; the default linear
-# expansion is technically correct for the digital color values.
-# Default: false (linear expansion).
+# When enabled, colors are darkened and softened the way the Game Boy Advance
+# screen showed them: most of the picture's detail sits in the brighter half
+# of each color. Screenshots and captures use it too.
+# At runtime, press F8 in a Game Boy Advance game to switch it; this setting
+# only decides how each start begins.
+# Default: false (raw colors).
 #gba-color-correction=false
 
 # GBA trace channels for emulator diagnostics.
