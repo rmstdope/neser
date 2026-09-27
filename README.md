@@ -127,7 +127,7 @@ neser --headless --frames 3600 --capture-every 300 --output out/shot.png path/to
 Each checkpoint is byte-identical to a single-frame capture at the same `--frames`, so a
 sweep against a reference emulator (see `scripts/reference_capture/README.md`) costs one
 run per ROM instead of one per checkpoint. `--capture-every` must be at least 1 and at
-most `--frames`.
+most `--frames`. Existing files at those paths are overwritten, as `--output` is.
 
 Captures are reproducible: the mode forces zero-initialised RAM, takes no input,
 and refuses to combine with the autorun flags or `--tui`. The same ROM and frame

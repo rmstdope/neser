@@ -94,14 +94,22 @@ pub fn run(
 
     let mut done = 0u32;
     if let Some(every) = capture.every {
-        while done + every <= capture.frames {
-            advance_frames(&mut console, every)?;
+        // The CLI rejects this, but `run` is public: a zero interval would
+        // otherwise loop forever without advancing.
+        if every == 0 {
+            return Err("Capture interval must be at least 1".to_string());
+        }
+        // `frames - done >= every` rather than `done + every <= frames`: it
+        // cannot overflow, and an interval beyond `frames` writes no checkpoint
+        // instead of panicking.
+        while capture.frames - done >= every {
+            advance_frames(&mut console, every, done)?;
             done += every;
             let path = checkpoint_path(&capture.output, done, capture.frames);
             write_frame(&console, &path)?;
         }
     }
-    advance_frames(&mut console, capture.frames - done)?;
+    advance_frames(&mut console, capture.frames - done, done)?;
     write_frame(&console, &capture.output)
 }
 
@@ -132,9 +140,15 @@ fn write_frame(console: &Console, path: &Path) -> Result<(), String> {
 ///
 /// Returns an error rather than looping forever if a frame never completes:
 /// either the emulator stops reporting progress (`run_tick` returns 0) or it
-/// exceeds [`MAX_TICKS_PER_FRAME`] without signalling a frame.
-fn advance_frames(stepper: &mut impl FrameStepper, frames: u32) -> Result<(), String> {
-    for frame in 0..frames {
+/// exceeds [`MAX_TICKS_PER_FRAME`] without signalling a frame. `first_frame`
+/// is how many frames the run had already completed before this call, so the
+/// error names the frame counting from power-on, not from the current chunk.
+fn advance_frames(
+    stepper: &mut impl FrameStepper,
+    frames: u32,
+    first_frame: u32,
+) -> Result<(), String> {
+    for frame in first_frame..first_frame + frames {
         let mut ticks = 0u64;
         while !stepper.is_ready_to_render() {
             if stepper.run_tick() == 0 {
@@ -280,7 +294,7 @@ mod tests {
         let mut stepper = FakeStepper::new(10);
 
         // When three frames are requested
-        advance_frames(&mut stepper, 3).expect("three frames should complete");
+        advance_frames(&mut stepper, 3, 0).expect("three frames should complete");
 
         // Then exactly three frames were finished, not two or four
         assert_eq!(stepper.frames_completed, 3);
@@ -292,7 +306,7 @@ mod tests {
         let mut stepper = FakeStepper::new(10);
 
         // When two frames are requested
-        advance_frames(&mut stepper, 2).expect("two frames should complete");
+        advance_frames(&mut stepper, 2, 0).expect("two frames should complete");
 
         // Then the loop stopped on a frame boundary, so the captured image is a
         // fully rendered frame rather than a partially drawn one
@@ -305,7 +319,7 @@ mod tests {
         let mut stepper = FakeStepper::stalling_after(1);
 
         // When more frames are requested than it will ever produce
-        let error = advance_frames(&mut stepper, 2).expect_err("stall should be reported");
+        let error = advance_frames(&mut stepper, 2, 0).expect_err("stall should be reported");
 
         // Then it gives up rather than spinning forever
         assert!(
@@ -315,12 +329,28 @@ mod tests {
     }
 
     #[test]
+    fn advance_frames_names_the_stalled_frame_from_power_on() {
+        // Given a stepper that renders one frame and then stalls, reached
+        // after 300 frames of an earlier chunk
+        let mut stepper = FakeStepper::stalling_after(1);
+
+        // When the next chunk is requested
+        let error = advance_frames(&mut stepper, 2, 300).expect_err("stall should be reported");
+
+        // Then the error counts from power-on (frame 302), not from the chunk
+        assert!(
+            error.contains("frame 302"),
+            "expected frame 302 to be named in {error:?}"
+        );
+    }
+
+    #[test]
     fn advance_frames_reports_an_emulator_that_stops_ticking() {
         // Given a stepper whose ticks consume no cycles at all
         let mut stepper = FakeStepper::returning_zero_ticks();
 
         // When a frame is requested
-        let error = advance_frames(&mut stepper, 1).expect_err("no progress should be reported");
+        let error = advance_frames(&mut stepper, 1, 0).expect_err("no progress should be reported");
 
         // Then the lack of progress is reported instead of looping forever
         assert!(
@@ -500,6 +530,56 @@ mod tests {
                 "series frame {frames} should equal a single capture at {frames}",
             );
         }
+    }
+
+    #[test]
+    fn run_rejects_a_zero_interval_instead_of_looping() {
+        // Given a capture struct built directly with a zero interval, which
+        // the CLI would have rejected
+        let temp = TempDir::new().expect("create temp dir");
+        let rom = write_nes_rom(&temp);
+        let capture = HeadlessCapture {
+            frames: 2,
+            output: temp.path().join("shot.png"),
+            every: Some(0),
+        };
+
+        // When it runs
+        let error = run(&make_app_context(), &rom, &capture).expect_err("zero interval");
+
+        // Then it fails with a message rather than spinning forever
+        assert!(error.contains("interval"), "unexpected error: {error:?}");
+    }
+
+    #[test]
+    fn run_with_an_interval_beyond_the_frame_count_writes_only_the_final_frame() {
+        // Given a capture struct built directly with an interval past --frames
+        let temp = TempDir::new().expect("create temp dir");
+        let rom = write_nes_rom(&temp);
+        let output = temp.path().join("shot.png");
+        let capture = HeadlessCapture {
+            frames: 2,
+            output: output.clone(),
+            every: Some(u32::MAX),
+        };
+
+        // When it runs
+        run(&make_app_context(), &rom, &capture).expect("capture should succeed");
+
+        // Then --output is written and no numbered file appears
+        assert!(output.exists());
+        assert_eq!(
+            std::fs::read_dir(temp.path())
+                .expect("list")
+                .filter(|e| e
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|x| x == "png"))
+                .count(),
+            1
+        );
     }
 
     #[test]

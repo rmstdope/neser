@@ -196,7 +196,7 @@ mod tests {
     fn capture_interval_requires_headless() {
         let error = error_for(&["--capture-every", "300", "game.nes"]);
         assert!(
-            error.contains("--capture-every") && error.contains("--headless"),
+            error.contains("--capture-every requires --headless"),
             "unexpected error: {error:?}"
         );
     }
@@ -212,7 +212,7 @@ mod tests {
             "game.nes",
         ]);
         assert!(
-            error.contains("--capture-every"),
+            error.contains("--capture-every must be at least 1"),
             "unexpected error: {error:?}"
         );
     }
