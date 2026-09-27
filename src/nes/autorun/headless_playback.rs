@@ -68,7 +68,7 @@ pub fn run_headless_playback(
         nes.set_joypad_button_states(2, frame.player2);
 
         // Emulate one full frame
-        run_one_frame(nes);
+        nes.run_one_frame_discarding_audio();
 
         // Check if this frame is a checkpoint
         while cp_idx < file.checkpoints.len()
@@ -135,7 +135,7 @@ where
         nes.set_joypad_button_states(1, frame.player1);
         nes.set_joypad_button_states(2, frame.player2);
 
-        run_one_frame(nes);
+        nes.run_one_frame_discarding_audio();
 
         while cp_idx < file.checkpoints.len()
             && file.checkpoints[cp_idx].frame_index as usize == frame_idx
@@ -149,22 +149,6 @@ where
     }
 
     Ok(updated)
-}
-
-/// Emulate the NES until the PPU signals a completed frame, then clear the flag.
-#[allow(dead_code)]
-/// Run a single NES frame without audio, draining samples.
-///
-/// Used by headless playback and the native frontend's headless autorun loop.
-pub fn run_one_frame(nes: &mut Nes) {
-    while !nes.is_ready_to_render() {
-        nes.run_cpu_tick();
-        // Drain audio samples to avoid unbounded accumulation
-        while nes.sample_ready() {
-            nes.get_sample();
-        }
-    }
-    nes.clear_ready_to_render();
 }
 
 #[cfg(test)]
@@ -218,23 +202,32 @@ mod tests {
 
     fn run_nes_frames(nes: &mut Nes, n: u32) {
         for _ in 0..n {
-            run_one_frame(nes);
+            nes.run_one_frame_discarding_audio();
         }
     }
 
     /// nr-3xu: a jammed CPU halts only the CPU; autorun frames keep coming from
     /// the PPU instead of repeating the frame the jam froze.
     #[test]
-    fn test_run_one_frame_finishes_frames_with_a_jammed_cpu() {
+    fn test_playback_frames_finish_with_a_jammed_cpu() {
         let mut rom = minimal_nrom_rom();
         rom[16] = 0x02; // KIL at the reset target $C000
         let mut nes = make_nes_with_cart(&rom);
         nes.run_cpu_tick();
         assert!(nes.cpu_ref().is_halted());
-        run_one_frame(&mut nes); // align with a frame boundary
+        nes.run_one_frame_discarding_audio(); // align with a frame boundary
 
         let frame = nes.ppu().borrow().timing().frame_count();
-        run_nes_frames(&mut nes, 2);
+        let idle = AutorunFrame {
+            player1: 0,
+            player2: 0,
+        };
+        let file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![idle.clone(), idle],
+            checkpoints: vec![],
+        };
+        run_headless_playback(&mut nes, &file, None).expect("playback ok");
 
         assert_eq!(nes.ppu().borrow().timing().frame_count(), frame + 2);
     }
