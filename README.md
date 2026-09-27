@@ -21,6 +21,10 @@ For emulator-specific options and notes, see:
 ### Pre-built releases
 
 Download the latest archive for your platform from [GitHub Releases](https://github.com/rmstdope/neser/releases).
+Each release's notes are also in `docs/releases/`. Releases are cut with the `release` skill
+(`.claude/skills/release/SKILL.md`): it computes the next version (maintenance, minor or major),
+drafts the notes and the web frontend's scroll text from what merged since the previous tag, lands
+them through a pull request once approved, and pushes the tag that runs the release workflow.
 
 Release archives contain a top-level `neser/` directory. Extract the archive, enter that directory, and run the included binary:
 
