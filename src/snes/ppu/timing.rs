@@ -44,6 +44,25 @@ impl Ppu {
             DRAM_REFRESH_BASE_POSITION - (self.total_master_clocks & 0x07) as u16;
     }
 
+    /// The intra-line clock of this scanline at which an auto-joypad read would strobe the
+    /// controllers, one sequencer step ahead of the busy flag's rise.
+    ///
+    /// fullsnes ("Auto Joypad Read"): the read "begins between H=32.5 and H=95.5 of the first
+    /// V-Blank scanline, and ends 4224 master cycles later [...] thereafter some multiple of 256
+    /// cycles after the start of the previous read". Mesen2 (`SetAutoJoypadReadClock`, from the
+    /// master clock at the line's start) makes that the first multiple of 256 absolute master
+    /// clocks at or after H=32.5, which lands anywhere in H=32.5..96.25 depending on the frame.
+    /// The line's start is derived rather than stored, so save-states need nothing new: every
+    /// clock of the line, DRAM refresh included, advances `line_clock` and the total together.
+    pub(super) fn auto_joypad_strobe_clock(&self) -> u16 {
+        let line_start = self
+            .total_master_clocks
+            .saturating_sub(u64::from(self.line_clock));
+        let busy = (line_start + super::AUTO_JOYPAD_EARLIEST_BUSY_CLOCK)
+            .next_multiple_of(super::AUTO_JOYPAD_START_GRID);
+        (busy - super::AUTO_JOYPAD_STROBE_LEAD - line_start) as u16
+    }
+
     /// Returns `true` if this clock is the once-per-frame HDMA channel reload point (only
     /// meaningful on scanline 0). The caller (`SnesSystemBus::tick`) must call `hdma_init()`
     /// on the bus's DMA controller when this fires.
@@ -89,6 +108,11 @@ impl Ppu {
         } else {
             self.line_clock += 1;
         }
+        if self.position.scanline == self.vblank_start_line()
+            && self.line_clock == self.auto_joypad_strobe_clock()
+        {
+            self.auto_joypad_latch = true;
+        }
         // Super Scope: latch the aimed coordinates once the beam reaches them.
         self.process_location_latch_request();
         // The interrupt counter circuit runs at master-clock/4 with the signal
@@ -115,11 +139,6 @@ impl Ppu {
             }
             self.on_scanline_start();
             new_scanline = true;
-        }
-        if self.position.scanline == self.vblank_start_line()
-            && self.position.dot == super::AUTO_JOYPAD_LATCH_DOT
-        {
-            self.auto_joypad_latch = true;
         }
         let forced_blank = self.inidisp & 0x80 != 0;
         self.update_obj_pipeline(forced_blank);
@@ -667,23 +686,26 @@ mod tests {
     }
 
     #[test]
-    fn auto_joypad_latch_fires_at_dot_32_of_first_vblank_scanline() {
+    fn auto_joypad_latch_fires_once_one_step_before_the_256_clock_grid_point() {
         let mut ppu = Ppu::new();
         tick_to_vblank(&mut ppu);
+        let line_start = ppu.total_master_clocks - u64::from(ppu.line_clock);
+        let busy = (line_start + 130).next_multiple_of(256);
+        let expected = busy - 128 - line_start;
         assert!(
-            !ppu.poll_auto_joypad_latch(),
-            "latch should not fire at the very start of VBlank"
+            (2..=257).contains(&expected),
+            "the strobe lands within H=0.5..64.25, one 128-clock step before busy rises in \
+             fullsnes' H=32.5..95.5: {expected}"
         );
 
-        tick_dots(&mut ppu, super::super::AUTO_JOYPAD_LATCH_DOT as u32);
-        assert!(
-            ppu.poll_auto_joypad_latch(),
-            "latch fires once the first VBlank scanline reaches the latch dot"
-        );
-        assert!(
-            !ppu.poll_auto_joypad_latch(),
-            "the auto-joypad latch signal is one-shot"
-        );
+        let mut fired_at = Vec::new();
+        for _ in 0..u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT {
+            if ppu.poll_auto_joypad_latch() {
+                fired_at.push(ppu.total_master_clocks - line_start);
+            }
+            ppu.tick();
+        }
+        assert_eq!(fired_at, vec![expected], "one latch, on the strobe clock");
     }
 
     fn tick_to_vblank(ppu: &mut Ppu) {

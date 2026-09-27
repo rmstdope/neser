@@ -1766,6 +1766,9 @@ impl SnesSystemBus {
             ppu.tick();
             (ppu.poll_auto_joypad_latch(), ppu.take_frame_start())
         };
+        // The sequencer ticks before a new read is triggered, so the strobe clock is step 0
+        // and the busy flag rises exactly one step (128 clocks) later.
+        self.input.get_mut().tick();
         if auto_joypad_latch {
             self.input.get_mut().trigger_auto_read();
         }
@@ -1775,7 +1778,6 @@ impl SnesSystemBus {
         if frame_start && let Some((x, y)) = self.input.get_mut().superscope_latch_request() {
             self.ppu.borrow_mut().set_location_latch_request(x, y);
         }
-        self.input.get_mut().tick();
         if let Some(sa1_core) = &mut self.sa1_core {
             sa1_core.tick_one_master_clock();
         }
@@ -5080,6 +5082,62 @@ mod tests {
             bus.tick();
         }
         assert_eq!(bus.read(0x004212) & 0x01, 0, "busy clears after the window");
+    }
+
+    /// fullsnes ("Auto Joypad Read"): the read "begins between H=32.5 and H=95.5 of the first
+    /// V-Blank scanline, and ends 4224 master cycles later [...] thereafter some multiple of 256
+    /// cycles after the start of the previous read". Mesen2 (`SetAutoJoypadReadClock`) puts the
+    /// busy flag's rise on the first multiple of 256 absolute master clocks at or after hclock
+    /// 130 of that line, so where in the line it rises moves from frame to frame (an NTSC frame
+    /// is 248 clocks short of a multiple of 256). Three frames cover three different phases.
+    #[test]
+    fn hvbjoy_busy_rises_on_the_256_clock_grid_and_lasts_4224_clocks() {
+        const VBLANK_START_LINE: u16 = 225;
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+        bus.write(0x004200, 0x01);
+
+        // The absolute master clock of the first vblank line's clock 0 (Mesen2 computes the
+        // start from `_masterClock` at `ProcessEndOfScanline`, as for DRAM refresh).
+        let line_start_clock = |bus: &mut SnesSystemBus| loop {
+            bus.tick();
+            let ppu = bus.ppu.borrow();
+            if ppu.position().scanline == VBLANK_START_LINE && ppu.line_clock_for_tests() == 0 {
+                return ppu.total_master_clocks();
+            }
+        };
+        let busy = |bus: &mut SnesSystemBus| bus.read(0x004212) & 0x01 != 0;
+
+        let mut phases = Vec::new();
+        for frame in 0..3 {
+            let line_start = line_start_clock(&mut bus);
+            while !busy(&mut bus) {
+                bus.tick();
+            }
+            let rise = bus.ppu.borrow().total_master_clocks();
+            let expected_rise = (line_start + 130).next_multiple_of(256);
+            assert_eq!(
+                rise - line_start,
+                expected_rise - line_start,
+                "frame {frame}: busy must rise at the first multiple of 256 master clocks at or \
+                 after hclock 130 of the first vblank line"
+            );
+            phases.push(rise - line_start);
+
+            while busy(&mut bus) {
+                bus.tick();
+            }
+            let fall = bus.ppu.borrow().total_master_clocks();
+            assert_eq!(
+                fall - rise,
+                4224,
+                "frame {frame}: busy lasts 4224 master clocks"
+            );
+        }
+        phases.dedup();
+        assert!(
+            phases.len() > 1,
+            "the rise moves within the line: {phases:?}"
+        );
     }
 
     #[test]
