@@ -49,6 +49,11 @@ mv "$SET.backup" "$SET"        # restore when done
 `settings.json` only exists after Mesen2 has been started once (the first testRunner run
 creates it, so run the capture twice on a fresh install).
 
+With file access off, Mesen2 leaves the Lua globals `io` and `os` undefined. `mesen2_capture.lua`
+checks for that before anything else: it prints one `ERROR: Lua file access is off; set
+"AllowIoOsAccess": true ...` line and stops Mesen2 with exit code 1 at once. Without that
+check, the run would sit silently until `--timeout` (nr-hg7).
+
 ```bash
 CAPTURE_FRAME=120 CAPTURE_OUT="$PWD/mesen.png" \
   /Applications/Mesen.app/Contents/MacOS/Mesen --testRunner --enableStdout --timeout=30 \
