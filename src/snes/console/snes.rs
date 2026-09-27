@@ -18,6 +18,7 @@ use crate::snes::console::config::SnesHardware;
 use crate::snes::console::save_state::SnesSaveState;
 use crate::snes::cpu::Cpu;
 use crate::snes::dsp::{self, DspChip, DspModel, FIRMWARE_FILES, FirmwareTable, ImageProblem};
+use crate::snes::input::InputPorts;
 use crate::snes::ppu::SnesVideoRegion;
 use crate::snes::upd77c25::Upd77c25Firmware;
 use std::path::PathBuf;
@@ -333,108 +334,19 @@ impl Snes {
         Ok(())
     }
 
-    /// Returns true if any SNES controller port currently hosts a mouse.
-    pub fn has_mouse(&self) -> bool {
-        self.cpu.as_ref().is_some_and(|cpu| cpu.has_mouse())
+    /// The controller ports of the loaded game, or `None` when no game is loaded. Every
+    /// frontend-facing input query (what is plugged in, a peripheral's state) is an
+    /// `InputPorts` method reached through here, so a new one is written once, in `InputPorts`.
+    /// The returned `Ref` borrows the ports' `RefCell`, which the CPU's joypad reads borrow
+    /// mutably: drop it before `run_tick`, or the next `$4016`/`$4218` read panics.
+    pub fn input_ports(&self) -> Option<std::cell::Ref<'_, InputPorts>> {
+        self.cpu.as_ref().map(|cpu| cpu.bus().input_ports())
     }
 
-    /// Returns true if the given physical SNES port currently hosts a mouse.
-    pub fn has_mouse_on_port(&self, port: u8) -> bool {
-        self.cpu
-            .as_ref()
-            .is_some_and(|cpu| cpu.has_mouse_on_port(port))
-    }
-
-    /// Add relative mouse motion for the given SNES controller port.
-    pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.add_mouse_delta(port, dx, dy);
-        }
-    }
-
-    /// Set SNES mouse left button state for the given port.
-    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_mouse_left_button(port, pressed);
-        }
-    }
-
-    /// Set SNES mouse right button state for the given port.
-    pub fn set_mouse_right_button(&mut self, port: u8, pressed: bool) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_mouse_right_button(port, pressed);
-        }
-    }
-
-    /// Set the Super Scope aiming coordinates for the given port.
-    pub fn set_superscope_position(&mut self, port: u8, x: i16, y: i16) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_superscope_position(port, x, y);
-        }
-    }
-
-    /// Set the Super Scope trigger state for the given port.
-    pub fn set_superscope_trigger(&mut self, port: u8, pressed: bool) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_superscope_trigger(port, pressed);
-        }
-    }
-
-    /// Set the Super Scope cursor state for the given port.
-    pub fn set_superscope_cursor(&mut self, port: u8, pressed: bool) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_superscope_cursor(port, pressed);
-        }
-    }
-
-    /// Set the Super Scope turbo switch state for the given port.
-    pub fn set_superscope_turbo(&mut self, port: u8, pressed: bool) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_superscope_turbo(port, pressed);
-        }
-    }
-
-    /// Flip the Turbo switch of the Super Scope on the given port and return its new
-    /// position (`true` = on), or `None` when no game is loaded or no scope is on that port.
-    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
-        self.cpu.as_mut()?.toggle_superscope_turbo(port)
-    }
-
-    /// The SNES Mouse's state on the given port, or `None` when no mouse is plugged in there.
-    pub fn mouse_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
-        self.cpu.as_ref()?.mouse_state(port)
-    }
-
-    /// The Super Scope's state on the given port (aim, buttons, Turbo), or `None` when no game
-    /// is loaded or no scope is on that port.
-    pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
-        self.cpu.as_ref()?.superscope_state(port)
-    }
-
-    /// Set the Super Scope pause button state for the given port.
-    pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_superscope_pause(port, pressed);
-        }
-    }
-
-    /// Returns true if any SNES controller port currently hosts a Super Scope.
-    pub fn has_superscope(&self) -> bool {
-        self.cpu.as_ref().is_some_and(|cpu| cpu.has_superscope())
-    }
-
-    /// Returns true if the given physical SNES port currently hosts a Super Scope.
-    pub fn has_superscope_on_port(&self, port: u8) -> bool {
-        self.cpu
-            .as_ref()
-            .is_some_and(|cpu| cpu.has_superscope_on_port(port))
-    }
-
-    /// Returns true if the given physical SNES port currently hosts a multitap.
-    pub fn is_multitap_on_port(&self, port: u8) -> bool {
-        self.cpu
-            .as_ref()
-            .is_some_and(|cpu| cpu.is_multitap_on_port(port))
+    /// The controller ports of the loaded game, for plugging devices in and feeding them input,
+    /// or `None` when no game is loaded.
+    pub fn input_ports_mut(&mut self) -> Option<&mut InputPorts> {
+        self.cpu.as_mut().map(|cpu| cpu.bus_mut().input_ports_mut())
     }
 }
 
@@ -497,7 +409,7 @@ impl Emulator for Snes {
             },
         );
         let mut cpu = Cpu::new(bus);
-        cpu.configure_controllers(port1, port2);
+        cpu.bus_mut().input_ports_mut().configure(port1, port2);
         cpu.do_reset();
         self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
@@ -507,12 +419,15 @@ impl Emulator for Snes {
         self.load_save_ram_from_disk();
 
         // Both frontends show these: desktop draws the context's toasts, the web drains them.
-        if self.has_superscope() {
+        let (has_superscope, has_mouse) = self.input_ports().map_or((false, false), |ports| {
+            (ports.has_superscope(), ports.has_mouse())
+        });
+        if has_superscope {
             self.app_context
                 .borrow_mut()
                 .add_toast(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED);
         }
-        if self.has_mouse() {
+        if has_mouse {
             self.app_context
                 .borrow_mut()
                 .add_toast(crate::snes::frontend_toasts::SNES_MOUSE_CONNECTED);
@@ -592,25 +507,23 @@ impl Emulator for Snes {
     }
 
     fn set_button(&mut self, port: u8, button_id: u8, pressed: bool) {
-        let Some(cpu) = self.cpu.as_mut() else {
-            return;
-        };
-        if let Some(button) = crate::snes::input::button_from_id(button_id) {
-            cpu.set_controller_button(port, button, pressed);
+        if let (Some(ports), Some(button)) = (
+            self.input_ports_mut(),
+            crate::snes::input::button_from_id(button_id),
+        ) {
+            ports.set_button(port, button, pressed);
         }
     }
 
     fn set_joypad_button_states(&mut self, port: u8, state: u8) {
-        if let Some(cpu) = self.cpu.as_mut() {
-            cpu.set_joypad_button_states(port, state);
+        if let Some(ports) = self.input_ports_mut() {
+            ports.set_joypad_button_states(port, state);
         }
     }
 
     fn get_joypad_button_states(&self, port: u8) -> u8 {
-        self.cpu
-            .as_ref()
-            .map(|cpu| cpu.joypad_button_states(port))
-            .unwrap_or(0)
+        self.input_ports()
+            .map_or(0, |ports| ports.joypad_button_states(port))
     }
 
     fn save_state_bytes(&self) -> Result<Vec<u8>, String> {
@@ -958,7 +871,7 @@ mod tests {
         let mut snes = Snes::new(app_context);
         snes.load_rom(&valid_lorom_nop_rom(), "test.sfc").unwrap();
 
-        assert!(snes.has_mouse());
+        assert!(snes.input_ports().is_some_and(|ports| ports.has_mouse()));
     }
 
     #[test]
@@ -1071,8 +984,17 @@ mod tests {
         )
         .expect("load ROM");
 
-        assert!(snes.has_superscope_on_port(1), "scope plugged into port 2");
-        assert!(!snes.has_superscope_on_port(0), "port 1 stays a controller");
+        assert!(
+            snes.input_ports()
+                .is_some_and(|ports| ports.has_superscope_on_port(1)),
+            "scope plugged into port 2"
+        );
+        assert!(
+            !snes
+                .input_ports()
+                .is_some_and(|ports| ports.has_superscope_on_port(0)),
+            "port 1 stays a controller"
+        );
         assert_eq!(
             snes.app_context.borrow().config().snes.controller_port2,
             SnesControllerType::Standard,
@@ -1094,7 +1016,11 @@ mod tests {
         )
         .expect("load ROM");
 
-        assert!(!snes.has_superscope());
+        assert!(
+            !snes
+                .input_ports()
+                .is_some_and(|ports| ports.has_superscope())
+        );
     }
 
     #[test]
@@ -1108,7 +1034,10 @@ mod tests {
         snes.load_rom(&valid_lorom_nop_rom(), "other.sfc")
             .expect("load ROM");
 
-        assert!(snes.has_superscope_on_port(1));
+        assert!(
+            snes.input_ports()
+                .is_some_and(|ports| ports.has_superscope_on_port(1))
+        );
     }
 
     #[test]
@@ -1119,10 +1048,15 @@ mod tests {
             "mc.sfc",
         )
         .expect("load ROM");
-        snes.toggle_superscope_turbo(1);
+        snes.input_ports_mut()
+            .and_then(|ports| ports.toggle_superscope_turbo(1));
         snes.load_rom(&valid_lorom_nop_rom(), "other.sfc")
             .expect("load ROM");
-        assert!(!snes.has_superscope());
+        assert!(
+            !snes
+                .input_ports()
+                .is_some_and(|ports| ports.has_superscope())
+        );
 
         snes.load_rom(
             &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
@@ -1130,10 +1064,38 @@ mod tests {
         )
         .expect("load ROM");
         assert_eq!(
-            snes.toggle_superscope_turbo(1),
+            snes.input_ports_mut()
+                .and_then(|ports| ports.toggle_superscope_turbo(1)),
             Some(true),
             "Turbo starts off again on every load"
         );
+    }
+
+    #[test]
+    fn input_ports_is_none_before_a_rom_is_loaded() {
+        let mut snes = make_snes();
+        assert!(snes.input_ports().is_none());
+        assert!(snes.input_ports_mut().is_none());
+    }
+
+    #[test]
+    fn input_ports_mut_reaches_the_loaded_games_ports() {
+        let mut snes = make_snes();
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"MARIOPAINT"),
+            "mp.sfc",
+        )
+        .expect("load ROM");
+
+        snes.input_ports_mut()
+            .expect("a game is loaded")
+            .add_mouse_delta(0, 7, -3);
+
+        let state = snes
+            .input_ports()
+            .and_then(|ports| ports.mouse_state(0))
+            .expect("mouse on port 1");
+        assert_eq!((state.mouse_accum_dx, state.mouse_accum_dy), (7, -3));
     }
 
     #[test]
@@ -1145,8 +1107,17 @@ mod tests {
         )
         .expect("load ROM");
 
-        assert!(snes.has_mouse_on_port(0), "mouse plugged into port 1");
-        assert!(!snes.has_mouse_on_port(1), "port 2 stays a controller");
+        assert!(
+            snes.input_ports()
+                .is_some_and(|ports| ports.has_mouse_on_port(0)),
+            "mouse plugged into port 1"
+        );
+        assert!(
+            !snes
+                .input_ports()
+                .is_some_and(|ports| ports.has_mouse_on_port(1)),
+            "port 2 stays a controller"
+        );
         assert_eq!(
             snes.app_context.borrow().config().snes.controller_port1,
             SnesControllerType::Standard,
@@ -1168,7 +1139,7 @@ mod tests {
         )
         .expect("load ROM");
 
-        assert!(!snes.has_mouse());
+        assert!(!snes.input_ports().is_some_and(|ports| ports.has_mouse()));
     }
 
     #[test]
@@ -1182,7 +1153,7 @@ mod tests {
         snes.load_rom(&valid_lorom_nop_rom(), "other.sfc")
             .expect("load ROM");
 
-        assert!(!snes.has_mouse());
+        assert!(!snes.input_ports().is_some_and(|ports| ports.has_mouse()));
     }
 
     #[test]

@@ -614,7 +614,10 @@ mod tests {
     fn scope_state(console: &Console) -> crate::snes::input::SnesControllerState {
         console
             .as_snes()
-            .and_then(|snes| snes.superscope_state(1))
+            .and_then(|snes| {
+                snes.input_ports()
+                    .and_then(|ports| ports.superscope_state(1))
+            })
             .expect("scope on port 2")
     }
 
@@ -811,7 +814,7 @@ mod tests {
     fn snes_mouse_state(console: &Console) -> crate::snes::input::SnesControllerState {
         console
             .as_snes()
-            .and_then(|snes| snes.mouse_state(0))
+            .and_then(|snes| snes.input_ports().and_then(|ports| ports.mouse_state(0)))
             .expect("mouse on port 1")
     }
 

@@ -3,6 +3,7 @@ use crate::platform::emulator::Emulator;
 use crate::platform::frontend_toasts::cartridge_load_toast_message;
 use crate::snes::console::Snes;
 use crate::snes::dsp::{self, DspChip, ImageProblem};
+use crate::snes::input::InputPorts;
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -60,6 +61,22 @@ impl WasmSnes {
             1 => Some(0),
             2 => Some(1),
             _ => None,
+        }
+    }
+
+    /// The loaded game's controller ports with the 1-based JavaScript `port` mapped to its
+    /// 0-based physical port; `None` for an invalid port or when no game is loaded.
+    fn ports_at(&mut self, port: u8) -> Option<(&mut InputPorts, u8)> {
+        let port = Self::physical_port(port)?;
+        Some((self.snes.input_ports_mut()?, port))
+    }
+
+    /// Asks `query` about the 1-based JavaScript `port`; `false` for an invalid port or when
+    /// no game is loaded.
+    fn port_hosts(&self, port: u8, query: impl FnOnce(&InputPorts, u8) -> bool) -> bool {
+        match (Self::physical_port(port), self.snes.input_ports()) {
+            (Some(port), Some(ports)) => query(&ports, port),
+            _ => false,
         }
     }
 
@@ -159,7 +176,8 @@ impl WasmSnes {
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn mouse_motion_for_test(&self) -> (i16, i16) {
         self.snes
-            .mouse_state(0)
+            .input_ports()
+            .and_then(|ports| ports.mouse_state(0))
             .map_or((0, 0), |state| (state.mouse_accum_dx, state.mouse_accum_dy))
     }
 
@@ -341,20 +359,22 @@ impl WasmSnes {
     /// Returns `true` if a SNES mouse peripheral is attached on any port.
     #[wasm_bindgen]
     pub fn has_mouse(&self) -> bool {
-        self.snes.has_mouse()
+        self.snes
+            .input_ports()
+            .is_some_and(|ports| ports.has_mouse())
     }
 
     /// Returns `true` if a SNES mouse peripheral is attached on the given 1-based port.
     #[wasm_bindgen]
     pub fn has_mouse_on_port(&self, port: u8) -> bool {
-        Self::physical_port(port).is_some_and(|port| self.snes.has_mouse_on_port(port))
+        self.port_hosts(port, InputPorts::has_mouse_on_port)
     }
 
     /// Report mouse movement delta to the SNES mouse peripheral on the given 1-based port.
     #[wasm_bindgen]
     pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.add_mouse_delta(port, dx, dy);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.add_mouse_delta(port, dx, dy);
         }
     }
 
@@ -369,9 +389,12 @@ impl WasmSnes {
         if counts_x == 0 && counts_y == 0 {
             return;
         }
+        let Some(ports) = self.snes.input_ports_mut() else {
+            return;
+        };
         for port in 0..=1u8 {
-            if self.snes.has_mouse_on_port(port) {
-                self.snes.add_mouse_delta(port, counts_x, counts_y);
+            if ports.has_mouse_on_port(port) {
+                ports.add_mouse_delta(port, counts_x, counts_y);
             }
         }
     }
@@ -379,36 +402,39 @@ impl WasmSnes {
     /// Set the left mouse button state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.set_mouse_left_button(port, pressed);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.set_mouse_left_button(port, pressed);
         }
     }
 
     /// Set the right mouse button state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_mouse_right_button(&mut self, port: u8, pressed: bool) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.set_mouse_right_button(port, pressed);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.set_mouse_right_button(port, pressed);
         }
     }
 
     /// Returns `true` if a Super Scope peripheral is attached on any port.
     #[wasm_bindgen]
     pub fn has_superscope(&self) -> bool {
-        self.snes.has_superscope()
+        self.snes
+            .input_ports()
+            .is_some_and(|ports| ports.has_superscope())
     }
 
     /// Returns `true` if a Super Scope peripheral is attached on the given 1-based port.
     #[wasm_bindgen]
     pub fn has_superscope_on_port(&self, port: u8) -> bool {
-        Self::physical_port(port).is_some_and(|port| self.snes.has_superscope_on_port(port))
+        self.port_hosts(port, InputPorts::has_superscope_on_port)
     }
 
     /// Flip the Turbo switch of the Super Scope on the given 1-based port and return its new
     /// position (`true` = on), or `undefined` when that port has no Super Scope.
     #[wasm_bindgen]
     pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
-        Self::physical_port(port).and_then(|port| self.snes.toggle_superscope_turbo(port))
+        self.ports_at(port)
+            .and_then(|(ports, port)| ports.toggle_superscope_turbo(port))
     }
 
     /// Set the Super Scope aiming coordinates for the given 1-based port.
@@ -416,47 +442,47 @@ impl WasmSnes {
     /// `x` and `y` are SNES screen coordinates (0–255 and 0–223 respectively).
     #[wasm_bindgen]
     pub fn set_superscope_position(&mut self, port: u8, x: i16, y: i16) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.set_superscope_position(port, x, y);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.set_superscope_position(port, x, y);
         }
     }
 
     /// Set the Super Scope trigger button state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_superscope_trigger(&mut self, port: u8, pressed: bool) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.set_superscope_trigger(port, pressed);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.set_superscope_trigger(port, pressed);
         }
     }
 
     /// Set the Super Scope cursor button state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_superscope_cursor(&mut self, port: u8, pressed: bool) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.set_superscope_cursor(port, pressed);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.set_superscope_cursor(port, pressed);
         }
     }
 
     /// Set the Super Scope turbo switch state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_superscope_turbo(&mut self, port: u8, pressed: bool) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.set_superscope_turbo(port, pressed);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.set_superscope_turbo(port, pressed);
         }
     }
 
     /// Set the Super Scope pause button state for the given 1-based port.
     #[wasm_bindgen]
     pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
-        if let Some(port) = Self::physical_port(port) {
-            self.snes.set_superscope_pause(port, pressed);
+        if let Some((ports, port)) = self.ports_at(port) {
+            ports.set_superscope_pause(port, pressed);
         }
     }
 
     /// Returns `true` if the given 1-based port currently hosts a multitap.
     #[wasm_bindgen]
     pub fn is_multitap_on_port(&self, port: u8) -> bool {
-        Self::physical_port(port).is_some_and(|port| self.snes.is_multitap_on_port(port))
+        self.port_hosts(port, InputPorts::is_multitap_on_port)
     }
 }
 

@@ -10,7 +10,7 @@ use crate::snes::cx4::Cx4;
 use crate::snes::dsp::{self, DspModel};
 use crate::snes::gsu::Gsu;
 use crate::snes::gsu::memory::{self as gsu_memory, SnesTarget as GsuTarget};
-use crate::snes::input::{InputPorts, SnesButton};
+use crate::snes::input::InputPorts;
 use crate::snes::obc1;
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
 use crate::snes::sa1::{
@@ -1096,109 +1096,18 @@ impl SnesSystemBus {
         self.ppu.borrow_mut().take_completed_frames()
     }
 
-    /// Set a controller button on the given port (0 = port 1, 1 = port 2).
-    pub fn set_controller_button(&mut self, port: u8, button: SnesButton, pressed: bool) {
-        self.input.get_mut().set_button(port, button, pressed);
+    /// The controller ports, for a frontend or test to query what is plugged in and its state.
+    /// Frontend-facing input queries and setters live on `InputPorts` alone; the bus does not
+    /// forward them.
+    /// The returned `Ref` borrows the ports' `RefCell`, which the CPU's joypad reads borrow
+    /// mutably: drop it before the CPU steps, or the next `$4016`/`$4218` read panics.
+    pub fn input_ports(&self) -> std::cell::Ref<'_, InputPorts> {
+        self.input.borrow()
     }
 
-    /// Configure the device plugged into each controller port.
-    pub fn configure_controllers(
-        &mut self,
-        port1: crate::snes::input::SnesControllerType,
-        port2: crate::snes::input::SnesControllerType,
-    ) {
-        self.input.get_mut().configure(port1, port2);
-    }
-
-    /// Bulk-set the 8 NES-convention buttons on the given port.
-    pub fn set_joypad_button_states(&mut self, port: u8, state: u8) {
-        self.input.get_mut().set_joypad_button_states(port, state);
-    }
-
-    /// Add relative mouse motion for the given SNES controller port.
-    pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
-        self.input.get_mut().add_mouse_delta(port, dx, dy);
-    }
-
-    /// Set SNES mouse left button state for the given port.
-    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
-        self.input.get_mut().set_mouse_left_button(port, pressed);
-    }
-
-    /// Set SNES mouse right button state for the given port.
-    pub fn set_mouse_right_button(&mut self, port: u8, pressed: bool) {
-        self.input.get_mut().set_mouse_right_button(port, pressed);
-    }
-
-    /// Set Super Scope aiming coordinates for the given port.
-    pub fn set_superscope_position(&mut self, port: u8, x: i16, y: i16) {
-        self.input.get_mut().set_superscope_position(port, x, y);
-    }
-
-    /// Set Super Scope trigger button state for the given port.
-    pub fn set_superscope_trigger(&mut self, port: u8, pressed: bool) {
-        self.input.get_mut().set_superscope_trigger(port, pressed);
-    }
-
-    /// Set Super Scope cursor button state for the given port.
-    pub fn set_superscope_cursor(&mut self, port: u8, pressed: bool) {
-        self.input.get_mut().set_superscope_cursor(port, pressed);
-    }
-
-    /// Set Super Scope turbo switch state for the given port.
-    pub fn set_superscope_turbo(&mut self, port: u8, pressed: bool) {
-        self.input.get_mut().set_superscope_turbo(port, pressed);
-    }
-
-    /// Flip the Turbo switch of the Super Scope on the given port; its new position, or
-    /// `None` when that port has no Super Scope.
-    pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
-        self.input.get_mut().toggle_superscope_turbo(port)
-    }
-
-    /// The SNES Mouse's state on the given port, or `None` when no mouse is plugged in there.
-    pub fn mouse_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
-        self.input.borrow().mouse_state(port)
-    }
-
-    /// The Super Scope's state on the given port, or `None` when it has none.
-    pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
-        self.input.borrow().superscope_state(port)
-    }
-
-    /// Set Super Scope pause button state for the given port.
-    pub fn set_superscope_pause(&mut self, port: u8, pressed: bool) {
-        self.input.get_mut().set_superscope_pause(port, pressed);
-    }
-
-    /// Returns true if any SNES controller port currently hosts a mouse.
-    pub fn has_mouse(&self) -> bool {
-        self.input.borrow().has_mouse()
-    }
-
-    /// Returns true if the given physical SNES port currently hosts a mouse.
-    pub fn has_mouse_on_port(&self, port: u8) -> bool {
-        self.input.borrow().has_mouse_on_port(port)
-    }
-
-    /// Returns true if any SNES controller port currently hosts a Super Scope.
-    pub fn has_superscope(&self) -> bool {
-        self.input.borrow().has_superscope()
-    }
-
-    /// Returns true if the given physical SNES port currently hosts a Super Scope.
-    pub fn has_superscope_on_port(&self, port: u8) -> bool {
-        self.input.borrow().has_superscope_on_port(port)
-    }
-
-    /// Returns true if the given physical SNES port currently hosts a multitap.
-    pub fn is_multitap_on_port(&self, port: u8) -> bool {
-        self.input.borrow().is_multitap_on_port(port)
-    }
-
-    /// Return the 8 NES-convention button states for the given port.
-    pub fn joypad_button_states(&self, port: u8) -> u8 {
-        self.input.borrow().joypad_button_states(port)
+    /// The controller ports, for a frontend or test to plug devices in and feed them input.
+    pub fn input_ports_mut(&mut self) -> &mut InputPorts {
+        self.input.get_mut()
     }
 
     /// Capture the PPU state for a save-state.
@@ -2238,7 +2147,7 @@ impl SnesBus for SnesSystemBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snes::input::SnesControllerType;
+    use crate::snes::input::{SnesButton, SnesControllerType};
     use crate::snes::ppu::{
         CGRAM_SIZE, DOTS_PER_SCANLINE, HDMA_TRANSFER_POSITION, MASTER_CYCLES_PER_DOT,
         NTSC_SCANLINES_PER_FRAME, OAM_SIZE, VRAM_SIZE,
@@ -5130,8 +5039,8 @@ mod tests {
     fn auto_joypad_reads_buttons_into_joy1_over_a_frame() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004200, 0x01); // enable auto-joypad
-        bus.set_controller_button(0, SnesButton::B, true);
-        bus.set_controller_button(0, SnesButton::A, true);
+        bus.input_ports_mut().set_button(0, SnesButton::B, true);
+        bus.input_ports_mut().set_button(0, SnesButton::A, true);
 
         for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
             bus.tick();
@@ -5146,7 +5055,7 @@ mod tests {
     fn auto_joypad_maps_port2_into_joy2() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004200, 0x01);
-        bus.set_controller_button(1, SnesButton::Start, true);
+        bus.input_ports_mut().set_button(1, SnesButton::Start, true);
 
         for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
             bus.tick();
@@ -5241,9 +5150,9 @@ mod tests {
     fn manual_serial_read_matches_auto_joypad_over_the_bus() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004200, 0x01);
-        bus.set_controller_button(0, SnesButton::Y, true);
-        bus.set_controller_button(0, SnesButton::Left, true);
-        bus.set_controller_button(0, SnesButton::L, true);
+        bus.input_ports_mut().set_button(0, SnesButton::Y, true);
+        bus.input_ports_mut().set_button(0, SnesButton::Left, true);
+        bus.input_ports_mut().set_button(0, SnesButton::L, true);
 
         for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
             bus.tick();
@@ -5263,13 +5172,14 @@ mod tests {
     #[test]
     fn multitap_pair_select_switches_between_the_two_controller_pairs() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
-        bus.configure_controllers(SnesControllerType::Standard, SnesControllerType::Multitap);
+        bus.input_ports_mut()
+            .configure(SnesControllerType::Standard, SnesControllerType::Multitap);
 
         // Given four controllers plugged into the multitap on port 2.
-        bus.set_controller_button(1, SnesButton::B, true);
-        bus.set_controller_button(2, SnesButton::A, true);
-        bus.set_controller_button(3, SnesButton::Start, true);
-        bus.set_controller_button(4, SnesButton::L, true);
+        bus.input_ports_mut().set_button(1, SnesButton::B, true);
+        bus.input_ports_mut().set_button(2, SnesButton::A, true);
+        bus.input_ports_mut().set_button(3, SnesButton::Start, true);
+        bus.input_ports_mut().set_button(4, SnesButton::L, true);
 
         // When the select line is high, the first pair should be visible.
         bus.write(0x004201, 0x80);
@@ -5283,9 +5193,33 @@ mod tests {
     }
 
     #[test]
+    fn input_ports_mut_reaches_the_ports_the_joypad_registers_read() {
+        let mut bus = SnesSystemBus::new(lorom_test_cart());
+
+        // Given a multitap plugged into port 2 and a button pressed, both through the one accessor.
+        bus.input_ports_mut()
+            .configure(SnesControllerType::Standard, SnesControllerType::Multitap);
+        bus.input_ports_mut().set_button(1, SnesButton::B, true);
+
+        // Then the same ports answer the query accessor…
+        assert!(bus.input_ports().is_multitap_on_port(1));
+        assert_eq!(
+            bus.input_ports().joypad_button_states(1) & 0x02,
+            0x02,
+            "B held"
+        );
+
+        // …and the joypad registers the game reads.
+        bus.write(0x004201, 0x80);
+        let (pad2, _) = read_joyb_pair_words(&mut bus);
+        assert_eq!(pad2, 0x8000, "B is the first bit shifted out");
+    }
+
+    #[test]
     fn multitap_on_port1_is_rejected_and_falls_back_to_standard() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
-        bus.configure_controllers(SnesControllerType::Multitap, SnesControllerType::Standard);
+        bus.input_ports_mut()
+            .configure(SnesControllerType::Multitap, SnesControllerType::Standard);
 
         let state = bus.capture_state();
         assert_eq!(state.input.port1_type, SnesControllerType::Standard);
@@ -5295,12 +5229,13 @@ mod tests {
     #[test]
     fn multitap_save_state_round_trips_all_subcontrollers() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
-        bus.configure_controllers(SnesControllerType::Standard, SnesControllerType::Multitap);
+        bus.input_ports_mut()
+            .configure(SnesControllerType::Standard, SnesControllerType::Multitap);
         bus.write(0x004201, 0x80);
-        bus.set_controller_button(1, SnesButton::B, true);
-        bus.set_controller_button(2, SnesButton::A, true);
-        bus.set_controller_button(3, SnesButton::Start, true);
-        bus.set_controller_button(4, SnesButton::L, true);
+        bus.input_ports_mut().set_button(1, SnesButton::B, true);
+        bus.input_ports_mut().set_button(2, SnesButton::A, true);
+        bus.input_ports_mut().set_button(3, SnesButton::Start, true);
+        bus.input_ports_mut().set_button(4, SnesButton::L, true);
 
         let state = bus.capture_state();
 
@@ -5316,11 +5251,12 @@ mod tests {
     #[test]
     fn multitap_auto_read_uses_the_selected_pair() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
-        bus.configure_controllers(SnesControllerType::Standard, SnesControllerType::Multitap);
+        bus.input_ports_mut()
+            .configure(SnesControllerType::Standard, SnesControllerType::Multitap);
         bus.write(0x004200, 0x01); // enable auto-joypad
 
-        bus.set_controller_button(1, SnesButton::B, true);
-        bus.set_controller_button(2, SnesButton::A, true);
+        bus.input_ports_mut().set_button(1, SnesButton::B, true);
+        bus.input_ports_mut().set_button(2, SnesButton::A, true);
         bus.write(0x004201, 0x80);
 
         for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
@@ -5333,8 +5269,8 @@ mod tests {
         assert_eq!(joy4, 0x0080, "player 3 should be latched into JOY4");
 
         bus.write(0x004201, 0x00);
-        bus.set_controller_button(3, SnesButton::Start, true);
-        bus.set_controller_button(4, SnesButton::L, true);
+        bus.input_ports_mut().set_button(3, SnesButton::Start, true);
+        bus.input_ports_mut().set_button(4, SnesButton::L, true);
 
         for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
             bus.tick();
@@ -5356,15 +5292,15 @@ mod tests {
     fn save_state_round_trips_input() {
         let mut bus = SnesSystemBus::new(lorom_test_cart());
         bus.write(0x004200, 0x01); // auto-joypad enabled
-        bus.set_controller_button(0, SnesButton::X, true);
-        bus.set_controller_button(1, SnesButton::Down, true);
+        bus.input_ports_mut().set_button(0, SnesButton::X, true);
+        bus.input_ports_mut().set_button(1, SnesButton::Down, true);
         let state = bus.capture_state();
 
         let mut restored = SnesSystemBus::new(lorom_test_cart());
         restored.restore_state(&state).expect("restore");
         assert_eq!(
-            restored.joypad_button_states(1),
-            bus.joypad_button_states(1)
+            restored.input_ports().joypad_button_states(1),
+            bus.input_ports().joypad_button_states(1)
         );
         // X (serial bit 9) survives a full auto-read after restore.
         for _ in 0..(FRAME_MASTER_CYCLES + 4224) {
