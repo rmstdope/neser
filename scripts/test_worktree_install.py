@@ -8,7 +8,6 @@ where the setting is re-asserted; these tests run it and check the result.
 """
 
 import os
-import stat
 import subprocess
 import tempfile
 import unittest
@@ -58,7 +57,7 @@ class WorktreeInstallTests(unittest.TestCase):
         self.assertTrue(_declared("install_shell"))
 
     def test_install_sets_hooks_path(self) -> None:
-        """Running install_shell in a fresh linked worktree sets core.hooksPath to .githooks."""
+        """install_shell sets core.hooksPath to .githooks in a fresh worktree, before any later step can fail."""
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -70,19 +69,12 @@ class WorktreeInstallTests(unittest.TestCase):
             _git(repo, "worktree", "add", "-q", "-b", "bead", str(tree))
             self.assertEqual(_hooks_path(tree), "", "a fresh repository must start without core.hooksPath")
 
-            # A stub npm, so the test proves the git setting without a real `npm ci`.
-            bin_dir = base / "bin"
-            bin_dir.mkdir()
-            npm = bin_dir / "npm"
-            npm.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            npm.chmod(npm.stat().st_mode | stat.S_IXUSR)
-            env = {**GIT_ENV, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
-
+            # The temporary tree has no package.json or setup-venv.sh, so the later install steps
+            # fail here; the hooks path is set first so it holds even then, which is what is pinned.
             subprocess.run(
                 ["bash", "-euo", "pipefail", "-c", _declared("install_shell")],
                 cwd=tree,
-                env=env,
-                check=True,
+                env=GIT_ENV,
                 capture_output=True,
             )
             self.assertEqual(_hooks_path(tree), ".githooks")
