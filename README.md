@@ -259,7 +259,7 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings
 cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
-cargo test --no-default-features --lib
+cargo test --all-features --lib
 npm test
 sh scripts/build_web.sh --no-bundle && npx tsc --noEmit -p tsconfig.json
 ruff check scripts

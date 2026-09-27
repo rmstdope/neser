@@ -54,19 +54,85 @@ class NextestSkipExpressionTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+# A stand-in for cargo: a ``--list`` call answers one test unless the filter is ``empty::`` (none)
+# or ``broken::`` (a compile error, exit 101), or ``--format`` reached it (JSON, which the check
+# cannot read); any other call prints its arguments, one per line, and records that it ran.
+FAKE_CARGO = """#!/bin/sh
+case " $* " in
+  *" --list "*)
+    case " $* " in
+      *" --format "*) echo '{ "type": "suite", "event": "started", "test_count": 1 }' ;;
+      *" broken::"*) echo "error[E0308]: mismatched types" >&2; exit 101 ;;
+      *" empty::"*) echo "0 tests, 0 benchmarks" ;;
+      *) echo "some::module::a_test: test"; echo "1 test, 0 benchmarks" ;;
+    esac ;;
+  *)
+    echo ran >> "$FAKE_CARGO_LOG"
+    printf "%s\\n" "$@" ;;
+esac
+"""
+
+
+def run_with_fake_cargo(*args: str) -> tuple[subprocess.CompletedProcess[str], bool]:
+    """Runs test-dir.sh against FAKE_CARGO; returns the result and whether the test run happened."""
+
+    with tempfile.TemporaryDirectory() as fake_bin:
+        cargo = Path(fake_bin) / "cargo"
+        cargo.write_text(FAKE_CARGO, encoding="utf-8")
+        cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
+        log = Path(fake_bin) / "ran.log"
+        env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}", FAKE_CARGO_LOG=str(log))
+        result = subprocess.run([str(TEST_DIR), *args], capture_output=True, text=True, env=env)
+        return result, log.exists()
+
+
 class SkipIntegrationTest(unittest.TestCase):
     """``--skip-integration`` skips exactly the modules the expression names."""
 
     def test_skip_integration_passes_a_skip_per_slow_module(self) -> None:
-        with tempfile.TemporaryDirectory() as fake_bin:
-            cargo = Path(fake_bin) / "cargo"
-            cargo.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n', encoding="utf-8")
-            cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
-            env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-            argv = run_test_dir("src/nes", "--skip-integration", env=env).stdout.splitlines()
+        result, _ = run_with_fake_cargo("src/nes", "--skip-integration")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = result.stdout.splitlines()
 
         skipped = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--skip"]
         self.assertEqual(skipped, modules_in(printed_expression()))
+
+
+class ZeroMatchTest(unittest.TestCase):
+    """A requested directory that matches no test fails instead of passing as ``0 passed`` (nr-5ku)."""
+
+    def test_directory_with_no_tests_fails(self) -> None:
+        result, ran = run_with_fake_cargo("src/empty")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("src/empty", result.stderr)
+        self.assertIn("matches no test", result.stderr)
+        self.assertFalse(ran, "the tests must not run once a directory matched none")
+
+    def test_one_empty_directory_among_several_fails(self) -> None:
+        result, ran = run_with_fake_cargo("src/nes", "src/empty/")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("src/empty/", result.stderr)
+        self.assertNotIn("src/nes ", result.stderr)
+        self.assertFalse(ran)
+
+    def test_compile_failure_is_not_reported_as_no_match(self) -> None:
+        result, ran = run_with_fake_cargo("src/broken")
+        self.assertEqual(result.returncode, 101)
+        self.assertNotIn("matches no test", result.stderr)
+        self.assertIn("error[E0308]", result.stderr)
+        self.assertFalse(ran)
+
+    def test_passthrough_args_do_not_reach_the_check(self) -> None:
+        result, ran = run_with_fake_cargo("src/nes", "--", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(ran)
+        self.assertIn("json", result.stdout.splitlines())
+
+    def test_directory_with_tests_runs(self) -> None:
+        result, ran = run_with_fake_cargo("src/nes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(ran)
+        self.assertIn("nes::", result.stdout.splitlines())
 
 
 class CiReadsSkipListTest(unittest.TestCase):

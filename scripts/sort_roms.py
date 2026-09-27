@@ -227,33 +227,46 @@ def sort_collection(
     rom_db_csv_path: Path,
     *,
     dry_run: bool = False,
+    build_script: Path | None = None,
 ) -> int:
-    """Copy ROMs into mapper/submapper directories and return count."""
+    """Copy ROMs into mapper/submapper directories and return count.
+
+    ``build.rs`` watches ``roms/games/mappers`` only once it exists (Cargo would otherwise rebuild
+    on every call), so when this run creates ``destination_root`` it touches ``build_script`` to
+    make the next build regenerate the autorun tests.
+    """
+
+    creates_destination = not dry_run and not destination_root.exists()
 
     overrides = load_rom_db_overrides(rom_db_csv_path)
     copied = 0
     projected_files: set[Path] = set()
 
-    for rom_path in _iter_nes_files(collection_root):
-        try:
-            mapper, submapper = _resolve_mapper_and_submapper(rom_path, overrides)
-        except (OSError, ValueError) as error:
-            print(f"Skipping invalid ROM {rom_path}: {error}")
-            continue
+    # In a finally: once a failed run has created the destination, no later run would touch it.
+    try:
+        for rom_path in _iter_nes_files(collection_root):
+            try:
+                mapper, submapper = _resolve_mapper_and_submapper(rom_path, overrides)
+            except (OSError, ValueError) as error:
+                print(f"Skipping invalid ROM {rom_path}: {error}")
+                continue
 
-        if submapper is None:
-            target_dir = destination_root / str(mapper)
-        else:
-            target_dir = destination_root / str(mapper) / str(submapper)
+            if submapper is None:
+                target_dir = destination_root / str(mapper)
+            else:
+                target_dir = destination_root / str(mapper) / str(submapper)
 
-        target_path = target_dir / rom_path.name
+            target_path = target_dir / rom_path.name
 
-        if not dry_run:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(rom_path, target_path)
-        else:
-            projected_files.add(target_path.relative_to(destination_root))
-        copied += 1
+            if not dry_run:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(rom_path, target_path)
+            else:
+                projected_files.add(target_path.relative_to(destination_root))
+            copied += 1
+    finally:
+        if creates_destination and destination_root.exists() and build_script is not None and build_script.exists():
+            build_script.touch()
 
     if dry_run:
         _print_projected_hierarchy(destination_root, projected_files)
@@ -311,6 +324,7 @@ def main(argv: list[str] | None = None) -> None:
         destination_root,
         rom_db_csv_path,
         dry_run=args.dry_run,
+        build_script=repo_root / "build.rs",
     )
     if args.dry_run:
         print(f"Dry run: would copy {copied} ROM(s)")

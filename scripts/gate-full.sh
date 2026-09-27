@@ -41,8 +41,10 @@ fi
 
 step cargo fmt --all -- --check
 step cargo clippy --all-targets --all-features -- -D warnings
-# Every unit test; the ROM-driven integration_tests modules (97% of runtime) wait for the full gate.
-step cargo test --no-default-features --lib -- --skip integration_tests
+# Every unit test, under the feature set CI archives its tests with (--all-features, so the native
+# frontend's tests are compiled too; scripts/test_gate_features.py pins the match). The ROM-driven
+# integration_tests modules (97% of runtime) wait for the full gate.
+step cargo test --all-features --lib -- --skip integration_tests
 
 if [[ $fast_only -eq 1 ]]; then
   echo
@@ -58,7 +60,7 @@ echo "==> py scripts/chromedriver_match.py"
 chromedriver=$(py scripts/chromedriver_match.py)
 echo "$chromedriver"
 
-step cargo test --no-default-features --lib
+step cargo test --all-features --lib
 step cargo test --doc
 step cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings
 step cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
