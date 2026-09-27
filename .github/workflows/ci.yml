@@ -428,17 +428,19 @@ jobs:
             npx playwright install-deps chromium && break
             echo "Playwright install-deps attempt $i failed (transient network); retrying after 15s..." && sleep 15
           done
-      - name: Build WASM
-        run: |
-          cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
-          wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path --no-typescript
+      # The one wasm build of this job: wasm-release, wasm-bindgen, wasm-opt -O3 and vite, the
+      # binary players get. The test step below only serves it (nr-1pl).
+      - name: Build web app
+        run: bash scripts/build_web.sh
       - name: Run web integration tests
         # Playwright splits shards by test count in file order, and the slowest specs sort last:
         # an even split gave shard 2 about 280 worker-seconds to shard 1's 170. Shard 1 therefore
         # takes two thirds of the tests. PWTEST_SHARD_WEIGHTS is read by the Playwright 1.60 CLI; a
         # Playwright upgrade that drops it silently falls back to an even split, so check it then.
+        # SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST makes Playwright's webServer serve the build above.
         env:
           PWTEST_SHARD_WEIGHTS: "2:1"
+          SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST: "1"
         run: npm run test:integration:web -- --shard=${{ matrix.shard }}/2
       # Playwright keeps a trace, the error context and screenshots for every failed test under
       # test-results/; without this upload a red run leaves only the call log (nr-dv5). Each shard
