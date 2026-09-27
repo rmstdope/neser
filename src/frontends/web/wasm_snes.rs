@@ -41,6 +41,8 @@ pub struct WasmSnes {
     audio_muted: bool,
     rom_loaded: bool,
     pending_toasts: Vec<String>,
+    /// Carries the fractions of SNES Mouse movement between pointer events; fresh per game.
+    mouse_motion: crate::snes::input::MouseMotionScale,
 }
 
 impl Default for WasmSnes {
@@ -130,6 +132,7 @@ impl WasmSnes {
             audio_muted: false,
             rom_loaded: false,
             pending_toasts: Vec::new(),
+            mouse_motion: crate::snes::input::MouseMotionScale::default(),
         }
     }
 
@@ -153,6 +156,14 @@ impl WasmSnes {
     }
 
     /// Replaces the table of genuine dumps, so tests can run synthetic firmware.
+    /// The SNES Mouse's accumulated, not yet reported motion on port 1.
+    #[cfg(all(test, target_arch = "wasm32"))]
+    pub(crate) fn mouse_motion_for_test(&self) -> (i16, i16) {
+        self.snes
+            .mouse_state(0)
+            .map_or((0, 0), |state| (state.mouse_accum_dx, state.mouse_accum_dy))
+    }
+
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn set_firmware_table_for_test(&mut self, table: dsp::FirmwareTable) {
         self.snes.set_firmware_table_for_test(table);
@@ -162,6 +173,7 @@ impl WasmSnes {
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
         self.rom_loaded = false;
+        self.mouse_motion = crate::snes::input::MouseMotionScale::default();
         match self.snes.load_rom(rom, rom_name) {
             Ok(()) => {
                 self.rom_loaded = true;
@@ -174,6 +186,10 @@ impl WasmSnes {
                 if self.snes.has_superscope() {
                     self.pending_toasts
                         .push(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED.to_string());
+                }
+                if self.snes.has_mouse() {
+                    self.pending_toasts
+                        .push(crate::snes::frontend_toasts::SNES_MOUSE_CONNECTED.to_string());
                 }
                 web_sys::console::log_1(&JsValue::from_str("SNES ROM loaded successfully"));
                 Ok(())
@@ -336,6 +352,24 @@ impl WasmSnes {
     pub fn add_mouse_delta(&mut self, port: u8, dx: i16, dy: i16) {
         if let Some(port) = Self::physical_port(port) {
             self.snes.add_mouse_delta(port, dx, dy);
+        }
+    }
+
+    /// Move every SNES Mouse by a pointer movement of (`dx`, `dy`) CSS pixels over a picture
+    /// drawn `picture_width` × `picture_height` CSS pixels large: crossing the picture
+    /// crosses the game screen, whatever its size. Fractions carry to the next movement.
+    #[wasm_bindgen]
+    pub fn add_mouse_motion(&mut self, dx: f32, dy: f32, picture_width: f32, picture_height: f32) {
+        let (counts_x, counts_y) = self
+            .mouse_motion
+            .counts(dx, dy, picture_width, picture_height);
+        if counts_x == 0 && counts_y == 0 {
+            return;
+        }
+        for port in 0..=1u8 {
+            if self.snes.has_mouse_on_port(port) {
+                self.snes.add_mouse_delta(port, counts_x, counts_y);
+            }
         }
     }
 

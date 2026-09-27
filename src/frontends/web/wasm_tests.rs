@@ -1479,6 +1479,46 @@ fn a_super_scope_game_loads_with_the_scope_on_port2_and_says_so() {
 }
 
 #[wasm_bindgen_test]
+fn a_mouse_game_loads_with_the_mouse_on_port1_and_says_so() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(
+        &titled(minimal_snes_rom(), b"MARIOPAINT           "),
+        "Mario Paint (Japan, USA).sfc",
+    )
+    .expect("loads");
+    assert!(snes.has_mouse_on_port(1));
+    assert!(!snes.has_mouse_on_port(2));
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .iter()
+        .filter_map(|t| t.as_string())
+        .collect();
+    assert!(
+        toasts
+            .iter()
+            .any(|t| t == "SNES Mouse connected — click the game to use the mouse"),
+        "connected message queued: {toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn add_mouse_motion_scales_to_the_picture() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(
+        &titled(minimal_snes_rom(), b"MARIOPAINT           "),
+        "mp.sfc",
+    )
+    .expect("loads");
+    // A 1024×896 picture is four times the game screen: 64 CSS pixels is 16 game pixels,
+    // and three quarter-pixel moves carry over into the fourth.
+    snes.add_mouse_motion(64.0, -32.0, 1024.0, 896.0);
+    for _ in 0..4 {
+        snes.add_mouse_motion(1.0, 0.0, 1024.0, 896.0);
+    }
+    assert_eq!(snes.mouse_motion_for_test(), (17, -8));
+}
+
+#[wasm_bindgen_test]
 fn toggle_superscope_turbo_reports_the_new_switch_position() {
     let mut snes = WasmSnes::new();
     snes.load_rom(
