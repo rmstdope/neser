@@ -73,7 +73,7 @@ import {
     superScopeTurboMessage,
     type ClickCaptureSession,
 } from "./input/super_scope";
-import { createSnesMouseSession } from "./input/snes_mouse";
+import { activeCaptureSession, createSnesMouseSession } from "./input/snes_mouse";
 import { computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./display/canvas_size";
 import {
     findNextVisibleZoomHeight,
@@ -2816,10 +2816,12 @@ function snesMousePorts(): number[] {
  * in: both are captured only by a click on the game.
  */
 function clickCaptureSession(): ClickCaptureSession | null {
-    if (superScopePort() !== null) {
-        return superScopeSession;
-    }
-    return snesMousePorts().length > 0 ? snesMouseSession : null;
+    return activeCaptureSession(
+        superScopePort() !== null,
+        snesMousePorts().length > 0,
+        superScopeSession,
+        snesMouseSession,
+    );
 }
 
 /** Let go of the SNES Mouse's buttons, so a release mid-press never leaves them held. */
@@ -2994,8 +2996,9 @@ function handleMouseMotion(event: MouseEvent) {
         const rect = canvas.getBoundingClientRect();
         if (rect.width <= 1 || rect.height <= 1) return;
 
-        if (isSnesMouseActive(snesInst) && snesMouseSession.captured()) {
-            // Crossing the picture crosses the game screen, whatever its size.
+        if (isSnesMouseActive(snesInst) && clickCaptureSession()?.captured()) {
+            // Crossing the picture crosses the game screen, whatever its size. (With a
+            // Super Scope plugged in as well, the scope's session holds the capture.)
             snesInst.add_mouse_motion(event.movementX, event.movementY, rect.width, rect.height);
         }
         const scopePort = superScopePort();
@@ -3161,7 +3164,7 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
     // SNES peripherals: handle mouse and superscope buttons.
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
-        if (isSnesMouseActive(snesInst) && snesMouseSession.captured()) {
+        if (isSnesMouseActive(snesInst) && clickCaptureSession()?.captured()) {
             for (const port of snesMousePorts()) {
                 applySnesMouseButton(snesInst, port, event.button, pressed);
             }
@@ -3203,6 +3206,10 @@ canvas.addEventListener("mousedown", (event) => {
             const aim = superScopeSession.position();
             applySnesSuperScopePosition(emulator.inst, scopePort, aim.x, aim.y, rect.width, rect.height);
             applySnesSuperScopeButton(emulator.inst, scopePort, event.button, true);
+            // A mouse chosen for the other port follows the scope's capture.
+            for (const port of snesMousePorts()) {
+                applySnesMouseButton(emulator.inst, port, event.button, true);
+            }
         }
         return;
     }

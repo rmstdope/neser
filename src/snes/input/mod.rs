@@ -722,8 +722,8 @@ impl InputPorts {
         }
     }
 
-    /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
-    /// `None` when that port has no Super Scope.
+    /// The state of the SNES Mouse on the given physical port, or `None` when that port has
+    /// no mouse.
     pub fn mouse_state(&self, port: u8) -> Option<SnesControllerState> {
         let device = match port {
             0 => &self.port1,
@@ -733,6 +733,8 @@ impl InputPorts {
         device.is_mouse().then(|| device.capture_state())
     }
 
+    /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
+    /// `None` when that port has no Super Scope.
     pub fn superscope_state(&self, port: u8) -> Option<SnesControllerState> {
         let device = match port {
             0 => &self.port1,

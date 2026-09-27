@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { SNES_MOUSE_CONNECTED, SNES_MOUSE_RELEASED, createSnesMouseSession } from "./snes_mouse";
+import {
+    SNES_MOUSE_CONNECTED,
+    SNES_MOUSE_RELEASED,
+    activeCaptureSession,
+    createSnesMouseSession,
+} from "./snes_mouse";
+import { createSuperScopeSession } from "./super_scope";
+
+describe("activeCaptureSession", () => {
+    const scope = createSuperScopeSession();
+    const mouse = createSnesMouseSession();
+
+    it("is the scope's when a scope is plugged in, even beside a mouse", () => {
+        expect(activeCaptureSession(true, true, scope, mouse)).toBe(scope);
+        expect(activeCaptureSession(true, false, scope, mouse)).toBe(scope);
+    });
+
+    it("is the mouse's with only a mouse, and none without either", () => {
+        expect(activeCaptureSession(false, true, scope, mouse)).toBe(mouse);
+        expect(activeCaptureSession(false, false, scope, mouse)).toBeNull();
+    });
+});
 
 describe("SNES Mouse words", () => {
     it("are the agreed ones, matching src/snes/frontend_toasts.rs", () => {

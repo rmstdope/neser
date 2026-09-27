@@ -973,6 +973,7 @@ impl ApplicationHandler for NativeEventLoop {
                         }
                         self.state.mouse_grabbed = true;
                         if !mouse::forwards_capturing_click(
+                            has_scope,
                             click_captured_mouse,
                             was_released_by_escape,
                         ) {
@@ -1125,7 +1126,8 @@ impl ApplicationHandler for NativeEventLoop {
                 .map(|gl| gl.window_size())
                 .unwrap_or((320, 240));
 
-            if mouse::has_click_captured_mouse(&self.console) {
+            let click_captured_mouse = mouse::has_click_captured_mouse(&self.console);
+            if click_captured_mouse {
                 // The SNES's SNES Mouse: crossing the picture crosses the game screen.
                 let (picture_w, picture_h) = mouse::picture_size(&self.console, w, h);
                 mouse::apply_snes_console_mouse_motion(
@@ -1136,7 +1138,17 @@ impl ApplicationHandler for NativeEventLoop {
                     picture_w,
                     picture_h,
                 );
-            } else if mouse::has_snes_mouse(&self.console) && !mouse::has_zapper(&self.console) {
+            }
+            if !mouse::virtual_cursor_aims(
+                click_captured_mouse,
+                mouse::has_super_scope(&self.console),
+            ) {
+                return;
+            }
+            if !click_captured_mouse
+                && mouse::has_snes_mouse(&self.console)
+                && !mouse::has_zapper(&self.console)
+            {
                 // SNES Mouse: pass raw deltas directly.
                 // Zapper takes precedence — if a Zapper is also connected,
                 // fall through to the virtual-cursor path (matching SDL logic).

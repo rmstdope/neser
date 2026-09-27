@@ -278,8 +278,21 @@ pub fn click_captures(
 /// own SNES Mouse (`click_captured_mouse`), where it would paint or select something; for
 /// the other devices only on the first capture, not a recapture after Escape or focus loss
 /// (`was_released_by_escape`).
-pub fn forwards_capturing_click(click_captured_mouse: bool, was_released_by_escape: bool) -> bool {
-    !click_captured_mouse && !was_released_by_escape
+///
+/// With a Super Scope plugged in as well (a mouse chosen for port 1 in settings, a Super
+/// Scope game on port 2) the scope's rule wins: it fires on the capturing click.
+pub fn forwards_capturing_click(
+    has_super_scope: bool,
+    click_captured_mouse: bool,
+    was_released_by_escape: bool,
+) -> bool {
+    (has_super_scope || !click_captured_mouse) && !was_released_by_escape
+}
+
+/// Whether captured motion also moves the virtual cursor that aims a Super Scope or an NES
+/// light gun: always, except when the SNES's own SNES Mouse is the only device it drives.
+pub fn virtual_cursor_aims(click_captured_mouse: bool, has_super_scope: bool) -> bool {
+    !click_captured_mouse || has_super_scope
 }
 
 /// The message shown when a device captured on a click lets go of the mouse: only when the
@@ -751,7 +764,7 @@ mod tests {
         // Given: mouse was NOT released by Escape (initial grab)
         // Then: click is forwarded to the NES controller
         assert!(
-            forwards_capturing_click(false, false),
+            forwards_capturing_click(false, false, false),
             "Initial grab click should be forwarded to the NES"
         );
     }
@@ -762,15 +775,35 @@ mod tests {
         // When: user clicks to re-grab
         // Then: the click is NOT forwarded (it is silently discarded)
         assert!(
-            !forwards_capturing_click(false, true),
+            !forwards_capturing_click(false, false, true),
             "Re-grab click after Escape should be silently discarded"
         );
     }
 
     #[test]
     fn capturing_click_never_reaches_the_snes_mouse() {
-        assert!(!forwards_capturing_click(true, false), "first capture");
-        assert!(!forwards_capturing_click(true, true), "recapture");
+        assert!(
+            !forwards_capturing_click(false, true, false),
+            "first capture"
+        );
+        assert!(!forwards_capturing_click(false, true, true), "recapture");
+    }
+
+    #[test]
+    fn with_a_scope_and_a_mouse_plugged_in_the_scope_still_fires_on_capture() {
+        // A mouse chosen for port 1 in settings, and a Super Scope game on port 2.
+        assert!(forwards_capturing_click(true, true, false));
+        assert!(!forwards_capturing_click(true, true, true));
+    }
+
+    #[test]
+    fn with_a_scope_and_a_mouse_plugged_in_the_scope_still_aims() {
+        assert!(
+            virtual_cursor_aims(true, true),
+            "scope and mouse: the scope aims too"
+        );
+        assert!(!virtual_cursor_aims(true, false), "the SNES Mouse alone");
+        assert!(virtual_cursor_aims(false, true), "the scope alone");
     }
 
     // ── SNES Mouse on the SNES ────────────────────────────────────────────

@@ -32,24 +32,6 @@ export function isSnesSuperScopeActive(snes: SnesInputBridge): boolean {
 }
 
 /**
- * Forward relative mouse movement to the SNES mouse peripheral.
- *
- * If the mouse is not active on `port`, the call is a no-op.
- * Call with no `port` argument or `port = 0` to skip without error.
- */
-export function applySnesMouseDelta(
-    snes: SnesInputBridge,
-    port = 0,
-    dx = 0,
-    dy = 0,
-): void {
-    if (port === 0 || !snes.has_mouse_on_port(port)) {
-        return;
-    }
-    snes.add_mouse_delta(port, dx, dy);
-}
-
-/**
  * Forward a mouse button press/release to the SNES mouse peripheral.
  *
  * button 0 → left, button 2 → right. Other buttons are ignored.

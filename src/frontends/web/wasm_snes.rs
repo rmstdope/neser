@@ -155,7 +155,6 @@ impl WasmSnes {
             })
     }
 
-    /// Replaces the table of genuine dumps, so tests can run synthetic firmware.
     /// The SNES Mouse's accumulated, not yet reported motion on port 1.
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn mouse_motion_for_test(&self) -> (i16, i16) {
@@ -164,6 +163,7 @@ impl WasmSnes {
             .map_or((0, 0), |state| (state.mouse_accum_dx, state.mouse_accum_dy))
     }
 
+    /// Replaces the table of genuine dumps, so tests can run synthetic firmware.
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn set_firmware_table_for_test(&mut self, table: dsp::FirmwareTable) {
         self.snes.set_firmware_table_for_test(table);
