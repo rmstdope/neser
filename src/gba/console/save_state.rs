@@ -222,7 +222,8 @@ mod tests {
         let saved_corrected = gba.save_state();
         gba.set_color_correction(false);
 
-        gba.load_state(&saved_corrected).expect("load should succeed");
+        gba.load_state(&saved_corrected)
+            .expect("load should succeed");
 
         assert!(!gba.color_correction());
         assert!(

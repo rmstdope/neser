@@ -24,10 +24,19 @@ describe("cgbColorButtonVisible", () => {
         expect(cgbColorButtonVisible({ kind: "gb", isColor: false, running: true, paused: false })).toBe(false);
     });
 
-    it("is hidden for NES, SNES and Game Boy Advance games", () => {
-        for (const kind of ["nes", "snes", "gba"] as const) {
+    it("is hidden for NES and SNES games", () => {
+        for (const kind of ["nes", "snes"] as const) {
             expect(cgbColorButtonVisible({ kind, isColor: true, running: true, paused: false })).toBe(false);
         }
+    });
+
+    it("is shown while a Game Boy Advance game is running", () => {
+        expect(cgbColorButtonVisible({ kind: "gba", isColor: false, running: true, paused: false })).toBe(true);
+    });
+
+    it("is hidden while a Game Boy Advance game is paused or stopped", () => {
+        expect(cgbColorButtonVisible({ kind: "gba", isColor: false, running: true, paused: true })).toBe(false);
+        expect(cgbColorButtonVisible({ kind: "gba", isColor: false, running: false, paused: false })).toBe(false);
     });
 
     it("is hidden while the colour game is paused, since no new frame would show the change", () => {
