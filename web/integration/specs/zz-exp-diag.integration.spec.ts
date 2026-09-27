@@ -1,5 +1,6 @@
 import { test } from "@playwright/test";
-import { openApp, waitForRunningState } from "../helpers/lifecycle.helpers";
+import { expect } from "@playwright/test";
+import { openApp } from "../helpers/lifecycle.helpers";
 import { makeMinimalSnesRomBytes } from "../helpers/snes_rom.helpers";
 
 test("EXP: pointer lock after a file load, and zoom click timing", async ({ page, browser }) => {
@@ -13,7 +14,7 @@ test("EXP: pointer lock after a file load, and zoom click timing", async ({ page
     await page.locator("#screen-minus").click({ timeout: 30_000 });
     console.log(`EXP zoom plus=${plusMs}ms minus=${Date.now() - t1}ms`);
     await page.locator("#rom").setInputFiles({ name: "suite.sfc", mimeType: "application/octet-stream", buffer: makeMinimalSnesRomBytes() });
-    await waitForRunningState(page);
+    await expect(page.locator("#emulation-controls")).toHaveAttribute("data-emulation-state", "running", { timeout: 15_000 });
     await page.waitForTimeout(500);
     const lock = await page.evaluate(() => document.pointerLockElement?.id ?? null);
     console.log(`EXP lock-after-file-load=${lock}`);
