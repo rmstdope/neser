@@ -1943,6 +1943,7 @@ fn wasm_snes_get_audio_samples_stereo_returns_vec() {
 fn wasm_nes_palette_label_follows_cycle_palette() {
     let mut nes = WasmNes::new();
     nes.load_rom(&minimal_nrom(), "test.nes").unwrap();
+    nes.drain_toasts();
     assert_eq!(nes.palette_label(), "Palette: Default");
     assert_eq!(nes.cycle_palette(), "Palette: NesDev");
     assert_eq!(nes.palette_label(), "Palette: NesDev");
