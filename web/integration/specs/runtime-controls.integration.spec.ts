@@ -138,8 +138,9 @@ test.describe("Phase 2 runtime controls", () => {
                 });
             }
             // A capture listener on window runs before the button's own handler and a bubble one
-            // after it, so the gap is how long the click blocks the page. Playwright's click time
-            // also waits for scrolling and for stable animation frames, which are slow on CI.
+            // after it, so the gap is how long the handler runs synchronously. It leaves out the
+            // next frame's style, layout, paint and first draw into the resized buffer. Playwright's
+            // click time also waits for scrolling and stable animation frames, which are slow on CI.
             const blocked: number[] = [];
             (window as unknown as { __clickBlockedMs: number[] }).__clickBlockedMs = blocked;
             let clickStartedAt = 0;
@@ -157,8 +158,8 @@ test.describe("Phase 2 runtime controls", () => {
             const elapsedMs = Date.now() - startedAt;
             const after = await backingStoreWrites();
             const blockedMs = Math.round(await lastClickBlockedMs());
-            console.log(`[nr-v5x] ${label} click took ${elapsedMs} ms, of which the page was blocked ${blockedMs} ms`);
-            test.info().annotations.push({ type: "zoom-click-ms", description: `${label}: ${elapsedMs} (blocked ${blockedMs})` });
+            console.log(`[nr-v5x] ${label} click took ${elapsedMs} ms, of which its handler ran ${blockedMs} ms`);
+            test.info().annotations.push({ type: "zoom-click-ms", description: `${label}: ${elapsedMs} (handler ${blockedMs})` });
             expect(after.width - before.width, `${label}: canvas.width assignments`).toBeLessThanOrEqual(1);
             expect(after.height - before.height, `${label}: canvas.height assignments`).toBeLessThanOrEqual(1);
         };
