@@ -51,7 +51,7 @@ impl Mapper35 {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
-            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
+            max_prg_ram_kb: ctx.header_prg_ram_kb(),
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             ..Default::default()

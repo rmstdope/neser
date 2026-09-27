@@ -130,9 +130,12 @@ impl MMC1Mapper {
     }
 
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
-        let prg_ram_size = (ctx.prg_ram_banks_8k as usize) * 8192;
+        // The board's PRG-RAM follows the header rule: a NES 2.0 header declaring none names a
+        // board without RAM (SGROM and kin), never SNROM.
+        let prg_ram_banks_8k = ctx.header_prg_ram_banks_8k();
+        let prg_ram_size = (prg_ram_banks_8k as usize) * 8192;
         let surom = ctx.prg_rom.len() > 256 * 1024;
-        let sorom = ctx.prg_ram_banks_8k >= 2;
+        let sorom = prg_ram_banks_8k >= 2;
         // SNROM: CHR is RAM (no CHR ROM), PRG-ROM <= 256KB, single 8KB PRG-RAM bank.
         // On SNROM, CHR A16 (bit 4 of CHR bank register) gates PRG-RAM /CE.
         let snrom = ctx.chr_rom.is_empty() && !surom && !sorom && prg_ram_size > 0;
@@ -525,7 +528,8 @@ impl Mapper for MMC1Mapper {
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
-                if !self.is_wram_enabled() {
+                // A board without PRG-RAM drives nothing here.
+                if self.prg_ram.is_empty() || !self.is_wram_enabled() {
                     return open_bus;
                 }
                 self.read_prg(addr)
@@ -659,7 +663,7 @@ impl Mapper for MMC1Mapper {
             has_chr_banking: true,
             has_dynamic_mirroring: true,
             has_expansion_audio: false,
-            max_prg_ram_kb: (self.prg_ram.len() / 1024).max(8),
+            max_prg_ram_kb: self.prg_ram.len() / 1024,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 4,
             trainer_jsr: false,
@@ -1228,6 +1232,52 @@ mod tests {
             !mapper.is_wram_enabled(),
             "MMC1B should power on with WRAM disabled by default"
         );
+    }
+
+    fn chr_ram_mmc1(ctx_prg_ram: impl FnOnce(MapperContext) -> MapperContext) -> MMC1Mapper {
+        MMC1Mapper::new(ctx_prg_ram(MapperContext::new_for_test(
+            1,
+            vec![0; 128 * 1024],
+            vec![],
+            NametableLayout::Horizontal,
+        )))
+    }
+
+    #[test]
+    fn mmc1_nes2_header_without_prg_ram_has_no_prg_ram_and_is_not_snrom() {
+        // NES 2.0: "If the shift count is zero, there is no PRG-(NV)RAM", and nesdev's
+        // SxROM board table names a CHR-RAM MMC1 board without PRG-RAM (SGROM), distinct
+        // from SNROM's 8 KiB. Nothing drives $6000-$7FFF, so it reads open bus.
+        let mut mapper = chr_ram_mmc1(|ctx| ctx.with_unspecified_prg_ram_size());
+        write_register(&mut mapper, 0xE000, 0b00000); // $E000 bit 4 clear: WRAM enabled
+
+        assert!(!mapper.snrom, "a board without PRG-RAM is not SNROM");
+        assert_eq!(mapper.wram_size(), 0);
+        assert_eq!(mapper.capabilities().max_prg_ram_kb, 0);
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5A), 0x5A);
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, 0xC3), 0xC3);
+
+        // CHR A16 (SNROM's PRG-RAM /CE) changes nothing: there is no RAM to gate.
+        write_register(&mut mapper, 0xA000, 0b10000);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5A), 0x5A);
+        write_register(&mut mapper, 0xA000, 0b00000);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5A), 0x5A);
+    }
+
+    #[test]
+    fn mmc1_chr_ram_header_with_8k_prg_ram_is_snrom() {
+        let mut mapper = chr_ram_mmc1(|ctx| ctx.with_prg_ram_banks(1));
+        write_register(&mut mapper, 0xE000, 0b00000);
+
+        assert!(
+            mapper.snrom,
+            "CHR-RAM, <= 256 KiB PRG and 8 KiB PRG-RAM is SNROM"
+        );
+        assert_eq!(mapper.wram_size(), 8 * 1024);
+        assert_eq!(mapper.capabilities().max_prg_ram_kb, 8);
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5A), 0xAB);
     }
 
     #[test]
