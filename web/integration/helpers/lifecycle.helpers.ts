@@ -64,10 +64,45 @@ async function waitForEmulationState(page: Page, state: "idle" | "running" | "pa
     });
 }
 
+/**
+ * Give the pointer back to the player, as Escape does.
+ *
+ * Choosing a ROM and clicking the game capture the mouse for the game (pointer lock on the
+ * canvas) wherever the browser grants it: CI's Linux Chromium does, the macOS headless shell
+ * does not. While the mouse is captured the browser routes every mouse event to the canvas, so
+ * no click reaches a control and Playwright reports the sidebar intercepting its own buttons
+ * (nr-dv5). A player presses Escape before reaching for the sidebar; so does a spec.
+ *
+ * Escape is pressed on every poll, not once: the lock is granted a task or two after the load
+ * requests it, and a single Escape that lands before the grant would leave the lock in place.
+ */
+export async function releaseCapturedMouse(page: Page) {
+    await expect
+        .poll(
+            async () => {
+                await page.keyboard.press("Escape");
+                return page.evaluate(() => document.pointerLockElement === null);
+            },
+            {
+                message: "Escape should release the mouse the game captured",
+                timeout: EXPECT_TIMEOUT_MS
+            }
+        )
+        .toBe(true);
+}
+
+/**
+ * Wait until the game runs, then take the pointer back with Escape (see
+ * `releaseCapturedMouse`): loading captures the mouse for the game, and every spec that
+ * clicks a control afterwards is a player who has it back. A spec that needs the mouse
+ * captured (a Zapper or Super Scope game) clicks the game after this, as
+ * `mouse-capture.integration.spec.ts` does.
+ */
 export async function waitForRunningState(page: Page) {
     await waitForEmulationState(page, "running");
     await expect(page.locator("#stop")).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
     await expect(page.locator("#pause")).toHaveText("Pause", { timeout: EXPECT_TIMEOUT_MS });
+    await releaseCapturedMouse(page);
 }
 
 export async function waitForIdleState(page: Page) {
