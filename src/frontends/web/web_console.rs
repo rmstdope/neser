@@ -273,13 +273,22 @@ mod tests {
         web.run_until_frame_ready();
         web.set_audio_muted(true);
         assert!(web.is_audio_muted());
-        assert!(web.audio_samples().is_empty());
+        // No read while muted: muting itself must throw the queued sound away.
         web.set_audio_muted(false);
         assert!(!web.is_audio_muted());
         assert!(
             web.audio_samples().is_empty(),
-            "what was queued while muted is gone"
+            "what was queued before muting is gone"
         );
+    }
+
+    #[test]
+    fn audio_samples_while_muted_are_empty() {
+        let mut web = web_gb();
+        web.load_rom(&minimal_gb_rom(), "game.gb").expect("loads");
+        web.set_audio_muted(true);
+        web.run_until_frame_ready();
+        assert!(web.audio_samples().is_empty());
     }
 
     #[test]
@@ -306,7 +315,9 @@ mod tests {
     fn run_until_frame_ready_finishes_one_frame() {
         let mut web = web_gb();
         web.load_rom(&minimal_gb_rom(), "game.gb").expect("loads");
+        assert!(!web.core().sample_ready(), "nothing has run yet");
         web.run_until_frame_ready();
+        assert!(web.core().sample_ready(), "a frame's worth of the core ran");
         assert!(!web.core().is_ready_to_render(), "the frame was taken");
     }
 
