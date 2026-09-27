@@ -64,6 +64,7 @@ export function createGbaPipeline(gl: WebGLRenderingContext, deps: GbaPipelineDe
     /** frames[0] is the current frame; frames[k] the frame k frames ago. */
     let frames: WebGLTexture[] = [];
     let historyFilled = false;
+    const maxVertexAttribs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) as number;
 
     function program(name: string, frag: string): WebGLProgram | null {
         const existing = programs.get(name);
@@ -192,6 +193,11 @@ export function createGbaPipeline(gl: WebGLRenderingContext, deps: GbaPipelineDe
         const flipLoc = gl.getUniformLocation(prog, "u_flipY");
         if (flipLoc) gl.uniform1f(flipLoc, out ? 0.0 : 1.0);
         const pos = gl.getAttribLocation(prog, "a_position");
+        // WebGL 1 refuses to draw while any array is enabled without a live buffer; the other
+        // pipelines leave theirs enabled (a_texCoord), and initWebGL replaces those buffers.
+        for (let i = 0; i < maxVertexAttribs; i++) {
+            if (i !== pos) gl.disableVertexAttribArray(i);
+        }
         gl.bindBuffer(gl.ARRAY_BUFFER, deps.positionBuffer());
         gl.enableVertexAttribArray(pos);
         gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);

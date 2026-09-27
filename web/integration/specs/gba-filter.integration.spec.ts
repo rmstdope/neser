@@ -20,6 +20,11 @@ async function loadGbaRom(page: Page) {
 test.describe("GBA screen filters on the web (nr-0pe)", () => {
     test("Given the first GBA game on the page, then it starts on None and Filter and F4 cycle the five looks, also while paused", async ({ page }) => {
         const errors = collectBrowserErrors(page);
+        // A pass WebGL refuses to draw reports only through the console, as a warning.
+        const glErrors: string[] = [];
+        page.on("console", (msg) => {
+            if (/INVALID_|too many errors/.test(msg.text())) glErrors.push(msg.text());
+        });
         await openApp(page);
         const filter = page.locator(FILTER_SELECTOR);
 
@@ -52,6 +57,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await expect(filter).toHaveText("Filter: LCD Grid");
         await expect(page.locator("#status")).not.toContainText("Rendering error");
         expect(errors.pageErrors).toEqual([]);
+        expect(glErrors).toEqual([]);
         expect(errors.consoleErrors.filter((e) => /shader|framebuffer|filter/i.test(e))).toEqual([]);
     });
 
