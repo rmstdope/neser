@@ -90,34 +90,19 @@ impl WasmGb {
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
-    /// F8: cycles an original Game Boy game's palette and queues the toast:
-    /// the shade palette on Game Boy hardware, the colourisation on Game Boy
-    /// Color hardware. In a Game Boy Color game it switches the colour
-    /// correction instead (read the result with `cgb_color_correction`).
-    /// Returns the new palette's name or the correction's message, or `""`
-    /// when no game is running (nothing changes, no toast).
+    /// F8 and the Palette button: whatever F8 does in the running game (see
+    /// `GameBoy::f8_action`). Returns the corner message for the page to
+    /// show, or `""` when nothing changed (no game).
     #[wasm_bindgen]
     pub fn cycle_palette(&mut self) -> String {
-        if let Some(palette) = self.gb.cycle_palette() {
-            self.pending_toasts
-                .push(crate::gb::ppu::dmg_palette::palette_toast_message(palette));
-            return palette.display_name().to_string();
-        }
-        match self.gb.cycle_gbc_palette() {
-            Some(toast) => {
-                self.pending_toasts.push(toast);
-                self.gb.gbc_palette().display_name().to_string()
-            }
-            None => match self.gb.toggle_cgb_color_correction() {
-                Some(enabled) => {
-                    let toast =
-                        crate::gb::console::gameboy::cgb_color_correction_toast_message(enabled);
-                    self.pending_toasts.push(toast.clone());
-                    toast
-                }
-                None => String::new(),
-            },
-        }
+        self.gb.f8_action().unwrap_or_default()
+    }
+
+    /// The Colors button's label: the colour correction's state in the words
+    /// of its corner message.
+    #[wasm_bindgen]
+    pub fn color_label(&self) -> String {
+        self.gb.color_correction_label()
     }
 
     /// The palette in use, as the Palette button names it ("Palette: <name>",

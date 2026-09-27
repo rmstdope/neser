@@ -830,43 +830,9 @@ impl ApplicationHandler for NativeEventLoop {
                             self.state.show_fps = !self.state.show_fps;
                         }
                         KeyOutcome::CyclePalette => {
-                            if let Some(nes) = self.console.as_nes_mut() {
-                                let palette = nes.cycle_palette();
-                                let toast =
-                                    crate::nes::frontend_toasts::palette_toast_message(palette);
-                                self.console.app_context().borrow_mut().add_toast(&toast);
-                            } else if let Some(palette) = self
-                                .console
-                                .as_gameboy_mut()
-                                .and_then(|gb| gb.cycle_palette())
-                            {
-                                let toast =
-                                    crate::gb::ppu::dmg_palette::palette_toast_message(palette);
+                            if let Some(toast) = self.console.f8_action() {
                                 self.console.app_context().borrow_mut().add_toast(&toast);
                                 self.sync_gb_palette_with_filter(false);
-                            } else if let Some(toast) = self
-                                .console
-                                .as_gameboy_mut()
-                                .and_then(|gb| gb.cycle_gbc_palette())
-                            {
-                                self.console.app_context().borrow_mut().add_toast(&toast);
-                            } else if let Some(gba) = self.console.as_gba_mut() {
-                                let enabled = gba.toggle_color_correction();
-                                let toast =
-                                    crate::gba::console::gba::color_correction_toast_message(
-                                        enabled,
-                                    );
-                                self.console.app_context().borrow_mut().add_toast(&toast);
-                            } else if let Some(enabled) = self
-                                .console
-                                .as_gameboy_mut()
-                                .and_then(|gb| gb.toggle_cgb_color_correction())
-                            {
-                                let toast =
-                                    crate::gb::console::gameboy::cgb_color_correction_toast_message(
-                                        enabled,
-                                    );
-                                self.console.app_context().borrow_mut().add_toast(&toast);
                             }
                         }
                     }

@@ -2,6 +2,7 @@ import { test, expect, Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+    loadGbaRomFromFileInput,
     loadRomFromFileInput,
     openApp,
     waitForIdleState,
@@ -13,6 +14,7 @@ const COLORS_BUTTON_SELECTOR = "#cgb-color-toggle";
 const STOP_BUTTON_SELECTOR = "#stop";
 const PAUSE_BUTTON_SELECTOR = "#pause";
 const ACID_DIR = path.join("roms", "gb", "automated_tests", "acid");
+const TOAST_SELECTOR = ".neser-toast";
 
 async function loadGbRom(page: Page, fileName: string) {
     await page.locator("#rom").setInputFiles({
@@ -76,5 +78,32 @@ test.describe("Colors button (Game Boy Color LCD colour correction)", () => {
         await page.reload();
         await loadGbRom(page, "cgb-acid2.gbc");
         await expect(colors).toHaveText("Colors: Raw");
+    });
+});
+
+test.describe("Colors button (Game Boy Advance LCD colour correction)", () => {
+    test("Given a GBA game, when Colors or F8 is pressed, then the label and toast use the core's words and Reset keeps the choice", async ({ page }) => {
+        await openApp(page);
+        const colors = page.locator(COLORS_BUTTON_SELECTOR);
+
+        await loadGbaRomFromFileInput(page);
+        await waitForRunningState(page);
+        await expect(colors).toBeVisible();
+        await expect(colors).toHaveText("Colors: Raw");
+
+        await colors.click();
+        await expect(colors).toHaveText("Colors: GBA screen");
+        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "Colors: GBA screen" })).toBeVisible();
+
+        await page.keyboard.press("F8");
+        await expect(colors).toHaveText("Colors: Raw");
+        await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "Colors: Raw" })).toBeVisible();
+
+        await page.keyboard.press("F8");
+        await expect(colors).toHaveText("Colors: GBA screen");
+
+        await page.locator("#reset").click();
+        await waitForRunningState(page);
+        await expect(colors).toHaveText("Colors: GBA screen");
     });
 });

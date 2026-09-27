@@ -201,6 +201,15 @@ impl Nes {
         self.ppu.borrow_mut().cycle_system_palette()
     }
 
+    /// What F8 (and the web Palette button) does: cycle the system palette,
+    /// returning the corner message. Never `None`; the `Option` is the shape
+    /// every console's F8 shares.
+    pub fn f8_action(&mut self) -> Option<String> {
+        Some(crate::nes::frontend_toasts::palette_toast_message(
+            self.cycle_palette(),
+        ))
+    }
+
     /// Insert `cartridge` and power the console on, leaving it ready to run: what every
     /// frontend does to start a game, so none of them resets what it has just loaded.
     pub fn load_cartridge(&mut self, cartridge: Cartridge) {
@@ -3327,6 +3336,15 @@ mod tests {
         ));
         assert_eq!(nes.current_palette(), crate::nes::ppu::NesPalette::Default);
         assert_eq!(nes.cycle_palette(), crate::nes::ppu::NesPalette::NesDev);
+        assert_eq!(nes.current_palette(), crate::nes::ppu::NesPalette::NesDev);
+    }
+
+    #[test]
+    fn test_nes_f8_action_cycles_the_palette_and_names_it() {
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        assert_eq!(nes.f8_action().as_deref(), Some("Palette: NesDev"));
         assert_eq!(nes.current_palette(), crate::nes::ppu::NesPalette::NesDev);
     }
 

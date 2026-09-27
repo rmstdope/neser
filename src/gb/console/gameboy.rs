@@ -560,6 +560,27 @@ impl GameBoy {
         }
     }
 
+    /// What F8 (and the web Palette and Colors buttons) does in the game
+    /// running now, returning the corner message, or `None` where it changes
+    /// nothing (no game). An original Game Boy game cycles its shade palette
+    /// on Game Boy hardware and its colourisation on Game Boy Color hardware;
+    /// a Game Boy Color game switches the colour correction.
+    pub fn f8_action(&mut self) -> Option<String> {
+        if let Some(palette) = self.cycle_palette() {
+            return Some(crate::gb::ppu::dmg_palette::palette_toast_message(palette));
+        }
+        self.cycle_gbc_palette().or_else(|| {
+            self.toggle_cgb_color_correction()
+                .map(cgb_color_correction_toast_message)
+        })
+    }
+
+    /// The colour correction's state in the words of its corner message,
+    /// which the web Colors button shows as its label.
+    pub fn color_correction_label(&self) -> String {
+        cgb_color_correction_toast_message(self.cgb_color_correction())
+    }
+
     /// Whether the Game Boy Color LCD colour correction is on. It lives in the
     /// shared config, so a runtime choice lasts until the program quits.
     pub fn cgb_color_correction(&self) -> bool {
@@ -2370,6 +2391,47 @@ mod tests {
     fn test_cycle_palette_without_a_rom_does_nothing() {
         let mut gb = make_gameboy();
         assert_eq!(gb.cycle_palette(), None);
+    }
+
+    // ── F8: one action per game, returning the corner message ───────────────
+
+    #[test]
+    fn test_f8_action_in_a_dmg_game_cycles_the_shades() {
+        let mut gb = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        assert_eq!(gb.f8_action().as_deref(), Some("Palette: DMG Green"));
+        assert_eq!(gb.palette(), GbPalette::DmgGreen);
+    }
+
+    #[test]
+    fn test_f8_action_in_a_dmg_game_on_cgb_hardware_cycles_the_colourisation() {
+        let mut gb = loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom());
+        assert_eq!(gb.f8_action().as_deref(), Some("Palette: Brown"));
+        assert!(!gb.cgb_color_correction(), "correction is left alone");
+    }
+
+    #[test]
+    fn test_f8_action_in_a_colour_game_switches_the_correction() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        assert_eq!(gb.f8_action().as_deref(), Some("Colors: GBC screen"));
+        assert!(gb.cgb_color_correction());
+        assert_eq!(gb.f8_action().as_deref(), Some("Colors: Raw"));
+        assert!(!gb.cgb_color_correction());
+    }
+
+    #[test]
+    fn test_f8_action_without_a_rom_does_nothing() {
+        let mut gb = make_gameboy();
+        assert_eq!(gb.f8_action(), None);
+    }
+
+    #[test]
+    fn test_color_correction_label_names_the_state_in_the_toast_words() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        assert_eq!(gb.color_correction_label(), "Colors: Raw");
+        gb.toggle_cgb_color_correction();
+        assert_eq!(gb.color_correction_label(), "Colors: GBC screen");
     }
 
     #[test]

@@ -1,5 +1,4 @@
 use crate::gba::Gba;
-use crate::gba::console::gba::color_correction_toast_message;
 use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::emulator::Emulator;
 use crate::platform::frontend_toasts::cartridge_load_toast_message;
@@ -130,13 +129,17 @@ impl WasmGba {
     }
 
     /// F8 and the top-bar Colors button: switch the GBA LCD colour
-    /// correction, queue the corner message, and return the new button label.
+    /// correction and return the corner message for the page to show.
     #[wasm_bindgen]
     pub fn cycle_palette(&mut self) -> String {
-        let enabled = self.gba.toggle_color_correction();
-        let message = color_correction_toast_message(enabled);
-        self.pending_toasts.push(message.clone());
-        message
+        self.gba.f8_action().unwrap_or_default()
+    }
+
+    /// The Colors button's label: the colour correction's state in the words
+    /// of its corner message.
+    #[wasm_bindgen]
+    pub fn color_label(&self) -> String {
+        self.gba.color_correction_label()
     }
 
     /// Whether the GBA LCD colour correction is on.

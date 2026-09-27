@@ -1,19 +1,5 @@
 import type { WebRomConsoleKind } from "../rom/rom_extensions";
 
-/** Label of the top-bar button: it names the current colour state. */
-export function cgbColorButtonLabel(enabled: boolean): string {
-    return enabled ? "Colors: GBC screen" : "Colors: Raw";
-}
-
-/**
- * Corner message when the correction is switched, by F8 or the Colors button.
- * The words match the button label and the desktop message; kept separate so
- * a later label change does not silently change the message.
- */
-export function cgbColorToastMessage(enabled: boolean): string {
-    return enabled ? "Colors: GBC screen" : "Colors: Raw";
-}
-
 /**
  * The Colors button is shown only while a game is running whose colours can
  * be corrected: on the Game Boy core, Game Boy Color games and black-and-white
@@ -35,28 +21,30 @@ export function cgbColorButtonVisible(state: {
 export interface CgbColorCore {
     set_cgb_color_correction(enabled: boolean): void;
     cgb_color_correction(): boolean;
+    /** The colour correction's state in the words of its corner message (the button label). */
+    color_label(): string;
 }
 
 /**
- * The page's one colour-correction state, shared by F8 and the Colors button.
+ * The page's one colour-correction choice, shared by F8 and the Colors button.
  * It lives for the page (each load starts at Raw) and is handed to every new
- * Game Boy instance, so a choice carries on to the next game.
+ * Game Boy instance, so a choice carries on to the next game. The running
+ * game is the truth; the words shown are always the core's.
  */
 export function createCgbColorControl(view: { refreshButton(): void; showMessage(message: string): void }) {
     let enabled = false;
     return {
         enabled: (): boolean => enabled,
-        /** The Colors button: switch, apply to the running game, relabel and show the message. */
-        click(core: CgbColorCore | null): void {
-            enabled = !enabled;
-            core?.set_cgb_color_correction(enabled);
+        /** The Colors button: switch the running game, relabel and show the core's message. */
+        click(core: CgbColorCore): void {
+            enabled = !core.cgb_color_correction();
+            core.set_cgb_color_correction(enabled);
             view.refreshButton();
-            view.showMessage(cgbColorToastMessage(enabled));
+            view.showMessage(core.color_label());
         },
-        /** After F8, which switched the game and queued its own message: follow it and relabel. */
-        afterF8(core: CgbColorCore): void {
+        /** Remember the running game's state (F8 may have changed it) for the next game. */
+        follow(core: CgbColorCore): void {
             enabled = core.cgb_color_correction();
-            view.refreshButton();
         }
     };
 }

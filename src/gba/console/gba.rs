@@ -218,6 +218,20 @@ impl Gba {
         enabled
     }
 
+    /// What F8 (and the web Colors button) does: switch the LCD colour
+    /// correction, returning the corner message.
+    pub fn f8_action(&mut self) -> Option<String> {
+        Some(color_correction_toast_message(
+            self.toggle_color_correction(),
+        ))
+    }
+
+    /// The colour correction's state in the words of its corner message,
+    /// which the web Colors button shows as its label.
+    pub fn color_correction_label(&self) -> String {
+        color_correction_toast_message(self.color_correction())
+    }
+
     /// Borrow the underlying system bus.
     pub fn bus(&self) -> &GbaBus {
         &self.bus
@@ -628,6 +642,23 @@ mod tests {
         let next = Gba::new(gba.app_context.clone());
         assert!(next.color_correction());
         assert!(next.bus.ppu.color_correction());
+    }
+
+    #[test]
+    fn test_f8_action_switches_the_correction_and_names_it() {
+        let mut gba = make_gba();
+        assert_eq!(gba.f8_action().as_deref(), Some("Colors: GBA screen"));
+        assert!(gba.color_correction());
+        assert_eq!(gba.f8_action().as_deref(), Some("Colors: Raw"));
+        assert!(!gba.color_correction());
+    }
+
+    #[test]
+    fn test_color_correction_label_follows_the_state() {
+        let mut gba = make_gba();
+        assert_eq!(gba.color_correction_label(), "Colors: Raw");
+        gba.toggle_color_correction();
+        assert_eq!(gba.color_correction_label(), "Colors: GBA screen");
     }
 
     #[test]
