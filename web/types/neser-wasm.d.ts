@@ -183,6 +183,7 @@ declare module "*/pkg/neser" {
         has_mouse(): boolean;
         has_mouse_on_port(port: number): boolean;
         add_mouse_delta(port: number, dx: number, dy: number): void;
+        add_mouse_motion(dx: number, dy: number, picture_width: number, picture_height: number): void;
         set_mouse_left_button(port: number, pressed: boolean): void;
         set_mouse_right_button(port: number, pressed: boolean): void;
         // Super Scope peripheral methods

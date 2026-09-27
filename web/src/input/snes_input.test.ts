@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
     isSnesMouseActive,
     isSnesSuperScopeActive,
-    applySnesMouseDelta,
     applySnesMouseButton,
     mapSnesScreenX,
     mapSnesScreenY,
@@ -22,7 +21,6 @@ function makeSnesStub({
     multitapPorts = [] as number[],
 } = {}) {
     const calls = {
-        addMouseDelta: [] as { port: number; dx: number; dy: number }[],
         setMouseLeftButton: [] as { port: number; pressed: boolean }[],
         setMouseRightButton: [] as { port: number; pressed: boolean }[],
         setSuperScopePosition: [] as { port: number; x: number; y: number }[],
@@ -38,9 +36,6 @@ function makeSnesStub({
         has_superscope: () => superScopePorts.length > 0,
         has_superscope_on_port: (port: number) => superScopePorts.includes(port),
         is_multitap_on_port: (port: number) => multitapPorts.includes(port),
-        add_mouse_delta: (port: number, dx: number, dy: number) => {
-            calls.addMouseDelta.push({ port, dx, dy });
-        },
         set_mouse_left_button: (port: number, pressed: boolean) => {
             calls.setMouseLeftButton.push({ port, pressed });
         },
@@ -98,34 +93,6 @@ it("isSnesSuperScopeActive returns false when no superscope configured", () => {
 it("isSnesSuperScopeActive returns true when superscope on port 2", () => {
     const { snes } = makeSnesStub({ superScopePorts: [2] });
     expect(isSnesSuperScopeActive(snes)).toBe(true);
-});
-
-// ---------------------------------------------------------------------------
-// applySnesMouseDelta
-// ---------------------------------------------------------------------------
-
-it("applySnesMouseDelta sends delta to port 1", () => {
-    const { snes, calls } = makeSnesStub({ mousePorts: [1] });
-    applySnesMouseDelta(snes, 1, 5, -3);
-    expect(calls.addMouseDelta).toEqual([{ port: 1, dx: 5, dy: -3 }]);
-});
-
-it("applySnesMouseDelta sends delta to port 2", () => {
-    const { snes, calls } = makeSnesStub({ mousePorts: [2] });
-    applySnesMouseDelta(snes, 2, 10, 20);
-    expect(calls.addMouseDelta).toEqual([{ port: 2, dx: 10, dy: 20 }]);
-});
-
-it("applySnesMouseDelta does nothing when called with default port (0)", () => {
-    const { snes, calls } = makeSnesStub({ mousePorts: [2] });
-    applySnesMouseDelta(snes);
-    expect(calls.addMouseDelta).toHaveLength(0);
-});
-
-it("applySnesMouseDelta does nothing when no mouse active", () => {
-    const { snes, calls } = makeSnesStub();
-    applySnesMouseDelta(snes, 1, 5, 5);
-    expect(calls.addMouseDelta).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------

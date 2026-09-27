@@ -359,6 +359,11 @@ impl DmgBus {
         self.apu.set_sample_rate(rate);
     }
 
+    /// The APU output sample rate in Hz.
+    pub fn audio_sample_rate(&self) -> f32 {
+        self.apu.sample_rate()
+    }
+
     /// Bypass PPU access-blocking for OAM DMA transfers.
     ///
     /// On DMG hardware, the DMA controller uses the external bus. For addresses
@@ -421,7 +426,7 @@ impl DmgBus {
         BusState {
             bus_type: GbBusType::Dmg,
             ppu: self.ppu.clone(),
-            wram: wram_padded,
+            wram: Box::new(wram_padded),
             hram: self.hram,
             timer: self.timer.clone(),
             joypad: self.joypad.clone(),

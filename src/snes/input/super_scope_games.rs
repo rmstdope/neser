@@ -31,11 +31,16 @@ const SUPER_SCOPE_TITLES: &[&[u8]] = &[
 
 /// Whether `title_bytes`, a cartridge's raw header title, names a Super Scope game.
 pub fn is_super_scope_game(title_bytes: &[u8]) -> bool {
+    SUPER_SCOPE_TITLES.contains(&trim_header_title(title_bytes))
+}
+
+/// A raw header title without its trailing space or NUL padding.
+pub(super) fn trim_header_title(title_bytes: &[u8]) -> &[u8] {
     let end = title_bytes
         .iter()
         .rposition(|&byte| byte != b' ' && byte != 0)
         .map_or(0, |last| last + 1);
-    SUPER_SCOPE_TITLES.contains(&&title_bytes[..end])
+    &title_bytes[..end]
 }
 
 #[cfg(test)]

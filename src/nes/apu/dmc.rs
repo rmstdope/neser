@@ -9,6 +9,7 @@
 //! - IRQ flag
 //! - Loop flag for sample restart
 use crate::nes::console::TimingMode;
+use crate::nes::region::RegionParams;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
@@ -37,18 +38,8 @@ pub struct DmcState {
     pub disable_delay: u8,
 }
 
-// NTSC rate periods (in CPU cycles)
-const DMC_RATE_TABLE_NTSC: [u16; 16] = [
-    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
-];
-
-// PAL rate periods (in CPU cycles)
-const DMC_RATE_TABLE_PAL: [u16; 16] = [
-    398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50,
-];
-
 pub struct Dmc {
-    tv_system: TimingMode,
+    region: &'static RegionParams,
     // Timer
     timer: u16,
     timer_period: u16,
@@ -102,14 +93,13 @@ impl Dmc {
     }
 
     pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
-        let timer_period = match tv_system {
-            TimingMode::Ntsc | TimingMode::Dendy => DMC_RATE_TABLE_NTSC[0],
-            TimingMode::Pal => DMC_RATE_TABLE_PAL[0],
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => DMC_RATE_TABLE_NTSC[0],
-        };
+        Self::with_region(tv_system.region())
+    }
 
+    fn with_region(region: &'static RegionParams) -> Self {
+        let timer_period = region.dmc_rates[0];
         Dmc {
-            tv_system,
+            region,
             timer: timer_period.saturating_sub(1),
             timer_period,
             irq_enabled: false,
@@ -136,8 +126,7 @@ impl Dmc {
     /// Reset DMC channel to initial state
     pub fn reset(&mut self) {
         trace_apu!(2; "dmc reset");
-        let tv_system = self.tv_system;
-        *self = Self::new_with_tv_system(tv_system);
+        *self = Self::with_region(self.region);
     }
 
     /// Reinitialize the timer counter to the full period value.
@@ -214,11 +203,7 @@ impl Dmc {
         self.irq_enabled = (value >> 7) & 1 == 1;
         self.loop_flag = (value >> 6) & 1 == 1;
         let rate_index = (value & 0x0F) as usize;
-        self.timer_period = match self.tv_system {
-            TimingMode::Ntsc | TimingMode::Dendy => DMC_RATE_TABLE_NTSC[rate_index],
-            TimingMode::Pal => DMC_RATE_TABLE_PAL[rate_index],
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => DMC_RATE_TABLE_NTSC[rate_index],
-        };
+        self.timer_period = self.region.dmc_rates[rate_index];
 
         trace_apu!(2; "dmc write_flags_and_rate value=0x{:02X} irq_enabled={} loop={} rate_index={} period={}", value, self.irq_enabled, self.loop_flag, rate_index, self.timer_period);
 
@@ -560,6 +545,7 @@ impl Dmc {
 mod tests {
     use super::*;
     use crate::nes::console::TimingMode;
+    use crate::nes::region::{NTSC, PAL};
 
     #[test]
     fn test_dmc_new() {
@@ -826,7 +812,7 @@ mod tests {
         // so the first output-unit tick occurs after exactly `period` CPU cycles,
         // not immediately on the first clock_timer() call.
         let dmc = Dmc::new();
-        let expected_timer = DMC_RATE_TABLE_NTSC[0] - 1; // 428 - 1 = 427
+        let expected_timer = NTSC.dmc_rates[0] - 1; // 428 - 1 = 427
         assert_eq!(
             dmc.debug_timer(),
             expected_timer,
@@ -843,11 +829,11 @@ mod tests {
         for _ in 0..10 {
             dmc.clock_timer();
         }
-        assert_ne!(dmc.debug_timer(), DMC_RATE_TABLE_NTSC[0] - 1);
+        assert_ne!(dmc.debug_timer(), NTSC.dmc_rates[0] - 1);
 
         dmc.reset();
 
-        let expected_timer = DMC_RATE_TABLE_NTSC[0] - 1;
+        let expected_timer = NTSC.dmc_rates[0] - 1;
         assert_eq!(
             dmc.debug_timer(),
             expected_timer,
@@ -861,7 +847,7 @@ mod tests {
         // exactly `period` clock_timer() calls, not on the first call.
         let mut dmc = Dmc::new();
         // Use the default rate 0 period (428 CPU cycles)
-        let period = DMC_RATE_TABLE_NTSC[0]; // 428
+        let period = NTSC.dmc_rates[0]; // 428
 
         // Set up a non-silent shift register so we can observe output changes.
         dmc.silence_flag = false;
@@ -893,9 +879,9 @@ mod tests {
         // NTSC rate[0]=428, PAL rate[0]=398 — they differ, use index 0.
         let dmc = Dmc::new_with_tv_system(TimingMode::Dendy);
         assert_eq!(
-            dmc.timer_period, DMC_RATE_TABLE_NTSC[0],
+            dmc.timer_period, NTSC.dmc_rates[0],
             "Dendy DMC must use NTSC rate table at power-on (got {}, expected NTSC[0]={})",
-            dmc.timer_period, DMC_RATE_TABLE_NTSC[0]
+            dmc.timer_period, NTSC.dmc_rates[0]
         );
     }
 
@@ -905,11 +891,11 @@ mod tests {
         let mut dmc = Dmc::new_with_tv_system(TimingMode::Dendy);
         dmc.write_flags_and_rate(0b0000_0001); // rate_index=1
         assert_ne!(
-            dmc.timer_period, DMC_RATE_TABLE_PAL[1],
+            dmc.timer_period, PAL.dmc_rates[1],
             "Dendy DMC must NOT use PAL rate table"
         );
         assert_eq!(
-            dmc.timer_period, DMC_RATE_TABLE_NTSC[1],
+            dmc.timer_period, NTSC.dmc_rates[1],
             "Dendy DMC must use NTSC rate table at index 1"
         );
     }

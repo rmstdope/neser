@@ -116,12 +116,6 @@ pub enum TimingMode {
 }
 
 impl TimingMode {
-    const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
-    const CPU_CLOCK_PAL: f32 = 1_662_607.0;
-    /// Dendy master clock: 26.601712 MHz / 15 CPU divider = 1,773,447.5 Hz, rounded to 1,773,448.
-    const CPU_CLOCK_DENDY: f32 = 1_773_448.0;
-    const NTSC_SCANLINES: u16 = 262;
-    const PAL_SCANLINES: u16 = 312;
     const DOTS_PER_SCANLINE: u16 = 341;
 
     pub fn from_header(header: &[u8; 16], nes2: bool) -> Self {
@@ -167,40 +161,29 @@ impl TimingMode {
     }
 
     pub fn cpu_clock_hz(self) -> f32 {
-        match self {
-            Self::Pal => Self::CPU_CLOCK_PAL,
-            Self::Dendy => Self::CPU_CLOCK_DENDY,
-            _ => Self::CPU_CLOCK_NTSC,
-        }
+        self.region().cpu_clock_hz
     }
 
     pub fn frame_rate_hz(self) -> f64 {
-        let cpu_clock = f64::from(self.cpu_clock_hz());
-        // Dendy and PAL both use 312 scanlines with no odd-frame dot skip.
-        let ppu_cycles_per_frame = if matches!(self, Self::Pal | Self::Dendy) {
-            f64::from(Self::PAL_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE)
+        let region = self.region();
+        let even_ppu_cycles =
+            f64::from(region.scanlines_per_frame) * f64::from(Self::DOTS_PER_SCANLINE);
+        // With the odd-frame dot skip, every other frame is one PPU cycle short.
+        let ppu_cycles_per_frame = if region.odd_frame_skip {
+            even_ppu_cycles - 0.5
         } else {
-            let even_ppu_cycles =
-                f64::from(Self::NTSC_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE);
-            let odd_ppu_cycles = even_ppu_cycles - 1.0;
-            (even_ppu_cycles + odd_ppu_cycles) / 2.0
+            even_ppu_cycles
         };
-        let cpu_cycles_per_frame = ppu_cycles_per_frame / self.ppu_cycles_per_cpu_cycle();
-        cpu_clock / cpu_cycles_per_frame
+        let cpu_cycles_per_frame = ppu_cycles_per_frame / region.ppu_cycles_per_cpu_cycle();
+        f64::from(region.cpu_clock_hz) / cpu_cycles_per_frame
     }
 
     pub fn ppu_cycles_per_cpu_cycle(self) -> f64 {
-        // PAL: 16 CPU divider, 5 PPU divider from 21.47727 MHz master → 3.2
-        // Dendy: 15 CPU divider, 5 PPU divider from 26.601712 MHz master → 3.0 (same as NTSC)
-        if matches!(self, Self::Pal) { 3.2 } else { 3.0 }
+        self.region().ppu_cycles_per_cpu_cycle()
     }
 
     pub fn scanlines_per_frame(self) -> u16 {
-        if matches!(self, Self::Pal | Self::Dendy) {
-            Self::PAL_SCANLINES
-        } else {
-            Self::NTSC_SCANLINES
-        }
+        self.region().scanlines_per_frame
     }
 }
 

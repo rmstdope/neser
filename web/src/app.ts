@@ -36,7 +36,6 @@ import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZappe
 import {
     isSnesMouseActive,
     isSnesSuperScopeActive,
-    applySnesMouseDelta,
     applySnesMouseButton,
     applySnesSuperScopePosition,
     applySnesSuperScopeButton,
@@ -72,12 +71,21 @@ import {
     createSuperScopeSession,
     superScopeKeyAction,
     superScopeTurboMessage,
+    type ClickCaptureSession,
 } from "./input/super_scope";
+import { activeCaptureSession, createSnesMouseSession } from "./input/snes_mouse";
 import { computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./display/canvas_size";
 import {
     findNextVisibleZoomHeight,
 } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
+import {
+    browserStorage,
+    gbHardwareNoteVisible,
+    readGbHardwareChoice,
+    writeGbHardwareChoice,
+    type GbHardwareChoice
+} from "./rom/gb_hardware_choice";
 import { createGamepadInitToastNotifier } from "./ui/gamepad_init_toast";
 import { renderDisasmLines } from "./debugger/debugger_disasm";
 import { buildOamHtml } from "./debugger/debugger_oam";
@@ -345,8 +353,10 @@ let idleScroller: { renderFrame: (ts: number) => Uint8Array } | null = null;
 let idleScrollerStartTime = 0;
 let crosshair: ReturnType<typeof createCrosshair> | null = null; // Light-gun sight overlay
 let crosshairStyle: CrosshairStyle = "plus";
-// Capture state for playing a Super Scope game with the mouse; fresh for every game load.
+// Capture state for playing a Super Scope or SNES Mouse game with the mouse; fresh for every
+// game load.
 let superScopeSession = createSuperScopeSession();
+let snesMouseSession = createSnesMouseSession();
 let windowFocused = true;
 let pointerReleasedByEscape = false;
 let lockedPointerX = 0;
@@ -844,6 +854,42 @@ function updatePaletteButton() {
 
 paletteCycleBtn?.addEventListener("click", () => cyclePaletteAction());
 
+/** "Game Boy games run on": remembered in this browser, applied when an original Game Boy game starts or is Reset. */
+const gbHardwareSelect = document.getElementById("gb-hardware") as HTMLSelectElement | null;
+const gbHardwareNote = document.getElementById("gb-hardware-note");
+let gbHardware: GbHardwareChoice = readGbHardwareChoice(browserStorage());
+if (gbHardwareSelect) gbHardwareSelect.value = gbHardware;
+
+/** Show "Applies when you press Reset" only while an original Game Boy game runs on the other console. */
+function updateGbHardwareNote() {
+    if (!gbHardwareNote) return;
+    const gb = emulator?.kind === "gb" ? emulator.inst : null;
+    const visible = gbHardwareNoteVisible({
+        kind: emulator?.kind ?? null,
+        running,
+        isOriginalGame: gb?.is_original_game() ?? false,
+        runsOnColor: gb?.is_color() ?? false,
+        choice: gbHardware
+    });
+    gbHardwareNote.classList.toggle("hidden", !visible);
+}
+
+gbHardwareSelect?.addEventListener("change", () => {
+    gbHardware = gbHardwareSelect.value === "cgb" ? "cgb" : "dmg";
+    writeGbHardwareChoice(browserStorage(), gbHardware);
+    if (emulator?.kind === "gb") emulator.inst.set_original_games_on_color(gbHardware === "cgb");
+    updateGbHardwareNote();
+});
+
+/** After a Reset or a state load, which may have moved a Game Boy game to the other console. */
+function refreshAfterGbConsoleChange() {
+    if (emulator?.kind !== "gb") return;
+    syncGbPaletteWithFilter(false);
+    updateCgbColorButton();
+    updatePaletteButton();
+    updateGbHardwareNote();
+}
+
 // ── Autorun context + DOM elements ───────────────────────────────────────────
 const autorunCtx = createAutorunContext();
 const autorunCreateCheckbox = document.getElementById("autorun-create") as HTMLInputElement | null;
@@ -908,6 +954,7 @@ function updateEmulationButtons() {
     }
     updateCgbColorButton();
     updatePaletteButton();
+    updateGbHardwareNote();
 }
 
 /** Create a fresh emulator instance and update kind-dependent UI. */
@@ -919,6 +966,7 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
     if (kind === "gb") {
         const gb = new WasmGb();
         gb.set_cgb_color_correction(cgbColor.enabled());
+        gb.set_original_games_on_color(gbHardware === "cgb");
         emulator = { kind: "gb", inst: gb };
     } else if (kind === "gba") {
         const gba = new WasmGba();
@@ -1227,7 +1275,7 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
 
 async function refreshSaveStateController() {
     let saveStateRuntime: SaveStateRuntime | null = null;
-    if (emulator?.kind === "nes" || emulator?.kind === "snes") {
+    if (emulator && emulator.kind !== "gba" && supportsWebSaveState(emulator.kind)) {
         saveStateRuntime = emulator.inst;
     }
     if (!saveStateRuntime || !romMetadata) {
@@ -1478,10 +1526,17 @@ async function start(): Promise<boolean> {
             (emulator!.inst as WasmSnes).set_dsp_firmware(firmwareChip.key, firmware);
         }
 
+        const wasCaptured = superScopeSession.captured() || snesMouseSession.captured();
         emulator!.inst.load_rom(romBytes, romName);
         superScopeSession = createSuperScopeSession();
-        if (superScopePort() !== null && document.pointerLockElement === canvas) {
-            // Choosing the game asked for the lock; a scope is captured only by a click.
+        snesMouseSession = createSnesMouseSession();
+        if (
+            consoleKind === "snes" &&
+            (clickCaptureSession() !== null || wasCaptured) &&
+            document.pointerLockElement === canvas
+        ) {
+            // Choosing the game asked for the lock; a scope or SNES Mouse is captured only by
+            // a click. A game that replaces a captured one lets go of the mouse too.
             document.exitPointerLock?.();
         }
         syncGbPaletteWithFilter(true);
@@ -2793,6 +2848,39 @@ function superScopePort(): number | null {
     return [1, 2].find((port) => snesInst.has_superscope_on_port(port)) ?? null;
 }
 
+/** The 1-based ports an SNES Mouse is plugged into. */
+function snesMousePorts(): number[] {
+    if (emulator?.kind !== "snes") {
+        return [];
+    }
+    const snesInst = emulator.inst;
+    return [1, 2].filter((port) => snesInst.has_mouse_on_port(port));
+}
+
+/**
+ * The capture session of the SNES device the mouse drives, or null when none is plugged
+ * in: both are captured only by a click on the game.
+ */
+function clickCaptureSession(): ClickCaptureSession | null {
+    return activeCaptureSession(
+        superScopePort() !== null,
+        snesMousePorts().length > 0,
+        superScopeSession,
+        snesMouseSession,
+    );
+}
+
+/** Let go of the SNES Mouse's buttons, so a release mid-press never leaves them held. */
+function releaseSnesMouseButtons() {
+    if (emulator?.kind !== "snes") {
+        return;
+    }
+    for (const port of snesMousePorts()) {
+        applySnesMouseButton(emulator.inst, port, 0, false);
+        applySnesMouseButton(emulator.inst, port, 2, false);
+    }
+}
+
 /** Let go of the scope's Fire and Cursor, so a release mid-press never leaves them held. */
 function releaseSuperScopeButtons() {
     const port = superScopePort();
@@ -2954,13 +3042,10 @@ function handleMouseMotion(event: MouseEvent) {
         const rect = canvas.getBoundingClientRect();
         if (rect.width <= 1 || rect.height <= 1) return;
 
-        if (isSnesMouseActive(snesInst)) {
-            // SNES mouse uses relative (delta) motion.
-            for (const port of [1, 2]) {
-                if (snesInst.has_mouse_on_port(port)) {
-                    applySnesMouseDelta(snesInst, port, event.movementX, event.movementY);
-                }
-            }
+        if (isSnesMouseActive(snesInst) && clickCaptureSession()?.captured()) {
+            // Crossing the picture crosses the game screen, whatever its size. (With a
+            // Super Scope plugged in as well, the scope's session holds the capture.)
+            snesInst.add_mouse_motion(event.movementX, event.movementY, rect.width, rect.height);
         }
         const scopePort = superScopePort();
         if (scopePort !== null && superScopeSession.captured()) {
@@ -3073,8 +3158,9 @@ function updateMouseCursorState() {
             }
             document.body.style.cursor = captured ? "none" : "";
         } else if (isSnesMouseActive(snesInst)) {
+            // The game draws its own pointer; the desktop one hides only while captured.
             setCrosshairVisible(false);
-            document.body.style.cursor = "none";
+            document.body.style.cursor = snesMouseSession.captured() ? "none" : "";
         } else {
             setCrosshairVisible(false);
             document.body.style.cursor = "";
@@ -3124,11 +3210,12 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
     // SNES peripherals: handle mouse and superscope buttons.
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
-        if (isSnesMouseActive(snesInst)) {
-            for (const port of [1, 2]) {
-                if (snesInst.has_mouse_on_port(port)) {
-                    applySnesMouseButton(snesInst, port, event.button, pressed);
-                }
+        // Presses reach the SNES Mouse only while captured; a release always does, so a
+        // press forwarded with a capturing click never stays held when the lock arrives late
+        // or is refused.
+        if (isSnesMouseActive(snesInst) && (!pressed || clickCaptureSession()?.captured())) {
+            for (const port of snesMousePorts()) {
+                applySnesMouseButton(snesInst, port, event.button, pressed);
             }
         }
         if (isSnesSuperScopeActive(snesInst)) {
@@ -3168,6 +3255,25 @@ canvas.addEventListener("mousedown", (event) => {
             const aim = superScopeSession.position();
             applySnesSuperScopePosition(emulator.inst, scopePort, aim.x, aim.y, rect.width, rect.height);
             applySnesSuperScopeButton(emulator.inst, scopePort, event.button, true);
+            // A mouse chosen for the other port follows the scope's capture.
+            for (const port of snesMousePorts()) {
+                applySnesMouseButton(emulator.inst, port, event.button, true);
+            }
+        }
+        return;
+    }
+    const mousePorts = snesMousePorts();
+    if (emulator?.kind === "snes" && mousePorts.length > 0) {
+        const locked = document.pointerLockElement === canvas;
+        // The capturing click never reaches the game: it would paint or select something.
+        const { requestLock, forward } = snesMouseSession.mouseDown(event.button, locked, 0, 0);
+        if (requestLock) {
+            requestPointerLockFromUserGesture();
+        }
+        if (forward) {
+            for (const port of mousePorts) {
+                applySnesMouseButton(emulator.inst, port, event.button, true);
+            }
         }
         return;
     }
@@ -3184,9 +3290,10 @@ window.addEventListener("focus", () => {
 window.addEventListener("blur", () => {
     windowFocused = false;
     pointerReleasedByEscape = true;
-    if (superScopePort() !== null) {
+    if (clickCaptureSession() !== null) {
         // No mouseup arrives once focus has gone.
         releaseSuperScopeButtons();
+        releaseSnesMouseButtons();
         if (document.pointerLockElement === canvas) {
             // Losing focus is treated like Escape; the lock change says so.
             document.exitPointerLock?.();
@@ -3195,12 +3302,14 @@ window.addEventListener("blur", () => {
     updateMouseCursorState();
 });
 document.addEventListener("pointerlockchange", () => {
-    if (superScopePort() !== null) {
+    const session = clickCaptureSession();
+    if (session !== null) {
         const locked = document.pointerLockElement === canvas;
         if (!locked) {
             releaseSuperScopeButtons();
+            releaseSnesMouseButtons();
         }
-        const { toast, release } = superScopeSession.lockChanged(locked);
+        const { toast, release } = session.lockChanged(locked);
         if (release) {
             document.exitPointerLock?.();
         }
@@ -3221,13 +3330,12 @@ document.addEventListener("pointerlockchange", () => {
 });
 
 document.addEventListener("pointerlockerror", () => {
-    if (superScopePort() !== null) {
-        superScopeSession.lockRefused();
-    }
+    clickCaptureSession()?.lockRefused();
 });
 canvas.addEventListener("contextmenu", (event) => {
-    // Right click is the Super Scope's Cursor button, not the browser's menu.
-    if (superScopePort() !== null) {
+    // Right click is the Super Scope's Cursor button or the SNES Mouse's right button, not
+    // the browser's menu.
+    if (clickCaptureSession() !== null) {
         event.preventDefault();
     }
 });
@@ -3407,6 +3515,7 @@ async function resetAction() {
         return;
     }
     emulator.inst.reset(true);
+    refreshAfterGbConsoleChange();
     setStatus("Soft reset", false);
 }
 
@@ -3418,6 +3527,7 @@ async function hardResetAction() {
         return;
     }
     emulator.inst.reset(false);
+    refreshAfterGbConsoleChange();
     setStatus("Hard reset", false);
 }
 
@@ -3488,6 +3598,7 @@ async function loadStateAction() {
     if (!saveStateController) return;
     const ok = await saveStateController.load();
     if (ok) {
+        refreshAfterGbConsoleChange();
         saveSlot = "loaded";
         updateSaveStateButtons();
     }

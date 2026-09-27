@@ -1455,6 +1455,43 @@ fn dsp1_rom_without_firmware_errors_and_loads_once_supplied() {
     );
 }
 
+/// The minimal ROM with the chipset byte `$FFD6` set, and, for a `$Fx` custom chip, the
+/// extended header's subtype byte `$FFBF` (with the `$33` maker code that enables it).
+fn chipset_snes_rom(chipset: u8, subtype: Option<u8>) -> Vec<u8> {
+    let mut rom = minimal_snes_rom();
+    rom[0x7FC0 + 0x16] = chipset;
+    if let Some(subtype) = subtype {
+        rom[0x7FC0 + 0x1A] = 0x33;
+        rom[0x7FBF] = subtype;
+    }
+    rom
+}
+
+/// nr-6sm: a load on the web must never reach `std::time::Instant::now()`, which panics on
+/// wasm32-unknown-unknown. Every enhancement-chip header goes through the chip check in
+/// `Snes::load_rom`; the unknown custom chip (`$F5`/`$7F`, never emulated) is the one that is
+/// sure to keep reaching its warning toast however many chips become emulated.
+#[wasm_bindgen_test]
+fn every_enhancement_chip_header_loads_on_the_web_without_panicking() {
+    let chips: [(&str, u8, Option<u8>); 8] = [
+        ("SA-1", 0x34, None),
+        ("Cx4", 0xF3, Some(0x10)),
+        ("OBC1", 0x25, None),
+        ("Super FX", 0x13, None),
+        ("S-DD1", 0x43, None),
+        ("S-RTC", 0x55, None),
+        ("SPC7110", 0xF5, Some(0x00)),
+        ("unknown custom", 0xF5, Some(0x7F)),
+    ];
+    for (chip, chipset, subtype) in chips {
+        let mut snes = WasmSnes::new();
+        snes.load_rom(&chipset_snes_rom(chipset, subtype), "chip.sfc")
+            .unwrap_or_else(|e| panic!("{chip} loads: {e:?}"));
+        let _ = snes.render_frame_rgba();
+        let _ = snes.drain_toasts();
+    }
+}
+
 #[wasm_bindgen_test]
 fn a_super_scope_game_loads_with_the_scope_on_port2_and_says_so() {
     let mut snes = WasmSnes::new();
@@ -1476,6 +1513,46 @@ fn a_super_scope_game_loads_with_the_scope_on_port2_and_says_so() {
             .any(|t| t == "Super Scope connected — click to aim with the mouse"),
         "connected message queued: {toasts:?}"
     );
+}
+
+#[wasm_bindgen_test]
+fn a_mouse_game_loads_with_the_mouse_on_port1_and_says_so() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(
+        &titled(minimal_snes_rom(), b"MARIOPAINT           "),
+        "Mario Paint (Japan, USA).sfc",
+    )
+    .expect("loads");
+    assert!(snes.has_mouse_on_port(1));
+    assert!(!snes.has_mouse_on_port(2));
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .iter()
+        .filter_map(|t| t.as_string())
+        .collect();
+    assert!(
+        toasts
+            .iter()
+            .any(|t| t == "SNES Mouse connected — click the game to use the mouse"),
+        "connected message queued: {toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn add_mouse_motion_scales_to_the_picture() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(
+        &titled(minimal_snes_rom(), b"MARIOPAINT           "),
+        "mp.sfc",
+    )
+    .expect("loads");
+    // A 1024×896 picture is four times the game screen: 64 CSS pixels is 16 game pixels,
+    // and three quarter-pixel moves carry over into the fourth.
+    snes.add_mouse_motion(64.0, -32.0, 1024.0, 896.0);
+    for _ in 0..4 {
+        snes.add_mouse_motion(1.0, 0.0, 1024.0, 896.0);
+    }
+    assert_eq!(snes.mouse_motion_for_test(), (17, -8));
 }
 
 #[wasm_bindgen_test]
@@ -1875,4 +1952,78 @@ fn wasm_gb_palette_label_follows_cycle_palette() {
 fn wasm_gb_palette_label_is_empty_without_a_dmg_game() {
     let gb = WasmGb::new();
     assert_eq!(gb.palette_label(), "");
+}
+
+// ── "Game Boy games run on" (nr-zdy.4) ─────────────────────────────────────
+
+#[wasm_bindgen_test]
+fn wasm_gb_original_game_runs_in_colour_when_chosen() {
+    let mut gb = WasmGb::new();
+    gb.set_original_games_on_color(true);
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    assert!(gb.is_color());
+    assert!(gb.is_original_game());
+    assert!(gb.palette_label().starts_with("Palette: Auto"));
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_original_game_runs_on_game_boy_by_default() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    assert!(!gb.is_color());
+    assert!(gb.is_original_game());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_choice_applies_on_reset_not_at_once() {
+    let mut gb = WasmGb::new();
+    gb.set_original_games_on_color(true);
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    gb.set_original_games_on_color(false);
+    assert!(gb.is_color(), "the running game carries on");
+    gb.reset(true);
+    assert!(!gb.is_color());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_colour_game_is_not_an_original_game() {
+    let mut gb = WasmGb::new();
+    assert!(!gb.is_original_game());
+    gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
+    assert!(!gb.is_original_game());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_save_state_round_trips() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    gb.render_frame_rgba();
+    let state = gb.save_state_bytes();
+    assert!(!state.is_empty());
+    let next = gb.render_frame_rgba();
+    gb.render_frame_rgba();
+    gb.load_state_bytes(&state).unwrap();
+    assert_eq!(
+        gb.render_frame_rgba(),
+        next,
+        "carries on from the saved moment"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_load_state_restores_on_the_saved_console() {
+    let mut gb = WasmGb::new();
+    gb.set_original_games_on_color(true);
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    gb.render_frame_rgba();
+    let colour_state = gb.save_state_bytes();
+    gb.set_original_games_on_color(false);
+    gb.reset(true);
+    assert!(!gb.is_color());
+    gb.load_state_bytes(&colour_state).unwrap();
+    assert!(
+        gb.is_color(),
+        "restored on the Game Boy Color it was saved on"
+    );
+    assert!(gb.palette_label().starts_with("Palette: Auto"));
 }
