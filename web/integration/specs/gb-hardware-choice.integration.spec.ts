@@ -118,6 +118,34 @@ test.describe("Game Boy games run on", () => {
         await expect(colors).toBeVisible();
     });
 
+    test("Given a state saved on the Game Boy Color, when it is loaded after a Reset onto the Game Boy, then it is restored on the Game Boy Color", async ({ page }) => {
+        await openApp(page);
+        const choice = page.locator(CHOICE_SELECTOR);
+        const note = page.locator(NOTE_SELECTOR);
+        const colors = page.locator(COLORS_BUTTON_SELECTOR);
+        const section = page.locator("#save-state-section");
+
+        await choice.selectOption("cgb");
+        await loadGbRom(page, "dmg-acid2.gb");
+        await expect(section).toBeVisible();
+        await page.locator("#save-state").click();
+        await expect(section).toHaveAttribute("data-save-state", "saved", { timeout: 5000 });
+
+        await choice.selectOption("dmg");
+        await page.locator("#reset").click();
+        await expect(colors).toBeHidden();
+        await expect(note).toBeHidden();
+
+        await page.locator("#load-state").click();
+        await expect(section).toHaveAttribute("data-save-state", "loaded", { timeout: 5000 });
+        await expect(colors).toBeVisible();
+        await expect(page.locator(PALETTE_BUTTON_SELECTOR)).toHaveText(/^Palette: Auto \(/);
+        // The choice still says Game Boy, so the line shows.
+        await expect(choice).toHaveValue("dmg");
+        await expect(note).toBeVisible();
+        await expect(note).toHaveText("Applies when you press Reset");
+    });
+
     test("Given a Game Boy Color or an NES game, changing the choice shows no line and leaves the game", async ({ page }) => {
         await openApp(page);
         const choice = page.locator(CHOICE_SELECTOR);

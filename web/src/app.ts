@@ -1272,7 +1272,7 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
 
 async function refreshSaveStateController() {
     let saveStateRuntime: SaveStateRuntime | null = null;
-    if (emulator?.kind === "nes" || emulator?.kind === "snes") {
+    if (emulator && emulator.kind !== "gba" && supportsWebSaveState(emulator.kind)) {
         saveStateRuntime = emulator.inst;
     }
     if (!saveStateRuntime || !romMetadata) {
