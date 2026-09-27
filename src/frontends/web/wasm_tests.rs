@@ -1530,12 +1530,16 @@ fn a_mouse_game_loads_with_the_mouse_on_port1_and_says_so() {
         .iter()
         .filter_map(|t| t.as_string())
         .collect();
-    assert!(
-        toasts
-            .iter()
-            .any(|t| t == "SNES Mouse connected — click the game to use the mouse"),
-        "connected message queued: {toasts:?}"
+    assert_eq!(
+        toasts.len(),
+        2,
+        "connected once, then the load message: {toasts:?}"
     );
+    assert_eq!(
+        toasts[0],
+        "SNES Mouse connected — click the game to use the mouse"
+    );
+    assert!(toasts[1].contains("Mario Paint"), "{toasts:?}");
 }
 
 #[wasm_bindgen_test]

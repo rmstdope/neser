@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-    SUPER_SCOPE_CONNECTED,
     SUPER_SCOPE_MOUSE_RELEASED,
     createSuperScopeSession,
     superScopeKeyAction,
@@ -9,7 +8,6 @@ import {
 
 describe("Super Scope words", () => {
     it("are the agreed ones, matching src/snes/frontend_toasts.rs", () => {
-        expect(SUPER_SCOPE_CONNECTED).toBe("Super Scope connected — click to aim with the mouse");
         expect(SUPER_SCOPE_MOUSE_RELEASED).toBe("Mouse released — click the game to aim again");
         expect(superScopeTurboMessage(true)).toBe("Turbo on");
         expect(superScopeTurboMessage(false)).toBe("Turbo off");

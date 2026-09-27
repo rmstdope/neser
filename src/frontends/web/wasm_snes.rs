@@ -174,13 +174,14 @@ impl WasmSnes {
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
         self.rom_loaded = false;
         self.mouse_motion = crate::snes::input::mouse_motion::MouseMotionScale::default();
-        match self.snes.load_rom(rom, rom_name) {
+        let result = self.snes.load_rom(rom, rom_name);
+        // What the core said while loading comes first, in the order it was raised.
+        let core_toasts = self.snes.app_context().borrow_mut().take_toasts();
+        self.pending_toasts.extend(core_toasts);
+        match result {
             Ok(()) => {
                 self.rom_loaded = true;
                 self.snes.set_audio_sample_rate(44_100.0);
-                // What the core said while loading comes first, in the order it was raised.
-                let core_toasts = self.snes.app_context().borrow_mut().take_toasts();
-                self.pending_toasts.extend(core_toasts);
                 self.pending_toasts
                     .push(cartridge_load_toast_message(rom_name, true));
                 web_sys::console::log_1(&JsValue::from_str("SNES ROM loaded successfully"));

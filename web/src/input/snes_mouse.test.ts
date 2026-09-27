@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-    SNES_MOUSE_CONNECTED,
     SNES_MOUSE_RELEASED,
     activeCaptureSession,
     createSnesMouseSession,
@@ -24,7 +23,6 @@ describe("activeCaptureSession", () => {
 
 describe("SNES Mouse words", () => {
     it("are the agreed ones, matching src/snes/frontend_toasts.rs", () => {
-        expect(SNES_MOUSE_CONNECTED).toBe("SNES Mouse connected — click the game to use the mouse");
         expect(SNES_MOUSE_RELEASED).toBe("Mouse released — click the game to use it again");
     });
 });
