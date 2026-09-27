@@ -16,6 +16,8 @@ use crate::nes::console::{
 };
 
 pub use rom_entry::Platform;
+
+use crate::platform::rom_extensions::platform_for_path;
 pub use rom_entry::RomEntry;
 
 /// Load the ROM catalog from disk and enrich each entry with iNES + ROM DB metadata.
@@ -173,18 +175,7 @@ fn stub_entry(path: &Path, platform: Platform) -> RomEntry {
 
 /// Determine the platform from a ROM file's extension.
 fn platform_from_path(path: &Path) -> Platform {
-    match path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("gb") => Platform::Gb,
-        Some("gbc") => Platform::Gbc,
-        Some("gba") => Platform::Gba,
-        Some("sfc") | Some("smc") => Platform::Snes,
-        _ => Platform::Nes,
-    }
+    platform_for_path(path).unwrap_or(Platform::Nes)
 }
 
 fn file_stem(path: &Path) -> String {
@@ -753,6 +744,12 @@ mod tests {
     fn test_platform_from_path_nes() {
         assert_eq!(platform_from_path(Path::new("game.nes")), Platform::Nes);
         assert_eq!(platform_from_path(Path::new("game.NES")), Platform::Nes);
+    }
+
+    #[test]
+    fn test_platform_from_path_cgb_is_gbc() {
+        assert_eq!(platform_from_path(Path::new("game.cgb")), Platform::Gbc);
+        assert_eq!(platform_from_path(Path::new("game.CGB")), Platform::Gbc);
     }
 
     #[test]
