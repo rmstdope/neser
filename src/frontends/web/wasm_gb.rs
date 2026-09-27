@@ -118,7 +118,7 @@ impl WasmGb {
     }
 
     /// The palette in use, as the Palette button names it ("Palette: <name>",
-    /// the toast's words), or `""` where F8 does nothing.
+    /// the toast's words), or `""` where F8 cycles no palette.
     #[wasm_bindgen]
     pub fn palette_label(&self) -> String {
         self.gb.palette_label().unwrap_or_default()
