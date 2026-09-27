@@ -102,15 +102,6 @@ pub fn load_console(app_context: &SharedAppContext, rom_path: &str) -> Result<Co
     app_context
         .borrow_mut()
         .add_toast(cartridge_load_toast_message(rom_path, result.is_ok()));
-    if let Some(snes) = result.as_ref().ok().and_then(|console| console.as_snes()) {
-        use crate::snes::frontend_toasts::{SNES_MOUSE_CONNECTED, SUPER_SCOPE_CONNECTED};
-        if snes.has_superscope() {
-            app_context.borrow_mut().add_toast(SUPER_SCOPE_CONNECTED);
-        }
-        if snes.has_mouse() {
-            app_context.borrow_mut().add_toast(SNES_MOUSE_CONNECTED);
-        }
-    }
 
     result
 }
@@ -534,8 +525,8 @@ mod tests {
         assert_eq!(
             toasts_of(&app_context),
             [
-                cartridge_load_toast_message(&rom_path, true),
                 crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED.to_string(),
+                cartridge_load_toast_message(&rom_path, true),
             ]
         );
     }
@@ -555,8 +546,8 @@ mod tests {
         assert_eq!(
             toasts_of(&app_context),
             [
-                cartridge_load_toast_message(&rom_path, true),
                 crate::snes::frontend_toasts::SNES_MOUSE_CONNECTED.to_string(),
+                cartridge_load_toast_message(&rom_path, true),
             ]
         );
     }
