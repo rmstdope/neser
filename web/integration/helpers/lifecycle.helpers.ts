@@ -55,18 +55,29 @@ export async function openApp(page: Page) {
     await expect(page.locator("#start")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 }
 
+const EMULATION_CONTROLS_SELECTOR = "#emulation-controls";
+
+/** Wait until the app itself reports this lifecycle on its controls block. */
+async function waitForEmulationState(page: Page, state: "idle" | "running" | "paused") {
+    await expect(page.locator(EMULATION_CONTROLS_SELECTOR)).toHaveAttribute("data-emulation-state", state, {
+        timeout: EXPECT_TIMEOUT_MS
+    });
+}
+
 export async function waitForRunningState(page: Page) {
+    await waitForEmulationState(page, "running");
     await expect(page.locator("#stop")).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
+    await expect(page.locator("#pause")).toHaveText("Pause", { timeout: EXPECT_TIMEOUT_MS });
 }
 
 export async function waitForIdleState(page: Page) {
+    await waitForEmulationState(page, "idle");
     await expect(page.locator("#stop")).toBeDisabled({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 export async function waitForPausedState(page: Page) {
-    // Wait for both the button text and the enabled state to ensure deterministic paused state
+    await waitForEmulationState(page, "paused");
     await expect(page.locator("#pause")).toHaveText("Resume", { timeout: EXPECT_TIMEOUT_MS });
-    // Also verify stop button is still enabled (emulation is paused, not stopped)
     await expect(page.locator("#stop")).toBeEnabled({ timeout: EXPECT_TIMEOUT_MS });
 }
 

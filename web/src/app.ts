@@ -887,6 +887,7 @@ function updateEmulationButtons() {
         paused,
         isRecording: autorunCtx.isCreateRecording(),
     });
+    if (emulationControls) emulationControls.dataset.emulationState = states.lifecycle;
     startBtn.disabled = !states.startEnabled;
     startBtn.textContent = states.startLabel;
     // pauseBtn, stopBtn, resetBtn are module-level and non-null (checked at init)
@@ -2620,6 +2621,7 @@ muteBtn!.addEventListener("click", async () => {
     }
 });
 updateMuteButton();
+const emulationControls = document.getElementById("emulation-controls");
 const pauseBtn = document.getElementById("pause") as HTMLButtonElement | null;
 const stopBtn = document.getElementById("stop") as HTMLButtonElement | null;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement | null;

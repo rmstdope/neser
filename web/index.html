@@ -114,8 +114,8 @@
             <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
           </div>
 
-          <!-- Emulation controls -->
-          <div class="flex flex-col gap-2">
+          <!-- Emulation controls; data-emulation-state is the app's lifecycle (idle|running|paused) -->
+          <div id="emulation-controls" class="flex flex-col gap-2" data-emulation-state="idle">
             <button id="start" class="btn btn-success btn-sm w-full">Start</button>
             <div class="flex gap-2">
               <button id="pause" class="btn btn-outline btn-sm flex-1" aria-label="Pause or resume emulation">Pause</button>
