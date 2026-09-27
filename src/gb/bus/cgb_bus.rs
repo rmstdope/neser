@@ -2,6 +2,7 @@ use crate::gb::apu::Apu;
 use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
+use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes::{self, GbcPalette};
 use crate::gb::input::joypad::Joypad;
@@ -799,6 +800,61 @@ impl CgbBus {
         self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
     }
 
+    /// HDMA5 ($FF55) write: start a GDMA, start or arm an HDMA, or cancel one.
+    fn write_hdma_control(&mut self, val: u8) {
+        // For HDMA timing decisions, check if we're in an HBlank-like state.
+        // When LCD is off, mode is effectively 0 (HBlank) for HDMA purposes.
+        // When LCD is on, use the PPU's physical mode (not STAT mode bits which
+        // can lag due to mode_for_stat() timing quirks).
+        let is_hblank = !self.ppu.is_lcd_enabled() || self.ppu.mode() == PpuMode::HBlank;
+        match self.hdma.write_control(val) {
+            HdmaAction::StartGdma => {
+                self.do_gdma_transfer();
+            }
+            HdmaAction::StartHdma => {
+                // If HDMA is started while in HBlank (mode 0), transfer starts
+                // immediately regardless of whether LCD is on or off. When LCD is off,
+                // mode is effectively 0, so one block transfers instantly.
+                if is_hblank {
+                    self.hdma.activate_hdma();
+                    // Clear pending flag since we're activating now
+                    self.hdma.clear_hblank_pending();
+                    // Clear HBlank flag so we don't double-transfer in the same HBlank period
+                    self.ppu.take_hblank_entered();
+                    // Transfer one block immediately
+                    self.do_hdma_block_transfer();
+                    self.hdma_halt_cycles = 8;
+                }
+                // Otherwise, HDMA stays pending until HBlank occurs
+            }
+            HdmaAction::CancelHdma => {}
+        }
+    }
+
+    /// $FF50 write: unmap the boot ROM, lock KEY0 and pick the display palettes.
+    fn disable_boot_rom(&mut self) {
+        // This transition only happens once; subsequent writes are ignored so
+        // DMG compatibility palettes are not re-selected mid-game.
+        if self.boot_rom_active {
+            self.boot_rom_active = false;
+            self.key0_locked = true;
+            self.ppu
+                .seed_boot_logo_from_header(&self.cartridge_header_logo());
+            self.ppu.seed_boot_registered_mark_tile();
+
+            // Apply DMG compatibility palettes for DMG-only games.
+            // KEY0 = $04 indicates DMG compatibility mode (bit 2 set).
+            if self.key0 == 0x04 {
+                // A button combo held now may pick the palette (Auto only).
+                let button_state = self.joypad.get_states();
+                self.apply_dmg_compat_palette(Some(button_state));
+                self.ppu.set_dmg_compat(true);
+            } else {
+                self.ppu.seed_cgb_boot_fade_bg_palettes();
+            }
+        }
+    }
+
     fn do_oam_dma(&mut self, val: u8) {
         let preserve_blocking = self.dma_active && self.dma_oam_blocked;
         self.dma_active = true;
@@ -1005,57 +1061,63 @@ impl CgbBus {
     }
 }
 
-impl GbBus for CgbBus {
-    fn read(&mut self, addr: u16) -> u8 {
+impl MemoryMap for CgbBus {
+    fn view(&self) -> MapView<'_> {
+        let (bank0, banks) = self.wram.split_at(1);
+        MapView {
+            cart: self.cart.as_ref(),
+            ppu: &self.ppu,
+            wram: [&bank0[0], &banks[self.effective_wram_bank() - 1]],
+            hram: &self.hram,
+            timer: &self.timer,
+            apu: &self.apu,
+            joypad: &self.joypad,
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            sb: self.sb,
+            sc: self.sc,
+            dma_source: self.dma_source,
+            dma_oam_blocked: self.dma_oam_blocked,
+        }
+    }
+
+    fn view_mut(&mut self) -> MapViewMut<'_> {
+        let bank = self.effective_wram_bank();
+        let (bank0, banks) = self.wram.split_at_mut(1);
+        MapViewMut {
+            cart: self.cart.as_mut(),
+            ppu: &mut self.ppu,
+            wram: [&mut bank0[0], &mut banks[bank - 1]],
+            hram: &mut self.hram,
+            timer: &mut self.timer,
+            apu: &mut self.apu,
+            joypad: &mut self.joypad,
+            if_reg: &mut self.if_reg,
+            ie_reg: &mut self.ie_reg,
+            sb: &mut self.sb,
+            dma_oam_blocked: self.dma_oam_blocked,
+        }
+    }
+
+    fn model_peek(&self, addr: u16) -> Option<u8> {
         // Boot ROM interception: $0000-$00FF and $0200-$08FF read from boot ROM
         // when active. $0100-$01FF always reads from cartridge (header gap).
         if let Some(value) = self.boot_rom_read(addr) {
-            return value;
+            return Some(value);
         }
-        match addr {
-            0x0000..=0x7FFF => self.cart.read(addr),
-            0x8000..=0x9FFF => self.ppu.read_vram(addr),
-            0xA000..=0xBFFF => self.cart.read(addr),
-            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
-            0xD000..=0xDFFF => self.wram[self.effective_wram_bank()][(addr - 0xD000) as usize],
-            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
-            0xF000..=0xFDFF => self.wram[self.effective_wram_bank()][(addr - 0xF000) as usize],
-            0xFE00..=0xFE9F => {
-                if self.dma_oam_blocked {
-                    return 0xFF;
-                }
-                self.ppu.read_oam(addr)
-            }
-            0xFEA0..=0xFEFF => {
-                if self.cgb_forbidden_region_blocked() {
-                    return 0xFF;
-                }
-                self.cgb_forbidden_region_read(addr)
-            }
-            0xFF00 => self.joypad.read(),
-            0xFF01 => self.sb,
-            0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
-            0xFF03 => 0xFF,           // unused I/O
-            0xFF04..=0xFF07 => self.timer.read(addr),
-            0xFF08..=0xFF0E => 0xFF, // unused I/O range
-            0xFF0F => self.if_reg | 0xE0,
-            0xFF10..=0xFF3F => self.apu.read_register(addr),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
-            0xFF46 => self.dma_source,
+        let value = match addr {
+            0xFEA0..=0xFEFF if self.cgb_forbidden_region_blocked() => 0xFF,
+            0xFEA0..=0xFEFF => self.cgb_forbidden_region_read(addr),
             // CGB KEY1 — speed switch register
             0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
             // CGB KEY0 — CPU mode select register (upper nibble reads as 1)
             0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
             0xFF4C => self.key0 | 0xF0,
-            0xFF4E => 0xFF,
             // CGB HDMA registers
             0xFF51..=0xFF55 if self.ppu.dmg_compat => 0xFF,
-            0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
             0xFF55 => self.hdma.read_control(),
-            0xFF50 => 0xFF,
-            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF, // Unused/reserved CGB I/O ranges
-            // CGB-specific registers
+            // VBK, palettes and OPRI
             0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             // $FF72-$FF73: fully R/W, initial value $00.
@@ -1070,56 +1132,25 @@ impl GbBus for CgbBus {
             0xFF77 => self.apu.read_pcm34(),
             0xFF70 if self.ppu.dmg_compat => 0xFF,
             0xFF70 => self.svbk | 0xF8,
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            0xFFFF => self.ie_reg,
-        }
+            // $FF4E, $FF50, HDMA1-4 (write-only) and the unused CGB I/O.
+            0xFF4C..=0xFF7F => 0xFF,
+            _ => return None,
+        };
+        Some(value)
     }
 
-    fn write(&mut self, addr: u16, val: u8) {
+    fn model_write(&mut self, addr: u16, val: u8) -> bool {
         match addr {
-            0x0000..=0x7FFF => self.cart.write(addr, val),
-            0x8000..=0x9FFF => self.ppu.write_vram(addr, val),
-            0xA000..=0xBFFF => self.cart.write(addr, val),
-            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize] = val,
-            0xD000..=0xDFFF => {
-                self.wram[self.effective_wram_bank()][(addr - 0xD000) as usize] = val
-            }
-            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize] = val,
-            0xF000..=0xFDFF => {
-                self.wram[self.effective_wram_bank()][(addr - 0xF000) as usize] = val
-            }
-            0xFE00..=0xFE9F => {
-                if !self.dma_oam_blocked {
-                    self.ppu.write_oam(addr, val);
-                }
-            }
             0xFEA0..=0xFEFF => {
                 if !self.cgb_forbidden_region_blocked() {
                     self.cgb_forbidden_region_write(addr, val);
                 }
             }
-            0xFF00 => self.joypad.write(val),
-            0xFF01 => self.sb = val,
             0xFF02 => {
                 // SC: Serial Control. Writing bit 7=1 starts transfer.
                 // For stub implementation, immediately clear bit 7 to signal completion.
                 self.sc = val & 0x7F;
             }
-            0xFF03 => {}          // unused I/O
-            0xFF08..=0xFF0E => {} // unused I/O range
-            0xFF04..=0xFF07 => {
-                let div_apu_edge = self.timer.write(addr, val);
-                // If a DIV-APU falling edge occurred (DIV write with bit 4/5 HIGH),
-                // clock the APU frame sequencer.
-                if div_apu_edge {
-                    self.apu.clock_div_apu();
-                }
-                if self.timer.fire_write_overflow_if_pending() {
-                    self.if_reg |= 0x04;
-                    self.timer.take_interrupt();
-                }
-            }
-            0xFF0F => self.if_reg = val & 0x1F,
             0xFF26 => {
                 // NR52 special handling: pass DIV-APU bit state for power-on skip logic.
                 let div_apu_high = self.timer.is_div_apu_bit_high();
@@ -1129,7 +1160,7 @@ impl GbBus for CgbBus {
                 }
                 self.apu.write_nr52_with_div_state(val, div_apu_high);
             }
-            0xFF10..=0xFF25 | 0xFF27..=0xFF3F => {
+            0xFF10..=0xFF3F => {
                 // Bit-pack the two double-speed APU phases used by pulse trigger
                 // timing: bit 0 is the trigger write phase, bit 1 is the NR52
                 // power-on phase captured above.
@@ -1143,11 +1174,6 @@ impl GbBus for CgbBus {
                     Some(self.timer.raw_counter()),
                 );
             }
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
-                self.ppu.write_register(addr, val);
-                self.if_reg |= self.ppu.take_pending_interrupts();
-            }
-            0xFF46 => self.do_oam_dma(val),
             // CGB KEY1 — only bit 0 (arm) is writable; bit 7 (current speed) is read-only
             0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => {}
             0xFF4D => self.key1 = (self.key1 & 0x80) | (val & 0x01),
@@ -1158,69 +1184,18 @@ impl GbBus for CgbBus {
                     self.key0 = val;
                 }
             }
-            0xFF4E => {}
             // CGB HDMA registers
             0xFF51..=0xFF55 if self.ppu.dmg_compat => {}
             0xFF51 => self.hdma.write_source_high(val),
             0xFF52 => self.hdma.write_source_low(val),
             0xFF53 => self.hdma.write_dest_high(val),
             0xFF54 => self.hdma.write_dest_low(val),
-            0xFF55 => {
-                // For HDMA timing decisions, check if we're in an HBlank-like state.
-                // When LCD is off, mode is effectively 0 (HBlank) for HDMA purposes.
-                // When LCD is on, use the PPU's physical mode (not STAT mode bits which
-                // can lag due to mode_for_stat() timing quirks).
-                let is_hblank = !self.ppu.is_lcd_enabled() || self.ppu.mode() == PpuMode::HBlank;
-                match self.hdma.write_control(val) {
-                    HdmaAction::StartGdma => {
-                        self.do_gdma_transfer();
-                    }
-                    HdmaAction::StartHdma => {
-                        // If HDMA is started while in HBlank (mode 0), transfer starts
-                        // immediately regardless of whether LCD is on or off. When LCD is off,
-                        // mode is effectively 0, so one block transfers instantly.
-                        if is_hblank {
-                            self.hdma.activate_hdma();
-                            // Clear pending flag since we're activating now
-                            self.hdma.clear_hblank_pending();
-                            // Clear HBlank flag so we don't double-transfer in the same HBlank period
-                            self.ppu.take_hblank_entered();
-                            // Transfer one block immediately
-                            self.do_hdma_block_transfer();
-                            self.hdma_halt_cycles = 8;
-                        }
-                        // Otherwise, HDMA stays pending until HBlank occurs
-                    }
-                    HdmaAction::CancelHdma => {}
-                }
-            }
-            // CGB-specific registers
+            0xFF55 => self.write_hdma_control(val),
+            // VBK, palettes and OPRI
             0xFF4F | 0xFF68..=0xFF6C => {
                 self.ppu.write_cgb_register(addr, val);
             }
-            0xFF50 => {
-                // Boot ROM disable: writing any value unmaps the boot ROM.
-                // This transition only happens once; subsequent writes are ignored so
-                // DMG compatibility palettes are not re-selected mid-game.
-                if self.boot_rom_active {
-                    self.boot_rom_active = false;
-                    self.key0_locked = true;
-                    self.ppu
-                        .seed_boot_logo_from_header(&self.cartridge_header_logo());
-                    self.ppu.seed_boot_registered_mark_tile();
-
-                    // Apply DMG compatibility palettes for DMG-only games.
-                    // KEY0 = $04 indicates DMG compatibility mode (bit 2 set).
-                    if self.key0 == 0x04 {
-                        // A button combo held now may pick the palette (Auto only).
-                        let button_state = self.joypad.get_states();
-                        self.apply_dmg_compat_palette(Some(button_state));
-                        self.ppu.set_dmg_compat(true);
-                    } else {
-                        self.ppu.seed_cgb_boot_fade_bg_palettes();
-                    }
-                }
-            }
+            0xFF50 => self.disable_boot_rom(),
             // CGB undocumented registers ($FF72-$FF75) — Pan Docs "CGB Registers".
             0xFF72 => self.ff72 = val,
             0xFF73 => self.ff73 = val,
@@ -1228,14 +1203,27 @@ impl GbBus for CgbBus {
             0xFF74 => self.ff74 = val,
             // $FF75: only bits 4-6 are writable.
             0xFF75 => self.ff75 = val & 0x70,
-            // CGB PCM registers (read-only; ignore writes)
-            0xFF76 | 0xFF77 => {}
             0xFF70 if self.ppu.dmg_compat => {}
             0xFF70 => self.svbk = val & 0x07,
-            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => {}
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
-            0xFFFF => self.ie_reg = val,
+            // $FF4E, the read-only PCM registers and the unused CGB I/O.
+            0xFF4C..=0xFF7F => {}
+            _ => return false,
         }
+        true
+    }
+
+    fn start_oam_dma(&mut self, val: u8) {
+        self.do_oam_dma(val);
+    }
+}
+
+impl GbBus for CgbBus {
+    fn read(&mut self, addr: u16) -> u8 {
+        self.map_read(addr)
+    }
+
+    fn write(&mut self, addr: u16, val: u8) {
+        self.map_write(addr, val);
     }
 
     fn tick(&mut self, m_cycles: u8) {
@@ -1296,76 +1284,7 @@ impl GbBus for CgbBus {
     }
 
     fn read_for_debugger(&self, addr: u16) -> u8 {
-        // Debugger reads mirror normal read() address decoding (including register
-        // readback behavior like `if_reg | 0xE0`) but avoid side effects such as
-        // OAM corruption.
-        // Boot ROM interception (same as read() for consistency).
-        if let Some(value) = self.boot_rom_read(addr) {
-            return value;
-        }
-        match addr {
-            0x0000..=0x7FFF => self.cart.read(addr),
-            0x8000..=0x9FFF => self.ppu.read_vram(addr),
-            0xA000..=0xBFFF => self.cart.read(addr),
-            0xC000..=0xCFFF => self.wram[0][(addr - 0xC000) as usize],
-            0xD000..=0xDFFF => self.wram[self.effective_wram_bank()][(addr - 0xD000) as usize],
-            0xE000..=0xEFFF => self.wram[0][(addr - 0xE000) as usize],
-            0xF000..=0xFDFF => self.wram[self.effective_wram_bank()][(addr - 0xF000) as usize],
-            0xFE00..=0xFE9F => {
-                if self.dma_oam_blocked {
-                    return 0xFF;
-                }
-                // Direct OAM read to avoid OAM corruption side effects that
-                // read_oam() triggers during Mode 2 (debugger reads must be
-                // side-effect-free).
-                self.ppu.oam[(addr - 0xFE00) as usize]
-            }
-            0xFEA0..=0xFEFF => {
-                if self.cgb_forbidden_region_blocked() {
-                    0xFF
-                } else {
-                    self.cgb_forbidden_region_read(addr)
-                }
-            }
-            0xFF00 => self.joypad.read(),
-            0xFF01 => self.sb,
-            0xFF02 => self.sc | 0x7E, // SC: bits 6-1 unused, read as 1
-            0xFF03 => 0xFF,           // unused I/O
-            0xFF04..=0xFF07 => self.timer.read(addr),
-            0xFF08..=0xFF0E => 0xFF, // unused I/O range
-            0xFF0F => self.if_reg | 0xE0,
-            0xFF10..=0xFF3F => self.apu.read_register(addr),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
-            0xFF46 => self.dma_source,
-            // CGB KEY1 — speed switch register (debugger)
-            0xFF4D if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
-            0xFF4D => (self.key1 & 0x80) | 0x7E | (self.key1 & 0x01),
-            // CGB KEY0 — CPU mode select register (debugger)
-            0xFF4C if self.ppu.dmg_compat && self.skip_boot_rom => 0xFF,
-            0xFF4C => self.key0 | 0xF0,
-            0xFF4E => 0xFF,
-            // CGB HDMA registers
-            0xFF51..=0xFF55 if self.ppu.dmg_compat => 0xFF,
-            0xFF51..=0xFF54 => 0xFF, // HDMA1-4 are write-only
-            0xFF55 => self.hdma.read_control(),
-            0xFF50 => 0xFF,
-            0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF78..=0xFF7F => 0xFF,
-            // CGB-specific registers
-            0xFF4F | 0xFF68..=0xFF6C => self.ppu.read_cgb_register(addr).unwrap_or(0xFF),
-            // CGB undocumented registers ($FF72-$FF75).
-            0xFF72 => self.ff72,
-            0xFF73 => self.ff73,
-            0xFF74 if self.ppu.dmg_compat => 0xFF,
-            0xFF74 => self.ff74,
-            0xFF75 => self.ff75 | 0x8F,
-            // CGB PCM registers
-            0xFF76 => self.apu.read_pcm12(),
-            0xFF77 => self.apu.read_pcm34(),
-            0xFF70 if self.ppu.dmg_compat => 0xFF,
-            0xFF70 => self.svbk | 0xF8,
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            0xFFFF => self.ie_reg,
-        }
+        self.map_peek(addr)
     }
 }
 
@@ -1765,6 +1684,25 @@ mod tests {
         dmg_compat_bus.write(0xFF01, 0xA5);
         assert_eq!(dmg_compat_bus.read(0xFF01), 0xA5);
         assert_eq!(dmg_compat_bus.read_for_debugger(0xFF01), 0xA5);
+    }
+
+    #[test]
+    fn cgb_bus_peeks_through_the_shared_map() {
+        use crate::gb::bus::memory_map::MemoryMap;
+        let mut bus = make_bus_post_boot();
+        bus.write(0xFF70, 0x03); // WRAM bank 3 at $D000
+        bus.write(0xD010, 0x5A);
+        bus.write(0xFF80, 0xA5);
+        assert_eq!(MemoryMap::map_peek(&bus, 0xF010), 0x5A);
+        assert_eq!(MemoryMap::map_peek(&bus, 0xFF80), 0xA5);
+    }
+
+    #[test]
+    fn cgb_serial_control_write_reads_back_with_the_transfer_bit_clear() {
+        let mut bus = make_bus_post_boot();
+        bus.write(0xFF02, 0x81);
+        assert_eq!(bus.read(0xFF02), 0x7F);
+        assert_eq!(bus.read_for_debugger(0xFF02), 0x7F);
     }
 
     #[test]
