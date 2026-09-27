@@ -280,3 +280,81 @@ it("fetchRomList manifest fallback includes .gba entries", async () => {
     expect(paths).toContain("game.nes");
     expect(paths).not.toContain("notes.txt");
 });
+
+// ── Manifest first (nr-4vr) ─────────────────────────────────────────────────
+
+function recordingFetch(responses: Map<string, string>) {
+    const requested: string[] = [];
+    const fetchFn = async (url: any) => {
+        const key = url.toString();
+        requested.push(key);
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "", json: async () => { throw new Error("404"); } };
+        }
+        return {
+            ok: true,
+            text: async () => responses.get(key),
+            json: async () => JSON.parse(responses.get(key)!)
+        };
+    };
+    return { fetchFn, requested };
+}
+
+it("fetchRomList reads the manifest and fetches no directory listing when it lists ROMs", async () => {
+    const base = "https://example.com/roms/";
+    const { fetchFn, requested } = recordingFetch(new Map([
+        [base, `<a href="crawled/">crawled/</a>`],
+        [`${base}crawled/`, `<a href="crawled.nes">crawled.nes</a>`],
+        [`${base}roms.json`, JSON.stringify({ roms: ["b/game.sfc", "a/test.nes"] })]
+    ]));
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+
+    expect(requested).toEqual([`${base}roms.json`]);
+    expect(entries).toEqual([
+        { path: "a/test.nes", url: `${base}a/test.nes` },
+        { path: "b/game.sfc", url: `${base}b/game.sfc` }
+    ]);
+});
+
+it("fetchRomList crawls when the manifest lists no ROMs", async () => {
+    const base = "https://example.com/roms/";
+    const { fetchFn, requested } = recordingFetch(new Map([
+        [base, `<a href="crawled/">crawled/</a>`],
+        [`${base}crawled/`, `<a href="crawled.nes">crawled.nes</a>`],
+        [`${base}roms.json`, JSON.stringify({ roms: [] })]
+    ]));
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+
+    expect(requested[0]).toBe(`${base}roms.json`);
+    expect(entries.map((entry: any) => entry.path)).toEqual(["crawled/crawled.nes"]);
+});
+
+it("fetchRomList crawls when the manifest is missing or malformed", async () => {
+    const base = "https://example.com/roms/";
+    for (const manifest of [undefined, "not json"]) {
+        const responses = new Map([
+            [base, `<a href="root.nes">root.nes</a>`]
+        ]);
+        if (manifest !== undefined) responses.set(`${base}roms.json`, manifest);
+        const { fetchFn } = recordingFetch(responses);
+
+        const entries = await fetchRomList(base, fetchFn as any, 4);
+
+        expect(entries.map((entry: any) => entry.path)).toEqual(["root.nes"]);
+    }
+});
+
+it("fetchRomList encodes manifest file names into URLs and keeps them readable as paths", async () => {
+    const base = "https://example.com/roms/";
+    const { fetchFn } = recordingFetch(new Map([
+        [`${base}roms.json`, JSON.stringify({ roms: ["dir #1/100% (a?b).nes"] })]
+    ]));
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+
+    expect(entries).toEqual([
+        { path: "dir #1/100% (a?b).nes", url: `${base}dir%20%231/100%25%20(a%3Fb).nes` }
+    ]);
+});
