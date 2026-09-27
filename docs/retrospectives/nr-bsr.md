@@ -17,7 +17,7 @@
 **What happened.** The `wasm-pack test` leg of `./scripts/gate-full.sh` failed with `Error: http status: 404`. wasm-pack's cached ChromeDriver was 154.0.8037.57; the installed Chrome was 153.0.8010.53. With ChromeDriver 153.0.8010.53 from Chrome for Testing passed as `--chromedriver`, 123/123 passed.
 **Why.** wasm-pack fetches the latest stable ChromeDriver, which ran ahead of the installed Chrome.
 **Cost.** About 10 minutes.
-**Prevent by.** As the earlier files propose. Nothing new here.
+**Prevent by.** Fixed on main while this PR was open, by nr-ux2 (#3232: the gate matches ChromeDriver to Chrome before the wasm leg). This tree was prepared before that landed.
 **Seen before.** nr-09s, nr-273, nr-1gg, nr-6e9, nr-aph, nr-ps1, nr-630, nr-72o, nr-nr7, nr-hab.1, nr-zdy.3, nr-qoi, nr-zdy.1.
 
 ## The Python gate legs failed in a fresh worktree: no `.venv`, and the main checkout's lacks dependencies
@@ -25,5 +25,5 @@
 **What happened.** With no `.venv` in the tree, the main checkout's `.venv` gave 28 import errors and has no mypy. Creating a tree `.venv` with `--group scripts/pyproject.toml:test --group scripts/pyproject.toml:dev` made every leg green.
 **Why.** `install_shell` does not create the Python environment.
 **Cost.** About 5 minutes.
-**Prevent by.** As the earlier files propose. Nothing new here.
+**Prevent by.** Fixed on main while this PR was open, by nr-i6h (#3233: every worktree builds `.venv`). This tree was prepared before that landed.
 **Seen before.** nr-1gg, nr-273, nr-6e9, nr-630, nr-aph, nr-nr7, nr-hab.1, nr-qoi, nr-ve3, nr-ps1, nr-zdy.3.
