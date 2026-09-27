@@ -1762,6 +1762,23 @@ mod tests {
     }
 
     #[test]
+    fn cgb_double_speed_keeps_serial_timing_in_m_cycles() {
+        // DIV counts CPU clocks, so double speed doubles both serial rates in
+        // real time and leaves the M-cycle counts unchanged.
+        let mut bus = make_bus_post_boot();
+        bus.write(0xFF4D, 0x01);
+        assert!(bus.try_speed_switch());
+        assert!(bus.is_double_speed());
+        start_transfer(&mut bus, 0x41, 0x81);
+        let done = ticks_until_serial_interrupt(&mut bus, 1024).expect("normal clock completes");
+        assert!(done > 900, "done at {done}");
+        start_transfer(&mut bus, 0x99, 0x83);
+        let done = ticks_until_serial_interrupt(&mut bus, 34).expect("fast clock completes");
+        assert!(done >= 30, "done at {done}");
+        assert_eq!(bus.serial_output(), &[0x41, 0x99]);
+    }
+
+    #[test]
     fn cgb_dmg_compat_ignores_the_fast_clock_bit() {
         let mut bus = make_dmg_compat_bus_post_boot();
         start_transfer(&mut bus, 0x99, 0x83);
