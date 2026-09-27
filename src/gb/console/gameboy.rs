@@ -306,8 +306,8 @@ impl GameBoy {
 
     /// Powers the loaded game on again on the other bus, as when a cartridge
     /// moves to another console: the battery RAM and the frontend's audio
-    /// sample rate stay, and the palettes start as when the game starts on
-    /// that console (under the LCD filter too).
+    /// sample rate stay. The palettes are left as they are (a state load
+    /// keeps them, as on the same console); a Reset starts them afresh.
     fn power_on_on(&mut self, use_cgb_bus: bool) {
         let Some(cart) = self.rom.as_deref().and_then(|rom| load_cartridge(rom).ok()) else {
             return;
@@ -322,7 +322,13 @@ impl GameBoy {
             console.set_audio_sample_rate(sample_rate);
         }
         self.gb = Some(console);
-        // The palettes start as when the game starts on this console.
+        self.apply_palette();
+        self.apply_gbc_palette();
+    }
+
+    /// The palettes as when the game starts on the console it now runs on
+    /// (under the LCD filter too).
+    fn start_palettes(&mut self) {
         let config = self.app_context.borrow().config().gb.clone();
         self.palette = config.palette.unwrap_or_default();
         self.gbc_palette = config.gbc_palette;
@@ -455,6 +461,7 @@ impl GameBoy {
         let wanted = self.cgb_flag().and_then(|f| self.wants_cgb_bus(f).ok());
         if let Some(cgb) = wanted.filter(|&cgb| self.gb.is_some() && cgb != self.is_cgb_mode()) {
             self.power_on_on(cgb);
+            self.start_palettes();
             return;
         }
         if let Some(gb) = &mut self.gb {
@@ -1722,6 +1729,20 @@ mod tests {
 
     fn saved_cpu_and_wram(gb: &GameBoy) -> (String, Vec<u8>) {
         state_cpu_and_wram(&gb.save_state_bytes().unwrap())
+    }
+
+    #[test]
+    fn test_load_state_as_saved_across_consoles_keeps_the_palettes_as_a_same_console_load_does() {
+        let mut dmg_gb = loaded(make_gameboy(), &minimal_rom());
+        let dmg_state = dmg_gb.save_state_bytes().unwrap();
+        dmg_gb.run_tick();
+
+        let mut gb = loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom());
+        gb.cycle_gbc_palette(); // Brown
+        gb.load_state_bytes_as_saved(&dmg_state).unwrap();
+        assert!(!gb.is_cgb_mode());
+        assert_eq!(gb.gbc_palette(), GbcPalette::Brown);
+        assert_eq!(gb.palette(), GbPalette::Grey);
     }
 
     #[test]

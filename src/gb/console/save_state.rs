@@ -60,8 +60,10 @@ pub struct Sm83State {
 pub struct BusState {
     pub bus_type: GbBusType,
     pub ppu: Ppu,
-    /// Boxed, like `GbSaveState::bus`, so deserializing does not copy 32 KB
-    /// through every serde frame: wasm's 1 MB stack overflowed silently.
+    /// Boxed, like `GbSaveState::bus`, so the 32 KB array leaves `BusState`
+    /// once built and the frames above it stay small: carried by value, the
+    /// whole state overflowed wasm's 1 MB stack, which has no guard page, and
+    /// a load never returned. The JSON is the same.
     #[serde_as(as = "Box<[_; 0x8000]>")]
     pub wram: Box<[u8; 0x8000]>,
     #[serde_as(as = "[_; 0x7F]")]
@@ -119,9 +121,9 @@ pub struct GbSaveState {
     pub version: u32,
     /// CPU state.
     pub cpu: Sm83State,
-    /// Bus state (PPU, APU, timer, joypad, RAM, etc.). Boxed so that
-    /// deserializing moves a pointer, not 50 KB, through serde's frames (the
-    /// JSON is the same).
+    /// Bus state (PPU, APU, timer, joypad, RAM, etc.). Boxed so that the
+    /// frames above it hold a pointer once it is built (serde still builds
+    /// `BusState` itself on the stack); see `BusState::wram`.
     pub bus: Box<BusState>,
     /// Cartridge RAM snapshot (battery-backed SRAM).
     pub cart_ram: Vec<u8>,
