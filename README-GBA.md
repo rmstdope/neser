@@ -85,6 +85,9 @@ Documented presets include:
 - `sp101-color`
 - `gba-lcd-grid`
 
+F4 cycles them in that order. In the web frontend, F4 and the Filter button cycle the same looks
+for GBA games as None, AGB-001, Switch Online, GBA SP and LCD Grid; a GBA game starts on None.
+
 GBA LCD color correction can be enabled with:
 
 ```bash
