@@ -3,7 +3,9 @@ use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
+use crate::gb::bus::oam_dma::OamDma;
 use crate::gb::bus::serial::Serial;
+use crate::gb::bus::tick_sequence::{TickParts, TickSequence};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes::{self, GbcPalette};
 use crate::gb::input::joypad::Joypad;
@@ -72,14 +74,8 @@ pub struct CgbBus {
     apu: Apu,
     if_reg: u8,
     ie_reg: u8,
-    /// Whether an OAM DMA transfer is currently in progress.
-    dma_active: bool,
-    /// High byte of the OAM DMA source address.
-    dma_source: u8,
-    /// DMA position: 0=warm-up, 1–160=copy, 161=teardown.
-    dma_position: u8,
-    /// Whether OAM access is blocked by an active DMA transfer.
-    dma_oam_blocked: bool,
+    /// OAM DMA ($FF46).
+    oam_dma: OamDma,
     /// $FF01 SB, $FF02 SC and the internal-clock transfer (shared with DMG).
     serial: Serial,
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
@@ -196,18 +192,9 @@ impl CgbBus {
     }
 
     fn cgb_forbidden_region_blocked(&self) -> bool {
-        self.dma_oam_blocked
+        self.oam_dma.blocks_oam()
             || (self.ppu.is_lcd_enabled()
                 && matches!(self.ppu.mode(), PpuMode::OamScan | PpuMode::PixelTransfer))
-    }
-
-    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
-        const LCDC_TILE_DATA: u8 = 0x10;
-
-        addr == 0xFF40
-            && self.ppu.is_lcd_enabled()
-            && self.ppu.mode() == PpuMode::PixelTransfer
-            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
     }
 
     /// Create a new CGB bus.
@@ -255,11 +242,8 @@ impl CgbBus {
             // Store internal value $01 (VBlank set), readback produces $E1.
             if_reg: 0x01,
             ie_reg: 0,
-            dma_active: false,
             // DMA = $00 at CGB boot (different from DMG which has $FF).
-            dma_source: 0x00,
-            dma_position: 0,
-            dma_oam_blocked: false,
+            oam_dma: OamDma::from_parts(false, 0x00, 0, false),
             serial: Serial::new(),
             hdma: HdmaState::new(),
             hdma_halt_cycles: 0,
@@ -575,132 +559,16 @@ impl CgbBus {
         if bank == 0 { 1 } else { bank }
     }
 
-    /// Advance system timers, PPU, and APU by `m_cycles` M-cycles.
+    /// Advance the bus by `m_cycles` M-cycles: see the shared sequence in
+    /// `tick_sequence.rs`.
     ///
-    /// In double-speed mode, PPU receives half the dots per M-cycle (2 instead
-    /// of 4) and APU ticks at half rate, since each CPU M-cycle takes half the
-    /// real time.  Timer and OAM DMA are M-cycle driven and naturally run at 2x.
-    ///
-    /// The APU frame sequencer is clocked by DIV-APU falling edges from the
-    /// timer (bit 12 of the 16-bit internal counter = DIV bit 4, or bit 13 in
-    /// double-speed mode = DIV bit 5).
+    /// In double-speed mode, the PPU receives half the dots per M-cycle (2
+    /// instead of 4) and the APU and cartridge RTC tick at half rate, since
+    /// each CPU M-cycle takes half the real time. Timer and OAM DMA are
+    /// M-cycle driven and naturally run at 2x; the timer's DIV-APU bit moves
+    /// from DIV bit 4 to bit 5 so the frame sequencer keeps 512 Hz.
     pub fn tick(&mut self, m_cycles: u8) {
-        let double = self.tick_before_ppu(m_cycles);
-        let dots_per_mcycle = Self::dots_per_mcycle(double);
-        self.ppu.tick_dots(u32::from(m_cycles) * dots_per_mcycle);
-        self.tick_after_ppu(m_cycles, double);
-    }
-
-    fn dots_per_mcycle(double_speed: bool) -> u32 {
-        if double_speed { 2 } else { 4 }
-    }
-
-    fn tick_before_ppu(&mut self, m_cycles: u8) -> bool {
-        self.if_reg |= self.ppu.take_pending_interrupts();
-
-        let double = self.is_double_speed();
-
-        for _ in 0..m_cycles {
-            let pre_counter = self.timer.raw_counter();
-            let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
-            if self.timer.interrupt_pending {
-                self.if_reg |= 0x04;
-                self.timer.interrupt_pending = false;
-            }
-            let cgb_mode = !self.ppu.dmg_compat;
-            if self
-                .serial
-                .clock(pre_counter, self.timer.raw_counter(), cgb_mode)
-            {
-                self.if_reg |= 0x08;
-            }
-
-            // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
-            for _ in 0..div_apu_rising {
-                self.apu.clock_div_apu_secondary();
-            }
-            // Clock APU frame sequencer for each DIV-APU falling edge.
-            for _ in 0..div_apu_falling {
-                self.apu.clock_div_apu();
-            }
-
-            if self.dma_active {
-                match self.dma_position {
-                    0 => {
-                        self.dma_position = 1;
-                    }
-                    1..=160 => {
-                        self.dma_oam_blocked = true;
-                        let byte_idx = (self.dma_position - 1) as u16;
-                        let src = (self.dma_source as u16) << 8 | byte_idx;
-                        self.ppu.oam[byte_idx as usize] = self.read_raw(src);
-                        self.dma_position += 1;
-                    }
-                    161 => {
-                        self.dma_active = false;
-                        self.dma_oam_blocked = false;
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-        double
-    }
-
-    fn tick_after_ppu(&mut self, m_cycles: u8, double: bool) {
-        if double {
-            // In double-speed mode the APU runs at normal speed (half the CPU M-cycle
-            // rate). CH3 wave-position timing requires 1-APU-cycle-per-M-cycle
-            // granularity, so it is ticked once per CPU M-cycle with 1 cycle.
-            // All other channels are still ticked at the half rate via the accumulator.
-            for _ in 0..m_cycles {
-                self.apu.tick_ch3_one_apu_cycle();
-            }
-            self.apu_tick_accumulator += m_cycles;
-            let apu_ticks = self.apu_tick_accumulator / 2;
-            self.apu_tick_accumulator %= 2;
-            if apu_ticks > 0 {
-                self.apu.tick_except_ch3(apu_ticks);
-            }
-        } else {
-            self.apu.tick(m_cycles);
-        }
-        // Tick the cartridge RTC in real-time units. In double speed, each CPU
-        // M-cycle takes half as much real time, so MBC3 sees half the normal rate.
-        if double {
-            self.rtc_tick_accumulator += u16::from(m_cycles);
-            let cart_ticks = self.rtc_tick_accumulator / 2;
-            self.rtc_tick_accumulator %= 2;
-            if cart_ticks > 0 {
-                self.cart.tick(u32::from(cart_ticks));
-            }
-        } else {
-            self.rtc_tick_accumulator = 0;
-            self.cart.tick(u32::from(m_cycles));
-        }
-
-        // HDMA state machine: activate pending HDMA when LCD turns on.
-        // HDMA requested with LCD off remains pending until LCD is enabled.
-        // Once activated, actual transfers occur during HBlank periods (checked below).
-        if self.hdma.is_hdma_pending() && self.ppu.is_lcd_enabled() {
-            self.hdma.activate_hdma();
-            // Clear any pending HBlank flag so we wait for the NEXT HBlank after LCD enable.
-            // Per Pan Docs: transfers occur at LY=0-143 during HBlank, starting from the
-            // first full scanline after LCD is enabled.
-            self.ppu.take_hblank_entered();
-        }
-
-        // HDMA: transfer one 16-byte block per HBlank (Mode 3→0).
-        // Transfers occur only when LCD is on and HBlank is entered.
-        if self.hdma.is_active() && self.hdma.is_hblank_mode() {
-            let hblank = self.ppu.take_hblank_entered();
-            if hblank {
-                self.do_hdma_block_transfer();
-                // Signal CPU to halt for 8 M-cycles during the transfer.
-                // Per Pan Docs: HDMA takes 8 M-cycles per block regardless of CPU speed mode.
-                self.hdma_halt_cycles = 8;
-            }
-        }
+        TickSequence::tick(self, m_cycles);
     }
 
     /// Execute one HDMA block transfer (16 bytes from source to VRAM).
@@ -784,14 +652,8 @@ impl CgbBus {
         }
     }
 
-    fn dma_conflict_active(&self, addr: u16) -> bool {
-        self.dma_active
-            && self.dma_oam_blocked
-            && Self::dma_bus_for_addr(addr).is_some_and(|bus| bus == self.dma_source_bus())
-    }
-
     fn dma_source_bus(&self) -> CgbDmaBusKind {
-        Self::dma_bus_for_addr(u16::from(self.dma_source) << 8).unwrap_or(CgbDmaBusKind::Wram)
+        Self::dma_bus_for_addr(u16::from(self.oam_dma.source()) << 8).unwrap_or(CgbDmaBusKind::Wram)
     }
 
     fn dma_bus_for_addr(addr: u16) -> Option<CgbDmaBusKind> {
@@ -801,11 +663,6 @@ impl CgbBus {
             0xC000..=0xFDFF => Some(CgbDmaBusKind::Wram),
             _ => None,
         }
-    }
-
-    fn dma_conflict_byte(&self) -> u8 {
-        let byte_idx = self.dma_position.saturating_sub(2) as u16;
-        self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
     }
 
     /// HDMA5 ($FF55) write: start a GDMA, start or arm an HDMA, or cancel one.
@@ -861,14 +718,6 @@ impl CgbBus {
                 self.ppu.seed_cgb_boot_fade_bg_palettes();
             }
         }
-    }
-
-    fn do_oam_dma(&mut self, val: u8) {
-        let preserve_blocking = self.dma_active && self.dma_oam_blocked;
-        self.dma_active = true;
-        self.dma_source = val;
-        self.dma_position = 0;
-        self.dma_oam_blocked = preserve_blocking;
     }
 
     /// Set a button state on the joypad and propagate any resulting interrupt.
@@ -934,6 +783,7 @@ impl CgbBus {
             let offset = bank * 0x1000;
             wram_flat[offset..offset + 0x1000].copy_from_slice(bank_data);
         }
+        let (dma_active, dma_source, dma_position, dma_oam_blocked) = self.oam_dma.parts();
         let mut state = BusState {
             bus_type: GbBusType::Cgb,
             ppu: self.ppu.clone(),
@@ -944,10 +794,10 @@ impl CgbBus {
             apu: self.apu.clone(),
             if_reg: self.if_reg,
             ie_reg: self.ie_reg,
-            dma_active: self.dma_active,
-            dma_source: self.dma_source,
-            dma_position: self.dma_position,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_active,
+            dma_source,
+            dma_position,
+            dma_oam_blocked,
             hdma: Some(self.hdma.clone()),
             svbk: Some(self.svbk),
             key1: Some(self.key1),
@@ -1006,10 +856,12 @@ impl CgbBus {
         self.apu.set_cgb_model(self.model);
         self.if_reg = state.if_reg;
         self.ie_reg = state.ie_reg;
-        self.dma_active = state.dma_active;
-        self.dma_source = state.dma_source;
-        self.dma_position = state.dma_position;
-        self.dma_oam_blocked = state.dma_oam_blocked;
+        self.oam_dma = OamDma::from_parts(
+            state.dma_active,
+            state.dma_source,
+            state.dma_position,
+            state.dma_oam_blocked,
+        );
         self.hdma = state.hdma.clone().unwrap_or_default();
         self.svbk = state.svbk.unwrap_or(0);
         self.key1 = state.key1.unwrap_or(0);
@@ -1082,8 +934,8 @@ impl MemoryMap for CgbBus {
             ie_reg: self.ie_reg,
             serial: &self.serial,
             cgb_mode: !self.ppu.dmg_compat,
-            dma_source: self.dma_source,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_source: self.oam_dma.source(),
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -1101,7 +953,7 @@ impl MemoryMap for CgbBus {
             if_reg: &mut self.if_reg,
             ie_reg: &mut self.ie_reg,
             serial: &mut self.serial,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -1219,7 +1071,101 @@ impl MemoryMap for CgbBus {
     }
 
     fn start_oam_dma(&mut self, val: u8) {
-        self.do_oam_dma(val);
+        self.oam_dma.start(val);
+    }
+}
+
+impl TickSequence for CgbBus {
+    fn tick_parts(&mut self) -> TickParts<'_> {
+        TickParts {
+            ppu: &mut self.ppu,
+            timer: &mut self.timer,
+            apu: &mut self.apu,
+            if_reg: &mut self.if_reg,
+            serial: &mut self.serial,
+            oam_dma: &mut self.oam_dma,
+        }
+    }
+
+    fn oam_dma(&self) -> &OamDma {
+        &self.oam_dma
+    }
+
+    fn dma_read(&self, addr: u16) -> u8 {
+        self.read_raw(addr)
+    }
+
+    /// While a DMA copies, a CPU access on the same bus (cartridge, VRAM or
+    /// WRAM) as its source sees the DMA's byte instead.
+    fn dma_conflicts_with(&self, addr: u16) -> bool {
+        self.oam_dma.holds_bus()
+            && Self::dma_bus_for_addr(addr).is_some_and(|bus| bus == self.dma_source_bus())
+    }
+
+    fn dots_per_m_cycle(&self) -> u32 {
+        if self.is_double_speed() { 2 } else { 4 }
+    }
+
+    /// The fast serial clock exists only in CGB mode, not in DMG compatibility.
+    fn serial_cgb_mode(&self) -> bool {
+        !self.ppu.dmg_compat
+    }
+
+    fn tick_after_ppu(&mut self, m_cycles: u8) {
+        let double = self.is_double_speed();
+        if double {
+            // In double-speed mode the APU runs at normal speed (half the CPU M-cycle
+            // rate). CH3 wave-position timing requires 1-APU-cycle-per-M-cycle
+            // granularity, so it is ticked once per CPU M-cycle with 1 cycle.
+            // All other channels are still ticked at the half rate via the accumulator.
+            for _ in 0..m_cycles {
+                self.apu.tick_ch3_one_apu_cycle();
+            }
+            self.apu_tick_accumulator += m_cycles;
+            let apu_ticks = self.apu_tick_accumulator / 2;
+            self.apu_tick_accumulator %= 2;
+            if apu_ticks > 0 {
+                self.apu.tick_except_ch3(apu_ticks);
+            }
+        } else {
+            self.apu.tick(m_cycles);
+        }
+        // Tick the cartridge RTC in real-time units. In double speed, each CPU
+        // M-cycle takes half as much real time, so MBC3 sees half the normal rate.
+        if double {
+            self.rtc_tick_accumulator += u16::from(m_cycles);
+            let cart_ticks = self.rtc_tick_accumulator / 2;
+            self.rtc_tick_accumulator %= 2;
+            if cart_ticks > 0 {
+                self.cart.tick(u32::from(cart_ticks));
+            }
+        } else {
+            self.rtc_tick_accumulator = 0;
+            self.cart.tick(u32::from(m_cycles));
+        }
+
+        // HDMA state machine: activate pending HDMA when LCD turns on.
+        // HDMA requested with LCD off remains pending until LCD is enabled.
+        // Once activated, actual transfers occur during HBlank periods (checked below).
+        if self.hdma.is_hdma_pending() && self.ppu.is_lcd_enabled() {
+            self.hdma.activate_hdma();
+            // Clear any pending HBlank flag so we wait for the NEXT HBlank after LCD enable.
+            // Per Pan Docs: transfers occur at LY=0-143 during HBlank, starting from the
+            // first full scanline after LCD is enabled.
+            self.ppu.take_hblank_entered();
+        }
+
+        // HDMA: transfer one 16-byte block per HBlank (Mode 3→0).
+        // Transfers occur only when LCD is on and HBlank is entered.
+        if self.hdma.is_active() && self.hdma.is_hblank_mode() {
+            let hblank = self.ppu.take_hblank_entered();
+            if hblank {
+                self.do_hdma_block_transfer();
+                // Signal CPU to halt for 8 M-cycles during the transfer.
+                // Per Pan Docs: HDMA takes 8 M-cycles per block regardless of CPU speed mode.
+                self.hdma_halt_cycles = 8;
+            }
+        }
     }
 }
 
@@ -1237,31 +1183,15 @@ impl GbBus for CgbBus {
     }
 
     fn tick(&mut self, m_cycles: u8) {
-        CgbBus::tick(self, m_cycles);
+        TickSequence::tick(self, m_cycles);
     }
 
     fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
-        if self.needs_mode3_lcdc_write_phase(addr, val) {
-            let double = self.tick_before_ppu(1);
-            let dots_per_mcycle = Self::dots_per_mcycle(double);
-            self.ppu.tick_dots(dots_per_mcycle - 1);
-            self.write(addr, val);
-            self.ppu.tick_dots(1);
-            self.tick_after_ppu(1, double);
-        } else {
-            self.tick(1);
-            if !self.dma_conflict_active(addr) {
-                self.write(addr, val);
-            }
-        }
+        self.cpu_write_m_cycle(addr, val);
     }
 
     fn read_cpu_m_cycle(&mut self, addr: u16) -> u8 {
-        if self.dma_conflict_active(addr) {
-            self.dma_conflict_byte()
-        } else {
-            self.read(addr)
-        }
+        self.cpu_read_m_cycle(addr)
     }
 
     fn try_speed_switch(&mut self) -> bool {
@@ -2429,7 +2359,7 @@ mod tests {
     fn test_double_speed_ppu_gets_half_dots_per_mcycle() {
         // Given: CGB bus in normal speed, LCD enabled.
         // Warm up past the LCD-enable transient so subsequent ticks
-        // advance by exactly m_cycles × dots_per_mcycle.
+        // advance by exactly m_cycles × dots_per_m_cycle.
         let mut bus = make_bus();
         enable_lcd(&mut bus);
         bus.tick(10); // warm-up
