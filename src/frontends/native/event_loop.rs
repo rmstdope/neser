@@ -837,6 +837,13 @@ impl ApplicationHandler for NativeEventLoop {
                                 .and_then(|gb| gb.cycle_gbc_palette())
                             {
                                 self.console.app_context().borrow_mut().add_toast(&toast);
+                            } else if let Some(gba) = self.console.as_gba_mut() {
+                                let enabled = gba.toggle_color_correction();
+                                let toast =
+                                    crate::gba::console::gba::color_correction_toast_message(
+                                        enabled,
+                                    );
+                                self.console.app_context().borrow_mut().add_toast(&toast);
                             }
                         }
                     }
