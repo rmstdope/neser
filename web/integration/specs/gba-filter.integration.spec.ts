@@ -40,8 +40,11 @@ async function pictureAt(page: Page, points: [number, number][]): Promise<Rgb[]>
     }, { png, points });
 }
 
-// ppu/shades.gba draws vertical bands from black (left) to full blue (right).
-const TOP_MIDDLE: [number, number] = [0.5, 0.03];
+// ppu/shades.gba draws vertical bands from black (left) to full blue (right). The probes sit in
+// the bright bands on the right: the middle bands are dark enough to sit at the colour threshold,
+// and which band a fixed fraction lands in shifts with the canvas size. Near the top edge, LCD Grid
+// draws black there, above the console.
+const TOP_RIGHT: [number, number] = [0.9, 0.03];
 const RIGHT_MIDDLE: [number, number] = [0.9, 0.5];
 const isBlue = ([r, g, b]: Rgb) => b > 60 && b > r + 30;
 const isBlack = ([r, g, b]: Rgb) => r < 16 && g < 16 && b < 16;
@@ -54,7 +57,7 @@ async function loadShades(page: Page) {
     });
     await waitForRunningState(page);
     // Past the boot logo: the top of the screen shows the game's blue bands.
-    await expect.poll(async () => isBlue((await pictureAt(page, [TOP_MIDDLE]))[0]), { timeout: 20_000 }).toBe(true);
+    await expect.poll(async () => isBlue((await pictureAt(page, [TOP_RIGHT]))[0]), { timeout: 20_000 }).toBe(true);
 }
 
 async function pressFilterUntil(page: Page, name: string) {
@@ -161,7 +164,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
 
         await pressFilterUntil(page, "LCD Grid");
         // The top of the screen is now above the console: black, where None shows the game.
-        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_MIDDLE]))[0])).toBe(true);
+        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_RIGHT]))[0])).toBe(true);
     });
 
     test("Given LCD Grid's console art still being fetched, then the picture stays on the previous look until it arrives", async ({ page }) => {
@@ -175,9 +178,9 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await loadShades(page);
         await pressFilterUntil(page, "LCD Grid");
         await page.waitForTimeout(500);
-        expect(isBlue((await pictureAt(page, [TOP_MIDDLE]))[0])).toBe(true);
+        expect(isBlue((await pictureAt(page, [TOP_RIGHT]))[0])).toBe(true);
         release();
-        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_MIDDLE]))[0])).toBe(true);
+        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_RIGHT]))[0])).toBe(true);
     });
 
     test("Given a paused GBA game, then a new look is drawn at once", async ({ page }) => {
