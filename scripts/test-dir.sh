@@ -12,8 +12,11 @@
 #   ./scripts/test-dir.sh src/nes --skip-integration  # nes unit tests only
 #
 # Options:
-#   --skip-integration   Exclude nes/gb/gba/snes integration_tests modules
+#   --skip-integration   Exclude every console's integration_tests module
 #   --list               List matching tests without running them
+#   --print-nextest-skip-expr
+#                        Print the cargo-nextest filter that excludes the same
+#                        modules as --skip-integration, and exit (CI uses it)
 #   --                   Pass remaining args directly to cargo test
 #
 # Environment:
@@ -25,6 +28,16 @@ set -euo pipefail
 # anything launched with `cargo run` (the Cerebro fleet view, for one) inherits `stable`, which
 # beats rust-toolchain.toml. Unset it so this runs on the pinned toolchain, as CI does.
 unset RUSTUP_TOOLCHAIN
+
+# The slow ROM-suite modules --skip-integration leaves out. This is the only place the list is
+# written: CI's unit-only run takes its nextest filter from --print-nextest-skip-expr, so a new
+# core's integration module is added here and nowhere else.
+SLOW_MODULES=(
+    'nes::integration_tests'
+    'gb::integration_tests'
+    'gba::integration_tests'
+    'snes::integration_tests'
+)
 
 DIRS=()
 SKIP_INTEGRATION=false
@@ -44,11 +57,19 @@ for arg in "$@"; do
         --list)
             LIST_ONLY=true
             ;;
+        --print-nextest-skip-expr)
+            EXPR=""
+            for module in "${SLOW_MODULES[@]}"; do
+                EXPR="${EXPR:+$EXPR | }test($module)"
+            done
+            echo "not ($EXPR)"
+            exit 0
+            ;;
         --)
             PASSTHROUGH=true
             ;;
         --help|-h)
-            head -20 "$0" | grep '^#' | sed 's/^# \?//'
+            head -23 "$0" | grep '^#' | sed 's/^# \?//'
             exit 0
             ;;
         *)
@@ -90,10 +111,9 @@ done
 
 # Add --skip for integration tests if requested
 if $SKIP_INTEGRATION; then
-    CMD+=(--skip 'nes::integration_tests')
-    CMD+=(--skip 'gb::integration_tests')
-    CMD+=(--skip 'gba::integration_tests')
-    CMD+=(--skip 'snes::integration_tests')
+    for module in "${SLOW_MODULES[@]}"; do
+        CMD+=(--skip "$module")
+    done
 fi
 
 # Add --list if requested
