@@ -263,6 +263,7 @@ impl Mapper for NesEventMapper {
     fn capabilities(&self) -> MapperCapabilities {
         let mut caps = self.inner.capabilities();
         caps.has_irq = true;
+        caps.has_chr_banking = false;
         caps
     }
 }
@@ -545,6 +546,7 @@ mod tests {
         write_mmc1_register(mapper.as_mut(), 0xC000, 0b00000);
         assert_eq!(mapper.read_chr(0x0000), 0xAB);
         assert_eq!(mapper.read_chr(0x1000), 0xCD);
+        assert!(!mapper.capabilities().has_chr_banking);
     }
 
     /// nesdev NES-EVENT: the counter fires "when it reaches a high enough value"; with
