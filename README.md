@@ -111,9 +111,23 @@ neser --headless --output shot.png path/to/rom              # 60 frames (default
 neser --headless --frames 300 --output shot.png path/to/rom
 ```
 
-`--output` is required, and both `--frames` and `--output` are rejected without
-`--headless`. The exit code is 0 on success and 1 with a message on failure, so a
+`--output` is required, and `--frames`, `--capture-every` and `--output` are rejected
+without `--headless`. The exit code is 0 on success and 1 with a message on failure, so a
 script can branch on it.
+
+To capture a series of checkpoints in one run, add `--capture-every K`: every frame that
+is a multiple of K is also written next to `--output` as `<stem>_<N>.png`, with N
+zero-padded to the width of `--frames`, and `--output` still receives the final frame.
+
+```bash
+neser --headless --frames 3600 --capture-every 300 --output out/shot.png path/to/rom
+# writes out/shot_0300.png, out/shot_0600.png, ..., out/shot_3600.png and out/shot.png
+```
+
+Each checkpoint is byte-identical to a single-frame capture at the same `--frames`, so a
+sweep against a reference emulator (see `scripts/reference_capture/README.md`) costs one
+run per ROM instead of one per checkpoint. `--capture-every` must be at least 1 and at
+most `--frames`. Existing files at those paths are overwritten, as `--output` is.
 
 Captures are reproducible: the mode forces zero-initialised RAM, takes no input,
 and refuses to combine with the autorun flags or `--tui`. The same ROM and frame
