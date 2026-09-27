@@ -21,12 +21,55 @@ export function parseDirectoryListing(html: string) {
     };
 }
 
-export async function fetchRomList(baseUrl: string, fetchFn: typeof fetch = fetch, maxDepth = 4) {
+export interface RomListEntry {
+    path: string;
+    url: string;
+}
+
+/**
+ * The ROMs served under `baseUrl`: read from the build's roms.json, or, when that is missing or
+ * empty, by crawling the server's directory listings (up to `maxDepth` levels).
+ */
+export async function fetchRomList(
+    baseUrl: string,
+    fetchFn: typeof fetch = fetch,
+    maxDepth = 4
+): Promise<RomListEntry[]> {
+    const fromManifest = await fetchManifestRomList(baseUrl, fetchFn);
+    if (fromManifest.length > 0) {
+        return fromManifest;
+    }
+    return crawlRomList(baseUrl, fetchFn, maxDepth);
+}
+
+async function fetchManifestRomList(baseUrl: string, fetchFn: typeof fetch): Promise<RomListEntry[]> {
+    const baseRoot = new URL(baseUrl);
+    let manifest: unknown;
+    try {
+        const response = await fetchFn(new URL("roms.json", baseRoot).toString());
+        if (!response.ok) return [];
+        manifest = await response.json();
+    } catch {
+        return [];
+    }
+    const roms: unknown[] = Array.isArray((manifest as { roms?: unknown })?.roms)
+        ? (manifest as { roms: unknown[] }).roms
+        : [];
+    return roms
+        .filter((rom): rom is string => typeof rom === "string" && isSupportedWebRomName(rom))
+        .map((rom) => {
+            const path = rom.replace(/^\//, "");
+            return { path, url: new URL(path, baseRoot).toString() };
+        })
+        .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function crawlRomList(baseUrl: string, fetchFn: typeof fetch, maxDepth: number): Promise<RomListEntry[]> {
     const baseRoot = new URL(baseUrl);
     const basePath = baseRoot.pathname.endsWith("/") ? baseRoot.pathname : `${baseRoot.pathname}/`;
     const basePathNoSlash = basePath.replace(/^\/+/, "");
     const queue = [{ url: baseRoot.toString(), depth: 0 }];
-    const results = [];
+    const results: RomListEntry[] = [];
     const visited = new Set();
 
     const normalizeHref = (href: string) => {
@@ -83,23 +126,5 @@ export async function fetchRomList(baseUrl: string, fetchFn: typeof fetch = fetc
         }
     }
 
-    const sorted = results.sort((a, b) => a.path.localeCompare(b.path));
-    if (sorted.length > 0) {
-        return sorted;
-    }
-
-    const manifestUrl = new URL("roms.json", baseRoot).toString();
-    const manifestResponse = await fetchFn(manifestUrl);
-    if (!manifestResponse.ok) {
-        return [];
-    }
-    const manifest = await manifestResponse.json();
-    const roms = Array.isArray(manifest?.roms) ? manifest.roms : [];
-    return roms
-        .filter((rom: string) => typeof rom === "string" && isSupportedWebRomName(rom))
-        .map((rom: string) => ({
-            path: rom.replace(/^\//, ""),
-            url: new URL(rom.replace(/^\//, ""), baseRoot).toString()
-        }))
-        .sort((a: { path: string }, b: { path: string }) => a.path.localeCompare(b.path));
+    return results.sort((a, b) => a.path.localeCompare(b.path));
 }
