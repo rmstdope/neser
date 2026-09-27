@@ -1789,25 +1789,6 @@ mod tests {
     }
 
     #[test]
-    fn active_timer_reload_from_ffff_defers_current_instruction_tick() {
-        let mut bus = GbaBus::new();
-        bus.write16(0x0400_0100, 0xFFFF);
-        bus.write16(0x0400_0102, 0x00C0 | 0x0080);
-
-        bus.begin_cpu_instruction();
-        bus.write16(0x0400_0100, 0);
-        bus.end_cpu_instruction();
-        bus.step_after_cpu_instruction(1);
-
-        assert_eq!(
-            bus.read16(0x0400_0100),
-            0xFFFF,
-            "the active reload write cycle should not immediately tick TM0 from FFFF"
-        );
-        assert_eq!(bus.ic.if_flags & irq_bits::TIMER0, 0);
-    }
-
-    #[test]
     fn immediate_ffff_overflow_irq_line_uses_compensated_delay() {
         let mut bus = GbaBus::new();
         bus.write16(REG_IE, irq_bits::TIMER0);

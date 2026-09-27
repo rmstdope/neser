@@ -213,6 +213,8 @@ mod tests {
     use crate::gba::bus::GbaBus;
     use crate::gba::cpu::bus::Bus;
 
+    /// The tests' own width, not `IoWidth`: they write through the `Bus` trait so the address
+    /// alignment in `cpu_bus.rs` stays in the path under test.
     #[derive(Clone, Copy, Debug)]
     enum Width {
         Byte,
@@ -354,6 +356,19 @@ mod tests {
                 bus.waitstates.waitcnt & 0x00FF,
                 0x0014,
                 "{width:?}: WAITCNT writes reach the waitstate table"
+            );
+        }
+    }
+
+    #[test]
+    fn siocnt_start_reaches_the_serial_port_for_every_width() {
+        for width in WIDTHS {
+            let mut bus = GbaBus::new();
+            // SIOCNT: start (bit 7) with the internal clock (bit 0), IRQ enabled.
+            write_reg(&mut bus, width, 0x0400_0128, 0x4081, 0x00FF, 0x0000);
+            assert!(
+                bus.sio_start_delay_cycles > 0,
+                "{width:?}: a SIOCNT start write must reach the serial port"
             );
         }
     }
