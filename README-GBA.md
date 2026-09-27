@@ -74,13 +74,12 @@ The native frontend also supports gamepads through `gilrs`.
 GBA shader presets are selected with `--gba-filter` or `gba-filter`:
 
 ```bash
-neser --gba-filter gba-lcd path/to/game.gba
+neser --gba-filter agb001 path/to/game.gba
 ```
 
 Documented presets include:
 
 - `none`
-- `gba-lcd`
 - `agb001`
 - `nso-gba-color`
 - `sp101-color`

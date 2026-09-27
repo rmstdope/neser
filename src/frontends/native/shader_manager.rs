@@ -554,14 +554,12 @@ mod tests {
                 "nso-gba-color",
                 "vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp",
             ),
-            ("gba-lcd", "shaders/gba-lcd.slangp"),
             ("agb001", "vendor/slang-shaders/handheld/agb001.slangp"),
         ];
 
         let discovered = ShaderManager::presets_for_names(GBA_FILTER_NAMES, all);
         let expected = vec![
             PathBuf::from("shaders/stock.slangp"),
-            PathBuf::from("shaders/gba-lcd.slangp"),
             PathBuf::from("vendor/slang-shaders/handheld/agb001.slangp"),
             PathBuf::from("vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp"),
             PathBuf::from("vendor/slang-shaders/handheld/color-mod/sp101-color.slangp"),
