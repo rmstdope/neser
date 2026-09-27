@@ -1259,28 +1259,65 @@ impl SnesSystemBus {
     }
 
     pub(crate) fn capture_state(&self) -> SnesBusState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            _cartridge: _, // transient: the loaded cartridge, not machine state
+            mapping: _,    // transient: cartridge board, checked by the ROM identity
+            rom: _,        // transient: the loaded cartridge, checked by the ROM identity
+            ref sram,
+            ref wram,
+            ref wmadd,
+            wrmpya,
+            wrdiv,
+            rddiv,
+            rdmpy,
+            memsel,
+            hdmaen,
+            ref dma,
+            pending_gpdma,
+            pending_hdma,
+            cpu_speed: _,           // intra-cycle: the CPU writes it before every cycle
+            cpu_drives_dma_hook: _, // re-latched by a restored CPU on its first cycle
+            ref apu,
+            ppu: _, // captured separately by Cpu::capture_save_state
+            ref input,
+            ref mdr,
+            ref ticks,
+            sa1_registers: _,      // captured by capture_sa1_state
+            sa1_iram: _,           // captured by capture_sa1_state
+            sa1_memory_control: _, // captured by capture_sa1_state
+            sa1_core: _,           // captured by capture_sa1_state
+            ref cx4,
+            obc1: _, // transient: cartridge board; the OBC1 keeps its registers in sram
+            ref gsu,
+            ref sdd1,
+            ref dsp,
+            dsp_lorom_first_bank: _, // transient: cartridge board
+            #[cfg(test)]
+                b_bus_writes: _, // transient: test-only instrument
+        } = self;
         SnesBusState {
-            wram: self.wram.clone(),
-            wmadd: self.wmadd.get(),
-            wrmpya: self.wrmpya,
-            wrdiv: self.wrdiv,
-            rddiv: self.rddiv,
-            rdmpy: self.rdmpy,
-            memsel: self.memsel,
-            hdmaen: self.hdmaen,
-            dma: self.dma.capture_state(),
-            mdr: self.mdr.get(),
-            ticks: self.ticks.get(),
-            sram: self.sram.borrow().clone(),
-            apu: self.apu.borrow().capture_state(),
-            input: self.input.borrow().capture_state(),
+            wram: wram.clone(),
+            wmadd: wmadd.get(),
+            wrmpya,
+            wrdiv,
+            rddiv,
+            rdmpy,
+            memsel,
+            hdmaen,
+            dma: dma.capture_state(),
+            mdr: mdr.get(),
+            ticks: ticks.get(),
+            sram: sram.borrow().clone(),
+            apu: apu.borrow().capture_state(),
+            input: input.borrow().capture_state(),
             sa1: self.capture_sa1_state(),
-            cx4: self.cx4.as_ref().map(Cx4::capture_state),
-            dsp: self.dsp.as_ref().map(|dsp| dsp.borrow().capture_state()),
-            gsu: self.gsu.as_ref().map(|gsu| gsu.borrow().capture_state()),
-            sdd1: self.sdd1.as_ref().map(|sdd1| sdd1.borrow().capture_state()),
-            pending_gpdma: self.pending_gpdma,
-            pending_hdma: self.pending_hdma,
+            cx4: cx4.as_ref().map(Cx4::capture_state),
+            dsp: dsp.as_ref().map(|dsp| dsp.borrow().capture_state()),
+            gsu: gsu.as_ref().map(|gsu| gsu.borrow().capture_state()),
+            sdd1: sdd1.as_ref().map(|sdd1| sdd1.borrow().capture_state()),
+            pending_gpdma,
+            pending_hdma,
         }
     }
 
@@ -1302,6 +1339,7 @@ impl SnesSystemBus {
             .as_ref()
             .expect("sa1_core is constructed alongside sa1_registers");
         let (math_control, math_ma, math_mb, math_mr, math_overflow) = core.arithmetic().raw();
+        let (cpu, booted, master_clock_debt) = core.save_parts();
         Some(SnesSa1State {
             ccnt: registers.ccnt(),
             sie: registers.sie(),
@@ -1324,9 +1362,9 @@ impl SnesSystemBus {
             sbwe: memory_control.sbwe(),
             cbwe: memory_control.cbwe(),
             bwpa: memory_control.bwpa(),
-            cpu: core.cpu_state(),
-            booted: core.booted(),
-            master_clock_debt: core.master_clock_debt(),
+            cpu,
+            booted,
+            master_clock_debt,
             sa1_irq_pending: registers.sa1_irq_pending(),
             sa1_nmi_pending: registers.sa1_nmi_pending(),
             snes_irq_pending: registers.snes_irq_pending(),
@@ -1339,63 +1377,87 @@ impl SnesSystemBus {
     }
 
     pub(crate) fn restore_state(&mut self, state: &SnesBusState) -> Result<(), String> {
-        if state.wram.len() != self.wram.len() {
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &SnesBusState {
+            ref wram,
+            wmadd,
+            wrmpya,
+            wrdiv,
+            rddiv,
+            rdmpy,
+            memsel,
+            hdmaen,
+            ref dma,
+            mdr,
+            ticks,
+            ref sram,
+            ref apu,
+            ref input,
+            ref sa1,
+            ref cx4,
+            ref dsp,
+            ref gsu,
+            ref sdd1,
+            pending_gpdma,
+            pending_hdma,
+        } = state;
+        if wram.len() != self.wram.len() {
             return Err(format!(
                 "WRAM size mismatch (expected {}, found {})",
                 self.wram.len(),
-                state.wram.len()
+                wram.len()
             ));
         }
-        if state.dma.regs.len() != 0x80 {
+        if dma.regs.len() != 0x80 {
             return Err(format!(
                 "DMA register state size mismatch (expected 128, found {})",
-                state.dma.regs.len()
+                dma.regs.len()
             ));
         }
-        if state.dma.hdma_do_transfer.len() != 8 {
+        if dma.hdma_do_transfer.len() != 8 {
             return Err("DMA HDMA state size mismatch".to_string());
         }
-        if state.sram.len() != self.sram.borrow().len() {
+        if sram.len() != self.sram.borrow().len() {
             return Err(format!(
                 "SRAM size mismatch (expected {}, found {})",
                 self.sram.borrow().len(),
-                state.sram.len()
+                sram.len()
             ));
         }
 
-        self.wram.copy_from_slice(&state.wram);
-        self.wmadd.set(state.wmadd & 0x1_FFFF);
-        self.wrmpya = state.wrmpya;
-        self.wrdiv = state.wrdiv;
-        self.rddiv = state.rddiv;
-        self.rdmpy = state.rdmpy;
-        self.memsel = state.memsel & 0x01;
-        self.hdmaen = state.hdmaen;
-        self.dma.restore_state(&state.dma)?;
-        self.mdr.set(state.mdr);
-        self.ticks.set(state.ticks);
-        self.sram.borrow_mut().copy_from_slice(&state.sram);
-        self.apu.get_mut().restore_state(&state.apu)?;
-        self.input.get_mut().restore_state(&state.input);
-        self.restore_sa1_state(state.sa1.as_ref());
+        self.wram.copy_from_slice(wram);
+        self.wmadd.set(wmadd & 0x1_FFFF);
+        self.wrmpya = wrmpya;
+        self.wrdiv = wrdiv;
+        self.rddiv = rddiv;
+        self.rdmpy = rdmpy;
+        self.memsel = memsel & 0x01;
+        self.hdmaen = hdmaen;
+        self.dma.restore_state(dma)?;
+        self.mdr.set(mdr);
+        self.ticks.set(ticks);
+        self.sram.borrow_mut().copy_from_slice(sram);
+        self.apu.get_mut().restore_state(apu)?;
+        self.input.get_mut().restore_state(input);
+        self.restore_sa1_state(sa1.as_ref());
         // Like SA-1, a state without CX4 data (or a cartridge without the chip) leaves the
         // chip as it is.
-        if let (Some(cx4), Some(cx4_state)) = (self.cx4.as_mut(), state.cx4.as_ref()) {
+        if let (Some(cx4), Some(cx4_state)) = (self.cx4.as_mut(), cx4.as_ref()) {
             cx4.restore_state(cx4_state)?;
         }
-        if let (Some(dsp), Some(dsp_state)) = (self.dsp.as_mut(), state.dsp.as_ref()) {
+        if let (Some(dsp), Some(dsp_state)) = (self.dsp.as_mut(), dsp.as_ref()) {
             dsp.get_mut().restore_state(dsp_state)?;
         }
         // As for the SA-1: a state without a GSU section (another cartridge, or saved before
         // Super FX support) leaves the GSU as it is.
-        if let (Some(gsu), Some(gsu_state)) = (&mut self.gsu, &state.gsu) {
+        if let (Some(gsu), Some(gsu_state)) = (&mut self.gsu, gsu) {
             gsu.get_mut().restore_state(gsu_state);
         }
-        if let (Some(sdd1), Some(sdd1_state)) = (self.sdd1.as_mut(), state.sdd1.as_ref()) {
+        if let (Some(sdd1), Some(sdd1_state)) = (self.sdd1.as_mut(), sdd1.as_ref()) {
             sdd1.get_mut().restore_state(sdd1_state);
         }
-        self.pending_gpdma = state.pending_gpdma;
-        self.pending_hdma = state.pending_hdma;
+        self.pending_gpdma = pending_gpdma;
+        self.pending_hdma = pending_hdma;
         Ok(())
     }
 
@@ -1410,6 +1472,41 @@ impl SnesSystemBus {
     /// re-boots rather than running from the noise.
     fn restore_sa1_state(&mut self, state: Option<&SnesSa1State>) {
         let Some(state) = state else { return };
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &SnesSa1State {
+            ccnt,
+            sie,
+            reset_vector,
+            nmi_vector,
+            irq_vector,
+            scnt,
+            cie,
+            snes_nmi_vector,
+            snes_irq_vector,
+            iram: ref saved_iram,
+            iram_snes_write_protect,
+            iram_sa1_write_protect,
+            cxb,
+            dxb,
+            exb,
+            fxb,
+            bmaps,
+            bmap,
+            sbwe,
+            cbwe,
+            bwpa,
+            ref cpu,
+            booted,
+            master_clock_debt,
+            sa1_irq_pending,
+            sa1_nmi_pending,
+            snes_irq_pending,
+            math_control,
+            math_ma,
+            math_mb,
+            math_mr,
+            math_overflow,
+        } = state;
         let (Some(registers), Some(iram), Some(memory_control), Some(core)) = (
             &self.sa1_registers,
             &self.sa1_iram,
@@ -1419,45 +1516,29 @@ impl SnesSystemBus {
             return;
         };
         registers.borrow_mut().restore_raw(
-            state.ccnt,
-            state.sie,
-            state.reset_vector,
-            state.nmi_vector,
-            state.irq_vector,
-            state.scnt,
-            state.cie,
-            state.snes_nmi_vector,
-            state.snes_irq_vector,
-            state.sa1_irq_pending,
-            state.sa1_nmi_pending,
-            state.snes_irq_pending,
+            ccnt,
+            sie,
+            reset_vector,
+            nmi_vector,
+            irq_vector,
+            scnt,
+            cie,
+            snes_nmi_vector,
+            snes_irq_vector,
+            sa1_irq_pending,
+            sa1_nmi_pending,
+            snes_irq_pending,
         );
-        iram.borrow_mut().restore_raw(
-            &state.iram,
-            state.iram_snes_write_protect,
-            state.iram_sa1_write_protect,
-        );
-        memory_control.borrow_mut().restore_raw(
-            state.cxb,
-            state.dxb,
-            state.exb,
-            state.fxb,
-            state.bmaps,
-            state.bmap,
-            state.sbwe,
-            state.cbwe,
-            state.bwpa,
-        );
-        core.restore_cpu_state(&state.cpu);
-        core.set_booted(state.booted);
-        core.set_master_clock_debt(state.master_clock_debt);
-        core.arithmetic_mut().restore_raw(
-            state.math_control,
-            state.math_ma,
-            state.math_mb,
-            state.math_mr,
-            state.math_overflow,
-        );
+        iram.borrow_mut()
+            .restore_raw(saved_iram, iram_snes_write_protect, iram_sa1_write_protect);
+        memory_control
+            .borrow_mut()
+            .restore_raw(cxb, dxb, exb, fxb, bmaps, bmap, sbwe, cbwe, bwpa);
+        core.restore_cpu_state(cpu);
+        core.set_booted(booted);
+        core.set_master_clock_debt(master_clock_debt);
+        core.arithmetic_mut()
+            .restore_raw(math_control, math_ma, math_mb, math_mr, math_overflow);
     }
 
     pub(crate) fn sample_ready(&self) -> bool {

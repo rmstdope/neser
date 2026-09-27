@@ -382,27 +382,32 @@ impl Sa1ControlRegisters {
         sa1_nmi_pending: bool,
         snes_irq_pending: bool,
     ) {
-        self.ccnt = ccnt;
-        self.sie = sie;
-        self.reset_vector = reset_vector;
-        self.nmi_vector = nmi_vector;
-        self.irq_vector = irq_vector;
-        self.scnt = scnt;
-        self.cie = cie;
-        self.snes_nmi_vector = snes_nmi_vector;
-        self.snes_irq_vector = snes_irq_vector;
-        self.sa1_irq_pending = sa1_irq_pending;
-        self.sa1_irq_enabled = cie & 0x80 != 0;
-        self.sa1_nmi_pending = sa1_nmi_pending;
-        self.sa1_nmi_enabled = cie & 0x10 != 0;
-        self.sa1_nmi_edge = false; // transient dispatch signal; never persisted
-        self.snes_irq_pending = snes_irq_pending;
-        self.snes_irq_enabled = sie & 0x80 != 0;
-        // Transient H/V-counter latch, also never persisted (see the field doc comment) --
-        // cleared here too, since `restore_raw` runs on the live shared instance rather than a
-        // fresh one, and would otherwise leak a stale pre-restore latch into $2303-$2305.
-        self.hcr = 0;
-        self.vcr = 0;
+        // A whole-struct literal names every field, so a new one fails to build until it is
+        // saved or marked transient.
+        *self = Self {
+            ccnt,
+            sie,
+            reset_vector,
+            nmi_vector,
+            irq_vector,
+            scnt,
+            cie,
+            snes_nmi_vector,
+            snes_irq_vector,
+            sa1_irq_pending,
+            sa1_irq_enabled: cie & 0x80 != 0,
+            sa1_nmi_pending,
+            sa1_nmi_enabled: cie & 0x10 != 0,
+            sa1_nmi_edge: false, // transient dispatch signal; never persisted
+            snes_irq_pending,
+            snes_irq_enabled: sie & 0x80 != 0,
+            // Transient H/V-counter latch, also never persisted (see the field doc comment) --
+            // cleared here too, since `restore_raw` runs on the live shared instance rather
+            // than a fresh one, and would otherwise leak a stale pre-restore latch into
+            // $2303-$2305.
+            hcr: 0,
+            vcr: 0,
+        };
     }
 }
 
@@ -743,16 +748,21 @@ impl Sa1Core {
     /// Captures the inner 65816 CPU's register/flag state, for save-state serialization. This
     /// reuses `Cpu<B>`'s existing bus-agnostic `Stateful` impl -- the same mechanism the main
     /// CPU already uses -- since `Cpu<Sa1Bus>`'s architectural state doesn't depend on the bus.
-    pub(crate) fn cpu_state(&self) -> SnesCpuState {
-        self.cpu.capture_state()
+    /// The core's save-state parts: `(cpu, booted, master_clock_debt)`. The shared registers
+    /// are saved by the bus alongside the other SA-1 register blocks.
+    pub(crate) fn save_parts(&self) -> (SnesCpuState, bool, i64) {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let Self {
+            cpu,
+            registers: _, // saved by the bus with the other SA-1 register blocks
+            booted,
+            master_clock_debt,
+        } = self;
+        (cpu.capture_state(), *booted, *master_clock_debt)
     }
 
     pub(crate) fn restore_cpu_state(&mut self, state: &SnesCpuState) {
         self.cpu.restore_state(state);
-    }
-
-    pub(crate) fn booted(&self) -> bool {
-        self.booted
     }
 
     pub(crate) fn set_booted(&mut self, booted: bool) {
@@ -766,10 +776,6 @@ impl Sa1Core {
 
     pub(crate) fn arithmetic_mut(&mut self) -> &mut Sa1Arithmetic {
         self.cpu.bus_mut().arithmetic_mut()
-    }
-
-    pub(crate) fn master_clock_debt(&self) -> i64 {
-        self.master_clock_debt
     }
 
     pub(crate) fn set_master_clock_debt(&mut self, master_clock_debt: i64) {

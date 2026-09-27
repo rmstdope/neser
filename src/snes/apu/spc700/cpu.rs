@@ -464,25 +464,46 @@ impl Spc700 {
     }
 
     pub fn capture_state(&self) -> Spc700State {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            a,
+            x,
+            y,
+            sp,
+            pc,
+            psw,
+            halted,
+            in_progress: _, // cleared on restore; see the field doc
+        } = self;
         Spc700State {
-            a: self.a,
-            x: self.x,
-            y: self.y,
-            sp: self.sp,
-            pc: self.pc,
-            psw: self.psw,
-            halted: self.halted,
+            a,
+            x,
+            y,
+            sp,
+            pc,
+            psw,
+            halted,
         }
     }
 
     pub fn restore_state(&mut self, state: &Spc700State) {
-        self.a = state.a;
-        self.x = state.x;
-        self.y = state.y;
-        self.sp = state.sp;
-        self.pc = state.pc;
-        self.psw = state.psw;
-        self.halted = state.halted;
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &Spc700State {
+            a,
+            x,
+            y,
+            sp,
+            pc,
+            psw,
+            halted,
+        } = state;
+        self.a = a;
+        self.x = x;
+        self.y = y;
+        self.sp = sp;
+        self.pc = pc;
+        self.psw = psw;
+        self.halted = halted;
         // restore_state always lands on an instruction boundary.
         self.in_progress = None;
     }

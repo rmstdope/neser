@@ -352,7 +352,13 @@ impl Upd77c25 {
     }
 
     pub fn capture_state(&self) -> Upd77c25State {
-        self.state.clone()
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let Self {
+            firmware: _, // transient: user-supplied firmware
+            state,
+            master_clock_hz: _, // derived: from the console region
+        } = self;
+        state.clone()
     }
 
     /// Restores a captured state, rejecting one whose RAM is the wrong size or whose stack
