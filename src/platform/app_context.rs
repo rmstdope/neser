@@ -74,6 +74,13 @@ impl AppContext {
         self.toast_manager.push(text.into(), None);
     }
 
+    /// Removes every queued toast and returns its text, in the order raised. For a frontend
+    /// that shows toasts itself (the web), so a toast raised in a core reaches it and is
+    /// not kept after. Reads no clock, like [`Self::add_toast`].
+    pub fn take_toasts(&mut self) -> Vec<String> {
+        self.toast_manager.take()
+    }
+
     pub fn visible_toasts(&mut self, now: Instant) -> Vec<String> {
         self.toast_manager
             .visible_toasts(now)
@@ -104,6 +111,10 @@ impl ToastManager {
         self.toasts.push(Toast { text, created_at });
     }
 
+    fn take(&mut self) -> Vec<String> {
+        self.toasts.drain(..).map(|toast| toast.text).collect()
+    }
+
     fn prune_expired(&mut self, now: Instant) {
         let lifetime = Duration::from_secs(TOAST_LIFETIME_SECS);
         self.toasts.retain(|toast| {
@@ -130,6 +141,17 @@ impl ToastManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn take_toasts_returns_queued_toasts_in_order_and_empties_the_queue() {
+        let mut context = AppContext::new();
+        context.add_toast("first");
+        context.add_toast("second");
+
+        assert_eq!(context.take_toasts(), ["first", "second"]);
+        assert!(context.take_toasts().is_empty());
+        assert!(context.visible_toasts(Instant::now()).is_empty());
+    }
 
     #[test]
     fn test_toast_manager_expires_toast_after_lifetime() {
