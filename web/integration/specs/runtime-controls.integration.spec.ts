@@ -137,7 +137,16 @@ test.describe("Phase 2 runtime controls", () => {
                     },
                 });
             }
+            // A capture listener on window runs before the button's own handler and a bubble one
+            // after it, so the gap is how long the click blocks the page. Playwright's click time
+            // also waits for scrolling and for stable animation frames, which are slow on CI.
+            const blocked: number[] = [];
+            (window as unknown as { __clickBlockedMs: number[] }).__clickBlockedMs = blocked;
+            let clickStartedAt = 0;
+            window.addEventListener("click", () => { clickStartedAt = performance.now(); }, true);
+            window.addEventListener("click", () => { blocked.push(performance.now() - clickStartedAt); });
         });
+        const lastClickBlockedMs = () => page.evaluate(() => (window as unknown as { __clickBlockedMs: number[] }).__clickBlockedMs.slice(-1)[0] ?? NaN);
         const backingStoreWrites = () => page.evaluate(() => ({
             ...(window as unknown as { __screenBackingStoreWrites: { width: number; height: number } }).__screenBackingStoreWrites,
         }));
@@ -147,8 +156,9 @@ test.describe("Phase 2 runtime controls", () => {
             await button.click();
             const elapsedMs = Date.now() - startedAt;
             const after = await backingStoreWrites();
-            console.log(`[nr-v5x] ${label} click took ${elapsedMs} ms`);
-            test.info().annotations.push({ type: "zoom-click-ms", description: `${label}: ${elapsedMs}` });
+            const blockedMs = Math.round(await lastClickBlockedMs());
+            console.log(`[nr-v5x] ${label} click took ${elapsedMs} ms, of which the page was blocked ${blockedMs} ms`);
+            test.info().annotations.push({ type: "zoom-click-ms", description: `${label}: ${elapsedMs} (blocked ${blockedMs})` });
             expect(after.width - before.width, `${label}: canvas.width assignments`).toBeLessThanOrEqual(1);
             expect(after.height - before.height, `${label}: canvas.height assignments`).toBeLessThanOrEqual(1);
         };
