@@ -207,7 +207,9 @@ pub(crate) const NES_OPTIONAL_BOOL_FLAGS: &[&str] = &[
 impl NesConfig {
     /// Apply command-line arguments to NES configuration.
     ///
-    /// Parses NES-specific CLI flags (hardware, controllers, expansion,  4-score, APU channels, zapper, OAM, overscan).
+    /// Parses NES-specific CLI flags (4-score, APU channels, zapper, OAM, overscan,
+    /// hardware, expansion port, palette, controllers). `--nes-filter` is the
+    /// platform's, as it picks the frontend shader.
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         use crate::platform::config::{has_negation_flag, parse_bool_arg, parse_u32_arg};
 
@@ -316,11 +318,59 @@ impl NesConfig {
             self.vertical_overscan = v.min(16) as u8;
         }
 
+        // Parse hardware mode
+        let hardware_arg = crate::platform::config::parse_cli_string_arg(args, "--nes-hardware");
+        if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
+            self.hardware_mode = hardware_mode;
+            self.hardware_mode_explicit = true;
+            self.hardware_model = hardware_model;
+            self.hardware_model_explicit = true;
+
+            if let Some(hardware) = hardware_arg.as_deref()
+                && (hardware.eq_ignore_ascii_case("playchoice10")
+                    || hardware.eq_ignore_ascii_case("playchoice-10"))
+            {
+                self.expansion_port = ExpansionPort::Playchoice10;
+                self.expansion_port_explicit = true;
+            }
+        }
+
+        // Parse expansion port
+        if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
+            self.expansion_port = expansion_port;
+            self.expansion_port_explicit = true;
+        }
+
+        // Preset system palette
+        if let Some(palette) = crate::platform::config::parse_cli_string_arg(args, "--nes-palette")
+        {
+            self.palette = NesPalette::from_config_id(&palette).ok_or_else(|| {
+                format!(
+                    "Invalid --nes-palette value: '{palette}'. Valid options are: {}",
+                    NesPalette::config_id_list()
+                )
+            })?;
+        }
+
+        // Controller ports
+        if let Some(controller_port1) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-controller-port1")
+        {
+            self.controller_port1 =
+                Self::parse_controller_arg("--nes-controller-port1", &controller_port1)?;
+            self.controller_port1_explicit = true;
+        }
+        if let Some(controller_port2) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-controller-port2")
+        {
+            self.controller_port2 =
+                Self::parse_controller_arg("--nes-controller-port2", &controller_port2)?;
+            self.controller_port2_explicit = true;
+        }
+
         Ok(())
     }
-}
 
-impl Config {
     pub(crate) fn parse_hardware_value(value: &str) -> Option<(HardwareMode, HardwareModel)> {
         if value.eq_ignore_ascii_case("nes-ntsc") {
             Some((HardwareMode::Nes, HardwareModel::NesNtsc))
@@ -342,7 +392,9 @@ impl Config {
     fn parse_hardware_arg(
         args: &[String],
     ) -> Result<Option<(HardwareMode, HardwareModel)>, String> {
-        if let Some(hardware) = Self::parse_string_arg(args, "--nes-hardware") {
+        if let Some(hardware) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-hardware")
+        {
             if let Some(parsed) = Self::parse_hardware_value(&hardware) {
                 Ok(Some(parsed))
             } else {
@@ -357,7 +409,9 @@ impl Config {
     }
 
     fn parse_expansion_port_arg(args: &[String]) -> Result<Option<ExpansionPort>, String> {
-        if let Some(expansion_port) = Self::parse_string_arg(args, "--nes-expansion-port") {
+        if let Some(expansion_port) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-expansion-port")
+        {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
                     "Invalid --nes-expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad, vs-system, playchoice10",
@@ -378,24 +432,24 @@ impl Config {
                     value
                 )
             })?;
-        self.nes.hardware_mode = hardware_mode;
-        self.nes.hardware_mode_explicit = true;
-        self.nes.hardware_model = hardware_model;
-        self.nes.hardware_model_explicit = true;
+        self.hardware_mode = hardware_mode;
+        self.hardware_mode_explicit = true;
+        self.hardware_model = hardware_model;
+        self.hardware_model_explicit = true;
 
         if value.eq_ignore_ascii_case("playchoice10") || value.eq_ignore_ascii_case("playchoice-10")
         {
-            self.nes.expansion_port = ExpansionPort::Playchoice10;
-            self.nes.expansion_port_explicit = true;
+            self.expansion_port = ExpansionPort::Playchoice10;
+            self.expansion_port_explicit = true;
         }
 
         Ok(())
     }
 
     pub(crate) fn apply_expansion_port_value(&mut self, value: &str) -> Result<(), String> {
-        self.nes.expansion_port = ExpansionPort::parse(value)
+        self.expansion_port = ExpansionPort::parse(value)
             .ok_or_else(|| format!("Invalid nes-expansion_port value: '{}'", value))?;
-        self.nes.expansion_port_explicit = true;
+        self.expansion_port_explicit = true;
         Ok(())
     }
 
@@ -414,6 +468,44 @@ impl Config {
         })
     }
 
+    /// Reject NES setups the hardware cannot have: controller overrides in
+    /// Famicom mode, a Famicom expansion device on an NES, or two
+    /// mouse-emulated controllers.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.hardware_mode == HardwareMode::Famicom
+            && (self.controller_port1_explicit || self.controller_port2_explicit)
+        {
+            return Err(
+                "In Famicom mode, --controller-port1 and --controller-port2 are not allowed because ports 1 and 2 are hardwired joypads".to_string(),
+            );
+        }
+
+        if self.hardware_mode == HardwareMode::Nes && self.expansion_port.is_famicom_only() {
+            return Err("famicom expansion_port requires hardware=famicom".to_string());
+        }
+
+        let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
+            .iter()
+            .filter(|controller| {
+                matches!(
+                    **controller,
+                    ControllerType::Arkanoid | ControllerType::Zapper | ControllerType::SnesMouse
+                )
+            })
+            .count();
+
+        if mouse_emulated_controller_count > 1 {
+            return Err(
+                "No more than one mouse-emulated controller can be configured (Arkanoid/Zapper)"
+                    .to_string(),
+            );
+        }
+
+        Ok(())
+    }
+}
+
+impl Config {
     /// Create a new Config with only default values (no config files or args).
     #[cfg(test)]
     pub fn with_defaults() -> Self {
@@ -478,7 +570,7 @@ impl Config {
         // Step 3: Apply command-line arguments (override config file and defaults)
         config.apply_args(args)?;
 
-        config.validate_controller_ports()?;
+        config.nes.validate()?;
 
         Ok(ParseResult::Config(Box::new(config)))
     }
@@ -494,51 +586,6 @@ impl Config {
         // Delegate to sub-config apply_args() methods
         self.frontend.apply_args(args)?;
         self.nes.apply_args(args)?;
-
-        // Parse hardware mode (TODO: move to NesConfig in task 8)
-        let hardware_arg = Self::parse_string_arg(args, "--nes-hardware");
-        if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
-            self.nes.hardware_mode = hardware_mode;
-            self.nes.hardware_mode_explicit = true;
-            self.nes.hardware_model = hardware_model;
-            self.nes.hardware_model_explicit = true;
-
-            if let Some(hardware) = hardware_arg.as_deref()
-                && (hardware.eq_ignore_ascii_case("playchoice10")
-                    || hardware.eq_ignore_ascii_case("playchoice-10"))
-            {
-                self.nes.expansion_port = ExpansionPort::Playchoice10;
-                self.nes.expansion_port_explicit = true;
-            }
-        }
-
-        // Parse expansion port (TODO: move to NesConfig in task 8)
-        if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
-            self.nes.expansion_port = expansion_port;
-            self.nes.expansion_port_explicit = true;
-        }
-
-        // Preset system palette
-        if let Some(palette) = Self::parse_string_arg(args, "--nes-palette") {
-            self.nes.palette = NesPalette::from_config_id(&palette).ok_or_else(|| {
-                format!(
-                    "Invalid --nes-palette value: '{palette}'. Valid options are: {}",
-                    NesPalette::config_id_list()
-                )
-            })?;
-        }
-
-        // Controller ports (TODO: move to NesConfig in task 8)
-        if let Some(controller_port1) = Self::parse_string_arg(args, "--nes-controller-port1") {
-            self.nes.controller_port1 =
-                Self::parse_controller_arg("--nes-controller-port1", &controller_port1)?;
-            self.nes.controller_port1_explicit = true;
-        }
-        if let Some(controller_port2) = Self::parse_string_arg(args, "--nes-controller-port2") {
-            self.nes.controller_port2 =
-                Self::parse_controller_arg("--nes-controller-port2", &controller_port2)?;
-            self.nes.controller_port2_explicit = true;
-        }
 
         // Display argument (only applies if fullscreen is set)
         // TODO: Move to FrontendConfig in task 8
@@ -678,12 +725,6 @@ impl Config {
         Ok(rom_path)
     }
 
-    /// Parse a string argument from command-line args.
-    ///
-    /// Supports both `--flag value` and `--flag=value` forms.
-    fn parse_string_arg(args: &[String], flag: &str) -> Option<String> {
-        crate::platform::config::parse_cli_string_arg(args, flag)
-    }
     pub fn apply_rom_timing_mode(
         &mut self,
         rom_timing_mode: crate::nes::cartridge::TimingMode,
@@ -904,43 +945,6 @@ impl Config {
 
         parts.join(" | ")
     }
-
-    fn validate_controller_ports(&self) -> Result<(), String> {
-        if self.nes.hardware_mode == HardwareMode::Famicom
-            && (self.nes.controller_port1_explicit || self.nes.controller_port2_explicit)
-        {
-            return Err(
-                "In Famicom mode, --controller-port1 and --controller-port2 are not allowed because ports 1 and 2 are hardwired joypads".to_string(),
-            );
-        }
-
-        if self.nes.hardware_mode == HardwareMode::Nes && self.nes.expansion_port.is_famicom_only()
-        {
-            return Err("famicom expansion_port requires hardware=famicom".to_string());
-        }
-
-        let mouse_emulated_controller_count =
-            [self.nes.controller_port1, self.nes.controller_port2]
-                .iter()
-                .filter(|controller| {
-                    matches!(
-                        **controller,
-                        ControllerType::Arkanoid
-                            | ControllerType::Zapper
-                            | ControllerType::SnesMouse
-                    )
-                })
-                .count();
-
-        if mouse_emulated_controller_count > 1 {
-            return Err(
-                "No more than one mouse-emulated controller can be configured (Arkanoid/Zapper)"
-                    .to_string(),
-            );
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -1027,18 +1031,18 @@ mod tests {
 
     #[test]
     fn test_parse_hardware_value_dendy_returns_nes_dendy() {
-        let result = Config::parse_hardware_value("dendy");
+        let result = NesConfig::parse_hardware_value("dendy");
         assert_eq!(result, Some((HardwareMode::Nes, HardwareModel::Dendy)));
     }
 
     #[test]
     fn test_parse_hardware_value_dendy_is_case_insensitive() {
         assert_eq!(
-            Config::parse_hardware_value("DENDY"),
+            NesConfig::parse_hardware_value("DENDY"),
             Some((HardwareMode::Nes, HardwareModel::Dendy))
         );
         assert_eq!(
-            Config::parse_hardware_value("Dendy"),
+            NesConfig::parse_hardware_value("Dendy"),
             Some((HardwareMode::Nes, HardwareModel::Dendy))
         );
     }
@@ -1046,11 +1050,11 @@ mod tests {
     #[test]
     fn test_parse_hardware_value_playchoice10_returns_nes_ntsc() {
         assert_eq!(
-            Config::parse_hardware_value("playchoice10"),
+            NesConfig::parse_hardware_value("playchoice10"),
             Some((HardwareMode::Nes, HardwareModel::NesNtsc))
         );
         assert_eq!(
-            Config::parse_hardware_value("playchoice-10"),
+            NesConfig::parse_hardware_value("playchoice-10"),
             Some((HardwareMode::Nes, HardwareModel::NesNtsc))
         );
     }

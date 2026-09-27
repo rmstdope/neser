@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::gba::console::config::GBA_FILTER_NAMES;
-use crate::platform::config::{Config, parse_bool, parse_hex_u8};
+use crate::platform::config::{Config, parse_hex_u8};
 use crate::platform::shaders::SHADER_PRESETS;
 use std::fs;
 use std::path::Path;
@@ -9,10 +9,13 @@ use std::path::Path;
 impl NesConfig {
     /// Apply a single config file key-value pair to NES configuration.
     ///
-    /// Handles NES-specific config keys: APU channel toggles (`nes-pulse1`, `nes-pulse2`,
-    /// `nes-triangle`, `nes-noise`, `nes-dmc`), `nes-zapper_detection_size`, overscan
-    /// (`nes-horizontal_overscan`, `nes-vertical_overscan`), `nes-palette`,
-    /// `nes-oam_dram_decay`, and `nes-enable_4_score`.
+    /// Handles every `nes-` config key: hardware (`nes-hardware`), expansion port,
+    /// VS System DIP switches and wiring, controller ports, APU channel toggles
+    /// (`nes-pulse1`, `nes-pulse2`, `nes-triangle`, `nes-noise`, `nes-dmc`),
+    /// `nes-zapper_detection_size`, overscan (`nes-horizontal_overscan`,
+    /// `nes-vertical_overscan`), `nes-palette`, `nes-oam_dram_decay`, and
+    /// `nes-enable_4_score`. `nes-filter` is the platform's, as it picks the
+    /// frontend shader. Keys this config does not own are ignored.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         use crate::platform::config::parse_bool;
         let key = key.replace('-', "_");
@@ -109,6 +112,29 @@ impl NesConfig {
                 if let Ok(v) = value.parse::<u8>() {
                     self.vertical_overscan = v.min(16);
                 }
+            }
+            "nes_hardware" => self.apply_hardware_value(value)?,
+            "nes_expansion_port" => self.apply_expansion_port_value(value)?,
+            "nes_vs_dip_switches" => {
+                self.vs_dip_switches = parse_hex_u8(value).map_err(|_| {
+                    format!(
+                        "Invalid nes_vs_dip_switches value: '{}'. Expected hex (0x00-0xFF) or decimal (0-255)",
+                        value
+                    )
+                })?;
+            }
+            "nes_vs_controllers_swapped" => {
+                if let Ok(b) = parse_bool(value) {
+                    self.vs_controllers_swapped = b;
+                }
+            }
+            "nes_controller_port1" => {
+                self.controller_port1 = Self::parse_controller_arg("nes_controller_port1", value)?;
+                self.controller_port1_explicit = true;
+            }
+            "nes_controller_port2" => {
+                self.controller_port2 = Self::parse_controller_arg("nes_controller_port2", value)?;
+                self.controller_port2_explicit = true;
             }
             "nes_palette" => {
                 if let Some(palette) = NesPalette::from_config_id(value) {
@@ -222,21 +248,6 @@ impl Config {
 
         // Handle keys that need Config-level coordination or haven't been moved yet.
         match key.as_str() {
-            "nes_hardware" => self.apply_hardware_value(value)?,
-            "nes_expansion_port" => self.apply_expansion_port_value(value)?,
-            "nes_vs_dip_switches" => {
-                self.nes.vs_dip_switches = parse_hex_u8(value).map_err(|_| {
-                    format!(
-                        "Invalid nes_vs_dip_switches value: '{}'. Expected hex (0x00-0xFF) or decimal (0-255)",
-                        value
-                    )
-                })?;
-            }
-            "nes_vs_controllers_swapped" => {
-                if let Ok(b) = parse_bool(value) {
-                    self.nes.vs_controllers_swapped = b;
-                }
-            }
             "nes_filter" => {
                 if !value.is_empty() {
                     self.frontend.shader_path = Some(Self::map_filter_name_for(
@@ -256,16 +267,6 @@ impl Config {
                     self.frontend.shader_path =
                         Some(Self::map_filter_name_for(value, GBA_FILTER_NAMES)?);
                 }
-            }
-            "nes_controller_port1" => {
-                self.nes.controller_port1 =
-                    Self::parse_controller_arg("nes_controller_port1", value)?;
-                self.nes.controller_port1_explicit = true;
-            }
-            "nes_controller_port2" => {
-                self.nes.controller_port2 =
-                    Self::parse_controller_arg("nes_controller_port2", value)?;
-                self.nes.controller_port2_explicit = true;
             }
             _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }

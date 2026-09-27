@@ -229,6 +229,84 @@ bitflags! {
 mod tests {
     use super::*;
 
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("neser")
+            .chain(list.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn nes_config_file_hardware_famicom_sets_mode() {
+        let mut config = NesConfig::default();
+        config
+            .apply_config_value("nes-hardware", "famicom")
+            .unwrap();
+        assert_eq!(config.hardware_mode, HardwareMode::Famicom);
+        assert!(config.hardware_mode_explicit);
+    }
+
+    #[test]
+    fn nes_config_file_vs_keys_set_nes_config() {
+        let mut config = NesConfig::default();
+        config
+            .apply_config_value("nes_vs_dip_switches", "0x81")
+            .unwrap();
+        config
+            .apply_config_value("nes-vs-controllers-swapped", "true")
+            .unwrap();
+        assert_eq!(config.vs_dip_switches, 0x81);
+        assert!(config.vs_controllers_swapped);
+    }
+
+    #[test]
+    fn nes_config_file_controller_port_sets_port() {
+        let mut config = NesConfig::default();
+        config
+            .apply_config_value("nes-controller-port2", "zapper")
+            .unwrap();
+        assert_eq!(config.controller_port2, ControllerType::Zapper);
+        assert!(config.controller_port2_explicit);
+    }
+
+    #[test]
+    fn nes_config_cli_hardware_playchoice_sets_expansion_port() {
+        let mut config = NesConfig::default();
+        config
+            .apply_args(&args(&["--nes-hardware", "playchoice10"]))
+            .unwrap();
+        assert_eq!(config.expansion_port, ExpansionPort::Playchoice10);
+        assert!(config.hardware_model_explicit);
+    }
+
+    #[test]
+    fn nes_config_cli_expansion_port_and_controllers() {
+        let mut config = NesConfig::default();
+        config
+            .apply_args(&args(&[
+                "--nes-expansion-port",
+                "vs-system",
+                "--nes-controller-port1=zapper",
+                "--nes-palette",
+                "mesen",
+            ]))
+            .unwrap();
+        assert_eq!(config.expansion_port, ExpansionPort::VsSystem);
+        assert_eq!(config.controller_port1, ControllerType::Zapper);
+        assert_eq!(config.palette, NesPalette::from_config_id("mesen").unwrap());
+    }
+
+    #[test]
+    fn nes_config_validate_rejects_famicom_controller_override() {
+        let config = NesConfig {
+            hardware_mode: HardwareMode::Famicom,
+            controller_port1_explicit: true,
+            ..NesConfig::default()
+        };
+        assert!(config.validate().is_err());
+        assert!(NesConfig::default().validate().is_ok());
+    }
+
     #[test]
     fn test_timing_mode_values_match_expected_cpu_clock_and_scanlines() {
         let ntsc_timing = HardwareModel::NesNtsc.timing_mode();
