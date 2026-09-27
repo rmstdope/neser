@@ -39,8 +39,10 @@ impl Ppu {
             0x2100 => {
                 // fullsnes (OAMADDL/OAMADDH): the vblank OAM address reload "occurs also when
                 // deactivating forced blank anytime during the first scanline of vblank".
-                // Mesen2 reloads on any $2100 write made while forced blank is on during that
-                // line, whether or not it clears it; we follow fullsnes' narrower wording.
+                // anomie's regs.txt ("writing this register on the first line of V-Blank ...
+                // when force blank is currently active causes the OAM Address Reset") and
+                // Mesen2 reload on any such write, even one that keeps forced blank on; we
+                // follow fullsnes, the specification authority, and a test pins the choice.
                 if self.forced_blank_enabled()
                     && value & 0x80 == 0
                     && self.position.scanline == self.vblank_start_line()

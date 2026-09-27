@@ -213,8 +213,9 @@ impl Ppu {
                 // begin of Vblank ... but only if not in Forced Blank mode" the PPU reloads it
                 // from OAMADD. Games DMA their OAM buffer every vblank relying on it (Donkey
                 // Kong Country 3, nr-3bo). fullsnes' timing table puts it at H=10; like Mesen2
-                // (`SnesPpu::ProcessEndOfScanline`) we do it as the line starts, which no CPU
-                // access can tell apart since the NMI arrives only after it.
+                // (`SnesPpu::ProcessEndOfScanline`) we do it as the line starts. The NMI flag
+                // rises earlier, at H=0.5, but no NMI handler can reach $2104 before H=10;
+                // only a $4210 poll or a DMA straddling the line start could see the gap.
                 if !self.forced_blank_enabled() {
                     self.reload_oam_address();
                 }
@@ -775,6 +776,22 @@ mod tests {
         ppu.write_register(0x2104, 0x78);
 
         assert_eq!((ppu.oam_byte(0), ppu.oam_byte(1)), (0x56, 0x78));
+    }
+
+    // fullsnes names only *deactivating* forced blank; anomie and Mesen2 also reload on a
+    // write that keeps it on. We follow fullsnes (see the $2100 arm in registers.rs).
+    #[test]
+    fn a_write_that_keeps_forced_blank_on_the_first_vblank_line_keeps_the_oam_address() {
+        let mut ppu = Ppu::new();
+        leave_oam_address_two_bytes_past_the_reload(&mut ppu);
+
+        tick_to_vblank(&mut ppu);
+        tick_dots(&mut ppu, 100);
+        ppu.write_register(0x2100, 0x80);
+        ppu.write_register(0x2104, 0x56);
+        ppu.write_register(0x2104, 0x78);
+
+        assert_eq!((ppu.oam_byte(2), ppu.oam_byte(3)), (0x56, 0x78));
     }
 
     #[test]
