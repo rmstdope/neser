@@ -190,7 +190,6 @@ impl Timing {
         self.rendering_enabled_d2 = d2;
     }
 
-    /// Get the TV system
     /// This console's region parameters.
     pub fn region(&self) -> &'static RegionParams {
         self.region

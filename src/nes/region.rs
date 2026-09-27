@@ -245,12 +245,28 @@ mod tests {
 
     /// Outside this module, no NES subsystem names a region to decide its timing: a region
     /// defined in one place cannot fall through a stale `else` in another (#1889, #1890).
-    /// Test code, the cartridge header parser (`TimingMode`'s home) and the hardware-model
-    /// selection in `console/config/` (which region a ROM asks for, not its timing) may name
-    /// regions.
+    /// That covers naming PAL or Dendy, and the NTSC-only form (`== TimingMode::Ntsc`,
+    /// `matches!(…, TimingMode::Ntsc)`) that sends Dendy down the PAL branch unnamed.
+    /// Test code, the header parser (`cartridge/ines.rs`, `TimingMode`'s home), and the
+    /// hardware-model conversions in `cartridge/hardware_type.rs` and `console/config/` (which
+    /// region a ROM asks for, not its timing) may name regions.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn only_the_region_module_matches_on_pal_or_dendy() {
+        fn branches_on_region(production: &str) -> bool {
+            if production.contains("TimingMode::Pal")
+                || production.contains("TimingMode::Dendy")
+                || production.contains("== TimingMode::Ntsc")
+                || production.contains("!= TimingMode::Ntsc")
+            {
+                return true;
+            }
+            production.match_indices("matches!(").any(|(i, _)| {
+                let args = &production[i..];
+                let end = args.find(')').unwrap_or(args.len());
+                args[..end].contains("TimingMode::Ntsc")
+            })
+        }
         fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
             for entry in std::fs::read_dir(dir).expect("read src/nes") {
                 let path = entry.expect("dir entry").path();
@@ -274,7 +290,8 @@ mod tests {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             let exempt = rel == "region.rs"
                 || rel.starts_with("console/config/")
-                || rel.starts_with("cartridge/")
+                || rel == "cartridge/ines.rs"
+                || rel == "cartridge/hardware_type.rs"
                 || rel.starts_with("integration_tests/")
                 || name == "tests.rs"
                 || name.ends_with("_test.rs")
@@ -284,14 +301,14 @@ mod tests {
             }
             let source = std::fs::read_to_string(&path).expect("read source");
             let production = source.split("\nmod tests {").next().unwrap_or("");
-            if production.contains("TimingMode::Pal") || production.contains("TimingMode::Dendy") {
+            if branches_on_region(production) {
                 offenders.push(rel);
             }
         }
         offenders.sort();
         assert!(
             offenders.is_empty(),
-            "read region timing from `TimingMode::region()` instead of matching Pal/Dendy in: {offenders:?}"
+            "read region timing from `TimingMode::region()` instead of matching the timing mode in: {offenders:?}"
         );
     }
 }
