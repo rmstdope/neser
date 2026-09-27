@@ -4,8 +4,10 @@ use crate::gb::bus::GbBus;
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
 use crate::gb::bus::oam_dma::OamDma;
 use crate::gb::bus::serial::Serial;
+use crate::gb::bus::snapshot::{BusSnapshot, NoCartridge, SharedState, SharedStateMut};
 use crate::gb::bus::tick_sequence::{TickParts, TickSequence};
 use crate::gb::cartridge::GbCartridge;
+use crate::gb::console::save_state::{BusState, GbBusType};
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
 use crate::gb::ppu::{Ppu, StopDisplayMode};
@@ -118,38 +120,11 @@ impl DmgBus {
         bus
     }
 
-    /// Reset all bus state to power-on defaults.
-    ///
-    /// Reinitialises the PPU, timer, and joypad; zeroes WRAM and HRAM;
-    /// clears IF and IE. The cartridge is not touched by this reset, so
-    /// ROM, cartridge RAM, and any mapper state are preserved.
+    /// Hard reset: rebuild the bus as [`DmgBus::new`] (or [`DmgBus::new_sgb`])
+    /// would, keeping the cartridge and the audio sample rate; see
+    /// `snapshot.rs`.
     pub fn reset(&mut self) {
-        let apu_rate = self.apu.sample_rate();
-        let (boot_rom, div_counter) = match self.model.boot_variant() {
-            DmgBootVariant::Production => (DMG_BOOT_ROM, 5036),
-            DmgBootVariant::Dmg0 => (DMG0_BOOT_ROM, 204),
-        };
-        self.ppu = Ppu::new();
-        self.ppu.write_register(0xFF40, 0x00); // power-on: LCD disabled
-        self.timer = Timer::with_div_counter(div_counter);
-        self.joypad = Joypad::new();
-        let is_cgb = self.cart.is_cgb();
-        self.apu = Apu::new(is_cgb);
-        if is_cgb {
-            self.apu.set_cgb_model(CgbModel::CgbD);
-        }
-        self.apu.set_sample_rate(apu_rate);
-        self.wram = [0u8; 0x2000];
-        self.hram = [0u8; 0x7F];
-        self.if_reg = 1; // VBlank flag set at power-on (real DMG hardware)
-        self.ie_reg = 0;
-        self.boot_rom = boot_rom;
-        self.boot_rom_active = true;
-        self.serial = Serial::new();
-        self.oam_dma = OamDma::from_parts(false, 0xFF, 0, false);
-        if let Some(ref mut sgb) = self.sgb {
-            *sgb = SgbState::default();
-        }
+        BusSnapshot::reset(self);
     }
 
     /// Returns `true` while the boot ROM is still mapped at $0000–$00FF.
@@ -227,93 +202,16 @@ impl DmgBus {
 
     // ── Save-state capture / restore ───────────────────────────────────────
 
-    /// Capture the full bus state for serialization.
-    pub fn capture_bus_state(&self) -> crate::gb::console::save_state::BusState {
-        use crate::gb::console::save_state::{BusState, GbBusType};
-        let mut wram_padded = [0u8; 0x8000];
-        wram_padded[..0x2000].copy_from_slice(&self.wram);
-        let (dma_active, dma_source, dma_position, dma_oam_blocked) = self.oam_dma.parts();
-        let mut state = BusState {
-            bus_type: GbBusType::Dmg,
-            ppu: self.ppu.clone(),
-            wram: Box::new(wram_padded),
-            hram: self.hram,
-            timer: self.timer.clone(),
-            joypad: self.joypad.clone(),
-            apu: self.apu.clone(),
-            if_reg: self.if_reg,
-            ie_reg: self.ie_reg,
-            dma_active,
-            dma_source,
-            dma_position,
-            dma_oam_blocked,
-            hdma: None,
-            svbk: None,
-            key1: None,
-            apu_tick_accumulator: None,
-            rtc_tick_accumulator: None,
-            ff72: None,
-            ff73: None,
-            ff74: None,
-            ff75: None,
-            key0: None,
-            key0_locked: None,
-            cgb_extra_oam: None,
-            boot_rom_active: Some(self.boot_rom_active),
-            sb: None,
-            sc: None,
-            serial_buf: None,
-            serial_bits_remaining: None,
-            serial_master_clock: None,
-            model: Some(self.model),
-            sgb: self.sgb.clone(),
-        };
-        self.serial.capture_into(&mut state);
-        state
+    /// Capture the full bus state for serialization: see `snapshot.rs`.
+    pub fn capture_bus_state(&self) -> BusState {
+        BusSnapshot::capture_bus_state(self)
     }
 
-    /// Restore bus state from a deserialized snapshot.
+    /// Restore bus state from a deserialized snapshot: see `snapshot.rs`.
     ///
     /// Returns an error if the save state was captured from a CGB bus.
-    pub fn restore_bus_state(
-        &mut self,
-        state: &crate::gb::console::save_state::BusState,
-    ) -> Result<(), String> {
-        use crate::gb::console::save_state::GbBusType;
-        if state.bus_type != GbBusType::Dmg {
-            return Err(format!(
-                "bus type mismatch: expected DMG, found {:?}",
-                state.bus_type
-            ));
-        }
-        self.ppu = state.ppu.clone();
-        self.ppu.fixup_after_state_load();
-        self.wram.copy_from_slice(&state.wram[..0x2000]);
-        self.hram = state.hram;
-        self.timer = state.timer.clone();
-        self.joypad = state.joypad.clone();
-        self.apu = state.apu.clone();
-        self.if_reg = state.if_reg;
-        self.ie_reg = state.ie_reg;
-        self.oam_dma = OamDma::from_parts(
-            state.dma_active,
-            state.dma_source,
-            state.dma_position,
-            state.dma_oam_blocked,
-        );
-        if let Some(active) = state.boot_rom_active {
-            self.boot_rom_active = active;
-        }
-        self.serial.restore_from(state);
-        if let Some(model) = state.model {
-            self.model = model;
-            self.boot_rom = match model.boot_variant() {
-                DmgBootVariant::Production => DMG_BOOT_ROM,
-                DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
-            };
-        }
-        self.sgb = state.sgb.clone();
-        Ok(())
+    pub fn restore_bus_state(&mut self, state: &BusState) -> Result<(), String> {
+        BusSnapshot::restore_bus_state(self, state)
     }
 
     /// Returns `true` when the cartridge has battery-backed RAM.
@@ -432,6 +330,81 @@ impl MemoryMap for DmgBus {
 
     fn start_oam_dma(&mut self, val: u8) {
         self.oam_dma.start(val);
+    }
+}
+
+impl BusSnapshot for DmgBus {
+    const BUS_TYPE: GbBusType = GbBusType::Dmg;
+
+    fn shared(&self) -> SharedState<'_> {
+        SharedState {
+            ppu: &self.ppu,
+            hram: &self.hram,
+            timer: &self.timer,
+            joypad: &self.joypad,
+            apu: &self.apu,
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            oam_dma: self.oam_dma,
+            serial: &self.serial,
+            boot_rom_active: self.boot_rom_active,
+        }
+    }
+
+    fn shared_mut(&mut self) -> SharedStateMut<'_> {
+        SharedStateMut {
+            ppu: &mut self.ppu,
+            hram: &mut self.hram,
+            timer: &mut self.timer,
+            joypad: &mut self.joypad,
+            apu: &mut self.apu,
+            if_reg: &mut self.if_reg,
+            ie_reg: &mut self.ie_reg,
+            oam_dma: &mut self.oam_dma,
+            serial: &mut self.serial,
+            boot_rom_active: &mut self.boot_rom_active,
+        }
+    }
+
+    /// The DMG's 8 KiB of WRAM fills the first quarter of the array.
+    fn wram_flat(&self) -> Box<[u8; 0x8000]> {
+        let mut flat = Box::new([0u8; 0x8000]);
+        flat[..0x2000].copy_from_slice(&self.wram);
+        flat
+    }
+
+    fn restore_wram(&mut self, flat: &[u8; 0x8000]) {
+        self.wram.copy_from_slice(&flat[..0x2000]);
+    }
+
+    fn capture_model(&self, state: &mut BusState) {
+        state.model = Some(self.model);
+        state.sgb = self.sgb.clone();
+    }
+
+    fn restore_model(&mut self, state: &BusState) -> Result<(), String> {
+        if let Some(model) = state.model {
+            self.model = model;
+            self.boot_rom = match model.boot_variant() {
+                DmgBootVariant::Production => DMG_BOOT_ROM,
+                DmgBootVariant::Dmg0 => DMG0_BOOT_ROM,
+            };
+        }
+        self.sgb = state.sgb.clone();
+        Ok(())
+    }
+
+    fn take_cartridge(&mut self) -> Box<dyn GbCartridge> {
+        std::mem::replace(&mut self.cart, Box::new(NoCartridge))
+    }
+
+    /// Keeps the model and whether the SGB overlay is enabled.
+    fn rebuilt(&self, cart: Box<dyn GbCartridge>) -> Self {
+        if self.sgb.is_some() {
+            Self::new_sgb(cart, self.model)
+        } else {
+            Self::new(cart, self.model)
+        }
     }
 }
 
@@ -1902,5 +1875,67 @@ mod tests {
         assert_eq!(bus.read_cpu_m_cycle(0xFF46), 0xC0);
         bus.write_cpu_m_cycle(0xFF46, 0x80);
         assert_eq!(bus.read(0xFF46), 0x80);
+    }
+
+    // ── Hard reset rebuilds through the constructor ─────────────────────────
+
+    /// Scribble over as much bus state as the CPU can reach.
+    fn dirty(bus: &mut DmgBus) {
+        bus.set_audio_sample_rate(22_050.0);
+        bus.write(0xFF50, 0x01); // unmap the boot ROM
+        for addr in [0xC000, 0xDFFF, 0xFF80, 0xFFFE] {
+            bus.write(addr, 0x5A);
+        }
+        bus.write(0xFF0F, 0x1F); // IF
+        bus.write(0xFFFF, 0x1F); // IE
+        bus.write(0xFF01, 0x42); // SB
+        bus.write(0xFF02, 0x81); // SC
+        bus.write(0xFF40, 0x91); // LCD on
+        bus.write(0xFF42, 0x33); // SCY
+        bus.write(0xFF46, 0xC0); // OAM DMA
+        bus.write(0xFF26, 0x00); // APU off
+        if bus.sgb.is_some() {
+            let mlt_req_1 = [0x89, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            send_sgb_packet(bus, &mlt_req_1);
+        }
+        bus.tick(200);
+    }
+
+    #[test]
+    fn test_reset_matches_a_freshly_built_bus() {
+        type BuildFn = fn(Box<dyn GbCartridge>, DmgModel) -> DmgBus;
+        let builds: [(&str, BuildFn); 2] = [("DMG", DmgBus::new), ("SGB", DmgBus::new_sgb)];
+        for (name, build) in builds {
+            for model in [DmgModel::DmgB, DmgModel::Dmg0] {
+                let mut reset = build(rom_only_cart(), model);
+                dirty(&mut reset);
+                reset.reset();
+
+                let mut fresh = build(rom_only_cart(), model);
+                fresh.set_audio_sample_rate(22_050.0);
+
+                let snapshot =
+                    |bus: &DmgBus| serde_json::to_value(bus.capture_bus_state()).expect("json");
+                assert_eq!(
+                    snapshot(&reset),
+                    snapshot(&fresh),
+                    "{name} {model:?}: reset differs from a fresh bus"
+                );
+                assert_eq!(reset.boot_rom, fresh.boot_rom, "{name} {model:?}: boot ROM");
+            }
+        }
+    }
+
+    #[test]
+    fn test_reset_keeps_the_sgb_overlay() {
+        let mut sgb = make_sgb_bus();
+        dirty(&mut sgb);
+        sgb.reset();
+        assert!(sgb.sgb.is_some(), "an SGB bus stays an SGB bus");
+
+        let mut plain = make_bus();
+        dirty(&mut plain);
+        plain.reset();
+        assert!(plain.sgb.is_none(), "a plain DMG bus gains no SGB overlay");
     }
 }
