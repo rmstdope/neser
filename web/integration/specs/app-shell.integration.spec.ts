@@ -11,9 +11,12 @@ test.describe("web app shell", () => {
         }
     });
 
-    test("accepts GBA ROM files in the file picker", async ({ page }) => {
+    test("accepts every supported ROM file in the file picker once start-up installs the wasm table", async ({ page }) => {
         await page.goto("/");
 
-        await expect(page.locator("#rom")).toHaveAttribute("accept", /(^|,)\.gba(,|$)/);
+        await expect(page.locator("#rom")).toHaveAttribute(
+            "accept",
+            ".nes,.gb,.gbc,.cgb,.gba,.sfc,.smc,application/octet-stream"
+        );
     });
 });

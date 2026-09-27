@@ -4,6 +4,7 @@ import init, {
     WasmGba,
     WasmSnes,
     gamepad_init_toast_message,
+    rom_extension_table,
     snes_dsp_firmware_is_genuine,
     snes_rom_dsp_chip
 } from "../pkg/neser";
@@ -45,7 +46,12 @@ import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
 import { handleRomSelection } from "./rom/rom_selection";
 import { shouldCreateFreshEmulatorForRomStart } from "./rom/emulator_lifecycle";
-import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName } from "./rom/rom_extensions";
+import {
+    applyRomExtensionTable,
+    supportedRomExtensionsText,
+    webRomConsoleKindForName,
+    webRomExtensionForName
+} from "./rom/rom_extensions";
 import { CONSOLES, type ConsoleKind } from "./console/consoles";
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
@@ -2705,7 +2711,6 @@ async function populateRomSelect() {
     }
 }
 
-populateRomSelect();
 // Set initial button states (all disabled until a ROM is loaded)
 updateEmulationButtons();
 
@@ -2756,11 +2761,15 @@ updateConnectedGamepads();
 
 ensureWasmInitialized()
     .then(() => {
+        // Which extensions are ROMs is the wasm binding's table: the picker's accept list and the
+        // built-in ROM list both wait for it.
+        applyRomExtensionTable(rom_extension_table(), romInput);
+        void populateRomSelect();
         updateConnectedGamepads();
         showPageLoadGamepadInitToast();
     })
     .catch((error) => {
-        console.error("Failed to initialize WASM for gamepad init toast", error);
+        console.error("Failed to initialize WASM at start-up", error);
     });
 
 const webShortcutActions = {

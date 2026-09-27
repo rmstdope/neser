@@ -1,10 +1,51 @@
-import { expect, it } from "vitest";
+/**
+ * @vitest-environment jsdom
+ */
+import { beforeEach, expect, it } from "vitest";
 import {
+    applyRomExtensionTable,
+    installRomExtensionTable,
     isSupportedWebRomName,
+    romPickerAccept,
     supportedRomExtensionsText,
     webRomConsoleKindForName,
     webRomExtensionForName
 } from "./rom_extensions";
+import { ROM_EXTENSION_TABLE } from "./rom_extension_table.fixture";
+
+beforeEach(() => {
+    installRomExtensionTable(ROM_EXTENSION_TABLE);
+});
+
+it("knows no ROM extension until the table is installed", () => {
+    installRomExtensionTable([]);
+    expect(webRomConsoleKindForName("mario.nes")).toBeNull();
+    expect(supportedRomExtensionsText()).toBe("");
+});
+
+it("drops table entries that are not an extension paired with a known console", () => {
+    installRomExtensionTable([["nes", "nes"], ["abc", "dreamcast"], ["x"], "gb", [7, "gb"], ["SFC", "snes"]]);
+    expect(supportedRomExtensionsText()).toBe(".nes, .sfc");
+    expect(webRomConsoleKindForName("game.sfc")).toBe("snes");
+    expect(webRomConsoleKindForName("game.abc")).toBeNull();
+});
+
+it("treats a table that is not a list as empty", () => {
+    installRomExtensionTable(undefined);
+    expect(supportedRomExtensionsText()).toBe("");
+});
+
+it("gives the file picker every supported extension, then raw binaries", () => {
+    expect(romPickerAccept()).toBe(".nes,.gb,.gbc,.cgb,.gba,.sfc,.smc,application/octet-stream");
+});
+
+it("sets the ROM input's accept list from the installed table at start-up", () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    applyRomExtensionTable([["nes", "nes"], ["sfc", "snes"]], input);
+    expect(input.accept).toBe(".nes,.sfc,application/octet-stream");
+    expect(webRomConsoleKindForName("game.sfc")).toBe("snes");
+});
 
 it("classifies NES ROM names as NES", () => {
     expect(webRomConsoleKindForName("mario.nes")).toBe("nes");
