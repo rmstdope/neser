@@ -26,7 +26,7 @@ function makeButtonElement(button: string): Element {
 function makeTouchZoneElement(
     zone: string,
     rect: { left: number; top: number; width: number; height: number },
-): Element {
+): HTMLElement {
     const el = document.createElement("div");
     el.setAttribute("data-touch-zone", zone);
     Object.defineProperty(el, "getBoundingClientRect", {
@@ -239,7 +239,7 @@ describe("TouchInputManager", () => {
     let btnB: Element;
     let btnUp: Element;
     let btnRight: Element;
-    let joystickZone: Element;
+    let joystickZone: HTMLElement;
 
     beforeEach(() => {
         callback = vi.fn();

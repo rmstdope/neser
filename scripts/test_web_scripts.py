@@ -133,6 +133,63 @@ class RunWebPortTest(unittest.TestCase):
                 time.sleep(0.1)
 
 
+BUILD_WEB = SCRIPTS_ROOT / "build_web.sh"
+
+
+class BuildWebTest(unittest.TestCase):
+    """Given build_web.sh, when it builds, then web/pkg carries the bindings' own types (nr-n48).
+
+    ``cargo``, ``wasm-bindgen`` and ``npx`` are fakes on ``PATH`` that only log their arguments,
+    so the test sees every command the script runs without compiling anything.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.log = self.tmp / "commands.log"
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        for tool in ("cargo", "wasm-bindgen", "npx"):
+            path = bin_dir / tool
+            path.write_text(f'#!/bin/sh\necho "{tool} $*" >> "$COMMAND_LOG"\n')
+            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        self.path = f"{bin_dir}:/usr/bin:/bin"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run(self, *args: str) -> list[str]:
+        env = {"PATH": self.path, "HOME": str(self.tmp), "COMMAND_LOG": str(self.log)}
+        result = subprocess.run(["sh", str(BUILD_WEB), *args], env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        return self.log.read_text().splitlines()
+
+    def test_bindings_are_generated_with_typescript(self) -> None:
+        bindgen = [line for line in self._run() if line.startswith("wasm-bindgen ")]
+        self.assertEqual(1, len(bindgen), bindgen)
+        self.assertIn("--out-dir web/pkg", bindgen[0])
+        self.assertNotIn("--no-typescript", bindgen[0])
+
+    def test_default_run_bundles_with_vite(self) -> None:
+        self.assertEqual("npx vite build", self._run()[-1])
+
+    def test_an_unknown_argument_is_refused_before_building(self) -> None:
+        env = {"PATH": self.path, "HOME": str(self.tmp), "COMMAND_LOG": str(self.log)}
+        result = subprocess.run(
+            ["sh", str(BUILD_WEB), "--nobundle"], env=env, capture_output=True, text=True, check=False
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("usage: build_web.sh [--no-bundle]", result.stderr)
+        self.assertFalse(self.log.exists(), "nothing may run after an unknown argument")
+
+    def test_no_bundle_builds_pkg_without_vite(self) -> None:
+        commands = self._run("--no-bundle")
+        self.assertTrue(commands[0].startswith("cargo build --profile wasm-release"), commands)
+        self.assertTrue(commands[1].startswith("wasm-bindgen "), commands)
+        self.assertTrue(commands[2].startswith("npx wasm-opt "), commands)
+        self.assertEqual(3, len(commands), commands)
+
+
 def _web_integration_steps() -> list[str]:
     """Return the text of each step of the ``web-integration`` CI job, in order."""
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -167,6 +224,43 @@ class WebIntegrationJobTest(unittest.TestCase):
     def test_build_runs_before_the_tests(self) -> None:
         build = next(i for i, step in enumerate(self.steps) if "bash scripts/build_web.sh" in step)
         self.assertLess(build, self._step("Run web integration tests"))
+
+    def test_typechecks_against_the_bindings_the_build_generated(self) -> None:
+        """tsc needs web/pkg/neser.d.ts, which only the build step writes (nr-n48)."""
+        typecheck = self._step("Type-check web frontend")
+        self.assertIn("run: npx tsc --noEmit -p tsconfig.json\n", self.steps[typecheck])
+        self.assertLess(self._step("Build web app"), typecheck)
+
+    def test_a_tsconfig_change_runs_the_job(self) -> None:
+        ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        web_integration_filter = re.search(r"\n {12}web_integration:\n((?: {14}- .*\n)+)", ci)
+        assert web_integration_filter is not None, "ci.yml has no web_integration path filter"
+        self.assertIn("- 'tsconfig.json'", web_integration_filter.group(1))
+
+    def test_a_vite_config_change_runs_the_ci_typecheck(self) -> None:
+        """tsconfig.json includes vite.config.ts, so the job that runs tsc must see it change."""
+        ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        web_integration_filter = re.search(r"\n {12}web_integration:\n((?: {14}- .*\n)+)", ci)
+        assert web_integration_filter is not None, "ci.yml has no web_integration path filter"
+        self.assertIn("- 'vite.config.ts'", web_integration_filter.group(1))
+
+
+class GateTypecheckTest(unittest.TestCase):
+    """Given the full gate, when it reaches the web legs, then it type-checks the web TypeScript (nr-n48)."""
+
+    def setUp(self) -> None:
+        self.gate = (SCRIPTS_ROOT / "gate-full.sh").read_text(encoding="utf-8")
+
+    def _line(self, command: str) -> int:
+        lines = self.gate.splitlines()
+        self.assertIn(command, lines)
+        return lines.index(command)
+
+    def test_builds_the_bindings_then_typechecks_before_npm_test(self) -> None:
+        build = self._line("step sh scripts/build_web.sh --no-bundle")
+        typecheck = self._line("step npx tsc --noEmit -p tsconfig.json")
+        self.assertLess(build, typecheck)
+        self.assertLess(typecheck, self._line("step npm test"))
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ jobs:
           filters: |
             web:
               - 'web/**'
+              - 'tsconfig.json'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
@@ -58,6 +59,8 @@ jobs:
               - 'scripts/find_wasm_bindgen.sh'
               - 'scripts/run_web.sh'
               - 'playwright.config.ts'
+              - 'vite.config.ts'
+              - 'tsconfig.json'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/ci.yml'
@@ -432,6 +435,11 @@ jobs:
       # binary players get. The test step below only serves it (nr-1pl).
       - name: Build web app
         run: bash scripts/build_web.sh
+      # Nothing else type-checks web/: Vite and Vitest strip types unchecked. tsc reads the wasm
+      # bindings' types from web/pkg/neser.d.ts, which the build above generates (nr-n48). This job
+      # runs on src/** as well as web/**, so a change to the wasm surface is checked too.
+      - name: Type-check web frontend
+        run: npx tsc --noEmit -p tsconfig.json
       - name: Run web integration tests
         # Playwright splits shards by test count in file order, and the slowest specs sort last:
         # an even split gave shard 2 about 280 worker-seconds to shard 1's 170. Shard 1 therefore

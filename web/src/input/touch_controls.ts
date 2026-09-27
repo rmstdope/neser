@@ -207,7 +207,11 @@ function resolveTouchState(touch: Touch): ResolvedTouchState {
         };
     }
 
-    const zone = element?.getAttribute("data-touch-zone")?.toLowerCase();
+    if (element === null) {
+        return notCaptured();
+    }
+
+    const zone = element.getAttribute("data-touch-zone")?.toLowerCase();
     switch (zone) {
     case "joystick": {
         const joystickState = resolveJoystickState(element, touch);
@@ -219,13 +223,17 @@ function resolveTouchState(touch: Touch): ResolvedTouchState {
         };
     }
     default:
-        return {
-            captured: false,
-            buttons: [],
-            visualRoot: null,
-            stickOffset: null,
-        };
+        return notCaptured();
     }
+}
+
+function notCaptured(): ResolvedTouchState {
+    return {
+        captured: false,
+        buttons: [],
+        visualRoot: null,
+        stickOffset: null,
+    };
 }
 
 /**
