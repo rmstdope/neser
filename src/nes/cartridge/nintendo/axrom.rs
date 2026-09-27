@@ -44,11 +44,7 @@ impl AxROMMapper {
             ctx.submapper
         };
         // AxROM boards have no PRG-RAM; only allocate when explicitly specified.
-        let prg_ram_banks_8k = if ctx.prg_ram_size_specified {
-            ctx.prg_ram_banks_8k
-        } else {
-            0
-        };
+        let prg_ram_banks_8k = ctx.header_prg_ram_banks_8k();
         Self::new_internal(ctx, submapper, prg_ram_banks_8k)
     }
 

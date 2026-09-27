@@ -42,8 +42,8 @@ pub struct MMC2Mapper {
 
 impl MMC2Mapper {
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
-        let has_prg_ram = matches!(ctx.hardware_type, HardwareType::Playchoice10)
-            || (ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0);
+        let has_prg_ram =
+            matches!(ctx.hardware_type, HardwareType::Playchoice10) || ctx.header_prg_ram_kb() > 0;
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: true,

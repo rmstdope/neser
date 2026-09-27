@@ -90,18 +90,6 @@ use super::base_mapper::BaseMapper;
 use super::mapper::MapperContext;
 use crate::nes::cartridge::{Mapper, MapperCapabilities};
 
-/// Compute the PRG-RAM size in KB from a mapper context.
-///
-/// Returns `0` when the header did not explicitly specify PRG-RAM or
-/// indicated zero banks.
-fn prg_ram_size_kb(ctx: &MapperContext) -> usize {
-    if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
-        ctx.prg_ram_banks_8k as usize * 8
-    } else {
-        0
-    }
-}
-
 /// Simple mapper with fixed PRG-ROM and bank-selectable CHR-ROM.
 ///
 /// This template implements the CNROM pattern used by several simple mappers:
@@ -140,7 +128,7 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
         let bus_conflicts = ctx.submapper != 1;
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
-            max_prg_ram_kb: prg_ram_size_kb(&ctx),
+            max_prg_ram_kb: ctx.header_prg_ram_kb(),
             chr_bank_size_kb: CHR_BANK_KB,
             ..Default::default()
         };
@@ -249,7 +237,7 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool>
         let bus_conflicts = ctx.submapper != 2;
 
         let capabilities = MapperCapabilities {
-            max_prg_ram_kb: prg_ram_size_kb(&ctx),
+            max_prg_ram_kb: ctx.header_prg_ram_kb(),
             prg_bank_size_kb: PRG_BANK_KB,
             ..Default::default()
         };
@@ -373,7 +361,7 @@ impl<
     pub fn new(ctx: MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
-            max_prg_ram_kb: prg_ram_size_kb(&ctx),
+            max_prg_ram_kb: ctx.header_prg_ram_kb(),
             ..Default::default()
         };
 

@@ -39,11 +39,7 @@ impl NROMMapper {
             has_chr_banking: false,
             has_dynamic_mirroring: false,
             has_expansion_audio: false,
-            max_prg_ram_kb: if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
-                ctx.prg_ram_banks_8k as usize * 8
-            } else {
-                0
-            },
+            max_prg_ram_kb: ctx.header_prg_ram_kb(),
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             trainer_jsr: false,
