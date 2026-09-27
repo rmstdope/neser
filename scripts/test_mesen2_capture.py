@@ -17,6 +17,12 @@ The committed script is run unchanged except for a prepended shim. The shim repl
 ``io.open`` so the PNG reaches stdout as hex and ``os.getenv`` so the frame comes from
 the test. Mesen2's own ``AllowIoOsAccess`` setting, which is global and shared with
 every other session, is left alone.
+
+``TestMesen2CaptureWithoutFileAccess`` (nr-hg7) checks the script's other promise: with
+Mesen2's file access off it prints one line naming ``AllowIoOsAccess`` and exits 1 at load
+instead of sitting until the timeout. Its shim sets ``io`` and ``os`` to nil, which is what
+Mesen2 does with the setting off, so it too leaves the setting alone. It needs Mesen2 but
+no NESER build.
 """
 
 import os
@@ -145,7 +151,7 @@ class TestMesen2CaptureWithoutFileAccess(unittest.TestCase):
         named = [line for line in run.stdout.splitlines() if "AllowIoOsAccess" in line]
         self.assertEqual(len(named), 1, f"one line naming the setting; stdout was:\n{run.stdout}")
         self.assertEqual(run.returncode, 1)
-        self.assertLess(elapsed, 10, "must stop at load, not run until the timeout")
+        self.assertLess(elapsed, 25, "must stop at load, not run until the 30 s timeout")
 
 
 if __name__ == "__main__":

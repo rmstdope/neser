@@ -104,7 +104,10 @@ parity only), at 24 frames each, twice at load average 30-50 with no miss. It wa
 verified on `mandrill64PerTileRowHiRes.sfc` (512x448) and on the NES static check above.
 The check is `NESER_MESEN2_CAPTURE_TEST=1 python -m unittest scripts.test_mesen2_capture`.
 It is opt-in because it needs Mesen2 and a release build of the tree under test (the
-gate builds none). It leaves `AllowIoOsAccess` alone.
+gate builds none). It leaves `AllowIoOsAccess` alone. The same module's
+`TestMesen2CaptureWithoutFileAccess` (nr-hg7) checks the file-access error above. It
+simulates the setting being off with a shim that sets `io` and `os` to nil, and needs Mesen2
+but no NESER build.
 
 ## SameBoy (GB and CGB)
 
