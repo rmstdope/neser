@@ -11,152 +11,349 @@ use crate::snes::console::save_state::SnesPpuState;
 
 impl Ppu {
     pub(crate) fn capture_state(&self) -> SnesPpuState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref vram,
+            ref cgram,
+            ref oam,
+            ref position,
+            master_cycle_accumulator,
+            line_clock,
+            total_master_clocks,
+            dram_refresh_position,
+            hdma_init_position,
+            ref line_timing_profile,
+            inidisp,
+            nmi_enable,
+            nmi_flag,
+            vblank_active,
+            nmi_line_prev,
+            nmi_edge,
+            nmi_edge_arm,
+            vram_increment_after_high,
+            vram_increment_step,
+            ref vram_address_translation,
+            vram_address,
+            vram_prefetch,
+            cgram_address,
+            cgram_latch,
+            ref cgram_render_index,
+            oam_address,
+            oam_latch,
+            ophct_latch,
+            opvct_latch,
+            counter_latch_flag,
+            ophct_read_high,
+            opvct_read_high,
+            location_latch_request,
+            location_latch_x,
+            location_latch_y,
+            frame_start_edge: _, // one-shot: raised and consumed within one master clock
+            ppu2_open_bus,
+            wrio,
+            irq_mode,
+            htime,
+            vtime,
+            timeup_flag,
+            irq_line,
+            hv_h_counter,
+            hv_v_counter,
+            irq_level,
+            need_irq,
+            interlace_field,
+            frame_has_extra_scanline,
+            ref video_region,
+            framebuffer: _, // transient: cleared on restore, redrawn next frame
+            use_high_res_output,
+            line_main: _,       // transient: per-scanline buffer, reset on restore
+            line_sub: _,        // transient: per-scanline buffer, reset on restore
+            line_main_final: _, // transient: per-scanline buffer, reset on restore
+            line_inidisp: _,    // transient: relatched on restore and each frame
+            pending_completed_frames,
+            auto_joypad_latch: _, // one-shot: raised and consumed within one master clock
+            bg_mode,
+            bg3_priority,
+            bg_tile_size_16,
+            bg_tilemap_base,
+            bg_screen_size,
+            bg_char_base,
+            bg_hofs,
+            bg_vofs,
+            bg_old,
+            tm,
+            ts,
+            tmw,
+            tsw,
+            cgwsel,
+            cgadsub,
+            coldata,
+            w12sel,
+            w34sel,
+            wobjsel,
+            wh,
+            wbglog,
+            wobjlog,
+            windows: _,    // derived: rebuilt from the window registers on restore
+            mask_logic: _, // derived: rebuilt from the window registers on restore
+            setini,
+            m7a,
+            m7b,
+            m7c,
+            m7d,
+            m7x,
+            m7y,
+            m7hofs,
+            m7vofs,
+            m7sel,
+            m7_old,
+            obsel,
+            oam_addr_reload,
+            oam_priority_rotation,
+            stat77_range_over,
+            stat77_time_over,
+            obj_pipeline: _, // transient: reset on restore, rebuilt by the next scanline
+            mosaic,
+            mosaic_vblock_size,
+            mosaic_vcount,
+        } = self;
         SnesPpuState {
-            vram: self.vram.clone(),
-            cgram: self.cgram.clone(),
-            oam: self.oam.clone(),
-            scanline: self.position.scanline,
-            dot: self.position.dot,
-            master_cycle_accumulator: self.master_cycle_accumulator,
-            line_clock: self.line_clock,
-            total_master_clocks: self.total_master_clocks,
-            dram_refresh_position: self.dram_refresh_position,
-            hdma_init_position: self.hdma_init_position,
-            line_timing_profile: self.line_timing_profile.as_u8(),
-            inidisp: self.inidisp,
-            nmi_enable: self.nmi_enable,
-            nmi_flag: self.nmi_flag,
-            vblank_active: self.vblank_active,
-            nmi_line_prev: self.nmi_line_prev,
-            nmi_edge: self.nmi_edge,
-            nmi_edge_arm: self.nmi_edge_arm,
-            pending_completed_frames: self.pending_completed_frames,
-            vram_increment_after_high: self.vram_increment_after_high,
-            vram_increment_step: self.vram_increment_step,
-            vram_address_translation: self.vram_address_translation.as_u8(),
-            vram_address: self.vram_address,
-            vram_prefetch: self.vram_prefetch,
-            cgram_address: self.cgram_address,
-            cgram_latch: self.cgram_latch,
-            cgram_render_index: self.cgram_render_index.get(),
-            oam_address: self.oam_address,
-            oam_latch: self.oam_latch,
-            ophct_latch: self.ophct_latch,
-            opvct_latch: self.opvct_latch,
-            counter_latch_flag: self.counter_latch_flag,
-            ophct_read_high: self.ophct_read_high,
-            opvct_read_high: self.opvct_read_high,
-            location_latch_request: self.location_latch_request,
-            location_latch_x: self.location_latch_x,
-            location_latch_y: self.location_latch_y,
-            ppu2_open_bus: self.ppu2_open_bus,
-            wrio: self.wrio,
-            irq_mode: self.irq_mode,
-            htime: self.htime,
-            vtime: self.vtime,
-            timeup_flag: self.timeup_flag,
-            irq_line: self.irq_line,
-            hv_h_counter: Some(self.hv_h_counter),
-            hv_v_counter: Some(self.hv_v_counter),
-            irq_level: Some(self.irq_level),
-            need_irq: Some(self.need_irq),
-            interlace_field: self.interlace_field,
-            frame_has_extra_scanline: self.frame_has_extra_scanline,
-            video_region: self.video_region.to_state_byte(),
-            bg_mode: self.bg_mode,
-            bg3_priority: self.bg3_priority,
-            bg_tile_size_16: self.bg_tile_size_16,
-            bg_tilemap_base: self.bg_tilemap_base,
-            bg_screen_size: self.bg_screen_size,
-            bg_char_base: self.bg_char_base,
-            bg_hofs: self.bg_hofs,
-            bg_vofs: self.bg_vofs,
-            bg_old: self.bg_old,
-            tm: self.tm,
-            ts: self.ts,
-            tmw: self.tmw,
-            tsw: self.tsw,
-            cgwsel: self.cgwsel,
-            cgadsub: self.cgadsub,
-            coldata: self.coldata,
-            w12sel: self.w12sel,
-            w34sel: self.w34sel,
-            wobjsel: self.wobjsel,
-            wh: self.wh,
-            wbglog: self.wbglog,
-            wobjlog: self.wobjlog,
-            setini: self.setini,
-            m7a: self.m7a,
-            m7b: self.m7b,
-            m7c: self.m7c,
-            m7d: self.m7d,
-            m7x: self.m7x,
-            m7y: self.m7y,
-            m7hofs: self.m7hofs,
-            m7vofs: self.m7vofs,
-            m7sel: self.m7sel,
-            m7_old: self.m7_old,
-            obsel: self.obsel,
-            oam_addr_reload: self.oam_addr_reload,
-            oam_priority_rotation: self.oam_priority_rotation,
-            stat77_range_over: self.stat77_range_over,
-            stat77_time_over: self.stat77_time_over,
-            mosaic: self.mosaic,
-            mosaic_vblock_size: self.mosaic_vblock_size,
-            mosaic_vcount: self.mosaic_vcount,
-            use_high_res_output: Some(self.use_high_res_output),
+            vram: vram.clone(),
+            cgram: cgram.clone(),
+            oam: oam.clone(),
+            scanline: position.scanline,
+            dot: position.dot,
+            master_cycle_accumulator,
+            line_clock,
+            total_master_clocks,
+            dram_refresh_position,
+            hdma_init_position,
+            line_timing_profile: line_timing_profile.as_u8(),
+            inidisp,
+            nmi_enable,
+            nmi_flag,
+            vblank_active,
+            nmi_line_prev,
+            nmi_edge,
+            nmi_edge_arm,
+            pending_completed_frames,
+            vram_increment_after_high,
+            vram_increment_step,
+            vram_address_translation: vram_address_translation.as_u8(),
+            vram_address,
+            vram_prefetch,
+            cgram_address,
+            cgram_latch,
+            cgram_render_index: cgram_render_index.get(),
+            oam_address,
+            oam_latch,
+            ophct_latch,
+            opvct_latch,
+            counter_latch_flag,
+            ophct_read_high,
+            opvct_read_high,
+            location_latch_request,
+            location_latch_x,
+            location_latch_y,
+            ppu2_open_bus,
+            wrio,
+            irq_mode,
+            htime,
+            vtime,
+            timeup_flag,
+            irq_line,
+            hv_h_counter: Some(hv_h_counter),
+            hv_v_counter: Some(hv_v_counter),
+            irq_level: Some(irq_level),
+            need_irq: Some(need_irq),
+            interlace_field,
+            frame_has_extra_scanline,
+            video_region: video_region.to_state_byte(),
+            bg_mode,
+            bg3_priority,
+            bg_tile_size_16,
+            bg_tilemap_base,
+            bg_screen_size,
+            bg_char_base,
+            bg_hofs,
+            bg_vofs,
+            bg_old,
+            tm,
+            ts,
+            tmw,
+            tsw,
+            cgwsel,
+            cgadsub,
+            coldata,
+            w12sel,
+            w34sel,
+            wobjsel,
+            wh,
+            wbglog,
+            wobjlog,
+            setini,
+            m7a,
+            m7b,
+            m7c,
+            m7d,
+            m7x,
+            m7y,
+            m7hofs,
+            m7vofs,
+            m7sel,
+            m7_old,
+            obsel,
+            oam_addr_reload,
+            oam_priority_rotation,
+            stat77_range_over,
+            stat77_time_over,
+            mosaic,
+            mosaic_vblock_size,
+            mosaic_vcount,
+            use_high_res_output: Some(use_high_res_output),
         }
     }
 
     pub(crate) fn restore_state(&mut self, state: &SnesPpuState) -> Result<(), String> {
-        restore_memory(&mut self.vram, &state.vram, VRAM_SIZE, "VRAM")?;
-        restore_memory(&mut self.cgram, &state.cgram, CGRAM_SIZE, "CGRAM")?;
-        restore_memory(&mut self.oam, &state.oam, OAM_SIZE, "OAM")?;
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &SnesPpuState {
+            ref vram,
+            ref cgram,
+            ref oam,
+            scanline,
+            dot,
+            master_cycle_accumulator,
+            line_clock,
+            total_master_clocks,
+            dram_refresh_position,
+            hdma_init_position,
+            line_timing_profile,
+            inidisp,
+            nmi_enable,
+            nmi_flag,
+            vblank_active,
+            nmi_line_prev,
+            nmi_edge,
+            nmi_edge_arm,
+            pending_completed_frames,
+            vram_increment_after_high,
+            vram_increment_step,
+            vram_address_translation,
+            vram_address,
+            vram_prefetch,
+            cgram_address,
+            cgram_latch,
+            cgram_render_index,
+            oam_address,
+            oam_latch,
+            ophct_latch,
+            opvct_latch,
+            counter_latch_flag,
+            ophct_read_high,
+            opvct_read_high,
+            location_latch_request,
+            location_latch_x,
+            location_latch_y,
+            ppu2_open_bus,
+            wrio,
+            irq_mode,
+            htime,
+            vtime,
+            timeup_flag,
+            irq_line,
+            ref hv_h_counter,
+            ref hv_v_counter,
+            ref irq_level,
+            ref need_irq,
+            interlace_field,
+            frame_has_extra_scanline,
+            video_region,
+            bg_mode,
+            bg3_priority,
+            bg_tile_size_16,
+            bg_tilemap_base,
+            bg_screen_size,
+            bg_char_base,
+            bg_hofs,
+            bg_vofs,
+            bg_old,
+            tm,
+            ts,
+            tmw,
+            tsw,
+            cgwsel,
+            cgadsub,
+            coldata,
+            w12sel,
+            w34sel,
+            wobjsel,
+            wh,
+            wbglog,
+            wobjlog,
+            setini,
+            m7a,
+            m7b,
+            m7c,
+            m7d,
+            m7x,
+            m7y,
+            m7hofs,
+            m7vofs,
+            m7sel,
+            m7_old,
+            obsel,
+            oam_addr_reload,
+            oam_priority_rotation,
+            stat77_range_over,
+            stat77_time_over,
+            mosaic,
+            mosaic_vblock_size,
+            mosaic_vcount,
+            use_high_res_output,
+        } = state;
+        restore_memory(&mut self.vram, vram, VRAM_SIZE, "VRAM")?;
+        restore_memory(&mut self.cgram, cgram, CGRAM_SIZE, "CGRAM")?;
+        restore_memory(&mut self.oam, oam, OAM_SIZE, "OAM")?;
 
-        self.position = ScanPosition {
-            scanline: state.scanline,
-            dot: state.dot,
-        };
-        self.master_cycle_accumulator = state.master_cycle_accumulator;
-        self.line_clock = state.line_clock;
-        self.total_master_clocks = state.total_master_clocks;
-        self.dram_refresh_position = state.dram_refresh_position;
-        self.hdma_init_position = state.hdma_init_position;
-        self.line_timing_profile = PpuLineTimingProfile::from_u8(state.line_timing_profile);
-        self.inidisp = state.inidisp;
-        self.nmi_enable = state.nmi_enable;
-        self.nmi_flag = state.nmi_flag;
-        self.vblank_active = state.vblank_active;
-        self.nmi_line_prev = state.nmi_line_prev;
-        self.nmi_edge = state.nmi_edge;
-        self.nmi_edge_arm = state.nmi_edge_arm;
-        self.pending_completed_frames = state.pending_completed_frames;
-        self.vram_increment_after_high = state.vram_increment_after_high;
-        self.vram_increment_step = state.vram_increment_step;
-        self.vram_address_translation =
-            VramAddressTranslation::from_u8(state.vram_address_translation);
-        self.vram_address = state.vram_address;
-        self.vram_prefetch = state.vram_prefetch;
-        self.cgram_address = state.cgram_address;
-        self.cgram_latch = state.cgram_latch;
-        self.cgram_render_index.set(state.cgram_render_index);
-        self.oam_address = state.oam_address;
-        self.oam_latch = state.oam_latch;
-        self.ophct_latch = state.ophct_latch;
-        self.opvct_latch = state.opvct_latch;
-        self.counter_latch_flag = state.counter_latch_flag;
-        self.ophct_read_high = state.ophct_read_high;
-        self.opvct_read_high = state.opvct_read_high;
-        self.location_latch_request = state.location_latch_request;
-        self.location_latch_x = state.location_latch_x;
-        self.location_latch_y = state.location_latch_y;
-        self.ppu2_open_bus = state.ppu2_open_bus;
-        self.wrio = state.wrio;
-        self.irq_mode = state.irq_mode & 0x03;
-        self.htime = state.htime & 0x01FF;
-        self.vtime = state.vtime & 0x01FF;
-        self.timeup_flag = state.timeup_flag;
-        self.irq_line = state.irq_line;
+        self.position = ScanPosition { scanline, dot };
+        self.master_cycle_accumulator = master_cycle_accumulator;
+        self.line_clock = line_clock;
+        self.total_master_clocks = total_master_clocks;
+        self.dram_refresh_position = dram_refresh_position;
+        self.hdma_init_position = hdma_init_position;
+        self.line_timing_profile = PpuLineTimingProfile::from_u8(line_timing_profile);
+        self.inidisp = inidisp;
+        self.nmi_enable = nmi_enable;
+        self.nmi_flag = nmi_flag;
+        self.vblank_active = vblank_active;
+        self.nmi_line_prev = nmi_line_prev;
+        self.nmi_edge = nmi_edge;
+        self.nmi_edge_arm = nmi_edge_arm;
+        self.pending_completed_frames = pending_completed_frames;
+        self.vram_increment_after_high = vram_increment_after_high;
+        self.vram_increment_step = vram_increment_step;
+        self.vram_address_translation = VramAddressTranslation::from_u8(vram_address_translation);
+        self.vram_address = vram_address;
+        self.vram_prefetch = vram_prefetch;
+        self.cgram_address = cgram_address;
+        self.cgram_latch = cgram_latch;
+        self.cgram_render_index.set(cgram_render_index);
+        self.oam_address = oam_address;
+        self.oam_latch = oam_latch;
+        self.ophct_latch = ophct_latch;
+        self.opvct_latch = opvct_latch;
+        self.counter_latch_flag = counter_latch_flag;
+        self.ophct_read_high = ophct_read_high;
+        self.opvct_read_high = opvct_read_high;
+        self.location_latch_request = location_latch_request;
+        self.location_latch_x = location_latch_x;
+        self.location_latch_y = location_latch_y;
+        self.ppu2_open_bus = ppu2_open_bus;
+        self.wrio = wrio;
+        self.irq_mode = irq_mode & 0x03;
+        self.htime = htime & 0x01FF;
+        self.vtime = vtime & 0x01FF;
+        self.timeup_flag = timeup_flag;
+        self.irq_line = irq_line;
         // IRQ counter circuit (#3144): states written before the circuit
         // existed carry `None` here (their `irq_edge_age` key is ignored).
         // Re-derive the counters the circuit would hold at the restored scan
@@ -173,7 +370,7 @@ impl Ppu {
         // the idle countdown means a legacy state captured mid-countdown
         // loses at most that one in-flight IRQ.
         let lc = self.line_clock;
-        self.hv_h_counter = state.hv_h_counter.unwrap_or(if lc >= 10 {
+        self.hv_h_counter = hv_h_counter.unwrap_or(if lc >= 10 {
             (lc - 10) / 4
         } else if lc >= 6 {
             0
@@ -182,7 +379,7 @@ impl Ppu {
         } else {
             338
         });
-        self.hv_v_counter = state.hv_v_counter.unwrap_or_else(|| {
+        self.hv_v_counter = hv_v_counter.unwrap_or_else(|| {
             if self.position.scanline == 0 {
                 if lc >= 2 {
                     0
@@ -195,61 +392,61 @@ impl Ppu {
                 self.position.scanline - 1
             }
         });
-        self.irq_level = state.irq_level.unwrap_or_else(|| self.compute_irq_level());
-        self.need_irq = state.need_irq.unwrap_or(0);
-        self.interlace_field = state.interlace_field;
-        self.frame_has_extra_scanline = state.frame_has_extra_scanline;
-        self.video_region = SnesVideoRegion::from_state_byte(state.video_region);
-        self.bg_mode = state.bg_mode;
-        self.bg3_priority = state.bg3_priority;
-        self.bg_tile_size_16 = state.bg_tile_size_16;
-        self.bg_tilemap_base = state.bg_tilemap_base;
-        self.bg_screen_size = state.bg_screen_size;
-        self.bg_char_base = state.bg_char_base;
-        self.bg_hofs = state.bg_hofs;
-        self.bg_vofs = state.bg_vofs;
-        self.bg_old = state.bg_old;
-        self.tm = state.tm;
-        self.ts = state.ts;
-        self.tmw = state.tmw;
-        self.tsw = state.tsw;
-        self.cgwsel = state.cgwsel;
-        self.cgadsub = state.cgadsub;
-        self.coldata = state.coldata;
-        self.w12sel = state.w12sel;
-        self.w34sel = state.w34sel;
-        self.wobjsel = state.wobjsel;
-        self.wh = state.wh;
-        self.wbglog = state.wbglog;
-        self.wobjlog = state.wobjlog;
+        self.irq_level = irq_level.unwrap_or_else(|| self.compute_irq_level());
+        self.need_irq = need_irq.unwrap_or(0);
+        self.interlace_field = interlace_field;
+        self.frame_has_extra_scanline = frame_has_extra_scanline;
+        self.video_region = SnesVideoRegion::from_state_byte(video_region);
+        self.bg_mode = bg_mode;
+        self.bg3_priority = bg3_priority;
+        self.bg_tile_size_16 = bg_tile_size_16;
+        self.bg_tilemap_base = bg_tilemap_base;
+        self.bg_screen_size = bg_screen_size;
+        self.bg_char_base = bg_char_base;
+        self.bg_hofs = bg_hofs;
+        self.bg_vofs = bg_vofs;
+        self.bg_old = bg_old;
+        self.tm = tm;
+        self.ts = ts;
+        self.tmw = tmw;
+        self.tsw = tsw;
+        self.cgwsel = cgwsel;
+        self.cgadsub = cgadsub;
+        self.coldata = coldata;
+        self.w12sel = w12sel;
+        self.w34sel = w34sel;
+        self.wobjsel = wobjsel;
+        self.wh = wh;
+        self.wbglog = wbglog;
+        self.wobjlog = wobjlog;
         // The decoded window cache is derived from the raw registers above, so
         // it must be rebuilt rather than persisted (#3011).
         self.decode_window_registers();
-        self.setini = state.setini;
-        self.m7a = state.m7a;
-        self.m7b = state.m7b;
-        self.m7c = state.m7c;
-        self.m7d = state.m7d;
-        self.m7x = state.m7x;
-        self.m7y = state.m7y;
-        self.m7hofs = state.m7hofs;
-        self.m7vofs = state.m7vofs;
-        self.m7sel = state.m7sel;
-        self.m7_old = state.m7_old;
-        self.obsel = state.obsel;
-        self.oam_addr_reload = state.oam_addr_reload;
-        self.oam_priority_rotation = state.oam_priority_rotation;
-        self.stat77_range_over = state.stat77_range_over;
-        self.stat77_time_over = state.stat77_time_over;
+        self.setini = setini;
+        self.m7a = m7a;
+        self.m7b = m7b;
+        self.m7c = m7c;
+        self.m7d = m7d;
+        self.m7x = m7x;
+        self.m7y = m7y;
+        self.m7hofs = m7hofs;
+        self.m7vofs = m7vofs;
+        self.m7sel = m7sel;
+        self.m7_old = m7_old;
+        self.obsel = obsel;
+        self.oam_addr_reload = oam_addr_reload;
+        self.oam_priority_rotation = oam_priority_rotation;
+        self.stat77_range_over = stat77_range_over;
+        self.stat77_time_over = stat77_time_over;
         // The OBJ pipeline is transient like the framebuffer: reset it and let the next
         // scanline's eval/fetch windows rebuild it. After a mid-active-scanline load the
         // row in progress renders without OBJ pixels (its presented line and the partially
         // run eval window are lost); rows from the next scanline onward are correct. This
         // one-line artifact matches the transient-framebuffer policy above.
         self.obj_pipeline = super::sprites::ObjPipeline::default();
-        self.mosaic = state.mosaic;
-        self.mosaic_vblock_size = state.mosaic_vblock_size;
-        self.mosaic_vcount = state.mosaic_vcount;
+        self.mosaic = mosaic;
+        self.mosaic_vblock_size = mosaic_vblock_size;
+        self.mosaic_vcount = mosaic_vcount;
 
         // The framebuffer is transient; clear it and let the next frame redraw.
         self.framebuffer.iter_mut().for_each(|p| *p = 0);
@@ -260,8 +457,7 @@ impl Ppu {
         // 256x224 and change every remaining dot's pixel addressing. States written
         // before the field existed carry `None` and fall back to deriving, which is the
         // best guess available for them.
-        self.use_high_res_output = state
-            .use_high_res_output
+        self.use_high_res_output = use_high_res_output
             .unwrap_or_else(|| self.hires_output_enabled() || self.interlace_enabled());
         debug_assert_eq!(
             self.framebuffer.len(),

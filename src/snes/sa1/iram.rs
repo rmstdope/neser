@@ -98,11 +98,16 @@ impl Sa1IRam {
         snes_write_protect: u8,
         sa1_write_protect: u8,
     ) {
-        self.data = [0; IRAM_SIZE];
+        let mut restored = [0; IRAM_SIZE];
         let len = data.len().min(IRAM_SIZE);
-        self.data[..len].copy_from_slice(&data[..len]);
-        self.snes_write_protect = snes_write_protect;
-        self.sa1_write_protect = sa1_write_protect;
+        restored[..len].copy_from_slice(&data[..len]);
+        // A whole-struct literal names every field, so a new one fails to build until it is
+        // saved or marked transient.
+        *self = Self {
+            data: restored,
+            snes_write_protect,
+            sa1_write_protect,
+        };
     }
 }
 

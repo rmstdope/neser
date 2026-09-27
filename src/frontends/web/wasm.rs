@@ -1125,10 +1125,6 @@ fn run_to_next_frame(nes: &mut Nes) {
     };
 
     for _step in 0..MAX_STEPS {
-        if nes.cpu_ref().is_halted() {
-            break;
-        }
-
         nes.run_cpu_tick();
 
         let scanline = {
@@ -1153,10 +1149,6 @@ fn run_to_next_scanline(nes: &mut Nes) {
     };
 
     for _step in 0..MAX_STEPS {
-        if nes.cpu_ref().is_halted() {
-            break;
-        }
-
         nes.run_cpu_tick();
 
         let scanline = {

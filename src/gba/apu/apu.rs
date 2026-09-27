@@ -205,54 +205,96 @@ impl Apu {
 
     /// Capture APU state for save-state serialization.
     pub fn capture_state(&self) -> ApuState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref ch1,
+            ref ch2,
+            ref ch3,
+            ref ch4,
+            ref fifo_a,
+            ref fifo_b,
+            soundcnt_l,
+            soundcnt_h,
+            powered,
+            soundbias,
+            fs_counter,
+            fs_step,
+            sample_acc,
+            cycles_per_sample,
+            ref pending_samples,
+            psg_counter,
+            psg_sum,
+            psg_sample_count,
+        } = self;
         ApuState {
-            ch1: self.ch1.clone(),
-            ch2: self.ch2.clone(),
-            ch3: self.ch3.clone(),
-            ch4: self.ch4.clone(),
-            fifo_a: self.fifo_a.clone(),
-            fifo_b: self.fifo_b.clone(),
-            soundcnt_l: self.soundcnt_l,
-            soundcnt_h: self.soundcnt_h,
-            powered: self.powered,
-            soundbias: self.soundbias,
-            fs_counter: self.fs_counter,
-            fs_step: self.fs_step,
-            sample_acc: self.sample_acc,
-            cycles_per_sample: self.cycles_per_sample,
-            pending_samples: self.pending_samples.clone(),
-            psg_counter: self.psg_counter,
-            psg_sum: self.psg_sum,
-            psg_sample_count: self.psg_sample_count,
+            ch1: ch1.clone(),
+            ch2: ch2.clone(),
+            ch3: ch3.clone(),
+            ch4: ch4.clone(),
+            fifo_a: fifo_a.clone(),
+            fifo_b: fifo_b.clone(),
+            soundcnt_l,
+            soundcnt_h,
+            powered,
+            soundbias,
+            fs_counter,
+            fs_step,
+            sample_acc,
+            cycles_per_sample,
+            pending_samples: pending_samples.clone(),
+            psg_counter,
+            psg_sum,
+            psg_sample_count,
         }
     }
 
     /// Restore APU state from a save-state snapshot.
     pub fn restore_state(&mut self, state: &ApuState) {
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &ApuState {
+            ref ch1,
+            ref ch2,
+            ref ch3,
+            ref ch4,
+            ref fifo_a,
+            ref fifo_b,
+            soundcnt_l,
+            soundcnt_h,
+            powered,
+            soundbias,
+            fs_counter,
+            fs_step,
+            sample_acc,
+            cycles_per_sample,
+            ref pending_samples,
+            psg_counter,
+            psg_sum,
+            psg_sample_count,
+        } = state;
         let current_cycles_per_sample = self.cycles_per_sample;
-        self.ch1 = state.ch1.clone();
-        self.ch2 = state.ch2.clone();
-        self.ch3 = state.ch3.clone();
-        self.ch4 = state.ch4.clone();
-        self.fifo_a = state.fifo_a.clone();
-        self.fifo_b = state.fifo_b.clone();
-        self.soundcnt_l = state.soundcnt_l;
-        self.soundcnt_h = state.soundcnt_h;
-        self.powered = state.powered;
-        self.soundbias = state.soundbias;
-        self.fs_counter = state.fs_counter;
-        self.fs_step = state.fs_step;
+        self.ch1 = ch1.clone();
+        self.ch2 = ch2.clone();
+        self.ch3 = ch3.clone();
+        self.ch4 = ch4.clone();
+        self.fifo_a = fifo_a.clone();
+        self.fifo_b = fifo_b.clone();
+        self.soundcnt_l = soundcnt_l;
+        self.soundcnt_h = soundcnt_h;
+        self.powered = powered;
+        self.soundbias = soundbias;
+        self.fs_counter = fs_counter;
+        self.fs_step = fs_step;
         self.cycles_per_sample = current_cycles_per_sample;
-        self.sample_acc = if state.cycles_per_sample.is_finite() && state.cycles_per_sample > 0.0 {
-            (state.sample_acc / state.cycles_per_sample * self.cycles_per_sample)
+        self.sample_acc = if cycles_per_sample.is_finite() && cycles_per_sample > 0.0 {
+            (sample_acc / cycles_per_sample * self.cycles_per_sample)
                 .clamp(0.0, self.cycles_per_sample)
         } else {
             0.0
         };
-        self.pending_samples = state.pending_samples.clone();
-        self.psg_counter = state.psg_counter;
-        self.psg_sum = state.psg_sum;
-        self.psg_sample_count = state.psg_sample_count;
+        self.pending_samples = pending_samples.clone();
+        self.psg_counter = psg_counter;
+        self.psg_sum = psg_sum;
+        self.psg_sample_count = psg_sample_count;
     }
 
     /// Returns the hardware PWM output rate in Hz implied by the current

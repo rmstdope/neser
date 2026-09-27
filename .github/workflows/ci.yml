@@ -63,6 +63,11 @@ jobs:
               - '.github/workflows/ci.yml'
             python:
               - 'scripts/**'
+              # scripts/test_worktree_install.py and scripts/test_project_conf_rust_paths.py read
+              # the fleet declaration and run cerebro's scripts against it; the bare submodule
+              # path detects a cerebro pointer bump.
+              - '.cerebro/project.conf'
+              - '.cerebro/cerebro'
               - '.github/workflows/ci.yml'
             shader_assets:
               # Release packaging only ships shader files reachable from the
@@ -370,11 +375,19 @@ jobs:
       - name: Test web frontend
         run: npm ci && npm test
 
+  # Two shards on separate runners, each with the same setup and build (nr-ks6). fail-fast is off
+  # so a red shard does not cancel the other and hide its failures. Not a protected check, so the
+  # per-shard names need no fan-in job.
   web-integration:
+    name: web-integration (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: changes
     if: needs.changes.outputs.web_integration == 'true' || github.event_name == 'workflow_call'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
 
     steps:
       - uses: actions/checkout@v6
@@ -419,4 +432,21 @@ jobs:
           cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
           wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path --no-typescript
       - name: Run web integration tests
-        run: npm run test:integration:web
+        # Playwright splits shards by test count in file order, and the slowest specs sort last:
+        # an even split gave shard 2 about 280 worker-seconds to shard 1's 170. Shard 1 therefore
+        # takes two thirds of the tests. PWTEST_SHARD_WEIGHTS is read by the Playwright 1.60 CLI; a
+        # Playwright upgrade that drops it silently falls back to an even split, so check it then.
+        env:
+          PWTEST_SHARD_WEIGHTS: "2:1"
+        run: npm run test:integration:web -- --shard=${{ matrix.shard }}/2
+      # Playwright keeps a trace, the error context and screenshots for every failed test under
+      # test-results/; without this upload a red run leaves only the call log (nr-dv5). Each shard
+      # uploads under its own name: a second upload to the same name fails.
+      - name: Upload Playwright test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-integration-test-results-${{ matrix.shard }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

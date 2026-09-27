@@ -1,12 +1,10 @@
 use super::Ppu;
-use crate::nes::console::TimingMode;
 use crate::nes::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::nes::ppu::timing::{
     BG_PREFETCH_END, BG_PREFETCH_SHIFT_START, BG_PREFETCH_START, DUMMY_NT_FETCH_1,
     DUMMY_NT_FETCH_2, FINE_Y_INCREMENT_PIXEL, FIRST_DOT, FIRST_VISIBLE_PIXEL,
     HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL, LAST_VISIBLE_SCANLINE_PLUS_ONE,
-    NTSC_PRERENDER_SCANLINE, PAL_PRERENDER_SCANLINE, SPRITE_TILE_LOAD_END, SPRITE_TILE_LOAD_START,
-    VBLANK_NMI_LATCH_PIXEL, VBLANK_START_SCANLINE, VERTICAL_BITS_COPY_END,
+    SPRITE_TILE_LOAD_END, SPRITE_TILE_LOAD_START, VBLANK_NMI_LATCH_PIXEL, VERTICAL_BITS_COPY_END,
     VERTICAL_BITS_COPY_START,
 };
 use crate::platform::debugging::ppu_trace_level;
@@ -14,25 +12,6 @@ use crate::platform::debugging::ppu_trace_level;
 #[cfg(test)]
 use crate::nes::ppu::timing::FIRST_VISIBLE_SCANLINE;
 use crate::trace_ppu;
-
-pub(super) fn prerender_scanline(tv_system: TimingMode) -> u16 {
-    match tv_system {
-        TimingMode::Ntsc => NTSC_PRERENDER_SCANLINE,
-        TimingMode::Pal | TimingMode::Dendy => PAL_PRERENDER_SCANLINE,
-        TimingMode::MultiRegion | TimingMode::Unknown(_) => NTSC_PRERENDER_SCANLINE,
-    }
-}
-
-/// Returns the scanline at which VBlank (NMI) begins for the given TV system.
-/// - NTSC: 241
-/// - PAL:  241
-/// - Dendy: 291 (50 extra post-render scanlines before VBlank; ref: Mesen2 NesPpu.cpp UpdateTimings)
-pub(super) fn vblank_start_scanline(tv_system: TimingMode) -> u16 {
-    match tv_system {
-        TimingMode::Dendy => 291,
-        _ => VBLANK_START_SCANLINE,
-    }
-}
 
 #[inline(always)]
 fn is_rendering_pixel(pixel: u16) -> bool {
@@ -92,7 +71,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
 /// Phase 1: Advance timing, detect frame boundaries, and notify mappers.
 fn tick_timing(ppu: &mut Ppu) {
     let is_rendering_enabled = ppu.registers.is_rendering_enabled();
-    let prerender = prerender_scanline(ppu.timing.tv_system());
+    let prerender = ppu.timing.region().prerender_scanline;
     let scanline_before_tick = ppu.timing.scanline();
     let pixel_before_tick = ppu.timing.pixel();
 
@@ -134,8 +113,8 @@ fn tick_timing(ppu: &mut Ppu) {
 fn tick_vblank_and_nmi(ppu: &mut Ppu) {
     let scanline = ppu.timing.scanline();
     let pixel = ppu.timing.pixel();
-    let prerender = prerender_scanline(ppu.timing.tv_system());
-    let vblank_start = vblank_start_scanline(ppu.timing.tv_system());
+    let prerender = ppu.timing.region().prerender_scanline;
+    let vblank_start = ppu.timing.region().vblank_start_scanline;
 
     // Enter VBlank at the VBlank start scanline, pixel 1.
     // Note: reading PPUSTATUS right at VBlank set time can suppress VBlank for the frame.
@@ -212,7 +191,7 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
 fn tick_background(ppu: &mut Ppu) {
     let scanline = ppu.timing.scanline();
     let pixel = ppu.timing.pixel();
-    let prerender = prerender_scanline(ppu.timing.tv_system());
+    let prerender = ppu.timing.region().prerender_scanline;
     let is_rendering_enabled = ppu.registers.is_rendering_enabled();
     let is_visible_scanline = scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
     let is_prerender = scanline == prerender;
@@ -388,7 +367,7 @@ fn tick_background(ppu: &mut Ppu) {
 fn tick_sprites(ppu: &mut Ppu) {
     let scanline = ppu.timing.scanline();
     let pixel = ppu.timing.pixel();
-    let prerender = prerender_scanline(ppu.timing.tv_system());
+    let prerender = ppu.timing.region().prerender_scanline;
     let is_rendering_enabled = ppu.registers.is_rendering_enabled();
     let is_visible_scanline = scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
     let is_prerender = scanline == prerender;
@@ -686,48 +665,34 @@ mod tests {
     #[test]
     fn test_should_trace_vblank_enter() {
         assert!(should_trace_vblank_enter(
-            VBLANK_START_SCANLINE,
-            VBLANK_START_SCANLINE,
+            crate::nes::region::NTSC.vblank_start_scanline,
+            crate::nes::region::NTSC.vblank_start_scanline,
             FIRST_VISIBLE_PIXEL,
             false
         ));
         assert!(!should_trace_vblank_enter(
-            VBLANK_START_SCANLINE,
-            VBLANK_START_SCANLINE,
+            crate::nes::region::NTSC.vblank_start_scanline,
+            crate::nes::region::NTSC.vblank_start_scanline,
             FIRST_VISIBLE_PIXEL,
             true
         ));
         assert!(!should_trace_vblank_enter(
             LAST_VISIBLE_SCANLINE_PLUS_ONE - 1,
-            VBLANK_START_SCANLINE,
+            crate::nes::region::NTSC.vblank_start_scanline,
             FIRST_VISIBLE_PIXEL,
             false
         ));
         assert!(!should_trace_vblank_enter(
-            VBLANK_START_SCANLINE,
-            VBLANK_START_SCANLINE,
+            crate::nes::region::NTSC.vblank_start_scanline,
+            crate::nes::region::NTSC.vblank_start_scanline,
             VBLANK_NMI_LATCH_PIXEL,
             false
         ));
     }
 
     #[test]
-    fn test_vblank_start_scanline_ntsc_and_pal_is_241() {
-        assert_eq!(vblank_start_scanline(TimingMode::Ntsc), 241);
-        assert_eq!(vblank_start_scanline(TimingMode::Pal), 241);
-        assert_eq!(vblank_start_scanline(TimingMode::MultiRegion), 241);
-    }
-
-    #[test]
-    fn test_vblank_start_scanline_dendy_is_291() {
-        // Dendy hardware fires NMI at scanline 291, not 241.
-        // Spec: Mesen2 NesPpu.cpp UpdateTimings() — ConsoleRegion::Dendy: _nmiScanline = 291
-        assert_eq!(vblank_start_scanline(TimingMode::Dendy), 291);
-    }
-
-    #[test]
     fn test_should_trace_vblank_exit() {
-        let prerender = prerender_scanline(TimingMode::Ntsc);
+        let prerender = crate::nes::region::NTSC.prerender_scanline;
         assert!(should_trace_vblank_exit(
             prerender,
             prerender,

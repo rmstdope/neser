@@ -1,21 +1,16 @@
 use crate::nes::console::TimingMode;
+use crate::nes::region::RegionParams;
 
 /// Number of PPU cycles (pixels) per scanline
 pub(crate) const PIXELS_PER_SCANLINE: u16 = 341;
 
 // Scanline constants
-/// First scanline where VBlank begins (scanlines 241-260 for NTSC, 241-310 for PAL)
-pub(crate) const VBLANK_START_SCANLINE: u16 = 241;
 /// VBlank NMI edge latching occurs at pixel 2 of the VBlank start scanline
 pub(crate) const VBLANK_NMI_LATCH_PIXEL: u16 = 2;
 /// First visible scanline (0-239 are visible scanlines)
 pub(crate) const FIRST_VISIBLE_SCANLINE: u16 = 0;
 /// Last visible scanline + 1 (scanlines 0-239 are visible)
 pub(crate) const LAST_VISIBLE_SCANLINE_PLUS_ONE: u16 = 240;
-/// NTSC pre-render scanline (scanline 261)
-pub(crate) const NTSC_PRERENDER_SCANLINE: u16 = 261;
-/// PAL pre-render scanline (scanline 311)
-pub(crate) const PAL_PRERENDER_SCANLINE: u16 = 311;
 
 // Dot/pixel constants
 /// Last dot in a scanline (dots 0-340)
@@ -61,8 +56,8 @@ pub(crate) const VERTICAL_BITS_COPY_END: u16 = 304;
 pub struct Timing {
     /// Total number of PPU ticks since reset
     total_cycles: u64,
-    /// TV system (NTSC or PAL)
-    tv_system: TimingMode,
+    /// Region parameters (NTSC, PAL or Dendy), looked up once from the timing mode.
+    region: &'static RegionParams,
     /// Current scanline (0-261 for NTSC, 0-311 for PAL)
     scanline: u16,
     /// Current pixel within scanline (0-340, i.e., 0 to LAST_DOT)
@@ -81,7 +76,7 @@ impl Timing {
     pub fn new(tv_system: TimingMode) -> Self {
         Self {
             total_cycles: 0,
-            tv_system,
+            region: tv_system.region(),
             scanline: 0,
             pixel: 0,
             frame_count: 0,
@@ -120,10 +115,10 @@ impl Timing {
 
         // NTSC odd frame skip: On odd frames with rendering enabled,
         // skip from pre-render scanline dot 339 directly to scanline 0 dot 0
-        let should_skip_odd_frame = self.tv_system == TimingMode::Ntsc
+        let should_skip_odd_frame = self.region.odd_frame_skip
             && (self.frame_count & 1) == 1 // Odd frame
             && rendering_enabled_for_odd_skip
-            && self.scanline == NTSC_PRERENDER_SCANLINE
+            && self.scanline == self.region.prerender_scanline
             && self.pixel == ODD_FRAME_SKIP_DOT;
 
         if should_skip_odd_frame {
@@ -139,8 +134,7 @@ impl Timing {
                 self.pixel = 0;
                 self.scanline += 1;
 
-                let scanlines_per_frame = self.tv_system.scanlines_per_frame();
-                if self.scanline >= scanlines_per_frame {
+                if self.scanline >= self.region.scanlines_per_frame {
                     self.scanline = 0;
                     self.frame_count += 1;
                 }
@@ -196,9 +190,9 @@ impl Timing {
         self.rendering_enabled_d2 = d2;
     }
 
-    /// Get the TV system
-    pub fn tv_system(&self) -> TimingMode {
-        self.tv_system
+    /// This console's region parameters.
+    pub fn region(&self) -> &'static RegionParams {
+        self.region
     }
 
     /// Check if we're currently in a rendering cycle
@@ -207,13 +201,7 @@ impl Timing {
     #[cfg(test)]
     pub fn is_rendering_cycle(&self) -> bool {
         let is_visible_scanline = self.scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
-        let is_prerender_scanline = match self.tv_system {
-            TimingMode::Ntsc => self.scanline == NTSC_PRERENDER_SCANLINE,
-            TimingMode::Pal | TimingMode::Dendy => self.scanline == PAL_PRERENDER_SCANLINE,
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
-                self.scanline == NTSC_PRERENDER_SCANLINE
-            }
-        };
+        let is_prerender_scanline = self.scanline == self.region.prerender_scanline;
 
         if is_visible_scanline || is_prerender_scanline {
             // Dots 0-256: background and sprite fetching/rendering
@@ -238,10 +226,10 @@ impl Timing {
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimingDebugState {
     pub total_cycles: u64,
-    pub tv_system: TimingMode,
+    pub region: &'static RegionParams,
     pub scanline: u16,
     pub pixel: u16,
     pub frame_count: u64,
@@ -254,7 +242,7 @@ impl Timing {
     pub fn debug_state(&self) -> TimingDebugState {
         TimingDebugState {
             total_cycles: self.total_cycles,
-            tv_system: self.tv_system,
+            region: self.region,
             scanline: self.scanline,
             pixel: self.pixel,
             frame_count: self.frame_count,
@@ -265,7 +253,7 @@ impl Timing {
 
     pub fn set_debug_state(&mut self, state: TimingDebugState) {
         self.total_cycles = state.total_cycles;
-        self.tv_system = state.tv_system;
+        self.region = state.region;
         self.scanline = state.scanline;
         self.pixel = state.pixel;
         self.frame_count = state.frame_count;
@@ -277,6 +265,7 @@ impl Timing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::region::{NTSC, PAL};
 
     #[test]
     fn test_timing_new() {
@@ -362,12 +351,12 @@ mod tests {
         assert!(timing.is_rendering_cycle());
 
         // Vblank scanline
-        timing.scanline = VBLANK_START_SCANLINE;
+        timing.scanline = NTSC.vblank_start_scanline;
         timing.pixel = 100;
         assert!(!timing.is_rendering_cycle());
 
         // Pre-render scanline
-        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.scanline = NTSC.prerender_scanline;
         timing.pixel = 100;
         assert!(timing.is_rendering_cycle());
     }
@@ -377,12 +366,12 @@ mod tests {
         let mut timing = Timing::new(TimingMode::Pal);
 
         // PAL pre-render scanline is 311
-        timing.scanline = PAL_PRERENDER_SCANLINE;
+        timing.scanline = PAL.prerender_scanline;
         timing.pixel = 100;
         assert!(timing.is_rendering_cycle());
 
         // NTSC pre-render scanline should not be treated as rendering for PAL
-        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.scanline = NTSC.prerender_scanline;
         timing.pixel = 100;
         assert!(!timing.is_rendering_cycle());
     }
@@ -401,7 +390,7 @@ mod tests {
         assert!(!timing.is_visible_pixel());
 
         // Vblank is not visible
-        timing.scanline = VBLANK_START_SCANLINE;
+        timing.scanline = NTSC.vblank_start_scanline;
         timing.pixel = 100;
         assert!(!timing.is_visible_pixel());
     }
@@ -412,7 +401,7 @@ mod tests {
 
         // NTSC should have exactly 262 scanlines (0-261)
         // Run through an entire frame and verify we hit scanline 0 after scanline 261
-        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.scanline = NTSC.prerender_scanline;
         timing.pixel = LAST_DOT;
 
         timing.tick(false); // Advance to next scanline
@@ -430,7 +419,7 @@ mod tests {
 
         // PAL should have exactly 312 scanlines (0-311)
         // Run through an entire frame and verify we hit scanline 0 after scanline 311
-        timing.scanline = PAL_PRERENDER_SCANLINE;
+        timing.scanline = PAL.prerender_scanline;
         timing.pixel = LAST_DOT;
 
         timing.tick(false); // Advance to next scanline
@@ -461,7 +450,7 @@ mod tests {
         // Odd frame with rendering enabled: skip dot 340 on pre-render scanline
         // Set up: odd frame (frame_count = 1), pre-render scanline 261, dot 339
         timing.frame_count = 1; // Odd frame
-        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.scanline = NTSC.prerender_scanline;
         timing.pixel = ODD_FRAME_SKIP_DOT;
 
         // Skip decision uses a delayed rendering-enabled state.
@@ -487,7 +476,7 @@ mod tests {
 
         // Even frame: no skip, normal 341 dots
         timing.frame_count = 0; // Even frame
-        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.scanline = NTSC.prerender_scanline;
         timing.pixel = ODD_FRAME_SKIP_DOT;
 
         timing.rendering_enabled_d2 = true;
@@ -503,7 +492,7 @@ mod tests {
 
         // PAL never skips frames
         timing.frame_count = 1; // Odd frame
-        timing.scanline = PAL_PRERENDER_SCANLINE;
+        timing.scanline = PAL.prerender_scanline;
         timing.pixel = ODD_FRAME_SKIP_DOT;
 
         let skipped = timing.tick(true);
@@ -548,7 +537,7 @@ mod tests {
         for scanline in 0..262 {
             // Pre-render scanline with rendering enabled on odd frames skips pixel 340,
             // so we use LAST_DOT (340) as the limit to iterate through pixels 0-339
-            let dots = if scanline == NTSC_PRERENDER_SCANLINE {
+            let dots = if scanline == NTSC.prerender_scanline {
                 LAST_DOT
             } else {
                 PIXELS_PER_SCANLINE

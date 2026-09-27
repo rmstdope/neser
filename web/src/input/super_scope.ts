@@ -23,10 +23,32 @@ export function superScopeKeyAction(key: string): "turbo" | "pause" | null {
     return null;
 }
 
-const FIRE_BUTTON = 0;
-const CURSOR_BUTTON = 2;
+const LEFT_BUTTON = 0;
+const RIGHT_BUTTON = 2;
 
+/**
+ * How a device the SNES captures the mouse for on a click behaves: whether the capturing
+ * click also reaches the game, and what the player is told when the capture ends.
+ */
+export interface ClickCaptureOptions {
+    forwardsCapturingClick: boolean;
+    releasedMessage: string;
+}
+
+/** The Super Scope fires on the click that captures the mouse (but not on a recapture). */
 export function createSuperScopeSession() {
+    return createClickCaptureSession({
+        forwardsCapturingClick: true,
+        releasedMessage: SUPER_SCOPE_MOUSE_RELEASED,
+    });
+}
+
+/**
+ * The capture state machine shared by the Super Scope and the SNES Mouse: only a click on
+ * the game captures the mouse, a lock nobody clicked for is given back, and losing the lock
+ * after a capture says how to get it back.
+ */
+export function createClickCaptureSession(options: ClickCaptureOptions) {
     let isCaptured = false;
     let lockRequested = false;
     let releasedByPlayer = false;
@@ -36,11 +58,11 @@ export function createSuperScopeSession() {
     return {
         /**
          * A button pressed on the game at canvas position (`atX`, `atY`). Without the lock
-         * it asks for one; the press is forwarded to the scope unless the mouse was released
-         * (a recapturing click never fires).
+         * it asks for one; the press reaches the game only if the device forwards its
+         * capturing click and the mouse was not released (a recapturing click never does).
          */
         mouseDown(button: number, locked: boolean, atX: number, atY: number) {
-            if (button !== FIRE_BUTTON && button !== CURSOR_BUTTON) {
+            if (button !== LEFT_BUTTON && button !== RIGHT_BUTTON) {
                 return { requestLock: false, forward: false };
             }
             if (locked) {
@@ -51,7 +73,10 @@ export function createSuperScopeSession() {
             // A click after a release never fires until a capture has actually happened,
             // even when the browser refuses the lock it asks for.
             lockRequested = true;
-            return { requestLock: true, forward: !releasedByPlayer };
+            return {
+                requestLock: true,
+                forward: options.forwardsCapturingClick && !releasedByPlayer,
+            };
         },
 
         /**
@@ -75,7 +100,7 @@ export function createSuperScopeSession() {
             }
             isCaptured = false;
             releasedByPlayer = true;
-            return { toast: SUPER_SCOPE_MOUSE_RELEASED, release: false };
+            return { toast: options.releasedMessage, release: false };
         },
 
         /** The browser refused the lock a click asked for (`pointerlockerror`). */
@@ -100,4 +125,5 @@ export function createSuperScopeSession() {
     };
 }
 
-export type SuperScopeSession = ReturnType<typeof createSuperScopeSession>;
+export type ClickCaptureSession = ReturnType<typeof createClickCaptureSession>;
+export type SuperScopeSession = ClickCaptureSession;

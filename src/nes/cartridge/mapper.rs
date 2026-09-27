@@ -928,6 +928,10 @@ macro_rules! mapper_registry {
                 _ => None,
             }
         }
+
+        /// Every iNES mapper id the registry constructs, in registry order.
+        #[cfg(test)]
+        const REGISTERED_MAPPERS: &[u16] = &[$($id),+];
     };
 }
 
@@ -1285,28 +1289,10 @@ mapper_registry! {
     350 => Mapper350::new,
 }
 
-#[allow(clippy::style)]
-#[cfg(test)]
-const SUPPORTED_MAPPERS: &[u16] = &[
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-    50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
-    100, 101, 102, 103, 104, 106, 108, 110, 114, 115, 117, 118, 120, 121, 122, 123, 124, 125, 126,
-    128, 129, 132, 133, 140, 141, 142, 143, 144, 145, 146, 147, 149, 154, 155, 156, 160, 161, 165,
-    169, 173, 177, 180, 182, 184, 185, 193, 205, 206, 207, 214, 216, 217, 218, 219, 222, 225, 226,
-    227, 228, 229, 230, 248, 231, 232, 233, 234, 236, 237, 238, 241, 242, 243, 244, 245, 246, 249,
-    250, 251, 253, 254, 255, 256, 257, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270,
-    271, 274, 281, 282, 283, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 299, 300,
-    302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 319, 320, 322, 323, 324,
-    326, 327, 328, 329, 330, 331, 332, 335, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348,
-    349, 350,
-];
-
-/// List of supported iNES mapper IDs handled by the factory.
+/// List of supported iNES mapper IDs handled by the factory, emitted by `mapper_registry!`.
 #[cfg(test)]
 pub fn supported_mappers() -> &'static [u16] {
-    SUPPORTED_MAPPERS
+    REGISTERED_MAPPERS
 }
 
 /// Create a mapper instance based on mapper metadata.
@@ -1324,6 +1310,26 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
 mod tests {
     use super::*;
     use crate::nes::cartridge::NametableLayout;
+
+    #[test]
+    fn supported_mappers_lists_exactly_the_ids_create_mapper_accepts() {
+        // NES 2.0 mapper numbers are 12 bits wide, so 0..4096 is every id a header can name.
+        let supported = supported_mappers();
+        for id in 0..4096u16 {
+            let metadata = MapperContext::new_for_test(
+                id,
+                vec![0u8; 32 * 1024],
+                vec![0u8; 8 * 1024],
+                NametableLayout::Horizontal,
+            );
+            assert_eq!(
+                create_mapper(metadata).is_ok(),
+                supported.contains(&id),
+                "Mapper {} is accepted by create_mapper iff supported_mappers() lists it",
+                id
+            );
+        }
+    }
 
     #[test]
     fn test_supported_mappers_contains_common_ids() {

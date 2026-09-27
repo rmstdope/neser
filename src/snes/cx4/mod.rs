@@ -455,7 +455,13 @@ impl Cx4 {
     }
 
     pub(crate) fn capture_state(&self) -> Cx4State {
-        self.state.clone()
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let Self {
+            state,
+            rom: _,             // transient: the cartridge ROM
+            master_clock_hz: _, // derived: retuned from the saved video region before restore
+        } = self;
+        state.clone()
     }
 
     /// Restores a captured state. A state whose RAM or cache is the wrong size, or whose cache

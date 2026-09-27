@@ -300,7 +300,7 @@ impl NativeEventLoop {
     fn sync_mouse_grab_state(&mut self) {
         let should_grab = mouse::desired_mouse_grab(
             mouse::has_any_mouse_controller(&self.console),
-            mouse::has_super_scope(&self.console),
+            mouse::has_super_scope(&self.console) || mouse::has_click_captured_mouse(&self.console),
             self.state.mouse_grabbed,
             self.state.window_focused,
             self.state.mouse_released_by_escape,
@@ -684,18 +684,19 @@ impl ApplicationHandler for NativeEventLoop {
                 self.state.window_focused = focused;
                 self.sync_audio_state();
                 if !focused {
-                    // A captured Super Scope treats focus loss like Escape: the next
-                    // click recaptures without firing, and the player is told how.
-                    // (A Super Scope is never captured automatically, so macOS's
-                    // start-up Focused(false) cannot reach this: it needs a capture.)
-                    if let Some(toast) = mouse::super_scope_release_toast(
+                    // A captured Super Scope or SNES Mouse treats focus loss like Escape:
+                    // the next click recaptures without reaching the game, and the player
+                    // is told how. (Neither is captured automatically, so macOS's start-up
+                    // Focused(false) cannot reach this: it needs a capture.)
+                    if let Some(toast) = mouse::mouse_release_toast(
                         mouse::has_super_scope(&self.console),
+                        mouse::has_click_captured_mouse(&self.console),
                         self.state.mouse_grabbed,
                     ) {
                         self.state.mouse_released_by_escape = true;
                         self.console.app_context().borrow_mut().add_toast(toast);
                     }
-                    mouse::release_super_scope_buttons(&mut self.console);
+                    mouse::release_captured_buttons(&mut self.console);
                     // For the NES-style devices, release grab on focus loss but do NOT
                     // set mouse_released_by_escape — for them that flag is only for
                     // explicit Escape key presses. Keeping it clear means
@@ -880,9 +881,10 @@ impl ApplicationHandler for NativeEventLoop {
 
                 // If keyboard handler released the mouse grab (Escape), apply it.
                 if mouse_grabbed_before && !self.state.mouse_grabbed {
-                    mouse::release_super_scope_buttons(&mut self.console);
-                    if let Some(toast) = mouse::super_scope_release_toast(
+                    mouse::release_captured_buttons(&mut self.console);
+                    if let Some(toast) = mouse::mouse_release_toast(
                         mouse::has_super_scope(&self.console),
+                        mouse::has_click_captured_mouse(&self.console),
                         true,
                     ) {
                         self.console.app_context().borrow_mut().add_toast(toast);
@@ -921,6 +923,8 @@ impl ApplicationHandler for NativeEventLoop {
 
                 let has_mouse = mouse::has_any_mouse_controller(&self.console);
                 let has_scope = mouse::has_super_scope(&self.console);
+                let click_captured_mouse = mouse::has_click_captured_mouse(&self.console);
+                let captures_on_click = has_scope || click_captured_mouse;
                 let clicked = match button {
                     winit::event::MouseButton::Left => Some(mouse::MouseButton::Left),
                     winit::event::MouseButton::Right => Some(mouse::MouseButton::Right),
@@ -935,7 +939,8 @@ impl ApplicationHandler for NativeEventLoop {
                 let mut should_discard_grab_click = false;
                 if !self.state.mouse_grabbed
                     && state == ElementState::Pressed
-                    && clicked.is_some_and(|btn| mouse::click_captures(has_mouse, has_scope, btn))
+                    && clicked
+                        .is_some_and(|btn| mouse::click_captures(has_mouse, captures_on_click, btn))
                 {
                     let was_released_by_escape = self.state.mouse_released_by_escape;
                     self.state.mouse_released_by_escape = false;
@@ -966,7 +971,11 @@ impl ApplicationHandler for NativeEventLoop {
                             );
                         }
                         self.state.mouse_grabbed = true;
-                        if !mouse::should_forward_grab_click(was_released_by_escape) {
+                        if !mouse::forwards_capturing_click(
+                            has_scope,
+                            click_captured_mouse,
+                            was_released_by_escape,
+                        ) {
                             should_discard_grab_click = true;
                         }
                     }
@@ -974,7 +983,7 @@ impl ApplicationHandler for NativeEventLoop {
 
                 // Route button to NES controller if grabbed (but not for the
                 // re-grab click itself, which is silently discarded).
-                if (has_mouse || has_scope)
+                if (has_mouse || captures_on_click)
                     && self.state.mouse_grabbed
                     && !should_discard_grab_click
                     && let Some(btn) = clicked
@@ -1116,7 +1125,29 @@ impl ApplicationHandler for NativeEventLoop {
                 .map(|gl| gl.window_size())
                 .unwrap_or((320, 240));
 
-            if mouse::has_snes_mouse(&self.console) && !mouse::has_zapper(&self.console) {
+            let click_captured_mouse = mouse::has_click_captured_mouse(&self.console);
+            if click_captured_mouse {
+                // The SNES's SNES Mouse: crossing the picture crosses the game screen.
+                let (picture_w, picture_h) = mouse::picture_size(&self.console, w, h);
+                mouse::apply_snes_console_mouse_motion(
+                    &mut self.console,
+                    &mut self.state.snes_mouse_motion,
+                    dx as f32,
+                    dy as f32,
+                    picture_w,
+                    picture_h,
+                );
+            }
+            if !mouse::virtual_cursor_aims(
+                click_captured_mouse,
+                mouse::has_super_scope(&self.console),
+            ) {
+                return;
+            }
+            if !click_captured_mouse
+                && mouse::has_snes_mouse(&self.console)
+                && !mouse::has_zapper(&self.console)
+            {
                 // SNES Mouse: pass raw deltas directly.
                 // Zapper takes precedence — if a Zapper is also connected,
                 // fall through to the virtual-cursor path (matching SDL logic).

@@ -96,6 +96,16 @@
             </select>
           </div>
 
+          <!-- The console original Game Boy games run on, remembered in this browser (nr-zdy.4) -->
+          <div class="flex flex-col gap-2">
+            <label for="gb-hardware" class="label text-xs font-bold p-0">Game Boy games run on</label>
+            <select id="gb-hardware" class="select select-bordered select-sm w-full">
+              <option value="dmg">Game Boy</option>
+              <option value="cgb">Game Boy Color</option>
+            </select>
+            <span id="gb-hardware-note" class="text-xs opacity-60 hidden">Applies when you press Reset</span>
+          </div>
+
           <!-- SNES firmware: one row per chip with a file stored in this browser (nr-auv, nr-608) -->
           <div id="snes-firmware-section" class="hidden flex flex-col gap-2">
             <span class="label text-xs font-bold p-0">SNES firmware</span>

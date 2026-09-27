@@ -9,6 +9,9 @@ const WEB_APP_SERVER_COMMAND = "bash scripts/build_web.sh && bash scripts/run_we
 
 export default defineConfig({
     testDir: ".",
+    // Every test opens its own page, so tests can run in any order on any worker; this is what
+    // lets the CI job's --shard=1/2 and --shard=2/2 split the suite by test rather than by file.
+    fullyParallel: true,
     timeout: 45_000,
     retries: 1,
     use: {
