@@ -211,15 +211,13 @@ impl Config {
         self.nes.apply_args(args)?;
 
         // Display argument (only applies if fullscreen is set)
-        // TODO: Move to FrontendConfig in task 8
         if self.frontend.fullscreen
             && let Some(display) = Self::parse_display_arg(args)?
         {
             self.frontend.fullscreen_display = Some(display);
         }
 
-        // Shader paths (NES and GB filter names)
-        // TODO: Move to FrontendConfig in task 8
+        // Shader paths: each core's filter flag, checked against that core's names
         for (flag, allowed) in [
             ("--nes-filter", NES_FILTER_NAMES),
             ("--gb-filter", GB_FILTER_NAMES),
@@ -231,7 +229,6 @@ impl Config {
         }
 
         // ROM path from positional argument
-        // TODO: Move to FrontendConfig in task 8
         if let Some(path) = Self::parse_rom_arg(args)? {
             self.frontend.rom_path = Some(path);
         }
