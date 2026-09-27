@@ -107,7 +107,7 @@ import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
 import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
 import { paletteButtonVisible } from "./display/palette_button";
-import { selectRenderPipeline } from "./display/render_pipeline";
+import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
 import crtFragGlsl from "./shaders/crt.frag.glsl?raw";
@@ -148,7 +148,7 @@ const shortcutHelpOverlay = document.getElementById("shortcut-help-overlay");
 const debuggerPanel = document.getElementById("debugger-panel");
 
 // Use WebGL for rendering with filter support
-const gl = canvas.getContext("webgl")!;
+const gl = canvas.getContext("webgl", SCREEN_CONTEXT_ATTRIBUTES)!;
 if (!gl) {
     throw new Error("WebGL rendering context not available for canvas 'screen'");
 }

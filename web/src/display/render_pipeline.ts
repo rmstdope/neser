@@ -20,3 +20,10 @@ export function selectRenderPipeline(state: RenderPipelineState): RenderPipeline
 
     return "single";
 }
+
+/**
+ * Context attributes for the screen's WebGL context. Every screen draw is one full-viewport quad,
+ * so multisampling changes no pixel, yet it costs a resolve every frame and synchronous GPU round
+ * trips whenever the canvas is resized: seconds per zoom click on software GL (nr-v5x).
+ */
+export const SCREEN_CONTEXT_ATTRIBUTES: Readonly<WebGLContextAttributes> = { antialias: false };
