@@ -3,11 +3,21 @@
 import contextlib
 import io
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.chromedriver_match import choose_driver, default_driver_paths, main, parse_version
+from scripts.chromedriver_match import (
+    choose_driver,
+    default_chrome_paths,
+    default_driver_paths,
+    main,
+    parse_version,
+)
+
+SCRIPT = Path(__file__).resolve().parent / "chromedriver_match.py"
+SYSTEM_PYTHON = Path("/usr/bin/python3")
 
 
 def _fake_binary(directory: Path, name: str, output: str) -> Path:
@@ -100,6 +110,16 @@ class TestMain(unittest.TestCase):
         self.assertEqual(1, err.count("\n"), err)
         self.assertIn("found: none", err)
 
+    def test_main_names_a_driver_that_cannot_run_instead_of_saying_none(self) -> None:
+        broken = self.root / "d" / "chromedriver"
+        broken.parent.mkdir()
+        broken.write_text("not a program")
+        code, _out, err = self._run(["--chrome", str(self.chrome), "--driver", str(broken)])
+        self.assertEqual(1, code)
+        self.assertEqual(1, err.count("\n"), err)
+        self.assertIn(f"unreadable at {broken}", err)
+        self.assertNotIn("found: none", err)
+
     def test_main_stops_when_chrome_is_missing(self) -> None:
         code, out, err = self._run(["--chrome", str(self.root / "no-chrome"), "--driver", str(self.d153)])
         self.assertEqual(1, code)
@@ -120,6 +140,37 @@ class TestDefaultDriverPaths(unittest.TestCase):
             on_path = _fake_binary(root / "bin", "chromedriver", "x")
             env = {"PATH": os.pathsep.join([str(root / "empty"), str(root / "bin")])}
             self.assertEqual([on_path, mac_cache, linux_cache], default_driver_paths(env, home))
+
+
+class TestDefaultChromePaths(unittest.TestCase):
+    """Given Chrome in the user's Applications folder and on PATH, when listed, then both are found."""
+
+    def test_default_chrome_paths_find_the_user_app_bundle_and_path_browsers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            user_app = _fake_binary(home / "Applications/Google Chrome.app/Contents/MacOS", "Google Chrome", "x")
+            linux = _fake_binary(root / "bin", "google-chrome", "x")
+            paths = default_chrome_paths({"PATH": str(root / "bin")}, home)
+            self.assertIn(user_app, paths)
+            self.assertIn(linux, paths)
+            self.assertLess(paths.index(user_app), paths.index(linux))
+
+
+class TestSystemPython(unittest.TestCase):
+    """Given the system python3 the gate falls back to, when the script runs, then it does not crash on import."""
+
+    @unittest.skipUnless(SYSTEM_PYTHON.is_file(), "no /usr/bin/python3")
+    def test_script_runs_under_the_system_python(self) -> None:
+        result = subprocess.run(
+            [str(SYSTEM_PYTHON), str(SCRIPT), "--chrome", "/nonexistent/chrome"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("Chrome not found", result.stderr)
 
 
 if __name__ == "__main__":

@@ -9,8 +9,10 @@ passes the path it prints.
     python scripts/chromedriver_match.py     # prints the matching driver's path, exit 0
                                              # or one line naming the mismatch, exit 1
 
-Standard library only: the gate may run it with the system python3.
+Standard library only, and Python 3.9 safe: the gate may run it with the system python3.
 """
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -23,7 +25,7 @@ from pathlib import Path
 
 Version = tuple[int, ...]
 
-MAC_CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+MAC_CHROME_APP = "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 LINUX_CHROMES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
 WASM_PACK_CACHES = ["Library/Caches/.wasm-pack", ".cache/.wasm-pack"]
 CHROME_FOR_TESTING = "https://googlechromelabs.github.io/chrome-for-testing/"
@@ -47,9 +49,9 @@ def choose_driver(chrome: Version, drivers: list[tuple[Path, Version | None]]) -
     return None
 
 
-def default_chrome_paths(env: Mapping[str, str]) -> list[Path]:
-    """Return the Chrome binaries wasm-pack could start, macOS app bundle first."""
-    paths = [MAC_CHROME] if MAC_CHROME.is_file() else []
+def default_chrome_paths(env: Mapping[str, str], home: Path) -> list[Path]:
+    """Return the Chrome binaries wasm-pack could start: the macOS app bundles first, then PATH."""
+    paths = [app for app in (Path("/") / MAC_CHROME_APP, home / MAC_CHROME_APP) if app.is_file()]
     for name in LINUX_CHROMES:
         found = shutil.which(name, path=env.get("PATH", ""))
         if found is not None:
@@ -84,7 +86,7 @@ def _dotted(version: Version) -> str:
 
 def mismatch_message(chrome: Version, drivers: list[tuple[Path, Version | None]]) -> str:
     """One line naming Chrome's version, every driver found, and the fix."""
-    found = ", ".join(f"{_dotted(v)} at {p}" for p, v in drivers if v is not None) or "none"
+    found = ", ".join(f"{_dotted(v) if v is not None else 'unreadable'} at {p}" for p, v in drivers) or "none"
     return (
         f"ChromeDriver does not match Chrome {_dotted(chrome)} (found: {found}); "
         f"put a ChromeDriver {chrome[0]} first on PATH, e.g. from {CHROME_FOR_TESTING}, or update Chrome."
@@ -98,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--driver", type=Path, action="append", help="a candidate ChromeDriver (repeatable)")
     args = parser.parse_args(argv)
 
-    chromes = [args.chrome] if args.chrome else default_chrome_paths(os.environ)
+    chromes = [args.chrome] if args.chrome else default_chrome_paths(os.environ, Path.home())
     chrome = next((v for v in map(version_of, chromes) if v is not None), None)
     if chrome is None:
         looked_at = ", ".join(map(str, chromes)) or "nothing"
@@ -106,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     candidates = args.driver if args.driver else default_driver_paths(os.environ, Path.home())
-    drivers = [(path, version_of(path)) for path in candidates]
+    drivers = [(path, version_of(path)) for path in candidates if path.is_file()]
     chosen = choose_driver(chrome, drivers)
     if chosen is None:
         print(mismatch_message(chrome, drivers), file=sys.stderr)
