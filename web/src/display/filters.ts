@@ -7,6 +7,8 @@
  * on a console switch).
  */
 
+import { CONSOLES, type ConsoleKind } from "../console/consoles";
+
 export interface FilterDef {
     name: string;
     /** "single" = 1-pass, "ntsc" = 2-pass NTSC, "gb" = 5-pass Game Boy */
@@ -15,25 +17,21 @@ export interface FilterDef {
     params?: Record<string, number>;
 }
 
-export type ConsoleKind = "nes" | "gb" | "gba" | "snes";
-
 /** Return the ordered list of filter keys available for a given console. */
 export function filterKeysForConsole(
     allFilterKeys: string[],
     filters: Record<string, FilterDef>,
     console: ConsoleKind,
 ): string[] {
+    const family = CONSOLES[console].filterFamily;
     return allFilterKeys.filter((key) => {
         const f = filters[key];
         if (!f) return false;
-        if (console === "gba" || console === "snes") {
-            return f.type === "single" && key === "stock";
-        }
-        if (console === "gb") {
-            // GB mode: stock + gb-type filters only
-            return (f.type === "single" && key === "stock") || f.type === "gb";
-        }
-        // NES mode: everything except gb-type filters
+        const isStock = f.type === "single" && key === "stock";
+        if (family === "stock") return isStock;
+        // Game Boy family: stock + gb-type filters only
+        if (family === "gb") return isStock || f.type === "gb";
+        // NES family: everything except gb-type filters
         return f.type !== "gb";
     });
 }
@@ -73,11 +71,5 @@ export function filterOnConsoleSwitch(
 
 /** Return the preferred default filter key for a given console. */
 export function defaultFilterForConsole(console: ConsoleKind): string {
-    if (console === "gb") {
-        return "gameboy";
-    }
-    if (console === "gba" || console === "snes") {
-        return "stock";
-    }
-    return "ntsc";
+    return CONSOLES[console].defaultFilter;
 }
