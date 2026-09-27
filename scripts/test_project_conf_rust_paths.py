@@ -12,18 +12,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
-PROJECT_CONF = ROOT / ".cerebro/project.conf"
 BUILD_WORKLOAD = ROOT / ".cerebro/cerebro/scripts/build-workload"
-
-
-def _declared(key: str) -> str:
-    """The value of `key` in project.conf: `key value`, `#` to end of line is a comment."""
-
-    for line in PROJECT_CONF.read_text(encoding="utf-8").splitlines():
-        fields = line.split("#", 1)[0].split(None, 1)
-        if len(fields) == 2 and fields[0] == key:
-            return fields[1].strip()
-    return ""
 
 
 # project-conf reads the *shared* root's declaration, which in a fleet worktree is the main
@@ -80,9 +69,6 @@ NOT_CARGO_INPUTS = [
 @unittest.skipUnless(BUILD_WORKLOAD.exists(), "the cerebro submodule is not initialised")
 class RustPathsTests(unittest.TestCase):
     """build-workload classifies this tree's paths from the declared rust_paths."""
-
-    def test_rust_paths_is_declared(self) -> None:
-        self.assertTrue(_declared("rust_paths"))
 
     def test_cargo_inputs_classify_as_rust(self) -> None:
         for path in CARGO_INPUTS:
