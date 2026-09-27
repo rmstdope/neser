@@ -3,7 +3,7 @@
 use crate::nes::bus::ControllerStateWrapper;
 use crate::nes::console::SaveState;
 use crate::nes::input::ArkanoidState;
-use crate::wasm::{WasmNes, gamepad_init_toast_message};
+use crate::wasm::{WasmNes, gamepad_init_toast_message, rom_extension_table};
 use crate::wasm_gb::WasmGb;
 use crate::wasm_gba::WasmGba;
 use crate::wasm_snes::WasmSnes;
@@ -192,6 +192,31 @@ fn gamepad_init_toast_export_uses_shared_wording() {
         gamepad_init_toast_message(true, 1),
         "Gamepad found: using 1 gamepad"
     );
+}
+
+#[wasm_bindgen_test]
+fn rom_extension_table_pairs_each_extension_with_its_console() {
+    let pairs: Vec<(String, String)> = rom_extension_table()
+        .iter()
+        .map(|entry| {
+            let pair = js_sys::Array::from(&entry);
+            (
+                pair.get(0).as_string().expect("extension is a string"),
+                pair.get(1).as_string().expect("console is a string"),
+            )
+        })
+        .collect();
+    let expected = [
+        ("nes", "nes"),
+        ("gb", "gb"),
+        ("gbc", "gb"),
+        ("cgb", "gb"),
+        ("gba", "gba"),
+        ("sfc", "snes"),
+        ("smc", "snes"),
+    ]
+    .map(|(ext, console)| (ext.to_string(), console.to_string()));
+    assert_eq!(pairs, expected);
 }
 
 #[wasm_bindgen_test]

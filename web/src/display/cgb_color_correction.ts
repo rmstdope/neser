@@ -1,4 +1,4 @@
-import type { WebRomConsoleKind } from "../rom/rom_extensions";
+import { CONSOLES, type ConsoleKind } from "../console/consoles";
 
 /**
  * The Colors button is shown only while a game is running whose colours can
@@ -8,12 +8,13 @@ import type { WebRomConsoleKind } from "../rom/rom_extensions";
  * change the picture at once.
  */
 export function cgbColorButtonVisible(state: {
-    kind: WebRomConsoleKind | null;
+    kind: ConsoleKind | null;
     isColor: boolean;
     running: boolean;
     paused: boolean;
 }): boolean {
-    const correctable = (state.kind === "gb" && state.isColor) || state.kind === "gba";
+    const correction = state.kind === null ? "never" : CONSOLES[state.kind].colorCorrection;
+    const correctable = correction === "always" || (correction === "color-only" && state.isColor);
     return correctable && state.running && !state.paused;
 }
 

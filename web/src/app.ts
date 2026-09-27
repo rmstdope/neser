@@ -4,6 +4,7 @@ import init, {
     WasmGba,
     WasmSnes,
     gamepad_init_toast_message,
+    rom_extension_table,
     snes_dsp_firmware_is_genuine,
     snes_rom_dsp_chip
 } from "../pkg/neser";
@@ -45,12 +46,18 @@ import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
 import { handleRomSelection } from "./rom/rom_selection";
 import { shouldCreateFreshEmulatorForRomStart } from "./rom/emulator_lifecycle";
-import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName, type WebRomConsoleKind } from "./rom/rom_extensions";
+import {
+    applyRomExtensionTable,
+    supportedRomExtensionsText,
+    webRomConsoleKindForName,
+    webRomExtensionForName
+} from "./rom/rom_extensions";
+import { CONSOLES, type ConsoleKind } from "./console/consoles";
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
 import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio/audio_profiles";
-import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio/audio_normalizer";
+import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normalizer";
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
@@ -66,7 +73,7 @@ import {
     computeShortcutHelpFontSizePx,
     toggleShortcutHelpVisibility
 } from "./shortcuts/shortcut_help";
-import { createCrosshair, type CrosshairStyle } from "./display/crosshair";
+import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
     superScopeKeyAction,
@@ -104,10 +111,10 @@ import {
     shouldKeepPointerLocked,
 } from "./input/pointer_lock";
 import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from "./ui/emulation_controls";
-import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
+import { cycleFilterKey, filterOnConsoleSwitch, filterPipelineNeedsRebuild, type FilterDef } from "./display/filters";
 import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
 import { paletteButtonVisible } from "./display/palette_button";
-import { selectRenderPipeline } from "./display/render_pipeline";
+import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
 import crtFragGlsl from "./shaders/crt.frag.glsl?raw";
@@ -148,7 +155,7 @@ const shortcutHelpOverlay = document.getElementById("shortcut-help-overlay");
 const debuggerPanel = document.getElementById("debugger-panel");
 
 // Use WebGL for rendering with filter support
-const gl = canvas.getContext("webgl")!;
+const gl = canvas.getContext("webgl", SCREEN_CONTEXT_ATTRIBUTES)!;
 if (!gl) {
     throw new Error("WebGL rendering context not available for canvas 'screen'");
 }
@@ -223,6 +230,21 @@ function ensureWasmInitialized() {
         wasmInitPromise = init({ module_or_path: createWasmUrl() });
     }
     return wasmInitPromise;
+}
+
+let romExtensionTableReady: Promise<void> | null = null;
+
+/**
+ * Install the wasm binding's ROM extension table and set the picker's accept list from it, once.
+ * Everything that classifies a ROM by name waits for this: before it, no extension is known.
+ */
+function ensureRomExtensionTable(): Promise<void> {
+    if (!romExtensionTableReady) {
+        romExtensionTableReady = ensureWasmInitialized().then(() => {
+            applyRomExtensionTable(rom_extension_table(), romInput);
+        });
+    }
+    return romExtensionTableReady;
 }
 
 // WebGL shader setup for filters
@@ -317,6 +339,8 @@ interface AutorunFileInput extends HTMLInputElement {
 }
 
 let currentFilter = "ntsc"; // Start with NTSC filter as requested
+/** True until a look is chosen or a game has loaded: the first game then starts on its console's default. */
+let filterUntouched = true;
 const filterKeys = Object.keys(filters);
 let shaderProgram: ShaderProgram | null = null;
 let ntscPass1Program: ShaderProgram | null = null;
@@ -354,7 +378,7 @@ let idleScrollerActive = false;
 let idleScroller: { renderFrame: (ts: number) => Uint8Array } | null = null;
 let idleScrollerStartTime = 0;
 let crosshair: ReturnType<typeof createCrosshair> | null = null; // Light-gun sight overlay
-let crosshairStyle: CrosshairStyle = "plus";
+let crosshairPictureWidth = 256; // The picture width the sight overlay was created for
 // Capture state for playing a Super Scope or SNES Mouse game with the mouse; fresh for every
 // game load.
 let superScopeSession = createSuperScopeSession();
@@ -787,7 +811,7 @@ let emulator: ActiveEmulator | null = null;
 let nes: WasmNes | null = null;
 
 function frameTextureFormat(): number {
-    return emulator?.kind === "gba" ? gl.RGB : gl.RGBA;
+    return emulator && CONSOLES[emulator.kind].frameFormat === "rgb" ? gl.RGB : gl.RGBA;
 }
 
 function allocateFrameTextureStorage() {
@@ -959,7 +983,7 @@ function updateEmulationButtons() {
 }
 
 /** Create a fresh emulator instance and update kind-dependent UI. */
-function createEmulatorInstance(kind: WebRomConsoleKind): void {
+function createEmulatorInstance(kind: ConsoleKind): void {
     resetGamepadState();
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
@@ -1006,9 +1030,16 @@ function updateEmulatorKindUI() {
     }
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
-    const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind);
-    if (newFilter !== currentFilter) {
-        currentFilter = newFilter;
+    const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind, filterUntouched);
+    const rebuild = filterPipelineNeedsRebuild(
+        currentFilter,
+        newFilter,
+        filters,
+        { width: ntscPass1Width, height: ntscPass1Height },
+        { width, height },
+    );
+    currentFilter = newFilter;
+    if (rebuild) {
         initWebGL();
     }
     filterToggleBtn.disabled = false;
@@ -1420,18 +1451,11 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
             channelData[i] = normalizeGbaSample(samples[i * 2]);
             rightChannelData[i] = normalizeGbaSample(samples[i * 2 + 1]);
         }
-    } else if (emulator?.kind === "gb" || emulator?.kind === "gba" || emulator?.kind === "snes") {
-        // GB, GBA, and SNES APUs all output bipolar samples in [-1.0, 1.0].
-        // GBA and SNES share normalizeGbaSample (clamp to [-1, 1]); GB uses its own normalizer.
-        for (let i = 0; i < frameCount; i++) {
-            channelData[i] = emulator?.kind === "gb"
-                ? normalizeGbSample(samples[i])
-                : normalizeGbaSample(samples[i]);
-        }
     } else {
-        // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path
+        // NES APU output (0.0 to ~1.177) stays unipolar in 0.0 to 1.0; the other cores are bipolar in [-1.0, 1.0].
+        const normalize = monoSampleNormalizer(emulator?.kind ?? "nes", NES_APU_MAX);
         for (let i = 0; i < frameCount; i++) {
-            channelData[i] = normalizeNesSample(samples[i], NES_APU_MAX);
+            channelData[i] = normalize(samples[i]);
         }
     }
 
@@ -1475,9 +1499,17 @@ async function start(): Promise<boolean> {
         return true;
     }
     const romName = romMetadata?.name ?? "selected-rom.nes";
+    // A ROM chosen before the wasm module has loaded waits for its extension table.
+    try {
+        await ensureRomExtensionTable();
+    } catch (err: unknown) {
+        setStatus(`Failed to load ROM: ${err}`, true);
+        updateEmulationButtons();
+        return true;
+    }
     const consoleKind = webRomConsoleKindForName(romName);
 
-    // Reject unsupported file types before any async work.
+    // Reject unsupported file types before any emulator work.
     if (!consoleKind) {
         const ext = webRomExtensionForName(romName);
         toastOverlay.show(`Unsupported file type .${ext} — only ${supportedRomExtensionsText()} are supported`);
@@ -1529,6 +1561,7 @@ async function start(): Promise<boolean> {
 
         const wasCaptured = superScopeSession.captured() || snesMouseSession.captured();
         emulator!.inst.load_rom(romBytes, romName);
+        filterUntouched = false;
         superScopeSession = createSuperScopeSession();
         snesMouseSession = createSnesMouseSession();
         if (
@@ -2701,7 +2734,6 @@ async function populateRomSelect() {
     }
 }
 
-populateRomSelect();
 // Set initial button states (all disabled until a ROM is loaded)
 updateEmulationButtons();
 
@@ -2750,13 +2782,15 @@ function showPageLoadGamepadInitToast() {
 // Initialize connectedGamepads to detect any gamepads already connected on page load
 updateConnectedGamepads();
 
-ensureWasmInitialized()
+ensureRomExtensionTable()
     .then(() => {
+        // The built-in ROM list is filtered by the extension table, so it waits for it too.
+        void populateRomSelect();
         updateConnectedGamepads();
         showPageLoadGamepadInitToast();
     })
     .catch((error) => {
-        console.error("Failed to initialize WASM for gamepad init toast", error);
+        console.error("Failed to initialize WASM at start-up", error);
     });
 
 const webShortcutActions = {
@@ -2793,6 +2827,7 @@ function updateFilterToggleButtonLabel() {
 }
 
 function toggleFilterAction() {
+    filterUntouched = false;
     cycleFilter();
     syncGbPaletteWithFilter(false);
     updateFilterToggleButtonLabel();
@@ -3121,15 +3156,15 @@ function isMouseControllerActive(nesInstance: WasmNes | null) {
     );
 }
 
-function setCrosshairVisible(visible: boolean, style: CrosshairStyle = "plus") {
+function setCrosshairVisible(visible: boolean, pictureWidth = 256) {
     if (visible) {
-        if (crosshair && crosshairStyle !== style) {
+        if (crosshair && crosshairPictureWidth !== pictureWidth) {
             crosshair.destroy();
             crosshair = null;
         }
         if (!crosshair) {
-            crosshair = createCrosshair(canvas, { style });
-            crosshairStyle = style;
+            crosshair = createCrosshair(canvas, { pictureWidth });
+            crosshairPictureWidth = pictureWidth;
         }
         crosshair.show();
         return;
@@ -3148,7 +3183,7 @@ function updateMouseCursorState() {
         if (isSnesSuperScopeActive(snesInst)) {
             // The sight and the hidden pointer belong to a captured mouse only.
             const captured = superScopeSession.captured();
-            setCrosshairVisible(captured, "ring");
+            setCrosshairVisible(captured);
             if (captured && crosshair) {
                 const { x, y } = superScopeSession.position();
                 crosshair.updatePosition(x, y);
@@ -3177,7 +3212,7 @@ function updateMouseCursorState() {
 
     const zapperActive = isZapperActive(nes);
     const pointerLocked = document.pointerLockElement === canvas;
-    setCrosshairVisible(zapperActive && pointerLocked);
+    setCrosshairVisible(zapperActive && pointerLocked, width);
 
     if (zapperActive && pointerLocked) {
         document.body.style.cursor = "none";

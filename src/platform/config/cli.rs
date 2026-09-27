@@ -566,6 +566,7 @@ fn help_section_for_flag(flag: &str) -> &'static str {
             | "--nes-filter"
             | "--gb-filter"
             | "--gba-filter"
+            | "--snes-filter"
             | "--window-height"
             | "--vsync"
             | "--no-vsync"
@@ -865,6 +866,15 @@ mod tests {
         let sound_section = help.find("\nSound:").unwrap();
         let sound_flag = help.find("--audio").unwrap();
         assert!(sound_section < sound_flag);
+    }
+
+    #[test]
+    fn test_help_text_lists_snes_filter_under_video_and_display() {
+        assert_eq!(
+            super::help_section_for_flag("--snes-filter"),
+            "Video and Display"
+        );
+        assert!(help_text().contains("--snes-filter"));
     }
 
     #[test]

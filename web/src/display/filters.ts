@@ -7,6 +7,8 @@
  * on a console switch).
  */
 
+import { CONSOLES, type ConsoleKind } from "../console/consoles";
+
 export interface FilterDef {
     name: string;
     /** "single" = 1-pass, "ntsc" = 2-pass NTSC, "gb" = 5-pass Game Boy */
@@ -15,25 +17,21 @@ export interface FilterDef {
     params?: Record<string, number>;
 }
 
-export type ConsoleKind = "nes" | "gb" | "gba" | "snes";
-
 /** Return the ordered list of filter keys available for a given console. */
 export function filterKeysForConsole(
     allFilterKeys: string[],
     filters: Record<string, FilterDef>,
     console: ConsoleKind,
 ): string[] {
+    const family = CONSOLES[console].filterFamily;
     return allFilterKeys.filter((key) => {
         const f = filters[key];
         if (!f) return false;
-        if (console === "gba" || console === "snes") {
-            return f.type === "single" && key === "stock";
-        }
-        if (console === "gb") {
-            // GB mode: stock + gb-type filters only
-            return (f.type === "single" && key === "stock") || f.type === "gb";
-        }
-        // NES mode: everything except gb-type filters
+        const isStock = f.type === "single" && key === "stock";
+        if (family === "stock") return isStock;
+        // Game Boy family: stock + gb-type filters only
+        if (family === "gb") return isStock || f.type === "gb";
+        // NES family (NES and SNES): everything except gb-type filters
         return f.type !== "gb";
     });
 }
@@ -59,13 +57,19 @@ export function cycleFilterKey(
  * If the current filter is not available for the target console,
  * falls back to the console-appropriate default ("gameboy" for GB,
  * "ntsc" for NES) via {@link defaultFilterForConsole}.
+ *
+ * `untouched` is true while nobody has chosen a look and no game has loaded on
+ * this page: the page's initial filter is then not a choice to carry over, so
+ * the target console starts on its own default (None for SNES).
  */
 export function filterOnConsoleSwitch(
     currentFilter: string,
     allFilterKeys: string[],
     filters: Record<string, FilterDef>,
     targetConsole: ConsoleKind,
+    untouched = false,
 ): string {
+    if (untouched) return defaultFilterForConsole(targetConsole);
     const keys = filterKeysForConsole(allFilterKeys, filters, targetConsole);
     if (keys.includes(currentFilter)) return currentFilter;
     return defaultFilterForConsole(targetConsole);
@@ -73,11 +77,26 @@ export function filterOnConsoleSwitch(
 
 /** Return the preferred default filter key for a given console. */
 export function defaultFilterForConsole(console: ConsoleKind): string {
-    if (console === "gb") {
-        return "gameboy";
-    }
-    if (console === "gba" || console === "snes") {
-        return "stock";
-    }
-    return "ntsc";
+    return CONSOLES[console].defaultFilter;
+}
+
+/**
+ * Whether the WebGL filter pipeline must be rebuilt after a console switch.
+ *
+ * A changed filter always needs it. NTSC also needs it when the frame size
+ * differs from the one its pass-1 target was built for (`width * 4` by
+ * `height`): NTSC carries over between NES (240 wide) and SNES (256 wide)
+ * games, and a stale target computes the composite pattern at the wrong
+ * sample rate. Single-pass filters read the live frame size every frame.
+ */
+export function filterPipelineNeedsRebuild(
+    previousFilter: string,
+    nextFilter: string,
+    filters: Record<string, FilterDef>,
+    ntscTarget: { width: number; height: number },
+    frame: { width: number; height: number },
+): boolean {
+    if (previousFilter !== nextFilter) return true;
+    if (filters[nextFilter]?.type !== "ntsc") return false;
+    return ntscTarget.width !== frame.width * 4 || ntscTarget.height !== frame.height;
 }

@@ -3,9 +3,13 @@ use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
+use crate::gb::bus::oam_dma::OamDma;
 use crate::gb::bus::serial::Serial;
+use crate::gb::bus::snapshot::{BusSnapshot, NoCartridge, SharedState, SharedStateMut};
+use crate::gb::bus::tick_sequence::{TickParts, TickSequence};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes::{self, GbcPalette};
+use crate::gb::console::save_state::{BusState, GbBusType};
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
 use crate::gb::ppu::timing::PpuMode;
@@ -72,14 +76,8 @@ pub struct CgbBus {
     apu: Apu,
     if_reg: u8,
     ie_reg: u8,
-    /// Whether an OAM DMA transfer is currently in progress.
-    dma_active: bool,
-    /// High byte of the OAM DMA source address.
-    dma_source: u8,
-    /// DMA position: 0=warm-up, 1–160=copy, 161=teardown.
-    dma_position: u8,
-    /// Whether OAM access is blocked by an active DMA transfer.
-    dma_oam_blocked: bool,
+    /// OAM DMA ($FF46).
+    oam_dma: OamDma,
     /// $FF01 SB, $FF02 SC and the internal-clock transfer (shared with DMG).
     serial: Serial,
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
@@ -143,18 +141,6 @@ pub struct CgbBus {
     gbc_palette: GbcPalette,
 }
 
-/// Holds the cartridge slot for the instant [`CgbBus::reset`] has taken the
-/// real cartridge out to rebuild the bus around it; never read.
-struct NoCartridge;
-
-impl GbCartridge for NoCartridge {
-    fn read(&self, _addr: u16) -> u8 {
-        0xFF
-    }
-
-    fn write(&mut self, _addr: u16, _val: u8) {}
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CgbDmaBusKind {
     Cartridge,
@@ -196,18 +182,9 @@ impl CgbBus {
     }
 
     fn cgb_forbidden_region_blocked(&self) -> bool {
-        self.dma_oam_blocked
+        self.oam_dma.blocks_oam()
             || (self.ppu.is_lcd_enabled()
                 && matches!(self.ppu.mode(), PpuMode::OamScan | PpuMode::PixelTransfer))
-    }
-
-    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
-        const LCDC_TILE_DATA: u8 = 0x10;
-
-        addr == 0xFF40
-            && self.ppu.is_lcd_enabled()
-            && self.ppu.mode() == PpuMode::PixelTransfer
-            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
     }
 
     /// Create a new CGB bus.
@@ -255,11 +232,8 @@ impl CgbBus {
             // Store internal value $01 (VBlank set), readback produces $E1.
             if_reg: 0x01,
             ie_reg: 0,
-            dma_active: false,
             // DMA = $00 at CGB boot (different from DMG which has $FF).
-            dma_source: 0x00,
-            dma_position: 0,
-            dma_oam_blocked: false,
+            oam_dma: OamDma::from_parts(false, 0x00, 0, false),
             serial: Serial::new(),
             hdma: HdmaState::new(),
             hdma_halt_cycles: 0,
@@ -575,132 +549,16 @@ impl CgbBus {
         if bank == 0 { 1 } else { bank }
     }
 
-    /// Advance system timers, PPU, and APU by `m_cycles` M-cycles.
+    /// Advance the bus by `m_cycles` M-cycles: see the shared sequence in
+    /// `tick_sequence.rs`.
     ///
-    /// In double-speed mode, PPU receives half the dots per M-cycle (2 instead
-    /// of 4) and APU ticks at half rate, since each CPU M-cycle takes half the
-    /// real time.  Timer and OAM DMA are M-cycle driven and naturally run at 2x.
-    ///
-    /// The APU frame sequencer is clocked by DIV-APU falling edges from the
-    /// timer (bit 12 of the 16-bit internal counter = DIV bit 4, or bit 13 in
-    /// double-speed mode = DIV bit 5).
+    /// In double-speed mode, the PPU receives half the dots per M-cycle (2
+    /// instead of 4) and the APU and cartridge RTC tick at half rate, since
+    /// each CPU M-cycle takes half the real time. Timer and OAM DMA are
+    /// M-cycle driven and naturally run at 2x; the timer's DIV-APU bit moves
+    /// from DIV bit 4 to bit 5 so the frame sequencer keeps 512 Hz.
     pub fn tick(&mut self, m_cycles: u8) {
-        let double = self.tick_before_ppu(m_cycles);
-        let dots_per_mcycle = Self::dots_per_mcycle(double);
-        self.ppu.tick_dots(u32::from(m_cycles) * dots_per_mcycle);
-        self.tick_after_ppu(m_cycles, double);
-    }
-
-    fn dots_per_mcycle(double_speed: bool) -> u32 {
-        if double_speed { 2 } else { 4 }
-    }
-
-    fn tick_before_ppu(&mut self, m_cycles: u8) -> bool {
-        self.if_reg |= self.ppu.take_pending_interrupts();
-
-        let double = self.is_double_speed();
-
-        for _ in 0..m_cycles {
-            let pre_counter = self.timer.raw_counter();
-            let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
-            if self.timer.interrupt_pending {
-                self.if_reg |= 0x04;
-                self.timer.interrupt_pending = false;
-            }
-            let cgb_mode = !self.ppu.dmg_compat;
-            if self
-                .serial
-                .clock(pre_counter, self.timer.raw_counter(), cgb_mode)
-            {
-                self.if_reg |= 0x08;
-            }
-
-            // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
-            for _ in 0..div_apu_rising {
-                self.apu.clock_div_apu_secondary();
-            }
-            // Clock APU frame sequencer for each DIV-APU falling edge.
-            for _ in 0..div_apu_falling {
-                self.apu.clock_div_apu();
-            }
-
-            if self.dma_active {
-                match self.dma_position {
-                    0 => {
-                        self.dma_position = 1;
-                    }
-                    1..=160 => {
-                        self.dma_oam_blocked = true;
-                        let byte_idx = (self.dma_position - 1) as u16;
-                        let src = (self.dma_source as u16) << 8 | byte_idx;
-                        self.ppu.oam[byte_idx as usize] = self.read_raw(src);
-                        self.dma_position += 1;
-                    }
-                    161 => {
-                        self.dma_active = false;
-                        self.dma_oam_blocked = false;
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-        double
-    }
-
-    fn tick_after_ppu(&mut self, m_cycles: u8, double: bool) {
-        if double {
-            // In double-speed mode the APU runs at normal speed (half the CPU M-cycle
-            // rate). CH3 wave-position timing requires 1-APU-cycle-per-M-cycle
-            // granularity, so it is ticked once per CPU M-cycle with 1 cycle.
-            // All other channels are still ticked at the half rate via the accumulator.
-            for _ in 0..m_cycles {
-                self.apu.tick_ch3_one_apu_cycle();
-            }
-            self.apu_tick_accumulator += m_cycles;
-            let apu_ticks = self.apu_tick_accumulator / 2;
-            self.apu_tick_accumulator %= 2;
-            if apu_ticks > 0 {
-                self.apu.tick_except_ch3(apu_ticks);
-            }
-        } else {
-            self.apu.tick(m_cycles);
-        }
-        // Tick the cartridge RTC in real-time units. In double speed, each CPU
-        // M-cycle takes half as much real time, so MBC3 sees half the normal rate.
-        if double {
-            self.rtc_tick_accumulator += u16::from(m_cycles);
-            let cart_ticks = self.rtc_tick_accumulator / 2;
-            self.rtc_tick_accumulator %= 2;
-            if cart_ticks > 0 {
-                self.cart.tick(u32::from(cart_ticks));
-            }
-        } else {
-            self.rtc_tick_accumulator = 0;
-            self.cart.tick(u32::from(m_cycles));
-        }
-
-        // HDMA state machine: activate pending HDMA when LCD turns on.
-        // HDMA requested with LCD off remains pending until LCD is enabled.
-        // Once activated, actual transfers occur during HBlank periods (checked below).
-        if self.hdma.is_hdma_pending() && self.ppu.is_lcd_enabled() {
-            self.hdma.activate_hdma();
-            // Clear any pending HBlank flag so we wait for the NEXT HBlank after LCD enable.
-            // Per Pan Docs: transfers occur at LY=0-143 during HBlank, starting from the
-            // first full scanline after LCD is enabled.
-            self.ppu.take_hblank_entered();
-        }
-
-        // HDMA: transfer one 16-byte block per HBlank (Mode 3→0).
-        // Transfers occur only when LCD is on and HBlank is entered.
-        if self.hdma.is_active() && self.hdma.is_hblank_mode() {
-            let hblank = self.ppu.take_hblank_entered();
-            if hblank {
-                self.do_hdma_block_transfer();
-                // Signal CPU to halt for 8 M-cycles during the transfer.
-                // Per Pan Docs: HDMA takes 8 M-cycles per block regardless of CPU speed mode.
-                self.hdma_halt_cycles = 8;
-            }
-        }
+        TickSequence::tick(self, m_cycles);
     }
 
     /// Execute one HDMA block transfer (16 bytes from source to VRAM).
@@ -784,14 +642,8 @@ impl CgbBus {
         }
     }
 
-    fn dma_conflict_active(&self, addr: u16) -> bool {
-        self.dma_active
-            && self.dma_oam_blocked
-            && Self::dma_bus_for_addr(addr).is_some_and(|bus| bus == self.dma_source_bus())
-    }
-
     fn dma_source_bus(&self) -> CgbDmaBusKind {
-        Self::dma_bus_for_addr(u16::from(self.dma_source) << 8).unwrap_or(CgbDmaBusKind::Wram)
+        Self::dma_bus_for_addr(u16::from(self.oam_dma.source()) << 8).unwrap_or(CgbDmaBusKind::Wram)
     }
 
     fn dma_bus_for_addr(addr: u16) -> Option<CgbDmaBusKind> {
@@ -801,11 +653,6 @@ impl CgbBus {
             0xC000..=0xFDFF => Some(CgbDmaBusKind::Wram),
             _ => None,
         }
-    }
-
-    fn dma_conflict_byte(&self) -> u8 {
-        let byte_idx = self.dma_position.saturating_sub(2) as u16;
-        self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
     }
 
     /// HDMA5 ($FF55) write: start a GDMA, start or arm an HDMA, or cancel one.
@@ -863,14 +710,6 @@ impl CgbBus {
         }
     }
 
-    fn do_oam_dma(&mut self, val: u8) {
-        let preserve_blocking = self.dma_active && self.dma_oam_blocked;
-        self.dma_active = true;
-        self.dma_source = val;
-        self.dma_position = 0;
-        self.dma_oam_blocked = preserve_blocking;
-    }
-
     /// Set a button state on the joypad and propagate any resulting interrupt.
     pub fn set_joypad_button(&mut self, id: u8, pressed: bool) {
         if self.joypad.set_button(id, pressed) {
@@ -908,137 +747,25 @@ impl CgbBus {
         self.apu.sample_rate()
     }
 
-    /// Hard reset: rebuild the bus exactly as [`CgbBus::new`] would.
-    ///
-    /// The constructor is the one place that knows initial state, so a reset
-    /// machine is by construction a freshly loaded one. Only what is not
-    /// machine state survives: the cartridge (ROM, RAM and mapper state), the
-    /// model, the `skip_boot_rom` choice, the APU output sample rate and the
-    /// player's GBC palette choice.
+    /// Hard reset: rebuild the bus as [`CgbBus::new`] would, keeping the
+    /// cartridge, the model, the `skip_boot_rom` choice, the audio sample rate
+    /// and the player's GBC palette choice; see `snapshot.rs`.
     pub fn reset(&mut self) {
-        let cart = std::mem::replace(&mut self.cart, Box::new(NoCartridge));
-        let sample_rate = self.apu.sample_rate();
-        let gbc_palette = self.gbc_palette;
-        *self = Self::new(cart, self.model, self.skip_boot_rom);
-        self.apu.set_sample_rate(sample_rate);
-        self.set_gbc_palette(gbc_palette);
+        BusSnapshot::reset(self);
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
 
-    /// Capture the full bus state for serialization.
-    pub fn capture_bus_state(&self) -> crate::gb::console::save_state::BusState {
-        use crate::gb::console::save_state::{BusState, GbBusType};
-        let mut wram_flat = [0u8; 0x8000];
-        for (bank, bank_data) in self.wram.iter().enumerate() {
-            let offset = bank * 0x1000;
-            wram_flat[offset..offset + 0x1000].copy_from_slice(bank_data);
-        }
-        let mut state = BusState {
-            bus_type: GbBusType::Cgb,
-            ppu: self.ppu.clone(),
-            wram: Box::new(wram_flat),
-            hram: self.hram,
-            timer: self.timer.clone(),
-            joypad: self.joypad.clone(),
-            apu: self.apu.clone(),
-            if_reg: self.if_reg,
-            ie_reg: self.ie_reg,
-            dma_active: self.dma_active,
-            dma_source: self.dma_source,
-            dma_position: self.dma_position,
-            dma_oam_blocked: self.dma_oam_blocked,
-            hdma: Some(self.hdma.clone()),
-            svbk: Some(self.svbk),
-            key1: Some(self.key1),
-            apu_tick_accumulator: Some(self.apu_tick_accumulator),
-            rtc_tick_accumulator: Some(self.rtc_tick_accumulator),
-            ff72: Some(self.ff72),
-            ff73: Some(self.ff73),
-            ff74: Some(self.ff74),
-            ff75: Some(self.ff75),
-            key0: Some(self.key0),
-            key0_locked: Some(self.key0_locked),
-            cgb_extra_oam: Some(self.cgb_extra_oam.to_vec()),
-            boot_rom_active: Some(self.boot_rom_active),
-            sb: None,
-            sc: None,
-            serial_buf: None,
-            serial_bits_remaining: None,
-            serial_master_clock: None,
-            model: None,
-            sgb: None,
-        };
-        self.serial.capture_into(&mut state);
-        state
+    /// Capture the full bus state for serialization: see `snapshot.rs`.
+    pub fn capture_bus_state(&self) -> BusState {
+        BusSnapshot::capture_bus_state(self)
     }
 
-    /// Restore bus state from a deserialized snapshot.
+    /// Restore bus state from a deserialized snapshot: see `snapshot.rs`.
     ///
     /// Returns an error if the save state was captured from a DMG bus.
-    pub fn restore_bus_state(
-        &mut self,
-        state: &crate::gb::console::save_state::BusState,
-    ) -> Result<(), String> {
-        use crate::gb::console::save_state::GbBusType;
-        if state.bus_type != GbBusType::Cgb {
-            return Err(format!(
-                "bus type mismatch: expected CGB, found {:?}",
-                state.bus_type
-            ));
-        }
-        self.ppu = state.ppu.clone();
-        self.ppu.set_cgb_model(self.model);
-        self.ppu.fixup_after_state_load();
-        for (bank, bank_data) in self.wram.iter_mut().enumerate() {
-            let offset = bank * 0x1000;
-            bank_data.copy_from_slice(&state.wram[offset..offset + 0x1000]);
-        }
-        self.serial = Serial::new();
-        self.serial.restore_from(state);
-        self.hram = state.hram;
-        self.timer = state.timer.clone();
-        self.joypad = state.joypad.clone();
-        self.apu = state.apu.clone();
-        // Re-apply the configured CGB model after restoring the APU snapshot:
-        // older save-states won't have `is_cgb`/`cgb_model` serialized on CH1
-        // and would otherwise come back on the DMG/default model path.
-        self.apu.set_cgb_model(self.model);
-        self.if_reg = state.if_reg;
-        self.ie_reg = state.ie_reg;
-        self.dma_active = state.dma_active;
-        self.dma_source = state.dma_source;
-        self.dma_position = state.dma_position;
-        self.dma_oam_blocked = state.dma_oam_blocked;
-        self.hdma = state.hdma.clone().unwrap_or_default();
-        self.svbk = state.svbk.unwrap_or(0);
-        self.key1 = state.key1.unwrap_or(0);
-        self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
-        self.rtc_tick_accumulator = state.rtc_tick_accumulator.unwrap_or(0);
-        self.apu_power_on_accumulator = 0;
-        // Restore undocumented CGB registers with defaults for older save states
-        self.ff72 = state.ff72.unwrap_or(0x00);
-        self.ff73 = state.ff73.unwrap_or(0x00);
-        self.ff74 = state.ff74.unwrap_or(0x00);
-        self.ff75 = state.ff75.unwrap_or(0x00);
-        // Restore KEY0 state; default to locked with post-boot value for older save states
-        self.key0 = state.key0.unwrap_or(0x00);
-        self.key0_locked = state.key0_locked.unwrap_or(true);
-        if let Some(extra_oam) = &state.cgb_extra_oam {
-            if extra_oam.len() != self.cgb_extra_oam.len() {
-                return Err(format!(
-                    "invalid CGB extra OAM length: expected {}, found {}",
-                    self.cgb_extra_oam.len(),
-                    extra_oam.len()
-                ));
-            }
-            self.cgb_extra_oam.copy_from_slice(extra_oam);
-        } else {
-            self.cgb_extra_oam = [0; 0x60];
-        }
-        // Restore boot ROM state; default to inactive for older save states
-        self.boot_rom_active = state.boot_rom_active.unwrap_or(false);
-        Ok(())
+    pub fn restore_bus_state(&mut self, state: &BusState) -> Result<(), String> {
+        BusSnapshot::restore_bus_state(self, state)
     }
 
     /// Returns `true` when the cartridge has battery-backed RAM.
@@ -1082,8 +809,8 @@ impl MemoryMap for CgbBus {
             ie_reg: self.ie_reg,
             serial: &self.serial,
             cgb_mode: !self.ppu.dmg_compat,
-            dma_source: self.dma_source,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_source: self.oam_dma.source(),
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -1101,7 +828,7 @@ impl MemoryMap for CgbBus {
             if_reg: &mut self.if_reg,
             ie_reg: &mut self.ie_reg,
             serial: &mut self.serial,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -1219,7 +946,217 @@ impl MemoryMap for CgbBus {
     }
 
     fn start_oam_dma(&mut self, val: u8) {
-        self.do_oam_dma(val);
+        self.oam_dma.start(val);
+    }
+}
+
+impl BusSnapshot for CgbBus {
+    const BUS_TYPE: GbBusType = GbBusType::Cgb;
+
+    fn shared(&self) -> SharedState<'_> {
+        SharedState {
+            ppu: &self.ppu,
+            hram: &self.hram,
+            timer: &self.timer,
+            joypad: &self.joypad,
+            apu: &self.apu,
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            oam_dma: self.oam_dma,
+            serial: &self.serial,
+            boot_rom_active: self.boot_rom_active,
+        }
+    }
+
+    fn shared_mut(&mut self) -> SharedStateMut<'_> {
+        SharedStateMut {
+            ppu: &mut self.ppu,
+            hram: &mut self.hram,
+            timer: &mut self.timer,
+            joypad: &mut self.joypad,
+            apu: &mut self.apu,
+            if_reg: &mut self.if_reg,
+            ie_reg: &mut self.ie_reg,
+            oam_dma: &mut self.oam_dma,
+            serial: &mut self.serial,
+            boot_rom_active: &mut self.boot_rom_active,
+        }
+    }
+
+    /// The eight 4 KiB WRAM banks, in order, fill the array.
+    fn wram_flat(&self) -> Box<[u8; 0x8000]> {
+        let mut flat = Box::new([0u8; 0x8000]);
+        for (bank, bank_data) in self.wram.iter().enumerate() {
+            let offset = bank * 0x1000;
+            flat[offset..offset + 0x1000].copy_from_slice(bank_data);
+        }
+        flat
+    }
+
+    fn restore_wram(&mut self, flat: &[u8; 0x8000]) {
+        for (bank, bank_data) in self.wram.iter_mut().enumerate() {
+            let offset = bank * 0x1000;
+            bank_data.copy_from_slice(&flat[offset..offset + 0x1000]);
+        }
+    }
+
+    fn capture_model(&self, state: &mut BusState) {
+        state.hdma = Some(self.hdma.clone());
+        state.svbk = Some(self.svbk);
+        state.key1 = Some(self.key1);
+        state.apu_tick_accumulator = Some(self.apu_tick_accumulator);
+        state.rtc_tick_accumulator = Some(self.rtc_tick_accumulator);
+        state.ff72 = Some(self.ff72);
+        state.ff73 = Some(self.ff73);
+        state.ff74 = Some(self.ff74);
+        state.ff75 = Some(self.ff75);
+        state.key0 = Some(self.key0);
+        state.key0_locked = Some(self.key0_locked);
+        state.cgb_extra_oam = Some(self.cgb_extra_oam.to_vec());
+    }
+
+    fn restore_model(&mut self, state: &BusState) -> Result<(), String> {
+        // Re-apply the configured CGB model after restoring the APU snapshot:
+        // older save-states won't have `is_cgb`/`cgb_model` serialized on CH1
+        // and would otherwise come back on the DMG/default model path.
+        self.apu.set_cgb_model(self.model);
+        self.hdma = state.hdma.clone().unwrap_or_default();
+        self.svbk = state.svbk.unwrap_or(0);
+        self.key1 = state.key1.unwrap_or(0);
+        self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
+        self.rtc_tick_accumulator = state.rtc_tick_accumulator.unwrap_or(0);
+        self.apu_power_on_accumulator = 0;
+        // Restore undocumented CGB registers with defaults for older save states
+        self.ff72 = state.ff72.unwrap_or(0x00);
+        self.ff73 = state.ff73.unwrap_or(0x00);
+        self.ff74 = state.ff74.unwrap_or(0x00);
+        self.ff75 = state.ff75.unwrap_or(0x00);
+        // Restore KEY0 state; default to locked with post-boot value for older save states
+        self.key0 = state.key0.unwrap_or(0x00);
+        self.key0_locked = state.key0_locked.unwrap_or(true);
+        if let Some(extra_oam) = &state.cgb_extra_oam {
+            if extra_oam.len() != self.cgb_extra_oam.len() {
+                return Err(format!(
+                    "invalid CGB extra OAM length: expected {}, found {}",
+                    self.cgb_extra_oam.len(),
+                    extra_oam.len()
+                ));
+            }
+            self.cgb_extra_oam.copy_from_slice(extra_oam);
+        } else {
+            self.cgb_extra_oam = [0; 0x60];
+        }
+        Ok(())
+    }
+
+    /// The PPU runs the bus's configured model, whatever the state says.
+    fn prepare_restored_ppu(&self, ppu: &mut Ppu) {
+        ppu.set_cgb_model(self.model);
+    }
+
+    fn take_cartridge(&mut self) -> Box<dyn GbCartridge> {
+        std::mem::replace(&mut self.cart, Box::new(NoCartridge))
+    }
+
+    /// Keeps the model, the `skip_boot_rom` choice and the GBC palette.
+    fn rebuilt(&self, cart: Box<dyn GbCartridge>) -> Self {
+        let mut bus = Self::new(cart, self.model, self.skip_boot_rom);
+        bus.set_gbc_palette(self.gbc_palette);
+        bus
+    }
+}
+
+impl TickSequence for CgbBus {
+    fn tick_parts(&mut self) -> TickParts<'_> {
+        TickParts {
+            ppu: &mut self.ppu,
+            timer: &mut self.timer,
+            apu: &mut self.apu,
+            if_reg: &mut self.if_reg,
+            serial: &mut self.serial,
+            oam_dma: &mut self.oam_dma,
+        }
+    }
+
+    fn oam_dma(&self) -> &OamDma {
+        &self.oam_dma
+    }
+
+    fn dma_read(&self, addr: u16) -> u8 {
+        self.read_raw(addr)
+    }
+
+    /// While a DMA copies, a CPU access on the same bus (cartridge, VRAM or
+    /// WRAM) as its source sees the DMA's byte instead.
+    fn dma_conflicts_with(&self, addr: u16) -> bool {
+        self.oam_dma.holds_bus()
+            && Self::dma_bus_for_addr(addr).is_some_and(|bus| bus == self.dma_source_bus())
+    }
+
+    fn dots_per_m_cycle(&self) -> u32 {
+        if self.is_double_speed() { 2 } else { 4 }
+    }
+
+    /// The fast serial clock exists only in CGB mode, not in DMG compatibility.
+    fn serial_cgb_mode(&self) -> bool {
+        !self.ppu.dmg_compat
+    }
+
+    fn tick_after_ppu(&mut self, m_cycles: u8) {
+        let double = self.is_double_speed();
+        if double {
+            // In double-speed mode the APU runs at normal speed (half the CPU M-cycle
+            // rate). CH3 wave-position timing requires 1-APU-cycle-per-M-cycle
+            // granularity, so it is ticked once per CPU M-cycle with 1 cycle.
+            // All other channels are still ticked at the half rate via the accumulator.
+            for _ in 0..m_cycles {
+                self.apu.tick_ch3_one_apu_cycle();
+            }
+            self.apu_tick_accumulator += m_cycles;
+            let apu_ticks = self.apu_tick_accumulator / 2;
+            self.apu_tick_accumulator %= 2;
+            if apu_ticks > 0 {
+                self.apu.tick_except_ch3(apu_ticks);
+            }
+        } else {
+            self.apu.tick(m_cycles);
+        }
+        // Tick the cartridge RTC in real-time units. In double speed, each CPU
+        // M-cycle takes half as much real time, so MBC3 sees half the normal rate.
+        if double {
+            self.rtc_tick_accumulator += u16::from(m_cycles);
+            let cart_ticks = self.rtc_tick_accumulator / 2;
+            self.rtc_tick_accumulator %= 2;
+            if cart_ticks > 0 {
+                self.cart.tick(u32::from(cart_ticks));
+            }
+        } else {
+            self.rtc_tick_accumulator = 0;
+            self.cart.tick(u32::from(m_cycles));
+        }
+
+        // HDMA state machine: activate pending HDMA when LCD turns on.
+        // HDMA requested with LCD off remains pending until LCD is enabled.
+        // Once activated, actual transfers occur during HBlank periods (checked below).
+        if self.hdma.is_hdma_pending() && self.ppu.is_lcd_enabled() {
+            self.hdma.activate_hdma();
+            // Clear any pending HBlank flag so we wait for the NEXT HBlank after LCD enable.
+            // Per Pan Docs: transfers occur at LY=0-143 during HBlank, starting from the
+            // first full scanline after LCD is enabled.
+            self.ppu.take_hblank_entered();
+        }
+
+        // HDMA: transfer one 16-byte block per HBlank (Mode 3→0).
+        // Transfers occur only when LCD is on and HBlank is entered.
+        if self.hdma.is_active() && self.hdma.is_hblank_mode() {
+            let hblank = self.ppu.take_hblank_entered();
+            if hblank {
+                self.do_hdma_block_transfer();
+                // Signal CPU to halt for 8 M-cycles during the transfer.
+                // Per Pan Docs: HDMA takes 8 M-cycles per block regardless of CPU speed mode.
+                self.hdma_halt_cycles = 8;
+            }
+        }
     }
 }
 
@@ -1237,31 +1174,15 @@ impl GbBus for CgbBus {
     }
 
     fn tick(&mut self, m_cycles: u8) {
-        CgbBus::tick(self, m_cycles);
+        TickSequence::tick(self, m_cycles);
     }
 
     fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
-        if self.needs_mode3_lcdc_write_phase(addr, val) {
-            let double = self.tick_before_ppu(1);
-            let dots_per_mcycle = Self::dots_per_mcycle(double);
-            self.ppu.tick_dots(dots_per_mcycle - 1);
-            self.write(addr, val);
-            self.ppu.tick_dots(1);
-            self.tick_after_ppu(1, double);
-        } else {
-            self.tick(1);
-            if !self.dma_conflict_active(addr) {
-                self.write(addr, val);
-            }
-        }
+        self.cpu_write_m_cycle(addr, val);
     }
 
     fn read_cpu_m_cycle(&mut self, addr: u16) -> u8 {
-        if self.dma_conflict_active(addr) {
-            self.dma_conflict_byte()
-        } else {
-            self.read(addr)
-        }
+        self.cpu_read_m_cycle(addr)
     }
 
     fn try_speed_switch(&mut self) -> bool {
@@ -2429,7 +2350,7 @@ mod tests {
     fn test_double_speed_ppu_gets_half_dots_per_mcycle() {
         // Given: CGB bus in normal speed, LCD enabled.
         // Warm up past the LCD-enable transient so subsequent ticks
-        // advance by exactly m_cycles × dots_per_mcycle.
+        // advance by exactly m_cycles × dots_per_m_cycle.
         let mut bus = make_bus();
         enable_lcd(&mut bus);
         bus.tick(10); // warm-up

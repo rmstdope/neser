@@ -1,4 +1,4 @@
-import type { WebRomConsoleKind } from "../rom/rom_extensions";
+import { CONSOLES, type ConsoleKind } from "../console/consoles";
 
 /**
  * The Palette button does what F8 does, so it is shown only where F8 cycles
@@ -7,10 +7,10 @@ import type { WebRomConsoleKind } from "../rom/rom_extensions";
  * stopped, because a press must change the picture at once.
  */
 export function paletteButtonVisible(state: {
-    kind: WebRomConsoleKind | null;
+    kind: ConsoleKind | null;
     label: string;
     running: boolean;
     paused: boolean;
 }): boolean {
-    return (state.kind === "nes" || state.kind === "gb") && state.label !== "" && state.running && !state.paused;
+    return state.kind !== null && CONSOLES[state.kind].paletteButton && state.label !== "" && state.running && !state.paused;
 }

@@ -13,6 +13,7 @@
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::emulator::{Console, SystemType};
 use crate::platform::frontend_toasts::cartridge_load_toast_message;
+use crate::platform::rom_extensions::{Platform, platform_for_path};
 use crate::snes::dsp::{self, FirmwareProblem};
 use std::path::Path;
 
@@ -73,20 +74,7 @@ pub fn game_name(rom_path: &str) -> String {
 /// extension at all) fall back to [`SystemType::Nes`], preserving the
 /// historical behaviour of the `neser` CLI.
 pub fn detect_system_type(path: &str) -> SystemType {
-    let extension = Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("");
-
-    if extension.eq_ignore_ascii_case("gb") || extension.eq_ignore_ascii_case("gbc") {
-        SystemType::GameBoy
-    } else if extension.eq_ignore_ascii_case("gba") {
-        SystemType::Gba
-    } else if extension.eq_ignore_ascii_case("sfc") || extension.eq_ignore_ascii_case("smc") {
-        SystemType::Snes
-    } else {
-        SystemType::Nes
-    }
+    platform_for_path(Path::new(path)).map_or(SystemType::Nes, Platform::system_type)
 }
 
 /// Read `rom_path` and build the [`Console`] that can run it.
@@ -327,6 +315,11 @@ mod tests {
     #[test]
     fn detect_system_type_gb_extension_returns_gameboy() {
         assert_eq!(detect_system_type("tetris.gb"), SystemType::GameBoy);
+    }
+
+    #[test]
+    fn detect_system_type_cgb_extension_returns_gameboy() {
+        assert_eq!(detect_system_type("pocket-camera.cgb"), SystemType::GameBoy);
     }
 
     #[test]

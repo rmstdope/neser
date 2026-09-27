@@ -2,6 +2,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::{collections::BTreeSet, fs};
 
+use crate::platform::rom_extensions::platform_for_path;
+
 const CATALOG_HEADER: &str = "path";
 
 #[derive(Debug, Clone)]
@@ -95,17 +97,9 @@ fn read_dir_if_exists(path: &Path) -> io::Result<Option<fs::ReadDir>> {
 }
 
 fn is_rom_file(path: &Path) -> bool {
-    // The catalog feeds both the ROM browser (NES, GB, GBC, GBA, and SNES
-    // platforms) and the in-emulator cartridge switch dialog (which filters
-    // to .nes itself).
-    const ROM_EXTENSIONS: [&str; 6] = ["nes", "gb", "gbc", "gba", "sfc", "smc"];
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| {
-            ROM_EXTENSIONS
-                .iter()
-                .any(|rom_ext| ext.eq_ignore_ascii_case(rom_ext))
-        })
+    // The catalog feeds both the ROM browser (every platform) and the
+    // in-emulator cartridge switch dialog (which filters to .nes itself).
+    platform_for_path(path).is_some()
 }
 
 fn read_catalog_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
@@ -307,6 +301,8 @@ mod tests {
         assert!(is_rom_file(Path::new("game.GB")));
         assert!(is_rom_file(Path::new("game.gbc")));
         assert!(is_rom_file(Path::new("game.GBC")));
+        assert!(is_rom_file(Path::new("game.cgb")));
+        assert!(is_rom_file(Path::new("game.CGB")));
         assert!(is_rom_file(Path::new("game.gba")));
         assert!(is_rom_file(Path::new("game.GBA")));
         assert!(is_rom_file(Path::new("game.sfc")));

@@ -117,16 +117,30 @@ pub struct GlBackend {
 pub struct Crosshair {
     pub x: f32,
     pub y: f32,
-    pub style: CrosshairStyle,
+    pub gun: LightGun,
 }
 
-/// How a light gun's aim is drawn over the picture.
+/// The light gun a sight belongs to. Both draw the same white ring sight with a black
+/// outline; the gun decides only which picture the ring is measured in (see
+/// [`sight_picture`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CrosshairStyle {
-    /// The NES Zapper's small red plus.
-    Plus,
-    /// The Super Scope's white ring sight with a black outline.
-    Ring,
+pub enum LightGun {
+    /// The NES Zapper.
+    Zapper,
+    /// The SNES Super Scope.
+    SuperScope,
+}
+
+/// The picture, in native pixels, that `gun`'s ring sight is measured in when the shown
+/// picture is `cropped_size` texels large. The Zapper aims over the cropped NES picture
+/// itself; the Super Scope over its 256-wide scanlines, whatever the output resolution.
+fn sight_picture(gun: LightGun, cropped_size: [u32; 2]) -> [u32; 2] {
+    match gun {
+        LightGun::Zapper => cropped_size,
+        LightGun::SuperScope => {
+            crate::frontends::native::ui_geometry::super_scope_sight_picture(cropped_size)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,10 +159,6 @@ impl RegisteredEguiTexture {
     fn matches_gl_id(self, gl_id: gl::types::GLuint) -> bool {
         self.gl_id == gl_id
     }
-}
-
-fn crosshair_rgba() -> [f32; 4] {
-    [1.0, 0.2, 0.2, 1.0]
 }
 
 struct CrosshairDrawContext {
@@ -328,51 +338,27 @@ fn draw_egui_toasts(
 
 fn draw_egui_crosshair(ui: &mut egui::Ui, crosshair: Crosshair, draw_ctx: &CrosshairDrawContext) {
     let painter = ui.painter();
-    let color = egui_color_from_rgba(crosshair_rgba());
     let (ix, iy) = project_crosshair_to_cropped_indices(crosshair, draw_ctx);
-    if crosshair.style == CrosshairStyle::Ring {
-        let sight = crate::frontends::native::ui_geometry::super_scope_sight_shapes(
-            [draw_ctx.x0, draw_ctx.y0],
-            [draw_ctx.draw_w, draw_ctx.draw_h],
-            crate::frontends::native::ui_geometry::super_scope_sight_picture([
-                draw_ctx.cropped_w,
-                draw_ctx.cropped_h,
-            ]),
-            [ix, iy],
-        );
-        let center = egui::pos2(sight.center[0], sight.center[1]);
-        // Black first, white on top: the black shows as an outline on any background.
-        for (width, color) in [
-            (sight.outline_width, egui::Color32::BLACK),
-            (sight.line_width, egui::Color32::WHITE),
-        ] {
-            let stroke = egui::Stroke::new(width, color);
-            painter.circle_stroke(center, sight.radius, stroke);
-            for [from, to] in sight.ticks {
-                painter.line_segment(
-                    [egui::pos2(from[0], from[1]), egui::pos2(to[0], to[1])],
-                    stroke,
-                );
-            }
-        }
-        return;
-    }
-    let rects = crate::frontends::native::ui_geometry::crosshair_marker_rects(
+    let sight = crate::frontends::native::ui_geometry::super_scope_sight_shapes(
         [draw_ctx.x0, draw_ctx.y0],
         [draw_ctx.draw_w, draw_ctx.draw_h],
-        [draw_ctx.cropped_w, draw_ctx.cropped_h],
+        sight_picture(crosshair.gun, [draw_ctx.cropped_w, draw_ctx.cropped_h]),
         [ix, iy],
     );
-
-    for rect in rects {
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(rect.rect_min[0], rect.rect_min[1]),
-                egui::pos2(rect.rect_max[0], rect.rect_max[1]),
-            ),
-            0.0,
-            color,
-        );
+    let center = egui::pos2(sight.center[0], sight.center[1]);
+    // Black first, white on top: the black shows as an outline on any background.
+    for (width, color) in [
+        (sight.outline_width, egui::Color32::BLACK),
+        (sight.line_width, egui::Color32::WHITE),
+    ] {
+        let stroke = egui::Stroke::new(width, color);
+        painter.circle_stroke(center, sight.radius, stroke);
+        for [from, to] in sight.ticks {
+            painter.line_segment(
+                [egui::pos2(from[0], from[1]), egui::pos2(to[0], to[1])],
+                stroke,
+            );
+        }
     }
 }
 
@@ -1144,8 +1130,21 @@ mod tests_letterbox {
 #[cfg(test)]
 mod tests_crosshair_projection {
     use super::{
-        Crosshair, CrosshairDrawContext, CrosshairStyle, project_crosshair_to_cropped_indices,
+        Crosshair, CrosshairDrawContext, LightGun, project_crosshair_to_cropped_indices,
+        sight_picture,
     };
+
+    #[test]
+    fn sight_picture_for_the_zapper_is_the_cropped_nes_picture() {
+        assert_eq!(sight_picture(LightGun::Zapper, [256, 240]), [256, 240]);
+        assert_eq!(sight_picture(LightGun::Zapper, [240, 224]), [240, 224]);
+    }
+
+    #[test]
+    fn sight_picture_for_the_super_scope_is_its_scanline_picture() {
+        assert_eq!(sight_picture(LightGun::SuperScope, [256, 224]), [256, 224]);
+        assert_eq!(sight_picture(LightGun::SuperScope, [512, 448]), [256, 224]);
+    }
 
     #[test]
     fn test_crosshair_projection_without_overscan() {
@@ -1163,7 +1162,7 @@ mod tests_crosshair_projection {
             Crosshair {
                 x: 10.0,
                 y: 20.0,
-                style: CrosshairStyle::Plus,
+                gun: LightGun::Zapper,
             },
             &draw_ctx,
         );
@@ -1187,7 +1186,7 @@ mod tests_crosshair_projection {
             Crosshair {
                 x: 100.0,
                 y: 40.0,
-                style: CrosshairStyle::Plus,
+                gun: LightGun::Zapper,
             },
             &draw_ctx,
         );
@@ -1211,7 +1210,7 @@ mod tests_crosshair_projection {
             Crosshair {
                 x: 255.0,
                 y: 239.0,
-                style: CrosshairStyle::Plus,
+                gun: LightGun::Zapper,
             },
             &draw_ctx,
         );
@@ -1223,9 +1222,9 @@ mod tests_crosshair_projection {
 #[cfg(test)]
 mod tests_egui_frame_input {
     use super::{
-        LineSegment, RegisteredEguiTexture, crosshair_rgba, egui_color_from_rgba,
-        egui_frame_input_for_window, fps_counter_text, gb_tiles_texture_aspect,
-        gb_tiles_texture_uv, scroll_rect_line_segments, toast_background_rgba, toast_text_rgba,
+        LineSegment, RegisteredEguiTexture, egui_color_from_rgba, egui_frame_input_for_window,
+        fps_counter_text, gb_tiles_texture_aspect, gb_tiles_texture_uv, scroll_rect_line_segments,
+        toast_background_rgba, toast_text_rgba,
     };
 
     #[test]
@@ -1280,14 +1279,6 @@ mod tests_egui_frame_input {
         assert_eq!(
             egui_color_from_rgba(toast_background_rgba()),
             egui::Color32::from_rgba_unmultiplied(89, 89, 89, 179)
-        );
-    }
-
-    #[test]
-    fn crosshair_egui_color_matches_rgba_helper() {
-        assert_eq!(
-            egui_color_from_rgba(crosshair_rgba()),
-            egui::Color32::from_rgba_unmultiplied(255, 51, 51, 255)
         );
     }
 

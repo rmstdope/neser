@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { selectRenderPipeline } from "./render_pipeline";
+import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./render_pipeline";
 
 describe("selectRenderPipeline", () => {
     it("uses the GB pipeline once GB assets are ready", () => {
@@ -41,5 +41,13 @@ describe("selectRenderPipeline", () => {
                 hasSinglePassShader: false,
             }),
         ).toBe("ntsc");
+    });
+});
+
+describe("SCREEN_CONTEXT_ATTRIBUTES", () => {
+    // Every screen draw is one full-viewport quad, so multisampling changes no visible pixel, while
+    // it costs synchronous GPU round trips on every canvas resize (nr-v5x).
+    it("requests the screen context without antialiasing", () => {
+        expect(SCREEN_CONTEXT_ATTRIBUTES.antialias).toBe(false);
     });
 });

@@ -41,6 +41,8 @@ SNES-specific options:
 - `--snes-firmware-dir <folder>` (coprocessor firmware such as `dsp1b.rom`; default `~/.neser/firmware`)
 - `--snes-controller-port1 <standard|multitap|mouse|superscope>`
 - `--snes-controller-port2 <standard|multitap|mouse|superscope>`
+- `--snes-filter <crt|ntsc|smooth|pal|none>` (the starting screen filter; left out means none.
+  `F4` cycles None → CRT → Smooth → NTSC → PAL, the same looks as the NES)
 
 Examples:
 
@@ -93,6 +95,7 @@ Equivalent config keys in `neser.conf`:
 #snes-spc-ipl-path=/absolute/path/to/spc_ipl.bin
 #snes-controller-port1=standard
 #snes-controller-port2=standard
+#snes-filter=crt
 ```
 
 Notes:
@@ -136,7 +139,9 @@ SNES web behavior:
 
 - Uses the dedicated WASM SNES runtime.
 - Supports pause/resume, soft/hard reset, audio playback, and save/load state in browser storage.
-- Uses the stock filter only for SNES (`F4` does not cycle through NES/GB shader sets in SNES mode).
+- `F4` and the Filter button cycle the NES looks: None → NTSC → CRT. The first SNES game after
+  opening the page starts on None; a later one keeps the look of the game before it when SNES
+  games have that look, and otherwise starts on None.
 
 For browser build/run/test commands, see [web/README.md](web/README.md).
 

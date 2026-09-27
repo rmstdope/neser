@@ -122,38 +122,6 @@ pub(crate) fn bottom_center_text_panel(
     }
 }
 
-pub(crate) fn crosshair_marker_rects(
-    origin: [f32; 2],
-    size: [f32; 2],
-    cropped_size: [u32; 2],
-    cropped_index: [f32; 2],
-) -> [RectLayout; 8] {
-    let pixel_w = size[0] / cropped_size[0].max(1) as f32;
-    let pixel_h = size[1] / cropped_size[1].max(1) as f32;
-    let center_x = origin[0] + (cropped_index[0] + 0.5) * pixel_w;
-    let center_y = origin[1] + (cropped_index[1] + 0.5) * pixel_h;
-
-    let pattern: [(i32, i32); 8] = [
-        (0, -2),
-        (0, -1),
-        (-2, 0),
-        (-1, 0),
-        (1, 0),
-        (2, 0),
-        (0, 1),
-        (0, 2),
-    ];
-
-    pattern.map(|(dx, dy)| {
-        let cx = center_x + dx as f32 * pixel_w;
-        let cy = center_y + dy as f32 * pixel_h;
-        RectLayout {
-            rect_min: [cx - pixel_w * 0.5, cy - pixel_h * 0.5],
-            rect_max: [cx + pixel_w * 0.5, cy + pixel_h * 0.5],
-        }
-    })
-}
-
 /// Margin kept between a toast and the picture's left and right edges.
 pub(crate) const TOAST_SIDE_MARGIN: f32 = 12.0;
 
@@ -414,56 +382,5 @@ mod tests {
     fn toasts_wrap_inside_the_picture() {
         assert_eq!(toast_wrap_width(400.0, 8.0), 400.0 - 2.0 * 12.0 - 2.0 * 8.0);
         assert_eq!(toast_wrap_width(10.0, 8.0), 1.0, "never zero or negative");
-    }
-
-    #[test]
-    fn crosshair_marker_rects_center_around_projected_pixel() {
-        // Given a one-to-one cropped frame and a projected crosshair pixel index.
-        let origin = [10.0, 20.0];
-        let size = [256.0, 240.0];
-        let cropped_size = [256, 240];
-        let cropped_index = [10.0, 20.0];
-
-        // When computing the eight crosshair marker rectangles.
-        let rects = crosshair_marker_rects(origin, size, cropped_size, cropped_index);
-
-        // Then the marker pattern surrounds, but does not cover, the selected pixel center.
-        assert_eq!(
-            rects,
-            [
-                RectLayout {
-                    rect_min: [20.0, 38.0],
-                    rect_max: [21.0, 39.0],
-                },
-                RectLayout {
-                    rect_min: [20.0, 39.0],
-                    rect_max: [21.0, 40.0],
-                },
-                RectLayout {
-                    rect_min: [18.0, 40.0],
-                    rect_max: [19.0, 41.0],
-                },
-                RectLayout {
-                    rect_min: [19.0, 40.0],
-                    rect_max: [20.0, 41.0],
-                },
-                RectLayout {
-                    rect_min: [21.0, 40.0],
-                    rect_max: [22.0, 41.0],
-                },
-                RectLayout {
-                    rect_min: [22.0, 40.0],
-                    rect_max: [23.0, 41.0],
-                },
-                RectLayout {
-                    rect_min: [20.0, 41.0],
-                    rect_max: [21.0, 42.0],
-                },
-                RectLayout {
-                    rect_min: [20.0, 42.0],
-                    rect_max: [21.0, 43.0],
-                },
-            ]
-        );
     }
 }

@@ -28,6 +28,7 @@ mapper_verification/
 │   ├── test_irq.s               # Scanline/M2 counter IRQ verification
 │   ├── test_prg_ram.s           # PRG-RAM read/write at $6000-$7FFF
 │   ├── test_write_protect.s     # PRG-RAM write-protection verification
+│   ├── test_mmc6_prg_ram.s      # MMC6 internal 1 KB PRG-RAM enables (mapper 4.1)
 │   ├── test_bus_conflicts.s     # Bus conflict AND behavior
 │   ├── test_chr_latch.s         # PPU-triggered CHR latch (MMC2/MMC4)
 │   ├── test_chr_ram_banking.s   # CHR-RAM bank switching (CPROM)
@@ -39,6 +40,7 @@ mapper_verification/
 ├── defs/                        # Per-mapper capability and register definitions
 │   ├── m000.0_defs.inc          # NROM
 │   ├── m004.0_defs.inc          # MMC3 submapper 0
+│   ├── m004.1_defs.inc          # MMC6 (HKROM), mapper 4 submapper 1, console-verified
 │   ├── m019.0_defs.inc          # Namco 163
 │   ├── m032.0_defs.inc          # Irem G-101
 │   ├── m035.0_defs.inc          # J.Y. Company ASIC
@@ -196,6 +198,10 @@ For mappers with write-protection registers (MMC3, MMC5, MMC3-derivatives), this
 4. Write-protection preserves data integrity under attempted corruption
 
 The test writes patterns to `$6000`+, enables write-protect via the mapper-specific `write_protect_prg_ram` macro, attempts to overwrite, and verifies original data is preserved.
+
+### MMC6 PRG-RAM (`test_mmc6_prg_ram.s`)
+
+NES 2.0 submapper 004:1 is the Nintendo MMC6 (HKROM), whose only PRG-RAM is 1 KB inside the chip at `$7000`-`$7FFF`, mirrored, with nothing at `$6000`. The `m004.1` ROMs are therefore console-verified. Following the [MMC6](https://www.nesdev.org/wiki/MMC6) page, the test checks: both 512-byte halves read and write when `$8000` bit 5 and all `$A001` HhLl bits are set; the 1 KB mirrors through `$7000`-`$7FFF`; `$6000` is open bus; with only one half readable the other reads `$00` and a write enable without its read enable does nothing; read-only halves ignore writes; with neither half readable `$7000`-`$7FFF` is open bus; clearing `$8000` bit 5 disables the RAM, forces `$A001` to `$00` and ignores `$A001` writes, so re-enabling `$8000` bit 5 leaves the RAM unmapped until `$A001` is written again. The `m004.1` IRQ test uses Sharp MMC3 behaviour, as the submapper table specifies for the MMC6.
 
 ### Block Select / Outer Banking (`test_block_select.s`)
 

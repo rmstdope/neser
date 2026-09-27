@@ -488,10 +488,12 @@ fn tick_pixel_output(ppu: &mut Ppu) {
             // Get background pixel (only if background rendering is enabled)
             // Note: Shift registers were shifted above, after load (if any) but before reading
             let fine_x = ppu.registers.x();
-            let bg_pixel = if bg_enabled {
+            // PPUMASK bit 1 clear hides the background in x=0-7: the pixel there is
+            // transparent, so the backdrop (or a sprite, whatever its priority) shows.
+            let bg_pixel = if bg_enabled && (show_background_left || screen_x >= 8) {
                 ppu.background.get_pixel(fine_x)
             } else {
-                0 // Background disabled, treat as transparent
+                0 // Background disabled or hidden in the left column, treat as transparent
             };
 
             // Get sprite pixel (only if sprite rendering is enabled)

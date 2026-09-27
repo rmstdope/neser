@@ -1,3 +1,5 @@
+import { CONSOLES, type ConsoleKind } from "../console/consoles";
+
 /**
  * Clamp a GB APU sample to the valid bipolar range [-1.0, 1.0].
  *
@@ -34,4 +36,16 @@ export function normalizeNesSample(sample: number, nesApuMax: number): number {
     }
     const normalized = sample / nesApuMax;
     return Math.min(1.0, Math.max(0.0, normalized));
+}
+
+/** The normalizer for one console's mono samples, as its row in the console table names it. */
+export function monoSampleNormalizer(kind: ConsoleKind, nesApuMax: number): (sample: number) => number {
+    switch (CONSOLES[kind].audio.sampleScale) {
+        case "gb":
+            return normalizeGbSample;
+        case "gba":
+            return normalizeGbaSample;
+        case "nes":
+            return (sample) => normalizeNesSample(sample, nesApuMax);
+    }
 }

@@ -356,7 +356,7 @@ impl Emulator for Snes {
     }
 
     fn allowed_shaders(&self) -> &'static [&'static str] {
-        &["none", "crt", "smooth", "ntsc", "pal"]
+        crate::snes::console::config::SNES_FILTER_NAMES
     }
 
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {

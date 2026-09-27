@@ -295,4 +295,96 @@ mod tests {
             }
         }
     }
+
+    /// A PPU whose whole top tile row is CHR tile 1 (solid, pattern value 3 = blue $12),
+    /// backdrop black ($0F), with sprite palette 0 colour 3 magenta ($14) and OAM filled
+    /// with `sprites` followed by off-screen entries.
+    fn ppu_with_solid_top_row(sprites: &[[u8; 4]]) -> Ppu {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        let mut chr_rom = vec![0u8; 0x2000];
+        for row in 0..8 {
+            chr_rom[0x10 + row] = 0xFF;
+            chr_rom[0x18 + row] = 0xFF;
+        }
+        let cartridge = InesRomBuilder::new()
+            .prg_rom_size(2)
+            .chr_rom_size(1)
+            .chr_rom_data(chr_rom)
+            .build_cartridge();
+        ppu.set_cartridge(Rc::new(RefCell::new(cartridge)));
+
+        for (addr, value) in [(0x00u8, 0x0Fu8), (0x03, 0x12), (0x13, 0x14)] {
+            ppu.write_address(0x3F, false);
+            ppu.write_address(addr, false);
+            ppu.write_data(value);
+        }
+
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
+        for _ in 0..32 {
+            ppu.write_data(1);
+        }
+
+        ppu.write_oam_address(0x00);
+        for sprite in sprites {
+            for byte in sprite {
+                ppu.write_oam_data(*byte);
+            }
+        }
+        for _ in sprites.len()..64 {
+            for byte in [0xFF, 0, 0, 0] {
+                ppu.write_oam_data(byte);
+            }
+        }
+
+        ppu.write_scroll(0, false);
+        ppu.write_scroll(0, false);
+        ppu.write_control(0b0000_0000);
+        ppu
+    }
+
+    /// nesdev PPUMASK bit 1: "0: Hide background in leftmost 8 pixels of screen". With the
+    /// background hidden there, x=0-7 shows the backdrop and x=8+ the background.
+    #[test]
+    fn test_background_hidden_in_left_8_pixels_when_ppumask_bit_1_clear() {
+        let mut ppu = ppu_with_solid_top_row(&[]);
+        ppu.write_mask(0b0000_1000); // Background on, left 8 pixels hidden
+        ppu.run_ppu_cycles(2 * 262 * 341);
+
+        let screen_buffer = ppu.screen_buffer();
+        let blue = Nes::lookup_system_palette(0x12);
+        let black = Nes::lookup_system_palette(0x0F);
+        for y in 0..8 {
+            for x in 0..256 {
+                let expected = if x < 8 { black } else { blue };
+                assert_eq!(
+                    screen_buffer.get_pixel(x, y),
+                    expected,
+                    "Pixel ({x}, {y}) with the background hidden in the left 8 pixels"
+                );
+            }
+        }
+    }
+
+    /// A hidden background pixel is transparent, so a sprite with background priority in
+    /// x=0-7 is drawn over the backdrop instead of being covered by the background.
+    #[test]
+    fn test_behind_background_sprite_shows_where_left_background_is_hidden() {
+        // Sprite: Y=0 (drawn on lines 1-8), tile 1, behind background (attr bit 5), X=0.
+        let mut ppu = ppu_with_solid_top_row(&[[0, 1, 0x20, 0]]);
+        ppu.write_mask(0b0001_1100); // Background and sprites on, sprites shown left, BG hidden left
+        ppu.run_ppu_cycles(2 * 262 * 341);
+
+        let screen_buffer = ppu.screen_buffer();
+        let blue = Nes::lookup_system_palette(0x12);
+        let magenta = Nes::lookup_system_palette(0x14);
+        for x in 0..16 {
+            let expected = if x < 8 { magenta } else { blue };
+            assert_eq!(
+                screen_buffer.get_pixel(x, 4),
+                expected,
+                "Pixel ({x}, 4) with a behind-background sprite at X=0"
+            );
+        }
+    }
 }

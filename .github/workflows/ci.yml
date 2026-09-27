@@ -71,6 +71,8 @@ jobs:
               # path detects a cerebro pointer bump.
               - '.cerebro/project.conf'
               - '.cerebro/cerebro'
+              # scripts/test_build_rs_rerun.py compiles and runs build.rs.
+              - 'build.rs'
               - '.github/workflows/ci.yml'
             shader_assets:
               # Release packaging only ships shader files reachable from the
@@ -87,6 +89,7 @@ jobs:
               - '.github/workflows/ci.yml'
             rust:
               - 'src/**'
+              - 'build.rs'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -112,6 +115,8 @@ jobs:
             platform:
               - 'src/platform/**'
             root_rust:
+              # build.rs generates the autorun tests nes::integration_tests includes.
+              - 'build.rs'
               - 'src/lib.rs'
               - 'src/main.rs'
               - 'Cargo.toml'

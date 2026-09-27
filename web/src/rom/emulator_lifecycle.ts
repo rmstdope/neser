@@ -1,8 +1,8 @@
-import type { WebRomConsoleKind } from "./rom_extensions";
+import { CONSOLES, type ConsoleKind } from "../console/consoles";
 
 export function shouldCreateFreshEmulatorForRomStart(
-    currentKind: WebRomConsoleKind | null,
-    nextKind: WebRomConsoleKind,
+    currentKind: ConsoleKind | null,
+    nextKind: ConsoleKind,
 ) {
-    return currentKind !== nextKind || nextKind === "gba" || nextKind === "snes";
+    return currentKind !== nextKind || CONSOLES[nextKind].freshInstanceOnStart;
 }
