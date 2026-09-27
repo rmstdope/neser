@@ -102,5 +102,3 @@ class PreCommitRuffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-x = [1, 2, 3]
