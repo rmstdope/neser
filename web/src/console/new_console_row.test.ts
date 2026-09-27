@@ -83,4 +83,10 @@ describe("a console added as one table row", () => {
         });
         expect(playback).toEqual({ channels: 2, samples: stereo });
     });
+
+    it("scales its mono samples with its row's normalizer", async () => {
+        const { monoSampleNormalizer } = await import("../audio/audio_normalizer");
+        // "gba" scale: bipolar with the output gain (0.75), not the NES unipolar or the plain Game Boy clamp.
+        expect(monoSampleNormalizer(NEXT, 1.177)(-0.5)).toBeCloseTo(-0.375);
+    });
 });

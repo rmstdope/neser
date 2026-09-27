@@ -51,7 +51,7 @@ import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
 import { computePlaybackRate } from "./audio/audio_resampler";
 import { AUDIO_PROFILES, resolveAudioProfileName } from "./audio/audio_profiles";
-import { normalizeGbSample, normalizeGbaSample, normalizeNesSample } from "./audio/audio_normalizer";
+import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normalizer";
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
@@ -1415,23 +1415,17 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
     const channelData = buffer.getChannelData(0);
 
     // Normalize and copy samples to the buffer
-    const sampleScale = CONSOLES[emulator?.kind ?? "nes"].audio.sampleScale;
     if (channelCount === 2) {
         const rightChannelData = buffer.getChannelData(1);
         for (let i = 0; i < frameCount; i++) {
             channelData[i] = normalizeGbaSample(samples[i * 2]);
             rightChannelData[i] = normalizeGbaSample(samples[i * 2 + 1]);
         }
-    } else if (sampleScale === "gb" || sampleScale === "gba") {
-        // Bipolar samples in [-1.0, 1.0]; the "gba" scale (GBA, SNES) also applies the output gain.
-        const normalize = sampleScale === "gb" ? normalizeGbSample : normalizeGbaSample;
+    } else {
+        // NES APU output (0.0 to ~1.177) stays unipolar in 0.0 to 1.0; the other cores are bipolar in [-1.0, 1.0].
+        const normalize = monoSampleNormalizer(emulator?.kind ?? "nes", NES_APU_MAX);
         for (let i = 0; i < frameCount; i++) {
             channelData[i] = normalize(samples[i]);
-        }
-    } else {
-        // NES APU outputs 0.0 to ~1.177; normalize to the unipolar 0.0 to 1.0 range used by this output path
-        for (let i = 0; i < frameCount; i++) {
-            channelData[i] = normalizeNesSample(samples[i], NES_APU_MAX);
         }
     }
 
