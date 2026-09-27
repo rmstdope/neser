@@ -243,18 +243,34 @@ impl Eeprom {
 
     /// Capture EEPROM state for save-state serialization.
     pub fn capture_state(&self) -> EepromState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref data,
+            addr_bits,
+            phase,
+            shift_in,
+            write_shift,
+        } = self;
         EepromState {
-            data: self.data.clone(),
-            addr_bits: self.addr_bits,
-            phase: self.phase,
-            shift_in: self.shift_in,
-            write_shift: self.write_shift,
+            data: data.clone(),
+            addr_bits,
+            phase,
+            shift_in,
+            write_shift,
         }
     }
 
     /// Restore EEPROM state from a save-state snapshot.
     pub fn restore_state(&mut self, state: &EepromState) -> Result<(), String> {
-        let expected_len = match state.addr_bits {
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &EepromState {
+            ref data,
+            addr_bits,
+            phase,
+            shift_in,
+            write_shift,
+        } = state;
+        let expected_len = match addr_bits {
             ADDR_BITS_512 => SaveType::Eeprom512.size_bytes(),
             ADDR_BITS_8K => SaveType::Eeprom8K.size_bytes(),
             other => {
@@ -263,24 +279,24 @@ impl Eeprom {
                 ));
             }
         };
-        if state.data.len() != expected_len {
+        if data.len() != expected_len {
             return Err(format!(
                 "EEPROM save-state length mismatch: expected {expected_len}, got {}",
-                state.data.len()
+                data.len()
             ));
         }
-        if self.data.len() != state.data.len() {
+        if self.data.len() != data.len() {
             return Err(format!(
                 "EEPROM save-state variant mismatch: live={} bytes, state={} bytes",
                 self.data.len(),
-                state.data.len()
+                data.len()
             ));
         }
-        self.data.clone_from(&state.data);
-        self.addr_bits = state.addr_bits;
-        self.phase = state.phase;
-        self.shift_in = state.shift_in;
-        self.write_shift = state.write_shift;
+        self.data.clone_from(data);
+        self.addr_bits = addr_bits;
+        self.phase = phase;
+        self.shift_in = shift_in;
+        self.write_shift = write_shift;
         Ok(())
     }
 

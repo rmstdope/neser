@@ -254,43 +254,59 @@ impl Flash {
 
     /// Capture Flash state for save-state serialization.
     pub fn capture_state(&self) -> FlashStateSnapshot {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref data,
+            bank,
+            id_mode,
+            id,
+            state,
+        } = self;
         FlashStateSnapshot {
-            data: self.data.clone(),
-            bank: self.bank,
-            id_mode: self.id_mode,
-            id: self.id,
-            state: self.state,
+            data: data.clone(),
+            bank,
+            id_mode,
+            id,
+            state,
         }
     }
 
     /// Restore Flash state from a save-state snapshot.
     pub fn restore_state(&mut self, state: &FlashStateSnapshot) -> Result<(), String> {
-        if state.data.len() != FLASH_BANK_SIZE && state.data.len() != FLASH_BANK_SIZE * 2 {
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &FlashStateSnapshot {
+            ref data,
+            bank,
+            id_mode,
+            id,
+            state,
+        } = state;
+        if data.len() != FLASH_BANK_SIZE && data.len() != FLASH_BANK_SIZE * 2 {
             return Err(format!(
                 "Flash save-state length mismatch: expected {FLASH_BANK_SIZE} or {}, got {}",
                 FLASH_BANK_SIZE * 2,
-                state.data.len()
+                data.len()
             ));
         }
-        let bank_count = state.data.len() / FLASH_BANK_SIZE;
-        if state.bank >= bank_count {
+        let bank_count = data.len() / FLASH_BANK_SIZE;
+        if bank >= bank_count {
             return Err(format!(
                 "Flash save-state bank out of range: bank {} for {bank_count} banks",
-                state.bank
+                bank
             ));
         }
-        if self.data.len() != state.data.len() {
+        if self.data.len() != data.len() {
             return Err(format!(
                 "Flash save-state variant mismatch: live={} bytes, state={} bytes",
                 self.data.len(),
-                state.data.len()
+                data.len()
             ));
         }
-        self.data.clone_from(&state.data);
-        self.bank = state.bank;
-        self.id_mode = state.id_mode;
-        self.id = state.id;
-        self.state = state.state;
+        self.data.clone_from(data);
+        self.bank = bank;
+        self.id_mode = id_mode;
+        self.id = id;
+        self.state = state;
         Ok(())
     }
 

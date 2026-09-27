@@ -389,36 +389,68 @@ impl Arm7tdmi {
 
     /// Capture CPU state for save-state serialization.
     fn capture_state_inner(&self) -> Arm7tdmiState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref regs,
+            cycles,
+            irq_pending,
+            fiq_pending,
+            halt_exit_pending,
+            prefetch_valid,
+            prefetch_arm,
+            prefetch_thumb,
+            halted,
+            pending_data_abort_exec_pc,
+            gamepak_prefetch_halfwords,
+            gamepak_prefetch_cycle_credit,
+            #[cfg(test)]
+                irq_dispatch_count: _, // transient: test-only debug counter
+        } = self;
         Arm7tdmiState {
-            regs: self.regs.clone(),
-            cycles: self.cycles,
-            irq_pending: self.irq_pending,
-            fiq_pending: self.fiq_pending,
-            halt_exit_pending: self.halt_exit_pending,
-            prefetch_valid: self.prefetch_valid,
-            prefetch_arm: self.prefetch_arm,
-            prefetch_thumb: self.prefetch_thumb,
-            halted: self.halted,
-            pending_data_abort_exec_pc: self.pending_data_abort_exec_pc,
-            gamepak_prefetch_halfwords: self.gamepak_prefetch_halfwords,
-            gamepak_prefetch_cycle_credit: self.gamepak_prefetch_cycle_credit,
+            regs: regs.clone(),
+            cycles,
+            irq_pending,
+            fiq_pending,
+            halt_exit_pending,
+            prefetch_valid,
+            prefetch_arm,
+            prefetch_thumb,
+            halted,
+            pending_data_abort_exec_pc,
+            gamepak_prefetch_halfwords,
+            gamepak_prefetch_cycle_credit,
         }
     }
 
     /// Restore CPU state from a save-state snapshot.
     fn restore_state_inner(&mut self, state: &Arm7tdmiState) {
-        self.regs = state.regs.clone();
-        self.cycles = state.cycles;
-        self.irq_pending = state.irq_pending;
-        self.fiq_pending = state.fiq_pending;
-        self.halt_exit_pending = state.halt_exit_pending;
-        self.prefetch_valid = state.prefetch_valid;
-        self.prefetch_arm = state.prefetch_arm;
-        self.prefetch_thumb = state.prefetch_thumb;
-        self.halted = state.halted;
-        self.pending_data_abort_exec_pc = state.pending_data_abort_exec_pc;
-        self.gamepak_prefetch_halfwords = state.gamepak_prefetch_halfwords;
-        self.gamepak_prefetch_cycle_credit = state.gamepak_prefetch_cycle_credit;
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &Arm7tdmiState {
+            ref regs,
+            cycles,
+            irq_pending,
+            fiq_pending,
+            halt_exit_pending,
+            prefetch_valid,
+            prefetch_arm,
+            prefetch_thumb,
+            halted,
+            pending_data_abort_exec_pc,
+            gamepak_prefetch_halfwords,
+            gamepak_prefetch_cycle_credit,
+        } = state;
+        self.regs = regs.clone();
+        self.cycles = cycles;
+        self.irq_pending = irq_pending;
+        self.fiq_pending = fiq_pending;
+        self.halt_exit_pending = halt_exit_pending;
+        self.prefetch_valid = prefetch_valid;
+        self.prefetch_arm = prefetch_arm;
+        self.prefetch_thumb = prefetch_thumb;
+        self.halted = halted;
+        self.pending_data_abort_exec_pc = pending_data_abort_exec_pc;
+        self.gamepak_prefetch_halfwords = gamepak_prefetch_halfwords;
+        self.gamepak_prefetch_cycle_credit = gamepak_prefetch_cycle_credit;
     }
 
     /// Raise an external IRQ. Will be dispatched on the next `step` if not
