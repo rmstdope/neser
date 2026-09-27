@@ -2,10 +2,11 @@
 # Prints the path of the wasm-bindgen CLI the web build should run, or exits 1 naming the version
 # it needs.
 #
-# The CLI must match the wasm-bindgen crate version Cargo.lock pins. It is taken from PATH when
-# there is one there (CI installs the pinned version on PATH); otherwise from wasm-pack's cache,
-# where `wasm-pack test` leaves a copy on every machine that runs the gate, as long as that
-# copy's `--version` is the pinned one. WASM_PACK_CACHE overrides the cache location, as it does
+# The CLI must match the wasm-bindgen crate version Cargo.lock pins. One on PATH is trusted as
+# it always was, without a version check (CI installs the pinned version there). Otherwise it
+# comes from wasm-pack's cache, where `wasm-pack test` leaves copies on every machine that runs
+# the gate, and only a copy whose `--version` is the pinned one is taken: the cache can hold
+# several versions. WASM_PACK_CACHE overrides the cache location, as it does
 # for wasm-pack itself.
 set -e
 
