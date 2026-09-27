@@ -428,6 +428,12 @@ fn tick_sprites(ppu: &mut Ppu) {
         }
     }
 
+    // Per NESdev: no sprites are rendered on the first scanline, since evaluation does
+    // not happen on the pre-render line. Drop the set line 239 evaluated for line 240.
+    if is_prerender && pixel == BG_PREFETCH_START {
+        ppu.sprites.clear_sprites_for_first_scanline();
+    }
+
     // Sprite pattern fetching happens on ALL rendering scanlines (including pre-render)
     // This is critical for MMC3 IRQ timing - the A12 transition from BG ($0xxx) to
     // sprite ($1xxx) pattern fetches must happen 241 times per frame.

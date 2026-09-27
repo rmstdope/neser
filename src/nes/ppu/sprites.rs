@@ -592,6 +592,15 @@ impl Sprites {
         }
     }
 
+    /// Empty the sprite set drawn on the next scanline. Called on the pre-render line:
+    /// sprite evaluation does not run there, so no sprites are drawn on scanline 0, and
+    /// the set evaluated on line 239 (for a line 240 that is never drawn) must not
+    /// carry over into the next frame.
+    pub fn clear_sprites_for_first_scanline(&mut self) {
+        self.sprite_count = 0;
+        self.sprite_0_index = None;
+    }
+
     /// Update OAM read latch to secondary_oam[0] during idle sprite bus cycles.
     /// Per NES hardware: during cycles 321-340, the PPU repeatedly reads the first
     /// byte of secondary OAM onto the internal bus.
