@@ -63,6 +63,11 @@ jobs:
               - '.github/workflows/ci.yml'
             python:
               - 'scripts/**'
+              # scripts/test_worktree_install.py and scripts/test_project_conf_rust_paths.py read
+              # the fleet declaration and run cerebro's scripts against it; the bare submodule
+              # path detects a cerebro pointer bump.
+              - '.cerebro/project.conf'
+              - '.cerebro/cerebro'
               - '.github/workflows/ci.yml'
             shader_assets:
               # Release packaging only ships shader files reachable from the
