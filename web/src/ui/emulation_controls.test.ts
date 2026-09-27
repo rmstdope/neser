@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeButtonStates } from "./emulation_controls";
+import { computeButtonStates, computeSaveStateButtons, emulationLifecycle } from "./emulation_controls";
 
 describe("computeButtonStates", () => {
     // ── Stopped, no ROM ──────────────────────────────────────────────────
@@ -67,5 +67,61 @@ describe("computeButtonStates", () => {
         expect(s.startLabel).toBe("Start");
         expect(s.stopLabel).toBe("Stop");
         expect(s.pauseLabel).toBe("Pause");
+    });
+});
+
+describe("emulationLifecycle", () => {
+    it("is idle when not running, whatever the paused flag says", () => {
+        expect(emulationLifecycle(false, false)).toBe("idle");
+        expect(emulationLifecycle(false, true)).toBe("idle");
+    });
+
+    it("is running when running and not paused", () => {
+        expect(emulationLifecycle(true, false)).toBe("running");
+    });
+
+    it("is paused when running and paused", () => {
+        expect(emulationLifecycle(true, true)).toBe("paused");
+    });
+
+    it("is carried on the button states, so the rendered state and the buttons agree", () => {
+        const idle = computeButtonStates({ romLoaded: true, running: false, paused: false, isRecording: false });
+        const running = computeButtonStates({ romLoaded: true, running: true, paused: false, isRecording: false });
+        const paused = computeButtonStates({ romLoaded: true, running: true, paused: true, isRecording: false });
+        expect([idle.lifecycle, running.lifecycle, paused.lifecycle]).toEqual(["idle", "running", "paused"]);
+        expect(paused.pauseLabel).toBe("Resume");
+        expect(running.pauseLabel).toBe("Pause");
+    });
+});
+
+describe("computeSaveStateButtons", () => {
+    it("disables both without a save-state controller", () => {
+        expect(computeSaveStateButtons({ controllerReady: false, running: true, slot: "saved" })).toEqual({
+            saveEnabled: false,
+            loadEnabled: false,
+        });
+    });
+
+    it("disables both when emulation is not running", () => {
+        expect(computeSaveStateButtons({ controllerReady: true, running: false, slot: "saved" })).toEqual({
+            saveEnabled: false,
+            loadEnabled: false,
+        });
+    });
+
+    it("enables only Save while the slot is empty", () => {
+        expect(computeSaveStateButtons({ controllerReady: true, running: true, slot: "empty" })).toEqual({
+            saveEnabled: true,
+            loadEnabled: false,
+        });
+    });
+
+    it("enables Load once the slot holds a state, saved or just loaded", () => {
+        for (const slot of ["saved", "loaded"] as const) {
+            expect(computeSaveStateButtons({ controllerReady: true, running: true, slot })).toEqual({
+                saveEnabled: true,
+                loadEnabled: true,
+            });
+        }
     });
 });

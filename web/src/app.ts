@@ -92,7 +92,7 @@ import {
     shouldForwardArkanoidMouseInput,
     shouldKeepPointerLocked,
 } from "./input/pointer_lock";
-import { computeButtonStates } from "./ui/emulation_controls";
+import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
 import { cgbColorButtonLabel, cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
 import { gbaColorButtonLabel } from "./display/gba_color_correction";
@@ -786,7 +786,7 @@ function allocateFrameTextureStorage() {
 let romBytes: Uint8Array | null = null;
 let romMetadata: { name: string; size: number; bytes: Uint8Array } | null = null;
 let saveStateController: { save(): Promise<boolean>; load(): Promise<boolean> } | null = null;
-let saveStateAvailable = false;
+let saveSlot: SaveSlotState = "empty";
 let running = false;
 let paused = false;
 let romFromFile = false; // true only when ROM was loaded from the file input
@@ -887,6 +887,7 @@ function updateEmulationButtons() {
         paused,
         isRecording: autorunCtx.isCreateRecording(),
     });
+    if (emulationControls) emulationControls.dataset.emulationState = states.lifecycle;
     startBtn.disabled = !states.startEnabled;
     startBtn.textContent = states.startLabel;
     // pauseBtn, stopBtn, resetBtn are module-level and non-null (checked at init)
@@ -951,7 +952,6 @@ function updateEmulatorKindUI() {
         autorunSection.style.display = isNes ? "" : "none";
     }
     // Save-state buttons are shown for consoles with browser save/load support.
-    const saveStateSection = document.getElementById("save-state-section");
     if (saveStateSection) {
         saveStateSection.style.display = supportsWebSaveState(emulator?.kind ?? null) ? "" : "none";
     }
@@ -1232,7 +1232,7 @@ async function refreshSaveStateController() {
     }
     if (!saveStateRuntime || !romMetadata) {
         saveStateController = null;
-        saveStateAvailable = false;
+        saveSlot = "empty";
         updateSaveStateButtons();
         return;
     }
@@ -1257,14 +1257,14 @@ async function refreshSaveStateController() {
                 size: romMetadata.size,
                 bytes: romMetadata.bytes
             });
-            saveStateAvailable = await hasState(db, key);
+            saveSlot = (await hasState(db, key)) ? "saved" : "empty";
         } else {
-            saveStateAvailable = false;
+            saveSlot = "empty";
         }
     } catch (error) {
         console.error("Failed to initialize save state", error);
         saveStateController = null;
-        saveStateAvailable = false;
+        saveSlot = "empty";
         setStatus("Failed to initialize save state", true);
     }
     updateSaveStateButtons();
@@ -2620,6 +2620,7 @@ muteBtn!.addEventListener("click", async () => {
     }
 });
 updateMuteButton();
+const emulationControls = document.getElementById("emulation-controls");
 const pauseBtn = document.getElementById("pause") as HTMLButtonElement | null;
 const stopBtn = document.getElementById("stop") as HTMLButtonElement | null;
 const resetBtn = document.getElementById("reset") as HTMLButtonElement | null;
@@ -3238,6 +3239,7 @@ const fullscreenBtn = document.getElementById("fullscreen") as HTMLButtonElement
 const filterToggleBtn = document.getElementById("filter-toggle") as HTMLButtonElement;
 const saveStateBtn = document.getElementById("save-state") as HTMLButtonElement | null;
 const loadStateBtn = document.getElementById("load-state") as HTMLButtonElement | null;
+const saveStateSection = document.getElementById("save-state-section");
 
 // NES native resolution is 256x240 pixels; aspect ratio updated after NES init.
 let NES_ASPECT_RATIO = width / height;
@@ -3475,26 +3477,31 @@ function cancelActiveRecording() {
 
 async function saveStateAction() {
     if (!saveStateController) return;
-    if (saveStateBtn) delete saveStateBtn.dataset.saveStateStatus;
     const ok = await saveStateController.save();
     if (ok) {
-        saveStateAvailable = true;
+        saveSlot = "saved";
         updateSaveStateButtons();
-        if (saveStateBtn) saveStateBtn.dataset.saveStateStatus = "saved";
     }
 }
 
 async function loadStateAction() {
     if (!saveStateController) return;
-    if (saveStateBtn) delete saveStateBtn.dataset.saveStateStatus;
     const ok = await saveStateController.load();
-    if (ok && saveStateBtn) saveStateBtn.dataset.saveStateStatus = "loaded";
+    if (ok) {
+        saveSlot = "loaded";
+        updateSaveStateButtons();
+    }
 }
 
 function updateSaveStateButtons() {
-    const enabled = Boolean(saveStateController) && running;
-    if (saveStateBtn) saveStateBtn.disabled = !enabled;
-    if (loadStateBtn) loadStateBtn.disabled = !enabled || !saveStateAvailable;
+    const { saveEnabled, loadEnabled } = computeSaveStateButtons({
+        controllerReady: Boolean(saveStateController),
+        running,
+        slot: saveSlot,
+    });
+    if (saveStateBtn) saveStateBtn.disabled = !saveEnabled;
+    if (loadStateBtn) loadStateBtn.disabled = !loadEnabled;
+    if (saveStateSection) saveStateSection.dataset.saveState = saveSlot;
 }
 
 // Set initial canvas size and button text
