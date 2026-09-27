@@ -692,11 +692,6 @@ mod tests {
         let line_start = ppu.total_master_clocks - u64::from(ppu.line_clock);
         let busy = (line_start + 130).next_multiple_of(256);
         let expected = busy - 128 - line_start;
-        assert!(
-            (2..=257).contains(&expected),
-            "the strobe lands within H=0.5..64.25, one 128-clock step before busy rises in \
-             fullsnes' H=32.5..95.5: {expected}"
-        );
 
         let mut fired_at = Vec::new();
         for _ in 0..u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT {

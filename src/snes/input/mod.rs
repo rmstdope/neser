@@ -299,7 +299,7 @@ pub trait SnesController {
 /// raises the busy flag and clears JOY1-JOY4, step 2 releases the latch, and each 256-clock pair
 /// of steps from 3/4 to 33/34 clocks one bit into the registers. The busy flag falls at step 34,
 /// so it is up for 33 steps, the 4224 master cycles fullsnes gives.
-const AUTO_JOYPAD_STEP_CLOCKS: u32 = 128;
+pub(crate) const AUTO_JOYPAD_STEP_CLOCKS: u32 = 128;
 
 /// The sequencer's last step, at which the 16th bit is shifted in and the busy flag falls.
 const AUTO_JOYPAD_LAST_STEP: u32 = 34;
@@ -333,6 +333,9 @@ pub struct InputPortsState {
     /// Master clocks since the running auto-joypad read's latch strobe; `None` when idle.
     #[serde(default)]
     pub auto_clock: Option<u32>,
+    /// Port data sampled on the sequencer's last odd step, waiting for the even step's shift.
+    #[serde(default)]
+    pub auto_sample: [bool; 4],
     #[serde(default)]
     pub joy: [u16; 4],
     #[serde(default = "default_wrio")]
@@ -352,13 +355,16 @@ pub struct InputPorts {
     /// Master clocks since the running auto-joypad read's latch strobe (step 0 of the
     /// sequencer, see [`AUTO_JOYPAD_STEP_CLOCKS`]); `None` when no read is running.
     auto_clock: Option<u32>,
+    /// Port data sampled on the last odd step (JOY1-JOY4 order), shifted in on the even step.
+    auto_sample: [bool; 4],
     /// Auto-read result registers JOY1-JOY4 (`$4218`-`$421F`). These are shifted
     /// in progressively over the busy window, so a read mid-window sees an
     /// incomplete (and possibly manual-read-corrupted) value.
     joy: [u16; 4],
     /// Last WRIO ($4201) value written by the CPU.
     wrio: u8,
-    /// Last value written to `$4016` bit 0 (the `OUT0` strobe).
+    /// Last value written to `$4016` bit 0 by the CPU. The latch line the ports see (OUT0) is
+    /// this OR the auto-read sequencer's strobe (see [`Self::drive_latch`]).
     strobe: bool,
 }
 
@@ -378,6 +384,7 @@ impl InputPorts {
             port2: Box::new(StandardController::new()),
             auto_enable: false,
             auto_clock: None,
+            auto_sample: [false; 4],
             joy: [0; 4],
             wrio: default_wrio(),
             strobe: false,
@@ -403,10 +410,21 @@ impl InputPorts {
 
     /// `$4016` write (JOYWR): drive the `OUT0` strobe line of both gameports.
     pub fn write_joywr(&mut self, value: u8) {
-        let strobe = value & 0x01 != 0;
-        self.strobe = strobe;
-        self.port1.write_strobe(strobe);
-        self.port2.write_strobe(strobe);
+        self.strobe = value & 0x01 != 0;
+        self.drive_latch();
+    }
+
+    /// Drive the latch line of both gameports: the CPU's `$4016` bit 0 OR the auto-read
+    /// sequencer's strobe, which is held from step 0 to step 2 (Mesen2 `SetAutoReadStrobe`;
+    /// fullsnes: with OUT0 set during an auto-read "all 16bit will be equal to the B-button
+    /// state").
+    fn drive_latch(&mut self) {
+        let auto_strobe = self
+            .auto_clock
+            .is_some_and(|clock| clock < 2 * AUTO_JOYPAD_STEP_CLOCKS);
+        let high = self.strobe || auto_strobe;
+        self.port1.write_strobe(high);
+        self.port2.write_strobe(high);
     }
 
     /// Write WRIO ($4201) and fan out the per-port select bits:
@@ -463,10 +481,6 @@ impl InputPorts {
     }
 
     /// Advance the auto-joypad sequencer by one master clock (see [`AUTO_JOYPAD_STEP_CLOCKS`]).
-    ///
-    /// Mesen2 reads the ports on the odd step and shifts on the even one; here both happen on
-    /// the even step, which puts every bit into JOY1-JOY4 at the same clock. The difference is
-    /// only visible to a manual `$4016`/`$4017` read landing in the 128 clocks between them.
     pub fn tick(&mut self) {
         let Some(clock) = self.auto_clock else {
             return;
@@ -478,12 +492,9 @@ impl InputPorts {
         }
         match clock / AUTO_JOYPAD_STEP_CLOCKS {
             1 => self.joy = [0; 4],
-            2 => {
-                self.port1.write_strobe(false);
-                self.port2.write_strobe(false);
-                self.strobe = false;
-            }
-            step if step >= 4 && step % 2 == 0 => {
+            2 => self.drive_latch(),
+            step if step >= 3 && step % 2 == 1 => self.sample_auto_bit(),
+            step if step >= 4 => {
                 self.shift_auto_bit();
                 if step == AUTO_JOYPAD_LAST_STEP {
                     self.auto_clock = None;
@@ -502,20 +513,24 @@ impl InputPorts {
         if !self.auto_enable {
             return;
         }
-        self.port1.write_strobe(true);
-        self.port2.write_strobe(true);
         self.auto_clock = Some(0);
+        self.drive_latch();
     }
 
-    /// Clock one bit out of both ports and shift it into the JOY registers
-    /// (MSB first). JOY1/JOY2 take pin-4 data; JOY3/JOY4 take pin-5 data.
-    fn shift_auto_bit(&mut self) {
+    /// Clock one bit out of both ports (an odd sequencer step). JOY1/JOY2 take pin-4 data;
+    /// JOY3/JOY4 take pin-5 data.
+    fn sample_auto_bit(&mut self) {
         let (p1d1, p1d2) = self.port1.read();
         let (p2d1, p2d2) = self.port2.read();
-        self.joy[0] = (self.joy[0] << 1) | p1d1 as u16;
-        self.joy[1] = (self.joy[1] << 1) | p2d1 as u16;
-        self.joy[2] = (self.joy[2] << 1) | p1d2 as u16;
-        self.joy[3] = (self.joy[3] << 1) | p2d2 as u16;
+        self.auto_sample = [p1d1, p2d1, p1d2, p2d2];
+    }
+
+    /// Shift the bits sampled on the previous odd step into the JOY registers, MSB first (an
+    /// even sequencer step).
+    fn shift_auto_bit(&mut self) {
+        for (joy, bit) in self.joy.iter_mut().zip(self.auto_sample) {
+            *joy = (*joy << 1) | u16::from(bit);
+        }
     }
 
     /// Set a single button on the given port's device.
@@ -726,6 +741,7 @@ impl InputPorts {
             port2_multitap: self.port2.capture_multitap_state(),
             auto_enable: self.auto_enable,
             auto_clock: self.auto_clock,
+            auto_sample: self.auto_sample,
             joy: self.joy,
             wrio: self.wrio,
             strobe: self.strobe,
@@ -745,6 +761,7 @@ impl InputPorts {
         }
         self.auto_enable = state.auto_enable;
         self.auto_clock = state.auto_clock;
+        self.auto_sample = state.auto_sample;
         self.joy = state.joy;
         self.write_wrio(state.wrio);
         self.strobe = state.strobe;
@@ -832,6 +849,116 @@ mod tests {
         // JOY1: B = bit 15, Start = bit 12 -> 0x9000.
         assert_eq!(ports.read_joy_register(0x4218), Some(0x00)); // low byte
         assert_eq!(ports.read_joy_register(0x4219), Some(0x90)); // high byte
+    }
+
+    fn joy1(ports: &InputPorts) -> u16 {
+        (ports.read_joy_register(0x4219).unwrap() as u16) << 8
+            | ports.read_joy_register(0x4218).unwrap() as u16
+    }
+
+    fn tick_n(ports: &mut InputPorts, clocks: u32) {
+        for _ in 0..clocks {
+            ports.tick();
+        }
+    }
+
+    /// Mesen2 `ProcessAutoJoypad`, one 128-clock step at a time from the latch strobe (step 0).
+    #[test]
+    fn auto_read_sequencer_steps() {
+        let mut ports = InputPorts::new();
+        ports.set_auto_enable(true);
+        ports.set_button(0, SnesButton::Start, true);
+        ports.trigger_auto_read();
+        tick_n(&mut ports, AUTO_JOYPAD_SEQUENCE_CLOCKS);
+        assert_eq!(joy1(&ports), 0x1000, "previous frame's read");
+
+        ports.set_button(0, SnesButton::Start, false);
+        ports.set_button(0, SnesButton::B, true);
+        ports.trigger_auto_read();
+        tick_n(&mut ports, AUTO_JOYPAD_STEP_CLOCKS - 1);
+        assert_eq!(
+            joy1(&ports),
+            0x1000,
+            "JOY1 keeps last frame's value until step 1"
+        );
+        ports.tick();
+        assert_eq!(joy1(&ports), 0, "step 1 clears JOY1");
+
+        // Steps 1-2: the latch is still held, so manual reads do not advance the shift register.
+        ports.read_joya(0x00);
+        ports.read_joya(0x00);
+
+        tick_n(&mut ports, 3 * AUTO_JOYPAD_STEP_CLOCKS - 1);
+        assert_eq!(joy1(&ports), 0, "no bit before step 4");
+        ports.tick();
+        assert_eq!(joy1(&ports), 0x0001, "step 4 shifts in the first bit (B)");
+        tick_n(&mut ports, 2 * AUTO_JOYPAD_STEP_CLOCKS - 1);
+        assert_eq!(joy1(&ports), 0x0001, "one bit per 256 clocks");
+        ports.tick();
+        assert_eq!(joy1(&ports), 0x0002, "step 6 shifts in the second bit (Y)");
+
+        tick_n(
+            &mut ports,
+            AUTO_JOYPAD_SEQUENCE_CLOCKS - 6 * AUTO_JOYPAD_STEP_CLOCKS,
+        );
+        assert_eq!(joy1(&ports), 0x8000, "the held latch kept B as bit 15");
+        assert!(!ports.auto_busy());
+    }
+
+    /// Mesen2 reads the ports on the odd step and shifts that sample in on the even step, so a
+    /// manual `$4016` read between them clocks the port past a bit the sequencer already has.
+    #[test]
+    fn auto_read_samples_the_port_on_the_odd_step() {
+        let mut ports = InputPorts::new();
+        ports.set_auto_enable(true);
+        ports.set_button(0, SnesButton::B, true);
+        ports.trigger_auto_read();
+        tick_n(&mut ports, 3 * AUTO_JOYPAD_STEP_CLOCKS);
+        ports.read_joya(0x00); // between step 3 (B sampled) and step 4 (B shifted in)
+        tick_n(&mut ports, AUTO_JOYPAD_STEP_CLOCKS);
+        assert_eq!(
+            joy1(&ports),
+            0x0001,
+            "B, sampled at step 3, reaches JOY1 at step 4"
+        );
+    }
+
+    /// The latch line (OUT0) is the CPU's `$4016` bit 0 OR the auto-read strobe (Mesen2
+    /// `SetAutoReadStrobe`; fullsnes: with OUT0 set "all 16bit will be equal to the B-button
+    /// state").
+    #[test]
+    fn auto_read_latch_is_the_cpu_strobe_or_the_sequencer_strobe() {
+        // CPU leaves OUT0 high: the ports stay latched through the whole read.
+        let mut ports = InputPorts::new();
+        ports.set_auto_enable(true);
+        ports.set_button(0, SnesButton::B, true);
+        ports.write_joywr(1);
+        ports.trigger_auto_read();
+        tick_n(&mut ports, AUTO_JOYPAD_SEQUENCE_CLOCKS);
+        assert_eq!(
+            joy1(&ports),
+            0xFFFF,
+            "every bit is B while OUT0 is held high"
+        );
+
+        // CPU clears OUT0 during steps 0-1: the sequencer still holds the latch until step 2.
+        let mut ports = InputPorts::new();
+        ports.set_auto_enable(true);
+        ports.set_button(0, SnesButton::A, true);
+        ports.trigger_auto_read();
+        tick_n(&mut ports, AUTO_JOYPAD_STEP_CLOCKS);
+        ports.write_joywr(0);
+        ports.read_joya(0x00);
+        ports.read_joya(0x00);
+        tick_n(
+            &mut ports,
+            AUTO_JOYPAD_SEQUENCE_CLOCKS - AUTO_JOYPAD_STEP_CLOCKS,
+        );
+        assert_eq!(
+            joy1(&ports),
+            0x0080,
+            "A = serial bit 7, the reads were ignored"
+        );
     }
 
     #[test]

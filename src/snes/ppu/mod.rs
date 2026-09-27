@@ -69,9 +69,9 @@ pub(super) const AUTO_JOYPAD_EARLIEST_BUSY_CLOCK: u64 = 130;
 /// The auto-joypad read starts on a grid of this many absolute master clocks (fullsnes: "some
 /// multiple of 256 cycles after the start of the previous read").
 pub(super) const AUTO_JOYPAD_START_GRID: u64 = 256;
-/// Master clocks between the auto-joypad latch strobe and the busy flag's rise (one step of the
-/// sequencer in `crate::snes::input`).
-pub(super) const AUTO_JOYPAD_STROBE_LEAD: u64 = 128;
+/// Master clocks between the auto-joypad latch strobe and the busy flag's rise: one step of the
+/// sequencer in `crate::snes::input`, whose step 1 raises the flag.
+pub(super) const AUTO_JOYPAD_STROBE_LEAD: u64 = crate::snes::input::AUTO_JOYPAD_STEP_CLOCKS as u64;
 
 /// Master clocks per dot (normal-speed dots).
 pub(super) const MASTER_CYCLES_PER_DOT: u32 = 4;
