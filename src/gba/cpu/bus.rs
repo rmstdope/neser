@@ -11,21 +11,27 @@
 use crate::gba::bus::WidthClass;
 
 /// Abstraction over the memory bus seen by the CPU.
+///
+/// Callers pass the effective address of every halfword and word access
+/// unmasked, and never ask which region it falls in: the implementation owns
+/// alignment. On the GBA that means aligning to the access width everywhere
+/// except cartridge RAM (0x0E/0x0F), an 8-bit bus that keeps the addressed
+/// byte lane (reads return that byte replicated; writes store that lane's
+/// byte). Data rotation for unaligned LDR/LDRH stays with the CPU.
 pub trait Bus {
-    /// Read a 32-bit word. The address is automatically aligned to a 4-byte
-    /// boundary by the implementation when required by the architecture.
+    /// Read a 32-bit word at the effective (possibly unaligned) address.
     fn read32(&mut self, addr: u32) -> u32;
 
-    /// Read a 16-bit halfword.
+    /// Read a 16-bit halfword at the effective (possibly unaligned) address.
     fn read16(&mut self, addr: u32) -> u16;
 
     /// Read a single byte.
     fn read8(&mut self, addr: u32) -> u8;
 
-    /// Write a 32-bit word.
+    /// Write a 32-bit word at the effective (possibly unaligned) address.
     fn write32(&mut self, addr: u32, value: u32);
 
-    /// Write a 16-bit halfword.
+    /// Write a 16-bit halfword at the effective (possibly unaligned) address.
     fn write16(&mut self, addr: u32, value: u16);
 
     /// Write a single byte.

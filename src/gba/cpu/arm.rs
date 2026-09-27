@@ -26,10 +26,6 @@ use super::registers::CpuMode;
 use super::registers::{FLAG_T, Registers, condition_met};
 use crate::gba::bus::WidthClass;
 
-fn is_cart_sram_region(addr: u32) -> bool {
-    matches!((addr >> 24) & 0xF, 0xE | 0xF)
-}
-
 #[cfg(test)]
 use super::registers::{FLAG_C, FLAG_N, FLAG_V, FLAG_Z};
 
@@ -627,12 +623,8 @@ fn execute_single_data_transfer<B: Bus>(
         if b_byte {
             bus.write8(addr, value as u8);
         } else {
-            let store_addr = if is_cart_sram_region(addr) {
-                addr
-            } else {
-                addr & !0x3
-            };
-            bus.write32(store_addr, value);
+            // The bus aligns the address, except on the 8-bit cart RAM bus.
+            bus.write32(addr, value);
         }
         false
     };
@@ -1044,7 +1036,7 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
                     let byte = bus.read8(addr) as i8;
                     byte as i32 as u32
                 } else {
-                    let hw = bus.read16(addr & !1) as i16;
+                    let hw = bus.read16(addr) as i16;
                     hw as i32 as u32
                 }
             }
@@ -1059,12 +1051,8 @@ fn execute_halfword_transfer<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u
             return ExecOutcome::undefined();
         }
         let value = regs.r[rd] as u16;
-        let store_addr = if is_cart_sram_region(addr) {
-            addr
-        } else {
-            addr & !1
-        };
-        bus.write16(store_addr, value);
+        // The bus aligns the address, except on the 8-bit cart RAM bus.
+        bus.write16(addr, value);
         false
     };
 
@@ -1243,10 +1231,10 @@ fn execute_swap<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u32) -> ExecOu
         regs.r[rd] = old_val; // Zero-extended to 32 bits
     } else {
         // SWP: Swap word
-        let aligned = addr & !0x3;
-        let raw = bus.read32(aligned);
+        // The bus aligns the address, except on the 8-bit cart RAM bus.
+        let raw = bus.read32(addr);
         let old_val = raw.rotate_right((addr & 0x3) * 8);
-        bus.write32(aligned, rm_val);
+        bus.write32(addr, rm_val);
         regs.r[rd] = old_val;
     }
 
@@ -2464,6 +2452,64 @@ mod tests {
 
         assert_eq!(regs.r[3], 64_u32.rotate_right(8));
         assert_eq!(bus.read32(0x40), 32);
+    }
+
+    #[test]
+    fn arm_str_strh_to_unaligned_sram_store_lane_byte() {
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            for lane in 1..4u32 {
+                // STR r0, [r1, #lane]
+                let str_word =
+                    (0xE_u32 << 28) | (0b010 << 25) | (1 << 24) | (1 << 23) | (1 << 16) | lane;
+                // STRH r0, [r1, #lane]
+                let strh =
+                    arm_halfword_imm(0xE, true, true, false, false, 1, 0, false, true, lane as u8);
+                for (instr, value, shift) in [
+                    (str_word, 0x4433_2211u32, 8 * lane),
+                    (strh, 0x2211, 8 * (lane & 1)),
+                ] {
+                    let mut regs = make_regs();
+                    let mut bus = GbaBus::new();
+                    bus.write8(base, 0);
+                    regs.r[0] = value;
+                    regs.r[1] = base;
+
+                    execute(&mut regs, &mut bus, instr);
+
+                    assert_eq!(
+                        bus.read8(base + lane),
+                        (value >> shift) as u8,
+                        "{instr:#010X} base {base:#010X}, lane {lane}"
+                    );
+                    assert_eq!(bus.read8(base), 0, "{instr:#010X} lane 0 untouched");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn arm_swp_on_sram_uses_unaligned_cart_bus_lane() {
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            for lane in 1..4u32 {
+                let mut regs = make_regs();
+                let mut bus = GbaBus::new();
+                bus.write8(base, 0x47);
+                bus.write8(base + lane, 0x61);
+                regs.r[2] = base + lane;
+                regs.r[0] = 0x4433_2211;
+
+                let swp = arm_swap(0xE, false, 2, 3, 0);
+                execute(&mut regs, &mut bus, swp);
+
+                assert_eq!(regs.r[3], 0x6161_6161, "base {base:#010X}, lane {lane}");
+                assert_eq!(
+                    bus.read8(base + lane),
+                    (0x4433_2211u32 >> (8 * lane)) as u8,
+                    "base {base:#010X}, lane {lane}"
+                );
+                assert_eq!(bus.read8(base), 0x47, "base {base:#010X}, lane {lane}");
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

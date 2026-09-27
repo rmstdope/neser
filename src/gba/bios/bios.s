@@ -1090,24 +1090,15 @@ swi_cpu_set:
     bic     r3, r2, #0xFF000000
     bic     r3, r3, #0x00E00000  @ r3 = count (bits 0-20)
 
-    @ Align addresses. 16-bit CpuSet preserves an odd source byte lane but
-    @ still aligns the destination; 32-bit mode aligns both endpoints for
-    @ normal memory. Cart RAM (SRAM 0x0E/0x0F) is an 8-bit bus, so its
-    @ effective byte lane is preserved by skipping alignment for those regions.
-    tst     r2, #(1 << 26)      @ 32-bit mode?
-    bne     .cpuset_align32
+    @ 16-bit CpuSet preserves an odd source byte lane and clears bit 0 of the
+    @ destination. The bus already aligns STRH in normal memory, so that bic
+    @ only changes an odd cart-RAM destination (stores land on lane 0); it is
+    @ kept as it was, since changing SRAM behaviour is out of scope here.
+    @ 32-bit mode moves words with single-register LDM/STM, which never
+    @ rotate: the bus aligns each access itself (and keeps the byte lane on
+    @ the 8-bit cart RAM bus), so no 32-bit address is aligned here.
+    tst     r2, #(1 << 26)      @ 16-bit mode?
     biceq   r1, r1, #1
-    b       .cpuset_aligned
-.cpuset_align32:
-    mov     r4, r0, lsr #24
-    and     r4, r4, #0xF
-    cmp     r4, #0xE
-    biclo   r0, r0, #3
-    mov     r4, r1, lsr #24
-    and     r4, r4, #0xF
-    cmp     r4, #0xE
-    biclo   r1, r1, #3
-.cpuset_aligned:
 
     @ Check fill mode (bit 24)
     tst     r2, #(1 << 24)
@@ -1140,8 +1131,8 @@ swi_cpu_set:
 .cpuset_copy32:
     cmp     r3, #0
     beq     .cpuset_done
-    ldr     r4, [r0], #4
-    str     r4, [r1], #4
+    ldmia   r0!, {r4}
+    stmia   r1!, {r4}
     sub     r3, r3, #1
     b       .cpuset_copy32
 
@@ -1163,11 +1154,11 @@ swi_cpu_set:
 
     @ 32-bit fill
 .cpuset_fill32:
-    ldr     r4, [r0]
+    ldmia   r0, {r4}
 .cpuset_fill32_loop:
     cmp     r3, #0
     beq     .cpuset_done
-    str     r4, [r1], #4
+    stmia   r1!, {r4}
     sub     r3, r3, #1
     b       .cpuset_fill32_loop
 
@@ -1185,16 +1176,8 @@ swi_cpu_set:
 swi_cpu_fast_set:
     stmfd   sp!, {r4-r11, lr}
 
-    @ Align normal-memory endpoints to 4 bytes. Cart RAM is an 8-bit bus, so
-    @ SRAM and its mirror must preserve the effective byte lane.
-    mov     r4, r0, lsr #24
-    and     r4, r4, #0xF
-    cmp     r4, #0xE
-    biclo   r0, r0, #3
-    mov     r4, r1, lsr #24
-    and     r4, r4, #0xF
-    cmp     r4, #0xE
-    biclo   r1, r1, #3
+    @ Every word moves by LDM/STM, which never rotate: the bus aligns each
+    @ access itself (and keeps the byte lane on the 8-bit cart RAM bus).
 
     @ Extract count (bits 0-20) and round up to multiple of 8
     bic     r3, r2, #0xFF000000
@@ -1217,7 +1200,7 @@ swi_cpu_fast_set:
 
     @ Fill mode: read one word, replicate
 .cpufastset_fill:
-    ldr     r4, [r0]
+    ldmia   r0, {r4}
     mov     r5, r4
     mov     r6, r4
     mov     r7, r4
