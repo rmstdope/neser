@@ -420,3 +420,13 @@ jobs:
           wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path --no-typescript
       - name: Run web integration tests
         run: npm run test:integration:web
+      # Playwright keeps a trace, the error context and screenshots for every failed test under
+      # test-results/; without this upload a red run leaves only the call log (nr-dv5).
+      - name: Upload Playwright test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-integration-test-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
