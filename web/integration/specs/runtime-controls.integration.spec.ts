@@ -116,9 +116,11 @@ test.describe("Phase 2 runtime controls", () => {
         await waitForRunningState(page);
     });
 
-    // Every assignment to the screen's width or height reallocates the WebGL drawing buffer, which
-    // takes seconds on CI's software GL (a Zoom - once measured 4.97 s, nr-dv5), so a zoom click
-    // may assign each at most once (nr-b5h). The count is kept on the page by an init script.
+    // Every assignment to the screen's width or height reallocates the WebGL drawing buffer, and
+    // Blink does it with synchronous GPU round trips that first wait for every frame in flight:
+    // seconds on CI's software GL (a Zoom - once measured 4.97 s, nr-dv5). So a zoom click may
+    // assign each at most once (nr-b5h; the count is kept on the page by an init script), and the
+    // screen context has no multisampling, which tripled those round trips (nr-v5x).
     test("Given zoom controls exist, when clicked, then canvas presentation bounds change safely", async ({ page }) => {
         await page.addInitScript(() => {
             const counts = { width: 0, height: 0 };
@@ -135,7 +137,17 @@ test.describe("Phase 2 runtime controls", () => {
                     },
                 });
             }
+            // A capture listener on window runs before the button's own handler and a bubble one
+            // after it, so the gap is how long the handler runs synchronously. It leaves out the
+            // next frame's style, layout, paint and first draw into the resized buffer. Playwright's
+            // click time also waits for scrolling and stable animation frames, which are slow on CI.
+            const blocked: number[] = [];
+            (window as unknown as { __clickBlockedMs: number[] }).__clickBlockedMs = blocked;
+            let clickStartedAt = 0;
+            window.addEventListener("click", () => { clickStartedAt = performance.now(); }, true);
+            window.addEventListener("click", () => { blocked.push(performance.now() - clickStartedAt); });
         });
+        const lastClickBlockedMs = () => page.evaluate(() => (window as unknown as { __clickBlockedMs: number[] }).__clickBlockedMs.slice(-1)[0] ?? NaN);
         const backingStoreWrites = () => page.evaluate(() => ({
             ...(window as unknown as { __screenBackingStoreWrites: { width: number; height: number } }).__screenBackingStoreWrites,
         }));
@@ -145,13 +157,21 @@ test.describe("Phase 2 runtime controls", () => {
             await button.click();
             const elapsedMs = Date.now() - startedAt;
             const after = await backingStoreWrites();
-            console.log(`[nr-b5h] ${label} click took ${elapsedMs} ms`);
-            test.info().annotations.push({ type: "zoom-click-ms", description: `${label}: ${elapsedMs}` });
+            const blockedMs = Math.round(await lastClickBlockedMs());
+            console.log(`[nr-v5x] ${label} click took ${elapsedMs} ms, of which its handler ran ${blockedMs} ms`);
+            test.info().annotations.push({ type: "zoom-click-ms", description: `${label}: ${elapsedMs} (handler ${blockedMs})` });
             expect(after.width - before.width, `${label}: canvas.width assignments`).toBeLessThanOrEqual(1);
             expect(after.height - before.height, `${label}: canvas.height assignments`).toBeLessThanOrEqual(1);
         };
 
         await openApp(page);
+
+        // getContext with the type already created returns that context, so this reads the app's own.
+        const antialias = await page.evaluate(
+            (selector) => (document.querySelector(selector) as HTMLCanvasElement).getContext("webgl")?.getContextAttributes()?.antialias,
+            SCREEN_SELECTOR,
+        );
+        expect(antialias, "the screen's WebGL context is multisampled").toBe(false);
 
         const screenPlus = page.locator(SCREEN_PLUS_SELECTOR);
         const screenMinus = page.locator(SCREEN_MINUS_SELECTOR);
