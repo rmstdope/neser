@@ -242,32 +242,34 @@ def sort_collection(
     copied = 0
     projected_files: set[Path] = set()
 
-    for rom_path in _iter_nes_files(collection_root):
-        try:
-            mapper, submapper = _resolve_mapper_and_submapper(rom_path, overrides)
-        except (OSError, ValueError) as error:
-            print(f"Skipping invalid ROM {rom_path}: {error}")
-            continue
+    # In a finally: once a failed run has created the destination, no later run would touch it.
+    try:
+        for rom_path in _iter_nes_files(collection_root):
+            try:
+                mapper, submapper = _resolve_mapper_and_submapper(rom_path, overrides)
+            except (OSError, ValueError) as error:
+                print(f"Skipping invalid ROM {rom_path}: {error}")
+                continue
 
-        if submapper is None:
-            target_dir = destination_root / str(mapper)
-        else:
-            target_dir = destination_root / str(mapper) / str(submapper)
+            if submapper is None:
+                target_dir = destination_root / str(mapper)
+            else:
+                target_dir = destination_root / str(mapper) / str(submapper)
 
-        target_path = target_dir / rom_path.name
+            target_path = target_dir / rom_path.name
 
-        if not dry_run:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(rom_path, target_path)
-        else:
-            projected_files.add(target_path.relative_to(destination_root))
-        copied += 1
+            if not dry_run:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(rom_path, target_path)
+            else:
+                projected_files.add(target_path.relative_to(destination_root))
+            copied += 1
+    finally:
+        if creates_destination and destination_root.exists() and build_script is not None and build_script.exists():
+            build_script.touch()
 
     if dry_run:
         _print_projected_hierarchy(destination_root, projected_files)
-
-    if creates_destination and destination_root.exists() and build_script is not None and build_script.exists():
-        build_script.touch()
 
     return copied
 

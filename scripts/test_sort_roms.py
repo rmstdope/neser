@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from scripts.sort_roms import (
     calculate_rom_crc32,
@@ -205,6 +206,20 @@ class TestSortRoms(unittest.TestCase):
             build_script.write_text("", encoding="utf-8")
             os.utime(build_script, (1_000_000, 1_000_000))
             self._sort_one_rom(temp_dir, temp_dir / "mappers", build_script)
+            self.assertGreater(build_script.stat().st_mtime, 1_000_000)
+
+    def test_a_failed_copy_still_marks_build_rs_stale(self) -> None:
+        """Once the destination exists later runs never touch build.rs, so a failing run must."""
+
+        with tempfile.TemporaryDirectory() as temp_dir_str:
+            temp_dir = Path(temp_dir_str)
+            build_script = temp_dir / "build.rs"
+            build_script.write_text("", encoding="utf-8")
+            os.utime(build_script, (1_000_000, 1_000_000))
+            failing_copy = mock.patch("scripts.sort_roms.shutil.copy2", side_effect=OSError("disk full"))
+            with failing_copy, self.assertRaises(OSError):
+                self._sort_one_rom(temp_dir, temp_dir / "mappers", build_script)
+            self.assertTrue((temp_dir / "mappers").exists())
             self.assertGreater(build_script.stat().st_mtime, 1_000_000)
 
     def test_an_existing_destination_leaves_build_rs_alone(self) -> None:

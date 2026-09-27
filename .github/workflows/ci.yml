@@ -115,6 +115,8 @@ jobs:
             platform:
               - 'src/platform/**'
             root_rust:
+              # build.rs generates the autorun tests nes::integration_tests includes.
+              - 'build.rs'
               - 'src/lib.rs'
               - 'src/main.rs'
               - 'Cargo.toml'

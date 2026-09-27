@@ -87,8 +87,11 @@ class CiRunsTheBuildScriptTestsTest(unittest.TestCase):
     """A PR touching only build.rs runs this file's tests and the Rust suite in CI."""
 
     def test_python_and_rust_filters_include_build_rs(self) -> None:
+        """``root_rust`` too: it selects the full run, whose nes::integration_tests includes the
+        autorun tests build.rs generates."""
+
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        for name in ("python", "rust"):
+        for name in ("python", "rust", "root_rust"):
             with self.subTest(filter=name):
                 block = re.search(rf"^ {{12}}{name}:\n((?: {{14}}.*\n)+)", ci, re.MULTILINE)
                 self.assertIsNotNone(block, f"no {name} path filter in ci.yml")
