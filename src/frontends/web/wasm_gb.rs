@@ -170,6 +170,22 @@ impl WasmGb {
         self.rom_loaded && self.gb.is_cgb_mode()
     }
 
+    /// "Game Boy games run on": whether original Game Boy games run on the
+    /// Game Boy Color (`true`) or the Game Boy (`false`, auto-detect, so a
+    /// Game Boy Color game still runs on the Game Boy Color). Applies from
+    /// the next load or reset; the running game carries on unchanged.
+    #[wasm_bindgen]
+    pub fn set_original_games_on_color(&mut self, on: bool) {
+        self.gb.app_context().borrow_mut().config_mut().gb.hardware =
+            on.then_some(crate::gb::model::GbHardware::Cgb);
+    }
+
+    /// `true` when an original Game Boy game is loaded, on either console.
+    #[wasm_bindgen]
+    pub fn is_original_game(&self) -> bool {
+        self.rom_loaded && self.gb.is_original_game()
+    }
+
     /// Turn the Game Boy Color LCD colour correction on or off.
     ///
     /// Takes effect from the next rendered frame, and stays set for any game
@@ -263,7 +279,8 @@ impl WasmGb {
         }
     }
 
-    /// Reset the emulator.
+    /// Reset the emulator; an original Game Boy game starts over on the
+    /// console chosen with `set_original_games_on_color` if that changed.
     #[wasm_bindgen]
     pub fn reset(&mut self, soft_reset: bool) {
         self.gb.reset(soft_reset);
@@ -275,11 +292,12 @@ impl WasmGb {
         self.gb.save_state_bytes().unwrap_or_default()
     }
 
-    /// Restore emulator state from previously serialized bytes.
+    /// Restore emulator state from previously serialized bytes, on the
+    /// console it was saved on.
     #[wasm_bindgen]
     pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         self.gb
-            .load_state_bytes(bytes)
+            .load_state_bytes_as_saved(bytes)
             .map_err(|e| JsValue::from_str(&e))
     }
 }

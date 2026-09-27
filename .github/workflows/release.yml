@@ -111,8 +111,16 @@ jobs:
         with:
           tool: git-cliff
 
+      # The release skill commits the navigator-approved notes as docs/releases/<tag>.md before
+      # tagging; that file is the Release body. git-cliff's commit list is only the fallback for
+      # a tag pushed without one.
       - name: Generate changelog
-        run: git-cliff -l --strip header --github-repo "${{ github.repository }}" --output RELEASE_NOTES.md
+        run: |
+          if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
+            cp "docs/releases/${GITHUB_REF_NAME}.md" RELEASE_NOTES.md
+          else
+            git-cliff -l --strip header --github-repo "${{ github.repository }}" --output RELEASE_NOTES.md
+          fi
         env:
           GITHUB_TOKEN: ${{ github.token }}
 

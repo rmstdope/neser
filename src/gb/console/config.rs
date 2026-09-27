@@ -8,6 +8,9 @@ use crate::gb::model::{CgbModel, DmgModel, GbHardware};
 use crate::gb::ppu::GbPalette;
 use crate::platform::config::CliFlag;
 
+/// Names accepted by `--gb-filter` / `gb-filter` (see `platform::shaders::SHADER_PRESETS`).
+pub(crate) const GB_FILTER_NAMES: &[&str] = &["none", "dmg"];
+
 /// GB-specific CLI flags, defined here so that the GB module owns its flag
 /// declarations and parsing logic. These are chained into the global flag list
 /// by the platform config parser for validation and help-text generation.
@@ -54,6 +57,9 @@ pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
 ];
+
+/// Game Boy boolean flags that accept an optional value (the flag alone means true).
+pub(crate) const GB_OPTIONAL_BOOL_FLAGS: &[&str] = &["--cgb-color-correction"];
 
 /// Valid values for the `gb-dmg-variant` option (used in error messages).
 const VALID_DMG_VARIANTS: &str = "dmg-0, dmg-a, dmg-b, dmg-c";
@@ -186,7 +192,8 @@ impl GbConfig {
     ///
     /// Accepts `gb-dmg-variant`, `gb-cgb-variant`, `gb-hardware`,
     /// `gb-boot-animation`, `gb-palette`, `gbc-palette` and
-    /// `cgb-color-correction` keys.
+    /// `cgb-color-correction` keys. Every config-file key is offered here, so
+    /// keys this config does not own are ignored.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {
@@ -231,9 +238,8 @@ impl GbConfig {
                 self.cgb_color_correction = crate::platform::config::parse_bool(value)
                     .map_err(|_| format!("Invalid cgb_color_correction value: '{value}'"))?;
             }
-            _ => {
-                return Err(format!("Unknown GB config key: {key}"));
-            }
+            // Not a Game Boy key: another section of the config owns it.
+            _ => {}
         }
         Ok(())
     }
@@ -263,6 +269,15 @@ fn invalid_gbc_palette_warning(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gb_config_ignores_keys_it_does_not_own() {
+        let mut config = GbConfig::default();
+        let before = format!("{config:?}");
+        assert!(config.apply_config_value("audio", "true").is_ok());
+        assert!(config.apply_config_value("gba-hardware", "sp").is_ok());
+        assert_eq!(format!("{config:?}"), before);
+    }
 
     #[test]
     fn test_gb_config_default_values() {
@@ -778,5 +793,249 @@ mod tests {
             )
         );
         assert!(!flag.has_value);
+    }
+
+    /// The Game Boy keys and flags, parsed through the full `Config`.
+    mod config_parsing {
+        use crate::platform::config::test_support::{config_new, parse_config};
+        use crate::platform::config::{Config, ParseResult};
+
+        #[test]
+        fn test_gb_dmg_variant_arg_sets_gb_config() {
+            let args = vec![
+                "neser".to_string(),
+                "--gb-dmg-variant".to_string(),
+                "dmg-0".to_string(),
+            ];
+            let config = parse_config(args);
+            assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::Dmg0);
+        }
+
+        #[test]
+        fn test_gb_dmg_variant_default_is_dmg_b() {
+            let config = Config::with_defaults();
+            assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgB);
+        }
+
+        #[test]
+        fn test_gb_dmg_variant_invalid_value_returns_error() {
+            let args = vec![
+                "neser".to_string(),
+                "--gb-dmg-variant".to_string(),
+                "invalid".to_string(),
+            ];
+            let result = Config::new(&args);
+            assert!(result.is_err(), "Invalid variant should produce an error");
+        }
+
+        #[test]
+        fn test_gb_dmg_variant_all_values() {
+            for (input, expected) in [
+                ("dmg-0", crate::gb::model::DmgModel::Dmg0),
+                ("dmg-a", crate::gb::model::DmgModel::DmgA),
+                ("dmg-b", crate::gb::model::DmgModel::DmgB),
+                ("dmg-c", crate::gb::model::DmgModel::DmgC),
+            ] {
+                let args = vec![
+                    "neser".to_string(),
+                    "--gb-dmg-variant".to_string(),
+                    input.to_string(),
+                ];
+                let config = parse_config(args);
+                assert_eq!(config.gb.dmg_variant, expected, "variant={input}");
+            }
+        }
+
+        #[test]
+        fn test_gb_hardware_arg_is_valid() {
+            let args = vec![
+                "neser".to_string(),
+                "--gb-hardware".to_string(),
+                "dmg".to_string(),
+            ];
+            let result = config_new(args);
+            assert!(result.is_ok());
+            match result.unwrap() {
+                ParseResult::Config(config) => {
+                    assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Dmg));
+                }
+                ParseResult::Help => panic!("Expected Config, got Help"),
+                ParseResult::Version => panic!("Expected Config, got Version"),
+            }
+        }
+
+        #[test]
+        fn test_cgb_color_correction_arg_with_value_keeps_rom_path() {
+            let config = parse_config(vec![
+                "neser".to_string(),
+                "--cgb-color-correction".to_string(),
+                "true".to_string(),
+                "game.gbc".to_string(),
+            ]);
+            assert!(config.gb.cgb_color_correction);
+            assert_eq!(config.frontend.rom_path.as_deref(), Some("game.gbc"));
+        }
+
+        #[test]
+        fn test_cgb_color_correction_bare_flag_keeps_rom_path() {
+            let config = parse_config(vec![
+                "neser".to_string(),
+                "--cgb-color-correction".to_string(),
+                "game.gbc".to_string(),
+            ]);
+            assert!(config.gb.cgb_color_correction);
+            assert_eq!(config.frontend.rom_path.as_deref(), Some("game.gbc"));
+        }
+
+        #[test]
+        fn test_help_lists_the_gb_palette_flag() {
+            let help = crate::platform::config::cli::help_text();
+            assert!(
+                help.contains(
+                    "Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)"
+                ),
+                "help text:\n{help}"
+            );
+        }
+
+        #[test]
+        fn test_cli_gb_palette_invalid_refuses_start() {
+            let result = config_new(vec!["--gb-palette".to_string(), "bogus".to_string()]);
+            assert_eq!(
+                result.unwrap_err(),
+                "Invalid --gb-palette value: 'bogus'. Valid options are: grey, dmg-green, pocket, light"
+            );
+        }
+
+        #[test]
+        fn test_headless_takes_the_cli_gb_palette() {
+            let config = parse_config(vec![
+                "neser".to_string(),
+                "--headless".to_string(),
+                "--output".to_string(),
+                "shot.png".to_string(),
+                "--gb-palette".to_string(),
+                "pocket".to_string(),
+                "game.gb".to_string(),
+            ]);
+            assert!(config.frontend.headless_capture.is_some());
+            assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::Pocket));
+        }
+
+        #[test]
+        fn test_help_lists_the_gbc_palette_flag() {
+            let help = crate::platform::config::cli::help_text();
+            assert!(
+                help.contains(
+                    "Colour palette for original Game Boy games on a Game Boy Color: auto, brown, red, \u{2026} (default: auto)"
+                ),
+                "help text:\n{help}"
+            );
+        }
+
+        #[test]
+        fn test_cli_gbc_palette_invalid_refuses_start() {
+            let result = config_new(vec!["--gbc-palette".to_string(), "bogus".to_string()]);
+            assert_eq!(
+                result.unwrap_err(),
+                "Invalid --gbc-palette value: 'bogus'. Valid options are: auto, brown, red, dark-brown, blue, dark-blue, grayscale, pastel-mix, orange, yellow, green, dark-green, reverse"
+            );
+        }
+
+        #[test]
+        fn test_headless_takes_the_cli_gbc_palette() {
+            let config = parse_config(vec![
+                "neser".to_string(),
+                "--headless".to_string(),
+                "--output".to_string(),
+                "shot.png".to_string(),
+                "--gbc-palette".to_string(),
+                "red".to_string(),
+                "game.gb".to_string(),
+            ]);
+            assert!(config.frontend.headless_capture.is_some());
+            assert_eq!(
+                config.gb.gbc_palette,
+                crate::gb::compat_palettes::GbcPalette::Red
+            );
+        }
+
+        #[test]
+        fn test_config_file_gb_dmg_variant_key() {
+            let mut config = Config::with_defaults();
+            config
+                .apply_config_value("gb-dmg-variant", "dmg-c")
+                .unwrap();
+            assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgC);
+        }
+
+        #[test]
+        fn test_config_file_gb_hardware_dmg_sets_hardware() {
+            let mut config = Config::with_defaults();
+            config.apply_config_value("gb-hardware", "dmg").unwrap();
+            assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Dmg));
+        }
+
+        #[test]
+        fn test_config_file_gb_hardware_cgb_sets_hardware() {
+            let mut config = Config::with_defaults();
+            config.apply_config_value("gb-hardware", "cgb").unwrap();
+            assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Cgb));
+        }
+
+        #[test]
+        fn test_config_file_gb_hardware_invalid_value_returns_error() {
+            let mut config = Config::with_defaults();
+            let result = config.apply_config_value("gb-hardware", "dmg-a");
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("Invalid gb_hardware value"));
+        }
+
+        #[test]
+        fn test_config_file_cgb_color_correction_sets_gb_config() {
+            let mut config = Config::with_defaults();
+            config
+                .apply_config_value("cgb-color-correction", "true")
+                .unwrap();
+            assert!(config.gb.cgb_color_correction);
+        }
+
+        #[test]
+        fn test_config_file_cgb_color_correction_invalid_value_returns_error() {
+            let mut config = Config::with_defaults();
+            let result = config.apply_config_value("cgb-color-correction", "maybe");
+            assert_eq!(
+                result.unwrap_err(),
+                "Invalid cgb_color_correction value: 'maybe'"
+            );
+        }
+
+        #[test]
+        fn test_config_file_gb_palette_reaches_the_gb_config() {
+            let mut config = Config::default();
+            config
+                .apply_config_value("gb-palette", "dmg-green")
+                .unwrap();
+            assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
+            // An unknown value warns but does not stop the config file loading.
+            config.apply_config_value("gb-palette", "bogus").unwrap();
+            assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
+        }
+
+        #[test]
+        fn test_config_file_gbc_palette_reaches_the_gb_config() {
+            let mut config = Config::default();
+            config.apply_config_value("gbc-palette", "red").unwrap();
+            assert_eq!(
+                config.gb.gbc_palette,
+                crate::gb::compat_palettes::GbcPalette::Red
+            );
+            // An unknown value warns but does not stop the config file loading.
+            config.apply_config_value("gbc-palette", "bogus").unwrap();
+            assert_eq!(
+                config.gb.gbc_palette,
+                crate::gb::compat_palettes::GbcPalette::Red
+            );
+        }
     }
 }

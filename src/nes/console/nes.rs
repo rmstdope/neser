@@ -1554,6 +1554,37 @@ mod tests {
         assert_eq!(nes.ppu.borrow().total_cycles(), 7);
     }
 
+    /// nr-3xu: a game that jams the CPU on a KIL/STP opcode halts only the CPU. The
+    /// console's clock keeps running, so the PPU keeps finishing frames (NESdev "CPU
+    /// unofficial opcodes": STP "halt[s] the CPU until reset"). NESER used to stop the
+    /// whole console, and headless capture reported "Emulator stopped making progress"
+    /// for StarTropics and six other ROMs that Mesen2 keeps running.
+    #[test]
+    fn test_jammed_cpu_keeps_the_ppu_finishing_frames() {
+        let mut rom = create_minimal_rom();
+        rom[16] = 0x02; // KIL at the reset target $8000
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(load_test_cartridge(&rom));
+        nes.reset(true);
+
+        let mut frames = 0;
+        // Three frames take about 90k CPU cycles; allow each tick at least one cycle.
+        for _ in 0..200_000 {
+            assert_ne!(nes.run_cpu_tick(), 0, "a jammed CPU still spends cycles");
+            if nes.is_ready_to_render() {
+                nes.clear_ready_to_render();
+                frames += 1;
+                if frames == 3 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(frames, 3, "the PPU finishes frames while the CPU is jammed");
+        assert!(nes.cpu.is_halted(), "the CPU stays jammed until reset");
+    }
+
     #[test]
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let config = Config {

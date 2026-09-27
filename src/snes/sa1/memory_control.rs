@@ -116,15 +116,19 @@ impl Sa1MemoryControl {
         cbwe: u8,
         bwpa: u8,
     ) {
-        self.cxb = cxb;
-        self.dxb = dxb;
-        self.exb = exb;
-        self.fxb = fxb;
-        self.bmaps = bmaps;
-        self.bmap = bmap;
-        self.sbwe = sbwe;
-        self.cbwe = cbwe;
-        self.bwpa = bwpa;
+        // A whole-struct literal names every field, so a new one fails to build until it is
+        // saved or marked transient.
+        *self = Self {
+            cxb,
+            dxb,
+            exb,
+            fxb,
+            bmaps,
+            bmap,
+            sbwe,
+            cbwe,
+            bwpa,
+        };
     }
 
     /// `$2224` BMAPS bits 0-4: SNES-side 8KB BW-RAM block select (0-31).

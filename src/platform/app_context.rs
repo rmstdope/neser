@@ -67,8 +67,11 @@ impl AppContext {
         &mut self.config
     }
 
+    /// Queues a toast. It reads no clock: `Instant::now()` panics on wasm32-unknown-unknown,
+    /// and this is reached from load paths the browser build takes (nr-6sm). The toast's
+    /// lifetime starts at the first [`Self::visible_toasts`] call after it is added.
     pub fn add_toast(&mut self, text: impl Into<String>) {
-        self.toast_manager.push(text.into(), Instant::now());
+        self.toast_manager.push(text.into(), None);
     }
 
     pub fn visible_toasts(&mut self, now: Instant) -> Vec<String> {
@@ -83,7 +86,8 @@ impl AppContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Toast {
     text: String,
-    created_at: Instant,
+    /// `None` until the first `visible_toasts` call after it is added; see [`AppContext::add_toast`].
+    created_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -96,21 +100,28 @@ impl ToastManager {
         Self::default()
     }
 
-    fn push(&mut self, text: String, now: Instant) {
-        self.toasts.push(Toast {
-            text,
-            created_at: now,
-        });
+    fn push(&mut self, text: String, created_at: Option<Instant>) {
+        self.toasts.push(Toast { text, created_at });
     }
 
     fn prune_expired(&mut self, now: Instant) {
         let lifetime = Duration::from_secs(TOAST_LIFETIME_SECS);
-        self.toasts
-            .retain(|toast| now.saturating_duration_since(toast.created_at) <= lifetime);
+        self.toasts.retain(|toast| {
+            toast
+                .created_at
+                .is_none_or(|created_at| now.saturating_duration_since(created_at) <= lifetime)
+        });
+    }
+
+    fn stamp_new(&mut self, now: Instant) {
+        for toast in &mut self.toasts {
+            toast.created_at.get_or_insert(now);
+        }
     }
 
     fn visible_toasts(&mut self, now: Instant) -> Vec<&Toast> {
         self.prune_expired(now);
+        self.stamp_new(now);
         let start = self.toasts.len().saturating_sub(MAX_VISIBLE_TOASTS);
         self.toasts[start..].iter().collect()
     }
@@ -124,7 +135,7 @@ mod tests {
     fn test_toast_manager_expires_toast_after_lifetime() {
         let mut manager = ToastManager::new();
         let now = Instant::now();
-        manager.push("Saved state".to_string(), now);
+        manager.push("Saved state".to_string(), Some(now));
 
         let visible = manager.visible_toasts(now + Duration::from_secs(TOAST_LIFETIME_SECS));
         assert_eq!(visible.len(), 1);
@@ -137,7 +148,7 @@ mod tests {
     fn test_toast_manager_expires_without_extra_truncated_second() {
         let mut manager = ToastManager::new();
         let now = Instant::now();
-        manager.push("Saved state".to_string(), now);
+        manager.push("Saved state".to_string(), Some(now));
 
         let visible = manager.visible_toasts(
             now + Duration::from_secs(TOAST_LIFETIME_SECS) + Duration::from_millis(999),
@@ -153,10 +164,10 @@ mod tests {
         let mut manager = ToastManager::new();
         let now = Instant::now();
 
-        manager.push("One".to_string(), now);
-        manager.push("Two".to_string(), now + Duration::from_millis(1));
-        manager.push("Three".to_string(), now + Duration::from_millis(2));
-        manager.push("Four".to_string(), now + Duration::from_millis(3));
+        manager.push("One".to_string(), Some(now));
+        manager.push("Two".to_string(), Some(now + Duration::from_millis(1)));
+        manager.push("Three".to_string(), Some(now + Duration::from_millis(2)));
+        manager.push("Four".to_string(), Some(now + Duration::from_millis(3)));
 
         let visible = manager.visible_toasts(now + Duration::from_millis(3));
         assert_eq!(visible.len(), MAX_VISIBLE_TOASTS);
@@ -170,9 +181,9 @@ mod tests {
         let mut manager = ToastManager::new();
         let now = Instant::now();
 
-        manager.push("Oldest".to_string(), now);
-        manager.push("Middle".to_string(), now + Duration::from_millis(1));
-        manager.push("Newest".to_string(), now + Duration::from_millis(2));
+        manager.push("Oldest".to_string(), Some(now));
+        manager.push("Middle".to_string(), Some(now + Duration::from_millis(1)));
+        manager.push("Newest".to_string(), Some(now + Duration::from_millis(2)));
 
         let visible = manager.visible_toasts(now + Duration::from_millis(2));
         assert_eq!(visible.len(), 3);
@@ -188,5 +199,21 @@ mod tests {
 
         let visible = context.visible_toasts(Instant::now());
         assert_eq!(visible, vec!["Saved state".to_string()]);
+    }
+
+    #[test]
+    fn test_added_toast_lives_from_when_it_is_first_shown() {
+        let mut context = AppContext::new();
+        context.add_toast("Saved state");
+        let shown = Instant::now() + Duration::from_secs(60);
+
+        assert_eq!(context.visible_toasts(shown).len(), 1);
+        let lifetime = Duration::from_secs(TOAST_LIFETIME_SECS);
+        assert_eq!(context.visible_toasts(shown + lifetime).len(), 1);
+        assert!(
+            context
+                .visible_toasts(shown + lifetime + Duration::from_millis(1))
+                .is_empty()
+        );
     }
 }

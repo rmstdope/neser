@@ -56,7 +56,7 @@ fn main() {
 }
 
 fn run_one_frame(nes: &mut Nes) {
-    while !nes.is_ready_to_render() && !nes.cpu_ref().is_halted() {
+    while !nes.is_ready_to_render() {
         nes.run_cpu_tick();
         while nes.sample_ready() {
             nes.get_sample();

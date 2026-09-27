@@ -528,67 +528,127 @@ impl Ppu {
 
     /// Capture PPU state for save-state serialization.
     pub fn capture_state(&self) -> PpuState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            dispcnt,
+            dispstat,
+            bg_cnt,
+            vcount,
+            line_cycle,
+            ref framebuffer,
+            frame_ready,
+            bg_affine,
+            bg_scroll,
+            win_h,
+            win_v,
+            winin,
+            winout,
+            green_swap,
+            bldcnt,
+            bldalpha,
+            bldy,
+            mosaic,
+            forced_blank_restart_lines,
+            bg_enable_delays,
+            bg_disable_hblank_cooldowns,
+            bg_force_current_scanline,
+            bg_force_current_scanline_x_offset,
+            hblank_irq_raised_this_scanline,
+            ref obj_render_oam,
+            obj_render_oam_initialized,
+            color_correction,
+        } = self;
         PpuState {
-            dispcnt: self.dispcnt,
-            dispstat: self.dispstat,
-            bg_cnt: self.bg_cnt,
-            vcount: self.vcount,
-            line_cycle: self.line_cycle,
-            framebuffer: self.framebuffer.clone(),
-            frame_ready: self.frame_ready,
-            bg_affine: self.bg_affine,
-            bg_scroll: self.bg_scroll,
-            win_h: self.win_h,
-            win_v: self.win_v,
-            winin: self.winin,
-            winout: self.winout,
-            green_swap: self.green_swap,
-            bldcnt: self.bldcnt,
-            bldalpha: self.bldalpha,
-            bldy: self.bldy,
-            mosaic: self.mosaic,
-            forced_blank_restart_lines: self.forced_blank_restart_lines,
-            bg_enable_delays: self.bg_enable_delays,
-            bg_disable_hblank_cooldowns: self.bg_disable_hblank_cooldowns,
-            bg_force_current_scanline: self.bg_force_current_scanline,
-            bg_force_current_scanline_x_offset: self.bg_force_current_scanline_x_offset,
-            hblank_irq_raised_this_scanline: self.hblank_irq_raised_this_scanline,
-            obj_render_oam: self.obj_render_oam.clone(),
-            obj_render_oam_initialized: self.obj_render_oam_initialized,
-            color_correction: self.color_correction,
+            dispcnt,
+            dispstat,
+            bg_cnt,
+            vcount,
+            line_cycle,
+            framebuffer: framebuffer.clone(),
+            frame_ready,
+            bg_affine,
+            bg_scroll,
+            win_h,
+            win_v,
+            winin,
+            winout,
+            green_swap,
+            bldcnt,
+            bldalpha,
+            bldy,
+            mosaic,
+            forced_blank_restart_lines,
+            bg_enable_delays,
+            bg_disable_hblank_cooldowns,
+            bg_force_current_scanline,
+            bg_force_current_scanline_x_offset,
+            hblank_irq_raised_this_scanline,
+            obj_render_oam: obj_render_oam.clone(),
+            obj_render_oam_initialized,
+            color_correction,
         }
     }
 
     /// Restore PPU state from a save-state snapshot.
     pub fn restore_state(&mut self, state: &PpuState) {
-        self.dispcnt = state.dispcnt;
-        self.dispstat = state.dispstat;
-        self.bg_cnt = state.bg_cnt;
-        self.vcount = state.vcount;
-        self.line_cycle = state.line_cycle;
-        self.framebuffer.clone_from(&state.framebuffer);
-        self.frame_ready = state.frame_ready;
-        self.bg_affine = state.bg_affine;
-        self.bg_scroll = state.bg_scroll;
-        self.win_h = state.win_h;
-        self.win_v = state.win_v;
-        self.winin = state.winin;
-        self.winout = state.winout;
-        self.green_swap = state.green_swap;
-        self.bldcnt = state.bldcnt;
-        self.bldalpha = state.bldalpha;
-        self.bldy = state.bldy;
-        self.mosaic = state.mosaic;
-        self.forced_blank_restart_lines = state.forced_blank_restart_lines;
-        self.bg_enable_delays = state.bg_enable_delays;
-        self.bg_disable_hblank_cooldowns = state.bg_disable_hblank_cooldowns;
-        self.bg_force_current_scanline = state.bg_force_current_scanline;
-        self.bg_force_current_scanline_x_offset = state.bg_force_current_scanline_x_offset;
-        self.hblank_irq_raised_this_scanline = state.hblank_irq_raised_this_scanline;
-        self.obj_render_oam = state.obj_render_oam.clone();
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &PpuState {
+            dispcnt,
+            dispstat,
+            bg_cnt,
+            vcount,
+            line_cycle,
+            ref framebuffer,
+            frame_ready,
+            bg_affine,
+            bg_scroll,
+            win_h,
+            win_v,
+            winin,
+            winout,
+            green_swap,
+            bldcnt,
+            bldalpha,
+            bldy,
+            mosaic,
+            forced_blank_restart_lines,
+            bg_enable_delays,
+            bg_disable_hblank_cooldowns,
+            bg_force_current_scanline,
+            bg_force_current_scanline_x_offset,
+            hblank_irq_raised_this_scanline,
+            ref obj_render_oam,
+            obj_render_oam_initialized,
+            color_correction,
+        } = state;
+        self.dispcnt = dispcnt;
+        self.dispstat = dispstat;
+        self.bg_cnt = bg_cnt;
+        self.vcount = vcount;
+        self.line_cycle = line_cycle;
+        self.framebuffer.clone_from(framebuffer);
+        self.frame_ready = frame_ready;
+        self.bg_affine = bg_affine;
+        self.bg_scroll = bg_scroll;
+        self.win_h = win_h;
+        self.win_v = win_v;
+        self.winin = winin;
+        self.winout = winout;
+        self.green_swap = green_swap;
+        self.bldcnt = bldcnt;
+        self.bldalpha = bldalpha;
+        self.bldy = bldy;
+        self.mosaic = mosaic;
+        self.forced_blank_restart_lines = forced_blank_restart_lines;
+        self.bg_enable_delays = bg_enable_delays;
+        self.bg_disable_hblank_cooldowns = bg_disable_hblank_cooldowns;
+        self.bg_force_current_scanline = bg_force_current_scanline;
+        self.bg_force_current_scanline_x_offset = bg_force_current_scanline_x_offset;
+        self.hblank_irq_raised_this_scanline = hblank_irq_raised_this_scanline;
+        self.obj_render_oam = obj_render_oam.clone();
         self.obj_render_oam.resize(OAM_BYTES, 0);
-        self.obj_render_oam_initialized = state.obj_render_oam_initialized;
-        self.color_correction = state.color_correction;
+        self.obj_render_oam_initialized = obj_render_oam_initialized;
+        self.color_correction = color_correction;
     }
 
     /// Read `DISPCNT`.

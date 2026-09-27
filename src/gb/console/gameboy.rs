@@ -9,10 +9,10 @@
 //! (0x80) ROMs default to [`CgbBus`]; all others default to [`DmgBus`].
 
 use crate::gb::bus::{CgbBus, DmgBus};
-use crate::gb::cartridge::load_cartridge;
+use crate::gb::cartridge::{GbCartridge, load_cartridge};
 use crate::gb::compat_palettes::{GbcPalette, gbc_palette_toast_message};
 use crate::gb::console::Gb;
-use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbSaveState};
+use crate::gb::console::save_state::{GB_SAVESTATE_VERSION, GbBusType, GbSaveState};
 use crate::gb::model::GbHardware;
 use crate::gb::ppu::GbPalette;
 use crate::platform::app_context::{IntoSharedAppContext, SharedAppContext};
@@ -121,6 +121,13 @@ impl GbConsole {
         }
     }
 
+    fn audio_sample_rate(&self) -> f32 {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.audio_sample_rate(),
+            Self::Cgb(gb) => gb.cpu.bus.audio_sample_rate(),
+        }
+    }
+
     fn has_battery(&self) -> bool {
         match self {
             Self::Dmg(gb) => gb.cpu.bus.has_battery(),
@@ -147,14 +154,14 @@ impl GbConsole {
             Self::Dmg(gb) => GbSaveState {
                 version: GB_SAVESTATE_VERSION,
                 cpu: gb.cpu.capture_state(),
-                bus: gb.cpu.bus.capture_bus_state(),
+                bus: Box::new(gb.cpu.bus.capture_bus_state()),
                 cart_ram: gb.cpu.bus.cart_ram_snapshot(),
                 mbc_state: gb.cpu.bus.mbc_state_snapshot(),
             },
             Self::Cgb(gb) => GbSaveState {
                 version: GB_SAVESTATE_VERSION,
                 cpu: gb.cpu.capture_state(),
-                bus: gb.cpu.bus.capture_bus_state(),
+                bus: Box::new(gb.cpu.bus.capture_bus_state()),
                 cart_ram: gb.cpu.bus.cart_ram_snapshot(),
                 mbc_state: gb.cpu.bus.mbc_state_snapshot(),
             },
@@ -195,6 +202,9 @@ pub struct GameBoy {
     app_context: SharedAppContext,
     /// Path of the currently loaded ROM; used for deriving the save-state path.
     rom_path: Option<PathBuf>,
+    /// The loaded ROM's bytes, kept so a reset or a state load can power the
+    /// game on again on the other console.
+    rom: Option<Vec<u8>>,
     /// Shade palette chosen for an original Game Boy game. Held here, not in
     /// the PPU, because a hard reset rebuilds the PPU and a state load
     /// replaces it.
@@ -219,6 +229,7 @@ impl GameBoy {
             gb: None,
             app_context: app_context.into_shared(),
             rom_path: None,
+            rom: None,
             palette: GbPalette::default(),
             gbc_palette: GbcPalette::default(),
             lcd_filter_active: false,
@@ -234,44 +245,9 @@ impl GameBoy {
     /// - `Cgb`/`Gba`: Forces [`CgbBus`] for all ROMs
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cart = load_cartridge(bytes).map_err(|e| format!("{e:?}"))?;
-        let is_cgb_rom = cart.is_cgb();
-        let hardware = self.app_context.borrow().config().gb.hardware;
-
-        // Determine bus type based on hardware config and ROM flags
-        let use_cgb_bus = match hardware {
-            None => {
-                // Auto-detect: DMG-only ROMs use DmgBus, dual/CGB-only use CgbBus
-                is_cgb_rom
-            }
-            Some(GbHardware::Dmg) => {
-                // Force DMG: error on CGB-only, otherwise use DmgBus
-                if is_cgb_rom && cart.read(0x0143) == 0xC0 {
-                    return Err(
-                        "This CGB-only game requires --gb-hardware cgb or --gb-hardware gba"
-                            .to_string(),
-                    );
-                }
-                false
-            }
-            Some(GbHardware::Cgb) | Some(GbHardware::Gba) => {
-                // Force CGB/GBA: always use CgbBus
-                true
-            }
-        };
-
-        self.gb = Some(if use_cgb_bus {
-            let config = self.app_context.borrow().config().gb.clone();
-            let skip_boot_rom = !config.boot_animation;
-            let mut gb = Gb::new(CgbBus::new(cart, config.cgb_variant, skip_boot_rom));
-            if skip_boot_rom {
-                // Only set registers if skipping boot ROM (boot ROM sets them otherwise)
-                gb.cpu.reset_registers_cgb();
-            }
-            GbConsole::Cgb(Box::new(gb))
-        } else {
-            let dmg_variant = self.app_context.borrow().config().gb.dmg_variant;
-            GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, dmg_variant))))
-        });
+        let use_cgb_bus = self.wants_cgb_bus(cart.read(0x0143))?;
+        self.gb = Some(self.build_console(cart, use_cgb_bus));
+        self.rom = Some(bytes.to_vec());
         self.rom_path = Some(PathBuf::from(name));
         self.palette = self
             .app_context
@@ -288,6 +264,90 @@ impl GameBoy {
         self.load_save_ram_from_disk();
 
         Ok(())
+    }
+
+    /// Whether a cartridge with this CGB flag (header byte 0x0143) runs on
+    /// the CGB bus under the configured hardware.
+    fn wants_cgb_bus(&self, cgb_flag: u8) -> Result<bool, String> {
+        let is_cgb_rom = matches!(cgb_flag, 0x80 | 0xC0);
+        match self.app_context.borrow().config().gb.hardware {
+            // Auto-detect: DMG-only ROMs use DmgBus, dual/CGB-only use CgbBus
+            None => Ok(is_cgb_rom),
+            Some(GbHardware::Dmg) => {
+                // Force DMG: error on CGB-only, otherwise use DmgBus
+                if cgb_flag == 0xC0 {
+                    return Err(
+                        "This CGB-only game requires --gb-hardware cgb or --gb-hardware gba"
+                            .to_string(),
+                    );
+                }
+                Ok(false)
+            }
+            // Force CGB/GBA: always use CgbBus
+            Some(GbHardware::Cgb) | Some(GbHardware::Gba) => Ok(true),
+        }
+    }
+
+    /// A console powered on with `cart` on the chosen bus.
+    fn build_console(&self, cart: Box<dyn GbCartridge>, use_cgb_bus: bool) -> GbConsole {
+        let config = self.app_context.borrow().config().gb.clone();
+        if use_cgb_bus {
+            let skip_boot_rom = !config.boot_animation;
+            let mut gb = Gb::new(CgbBus::new(cart, config.cgb_variant, skip_boot_rom));
+            if skip_boot_rom {
+                // Only set registers if skipping boot ROM (boot ROM sets them otherwise)
+                gb.cpu.reset_registers_cgb();
+            }
+            GbConsole::Cgb(Box::new(gb))
+        } else {
+            GbConsole::Dmg(Box::new(Gb::new(DmgBus::new(cart, config.dmg_variant))))
+        }
+    }
+
+    /// Powers the loaded game on again on the other bus, as when a cartridge
+    /// moves to another console: the battery RAM and the frontend's audio
+    /// sample rate stay. The palettes are left as they are (a state load
+    /// keeps them, as on the same console); a Reset starts them afresh.
+    fn power_on_on(&mut self, use_cgb_bus: bool) {
+        let Some(cart) = self.rom.as_deref().and_then(|rom| load_cartridge(rom).ok()) else {
+            return;
+        };
+        let carried = self
+            .gb
+            .as_ref()
+            .map(|gb| (gb.cart_ram_snapshot(), gb.audio_sample_rate()));
+        let mut console = self.build_console(cart, use_cgb_bus);
+        if let Some((ram, sample_rate)) = carried {
+            console.restore_cart_ram(&ram);
+            console.set_audio_sample_rate(sample_rate);
+        }
+        self.gb = Some(console);
+        self.apply_palette();
+        self.apply_gbc_palette();
+    }
+
+    /// The palettes as when the game starts on the console it now runs on
+    /// (under the LCD filter too).
+    fn start_palettes(&mut self) {
+        let config = self.app_context.borrow().config().gb.clone();
+        self.palette = config.palette.unwrap_or_default();
+        self.gbc_palette = config.gbc_palette;
+        self.start_lcd_filter(self.lcd_filter_active);
+        self.apply_gbc_palette();
+    }
+
+    /// `true` when an original Game Boy game (neither a Game Boy Color nor a
+    /// dual-mode game) is loaded, whichever console it runs on.
+    pub fn is_original_game(&self) -> bool {
+        self.gb.is_some()
+            && self
+                .cgb_flag()
+                .is_some_and(|flag| !matches!(flag, 0x80 | 0xC0))
+    }
+
+    /// The loaded game's CGB flag, header byte 0x0143.
+    fn cgb_flag(&self) -> Option<u8> {
+        self.rom.as_deref().and_then(|rom| rom.get(0x0143)).copied()
     }
 
     /// Advance one CPU instruction. Returns the number of M-cycles consumed.
@@ -376,11 +436,34 @@ impl GameBoy {
         result
     }
 
+    /// Restores a state on the console it was saved on, switching console
+    /// first when the game runs on the other one. A Game Boy Color-only game
+    /// still refuses a state saved on the original Game Boy.
+    pub fn load_state_bytes_as_saved(&mut self, data: &[u8]) -> Result<(), String> {
+        let state = GbSaveState::from_bytes(data)
+            .map_err(|e| format!("save state deserialization failed: {e}"))?;
+        let saved_on_cgb = state.bus.bus_type == GbBusType::Cgb;
+        let cgb_only = self.cgb_flag() == Some(0xC0);
+        if self.gb.is_some() && saved_on_cgb != self.is_cgb_mode() && (saved_on_cgb || !cgb_only) {
+            self.power_on_on(saved_on_cgb);
+        }
+        self.load_state_bytes(data)
+    }
+
     /// Reset the console.
     ///
     /// - `soft_reset = true`: CPU registers only.
     /// - `soft_reset = false`: CPU registers + full bus state.
+    ///
+    /// When the configured hardware now puts the game on the other bus (the
+    /// web's "Game Boy games run on" changed), the game starts over on it.
     pub fn reset(&mut self, soft_reset: bool) {
+        let wanted = self.cgb_flag().and_then(|f| self.wants_cgb_bus(f).ok());
+        if let Some(cgb) = wanted.filter(|&cgb| self.gb.is_some() && cgb != self.is_cgb_mode()) {
+            self.power_on_on(cgb);
+            self.start_palettes();
+            return;
+        }
         if let Some(gb) = &mut self.gb {
             gb.reset(soft_reset);
         }
@@ -1496,6 +1579,190 @@ mod tests {
         let result = dmg_gb.load_state_bytes(&cgb_state);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("bus type mismatch"));
+    }
+
+    // ── The hardware chosen at run time (web: "Game Boy games run on") ────
+
+    fn choose_hardware(gb: &GameBoy, hardware: Option<GbHardware>) {
+        gb.app_context().borrow_mut().config_mut().gb.hardware = hardware;
+    }
+
+    #[test]
+    fn test_reset_after_the_hardware_changes_starts_an_original_game_on_the_new_console() {
+        let mut gb = loaded(make_gameboy(), &minimal_rom());
+        assert!(!gb.is_cgb_mode());
+
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        assert!(!gb.is_cgb_mode(), "the running game is not interrupted");
+        gb.reset(true);
+        assert!(gb.is_cgb_mode());
+
+        choose_hardware(&gb, None);
+        gb.reset(false);
+        assert!(!gb.is_cgb_mode());
+    }
+
+    #[test]
+    fn test_reset_that_switches_console_keeps_battery_ram() {
+        let mut gb = loaded(make_gameboy(), &mbc5_battery_rom());
+        let mut ram = gb.cart_ram_snapshot();
+        ram[0] = 0x5A;
+        ram[0x1FFF] = 0xA5;
+        gb.gb.as_mut().unwrap().restore_cart_ram(&ram);
+
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        gb.reset(true);
+        assert!(gb.is_cgb_mode());
+        assert_eq!(gb.cart_ram_snapshot(), ram);
+    }
+
+    #[test]
+    fn test_reset_that_switches_console_keeps_the_audio_sample_rate() {
+        let mut gb = loaded(make_gameboy(), &minimal_rom());
+        gb.set_audio_sample_rate(48_000.0);
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        gb.reset(true);
+        assert!(gb.is_cgb_mode());
+        assert_eq!(gb.gb.as_ref().unwrap().audio_sample_rate(), 48_000.0);
+        choose_hardware(&gb, None);
+        gb.reset(true);
+        assert_eq!(gb.gb.as_ref().unwrap().audio_sample_rate(), 48_000.0);
+    }
+
+    #[test]
+    fn test_reset_that_switches_console_starts_from_that_consoles_starting_palette() {
+        let mut gb = loaded(make_gameboy(), &minimal_rom());
+        gb.cycle_palette(); // DMG Green
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        gb.reset(true);
+        assert_eq!(gb.gbc_palette(), GbcPalette::Auto);
+        gb.cycle_gbc_palette(); // Brown
+        choose_hardware(&gb, None);
+        gb.reset(true);
+        assert_eq!(gb.palette(), GbPalette::Grey, "as when the game starts");
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Grey.shades()));
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        gb.reset(true);
+        assert_eq!(gb.gbc_palette(), GbcPalette::Auto);
+    }
+
+    #[test]
+    fn test_reset_onto_game_boy_under_the_lcd_filter_starts_in_dmg_green() {
+        let mut gb = loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom());
+        gb.start_lcd_filter(true);
+        assert_eq!(gb.palette(), GbPalette::Grey, "no shade palette on the GBC");
+        choose_hardware(&gb, None);
+        gb.reset(true);
+        assert_eq!(gb.palette(), GbPalette::DmgGreen, "as when the game starts");
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            GbPalette::DmgGreen.lcd_filter_colors()
+        );
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        gb.reset(true);
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS,
+            "the filter on the GBC as for colour games"
+        );
+    }
+
+    #[test]
+    fn test_reset_on_the_same_console_keeps_the_palette() {
+        let mut gb = loaded(make_gameboy(), &minimal_rom());
+        gb.cycle_palette(); // DMG Green
+        gb.reset(true);
+        assert_eq!(gb.palette(), GbPalette::DmgGreen);
+    }
+
+    #[test]
+    fn test_colour_game_ignores_the_hardware_change_on_reset() {
+        for rom in [minimal_cgb_rom(), minimal_dual_rom()] {
+            let mut gb = loaded(make_gameboy(), &rom);
+            choose_hardware(&gb, Some(GbHardware::Cgb));
+            gb.reset(true);
+            assert!(gb.is_cgb_mode());
+            choose_hardware(&gb, None);
+            gb.reset(false);
+            assert!(gb.is_cgb_mode());
+        }
+    }
+
+    #[test]
+    fn test_is_original_game() {
+        assert!(!make_gameboy().is_original_game());
+        assert!(loaded(make_gameboy(), &minimal_rom()).is_original_game());
+        assert!(
+            loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom()).is_original_game()
+        );
+        assert!(!loaded(make_gameboy(), &minimal_dual_rom()).is_original_game());
+        assert!(!loaded(make_gameboy(), &minimal_cgb_rom()).is_original_game());
+    }
+
+    #[test]
+    fn test_load_state_as_saved_switches_to_the_saved_console() {
+        let mut gb = loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom());
+        run_frames(&mut gb, 1);
+        let cgb_state = gb.save_state_bytes().unwrap();
+
+        choose_hardware(&gb, None);
+        gb.reset(true);
+        assert!(!gb.is_cgb_mode());
+        run_frames(&mut gb, 1);
+        let dmg_state = gb.save_state_bytes().unwrap();
+
+        gb.load_state_bytes_as_saved(&cgb_state).unwrap();
+        assert!(gb.is_cgb_mode());
+        assert_eq!(saved_cpu_and_wram(&gb), state_cpu_and_wram(&cgb_state));
+
+        gb.load_state_bytes_as_saved(&dmg_state).unwrap();
+        assert!(!gb.is_cgb_mode());
+        assert_eq!(saved_cpu_and_wram(&gb), state_cpu_and_wram(&dmg_state));
+    }
+
+    /// The CPU and work RAM of a state (a DMG state does not round-trip
+    /// byte for byte: some PPU fetcher fields are recomputed on load).
+    fn state_cpu_and_wram(bytes: &[u8]) -> (String, Vec<u8>) {
+        let state = GbSaveState::from_bytes(bytes).unwrap();
+        (format!("{:?}", state.cpu), state.bus.wram.to_vec())
+    }
+
+    fn saved_cpu_and_wram(gb: &GameBoy) -> (String, Vec<u8>) {
+        state_cpu_and_wram(&gb.save_state_bytes().unwrap())
+    }
+
+    #[test]
+    fn test_load_state_as_saved_across_consoles_keeps_the_palettes_as_a_same_console_load_does() {
+        let mut dmg_gb = loaded(make_gameboy(), &minimal_rom());
+        let dmg_state = dmg_gb.save_state_bytes().unwrap();
+        dmg_gb.run_tick();
+
+        let mut gb = loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom());
+        gb.cycle_gbc_palette(); // Brown
+        gb.load_state_bytes_as_saved(&dmg_state).unwrap();
+        assert!(!gb.is_cgb_mode());
+        assert_eq!(gb.gbc_palette(), GbcPalette::Brown);
+        assert_eq!(gb.palette(), GbPalette::Grey);
+    }
+
+    #[test]
+    fn test_load_state_as_saved_refuses_a_dmg_state_for_a_cgb_only_game() {
+        let mut dmg_gb = loaded(make_gameboy(), &minimal_rom());
+        let dmg_state = dmg_gb.save_state_bytes().unwrap();
+        dmg_gb.run_tick();
+
+        let mut gb = loaded(make_gameboy(), &minimal_cgb_rom());
+        let result = gb.load_state_bytes_as_saved(&dmg_state);
+        assert!(result.unwrap_err().contains("bus type mismatch"));
+        assert!(gb.is_cgb_mode());
+    }
+
+    #[test]
+    fn test_load_state_as_saved_with_garbage_leaves_the_console() {
+        let mut gb = loaded(make_gameboy(), &minimal_rom());
+        assert!(gb.load_state_bytes_as_saved(b"not a state").is_err());
+        assert!(!gb.is_cgb_mode());
+        assert!(gb.is_original_game());
     }
 
     // ── Emulator trait port-1 tests (autorun recording/playback) ──────────

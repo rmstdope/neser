@@ -309,18 +309,12 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
 // Parsing Helper Functions
 // ============================================================================
 
-/// Boolean flags that accept optional values (used by validation and ROM-path parsing).
-pub(crate) const OPTIONAL_BOOL_FLAGS: &[&str] = &[
-    "--nes-oam-dram-decay",
+/// Platform boolean flags that accept an optional value. Each core declares
+/// its own list beside its flag table; [`optional_bool_flags`] chains them.
+pub(crate) const PLATFORM_OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--audio",
     "--vsync",
     "--gamepads",
-    "--nes-enable-4-score",
-    "--nes-pulse1",
-    "--nes-pulse2",
-    "--nes-triangle",
-    "--nes-noise",
-    "--nes-dmc",
     "--debugger",
     "--load-state",
     "--fullscreen",
@@ -328,9 +322,23 @@ pub(crate) const OPTIONAL_BOOL_FLAGS: &[&str] = &[
     "--convert-autorun",
     "--recalculate-autorun",
     "--include-unofficial-roms",
-    "--gba-color-correction",
-    "--cgb-color-correction",
 ];
+
+/// Every boolean flag that accepts an optional value (used by validation and
+/// ROM-path parsing): the platform's and each core's.
+pub(crate) fn optional_bool_flags() -> impl Iterator<Item = &'static str> {
+    PLATFORM_OPTIONAL_BOOL_FLAGS
+        .iter()
+        .chain(crate::nes::console::NES_OPTIONAL_BOOL_FLAGS)
+        .chain(crate::gb::console::config::GB_OPTIONAL_BOOL_FLAGS)
+        .chain(crate::gba::console::config::GBA_OPTIONAL_BOOL_FLAGS)
+        .copied()
+}
+
+/// Whether `flag` is a boolean flag that accepts an optional value.
+pub(crate) fn is_optional_bool_flag(flag: &str) -> bool {
+    optional_bool_flags().any(|f| f == flag)
+}
 
 /// Parse a boolean argument from command-line args.
 ///
@@ -715,7 +723,7 @@ pub(crate) fn validate_args(args: &[String]) -> Result<(), String> {
                 i += 1; // Skip the value
             }
             // For optional boolean flags, check if next arg is a boolean value
-            else if OPTIONAL_BOOL_FLAGS.contains(&arg.as_str()) {
+            else if is_optional_bool_flag(arg) {
                 // Peek at next argument to see if it's a boolean value
                 if i + 1 < args.len() {
                     let next_arg = &args[i + 1];
@@ -758,9 +766,39 @@ pub(crate) fn validate_args(args: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParseResult, help_text};
+    use super::{PLATFORM_OPTIONAL_BOOL_FLAGS, ParseResult, help_text, optional_bool_flags};
     use crate::nes::console::Config;
     use crate::platform::config::test_support::{config_new, parse_config};
+
+    #[test]
+    fn platform_optional_bool_flags_name_no_core_flag() {
+        let core_prefixes = ["--nes-", "--gb-", "--gbc-", "--cgb-", "--gba-", "--snes-"];
+        for flag in PLATFORM_OPTIONAL_BOOL_FLAGS {
+            assert!(
+                !core_prefixes.iter().any(|p| flag.starts_with(p)),
+                "{flag} belongs in its core's optional-bool list"
+            );
+        }
+    }
+
+    #[test]
+    fn optional_bool_flags_include_every_core_list() {
+        let all: Vec<&str> = optional_bool_flags().collect();
+        for flag in crate::nes::console::NES_OPTIONAL_BOOL_FLAGS
+            .iter()
+            .chain(crate::gb::console::config::GB_OPTIONAL_BOOL_FLAGS)
+            .chain(crate::gba::console::config::GBA_OPTIONAL_BOOL_FLAGS)
+            .chain(PLATFORM_OPTIONAL_BOOL_FLAGS)
+        {
+            assert!(
+                all.contains(flag),
+                "{flag} missing from optional_bool_flags()"
+            );
+        }
+        assert!(all.contains(&"--cgb-color-correction"));
+        assert!(all.contains(&"--gba-color-correction"));
+        assert!(all.contains(&"--nes-dmc"));
+    }
 
     #[test]
     fn test_config_help_flag() {

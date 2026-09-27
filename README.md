@@ -21,6 +21,10 @@ For emulator-specific options and notes, see:
 ### Pre-built releases
 
 Download the latest archive for your platform from [GitHub Releases](https://github.com/rmstdope/neser/releases).
+Each release's notes are also in `docs/releases/`. Releases are cut with the `release` skill
+(`.claude/skills/release/SKILL.md`): it computes the next version (maintenance, minor or major),
+drafts the notes and the web frontend's scroll text from what merged since the previous tag, lands
+them through a pull request once approved, and pushes the tag that runs the release workflow.
 
 Release archives contain a top-level `neser/` directory. Extract the archive, enter that directory, and run the included binary:
 
@@ -221,10 +225,11 @@ Recommended setup after cloning:
 git config core.hooksPath .githooks
 ```
 
-The hooks in `.githooks` auto-format staged Rust and Python files, then forward to the
-beads hooks under `.beads/hooks` that keep the work board in step with git. Running `bd init`
-again will point `core.hooksPath` at `.beads/hooks`; set it back to `.githooks` afterwards so
-both keep running.
+The hooks in `.githooks` auto-format staged Rust and Python files (Python with the checkout's
+`.venv/bin/ruff`, or `ruff` on PATH; a commit with staged Python and no ruff is refused), then
+forward to the beads hooks under `.beads/hooks` that keep the work board in step with git.
+Running `bd init` again will point `core.hooksPath` at `.beads/hooks`; set it back to
+`.githooks` afterwards so both keep running.
 
 Working with the fleet: development is driven by a fleet of AI agents run by
 [Cerebro](https://github.com/rmstdope/cerebro), and planned work is tracked as beads (`bd`) on a

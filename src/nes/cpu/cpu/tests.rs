@@ -4577,6 +4577,51 @@ fn test_kil_opcode_0xf2() {
     assert!(cpu.halted);
 }
 
+/// nr-3xu: a jammed CPU keeps the bus clock running. Following Mesen2's
+/// implementation (the wiki leaves the bus activity of a halted CPU unspecified),
+/// each step re-runs the jam opcode: two cycles, PC held on it, no interrupt taken.
+#[test]
+fn test_jammed_cpu_keeps_spending_cycles_without_moving() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    fake_cartridge(&mut cpu, &[KIL]);
+    cpu.reset(true);
+    cpu.execute();
+    assert!(cpu.halted);
+
+    for _ in 0..3 {
+        let before = cpu.total_cycles;
+        cpu.execute();
+        assert_eq!(
+            cpu.total_cycles - before,
+            2,
+            "each jammed step spends two cycles"
+        );
+        assert_eq!(cpu.pc, 0x8000, "PC stays on the jam opcode");
+        assert!(cpu.halted);
+    }
+}
+
+/// nr-3xu: NMI and IRQ are not serviced while the CPU is jammed.
+#[test]
+fn test_jammed_cpu_ignores_nmi() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    fake_cartridge(&mut cpu, &[KIL]);
+    cpu.reset(true);
+    cpu.execute();
+    let sp = cpu.sp;
+
+    cpu.nmi_pending = true;
+    cpu.forced_irq_pending = true;
+    cpu.p &= !FLAG_INTERRUPT;
+    for _ in 0..4 {
+        cpu.execute();
+    }
+    assert_eq!(cpu.pc, 0x8000, "no interrupt vector was taken");
+    assert_eq!(cpu.sp, sp, "nothing was pushed");
+}
+
 #[test]
 fn test_kil_halts_until_reset() {
     let (ppu, apu, memory) = create_test_memory();

@@ -17,6 +17,12 @@ The committed script is run unchanged except for a prepended shim. The shim repl
 ``io.open`` so the PNG reaches stdout as hex and ``os.getenv`` so the frame comes from
 the test. Mesen2's own ``AllowIoOsAccess`` setting, which is global and shared with
 every other session, is left alone.
+
+``TestMesen2CaptureWithoutFileAccess`` (nr-hg7) checks the script's other promise: with
+Mesen2's file access off it prints one line naming ``AllowIoOsAccess`` and exits 1 at load
+instead of sitting until the timeout. Its shim sets ``io`` and ``os`` to nil, which is what
+Mesen2 does with the setting off, so it too leaves the setting alone. It needs Mesen2 but
+no NESER build.
 """
 
 import os
@@ -122,6 +128,30 @@ class TestMesen2CaptureFrameAlignment(unittest.TestCase):
                     self.assertEqual(diffs[frame], 0, f"differing pixels by NESER frame: {diffs}")
                     self.assertNotEqual(diffs[frame - 1], 0, f"frame must animate: {diffs}")
                     self.assertNotEqual(diffs[frame + 1], 0, f"frame must animate: {diffs}")
+
+
+# Mesen2 with "AllowIoOsAccess": false leaves the globals io and os nil (measured on 2.1.1,
+# nr-hg7), so this shim reproduces that state without touching the shared settings.json.
+NO_FILE_ACCESS_SHIM = "io = nil\nos = nil\n"
+
+
+@unittest.skipUnless(os.environ.get("NESER_MESEN2_CAPTURE_TEST") == "1", "opt-in, see docstring")
+@unittest.skipUnless(MESEN2.is_file() and shutil.which("pgrep"), "Mesen2 binary not found")
+class TestMesen2CaptureWithoutFileAccess(unittest.TestCase):
+    def test_stops_at_load_naming_the_setting(self) -> None:
+        rom = REPO / CASES[0][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "capture.lua"
+            script.write_text(NO_FILE_ACCESS_SHIM + SCRIPT.read_text())
+            wait_for_other_mesen2()
+            cmd = [str(MESEN2), "--testRunner", "--enableStdout", "--timeout=30", str(rom), str(script)]
+            start = time.monotonic()
+            run = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            elapsed = time.monotonic() - start
+        named = [line for line in run.stdout.splitlines() if "AllowIoOsAccess" in line]
+        self.assertEqual(len(named), 1, f"one line naming the setting; stdout was:\n{run.stdout}")
+        self.assertEqual(run.returncode, 1)
+        self.assertLess(elapsed, 25, "must stop at load, not run until the 30 s timeout")
 
 
 if __name__ == "__main__":

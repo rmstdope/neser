@@ -394,6 +394,11 @@ impl Snes {
         self.cpu.as_mut()?.toggle_superscope_turbo(port)
     }
 
+    /// The SNES Mouse's state on the given port, or `None` when no mouse is plugged in there.
+    pub fn mouse_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
+        self.cpu.as_ref()?.mouse_state(port)
+    }
+
     /// The Super Scope's state on the given port (aim, buttons, Turbo), or `None` when no game
     /// is loaded or no scope is on that port.
     pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
@@ -468,7 +473,7 @@ impl Emulator for Snes {
         }
         let config = self.app_context.borrow().config().snes.clone();
         let (port1, port2) = config.effective_controller_ports(
-            crate::snes::input::is_super_scope_game(cartridge.title_bytes()),
+            crate::snes::input::GamePeripheral::of_title(cartridge.title_bytes()),
         );
         self.active_hardware = Self::resolve_hardware_mode(config.hardware, cartridge.country());
 
@@ -487,7 +492,7 @@ impl Emulator for Snes {
         );
         let mut cpu = Cpu::new(bus);
         // The frontends say "Super Scope connected" after a load (`rom_loader::load_console`,
-        // `WasmSnes::load_rom`): a toast from here would need a clock the web build lacks.
+        // `WasmSnes::load_rom`): the web never shows the context's toasts, only its own queue.
         cpu.configure_controllers(port1, port2);
         cpu.do_reset();
         self.cpu = Some(cpu);
@@ -1107,6 +1112,55 @@ mod tests {
             Some(true),
             "Turbo starts off again on every load"
         );
+    }
+
+    #[test]
+    fn a_mouse_game_loads_with_the_mouse_on_port1() {
+        let mut snes = make_snes();
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"MARIOPAINT"),
+            "mp.sfc",
+        )
+        .expect("load ROM");
+
+        assert!(snes.has_mouse_on_port(0), "mouse plugged into port 1");
+        assert!(!snes.has_mouse_on_port(1), "port 2 stays a controller");
+        assert_eq!(
+            snes.app_context.borrow().config().snes.controller_port1,
+            SnesControllerType::Standard,
+            "the player's settings are not changed"
+        );
+    }
+
+    #[test]
+    fn the_players_port1_choice_keeps_the_mouse_out() {
+        let mut config = snes_test_config();
+        config
+            .snes
+            .apply_config_value("snes_controller_port1", "standard")
+            .expect("config parse");
+        let mut snes = Snes::new(AppContext::new_with_config(config));
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"Mario&Wario"),
+            "mw.sfc",
+        )
+        .expect("load ROM");
+
+        assert!(!snes.has_mouse());
+    }
+
+    #[test]
+    fn loading_another_game_after_a_mouse_game_unplugs_the_mouse() {
+        let mut snes = make_snes();
+        snes.load_rom(
+            &crate::snes::test_support::minimal_lorom(b"MARIOPAINT"),
+            "mp.sfc",
+        )
+        .expect("load ROM");
+        snes.load_rom(&valid_lorom_nop_rom(), "other.sfc")
+            .expect("load ROM");
+
+        assert!(!snes.has_mouse());
     }
 
     #[test]

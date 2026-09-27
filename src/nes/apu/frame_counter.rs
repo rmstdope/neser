@@ -2,9 +2,10 @@
 /// Sequences envelope, sweep, and length counter clocks
 /// Operates in two modes: 4-step and 5-step
 use crate::nes::console::TimingMode;
+use crate::nes::region::RegionParams;
 use crate::trace_apu;
 pub struct FrameCounter {
-    tv_system: TimingMode,
+    region: &'static RegionParams,
     mode: Mode,
     irq_inhibit: bool,
     cycle_counter: u32,
@@ -53,8 +54,12 @@ impl FrameCounter {
     }
 
     pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
+        Self::with_region(tv_system.region())
+    }
+
+    fn with_region(region: &'static RegionParams) -> Self {
         Self {
-            tv_system,
+            region,
             mode: Mode::FourStep,
             irq_inhibit: false,
             cycle_counter: 0,
@@ -71,8 +76,7 @@ impl FrameCounter {
 
     /// Reset frame counter to initial state
     pub fn reset(&mut self) {
-        let tv_system = self.tv_system;
-        *self = Self::new_with_tv_system(tv_system);
+        *self = Self::with_region(self.region);
     }
 
     /// Write to frame counter register ($4017) immediately (for internal/test use only)
@@ -415,13 +419,9 @@ impl FrameCounter {
     fn clock_four_step(&mut self) -> (bool, bool) {
         const IRQ_ASSERT_CYCLES: u8 = 3; // How long the internal IRQ signal keeps asserting
 
-        let (step_1, step_2, step_3, step_4, irq_cycle, frame_cycles) = match self.tv_system {
-            TimingMode::Ntsc | TimingMode::Dendy => (7457, 14913, 22371, 29829, 29828, 29830),
-            TimingMode::Pal => (8313, 16627, 24939, 33253, 33252, 33254),
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
-                (7457, 14913, 22371, 29829, 29828, 29830)
-            }
-        };
+        let sequence = &self.region.four_step;
+        let [step_1, step_2, step_3, step_4] = sequence.steps;
+        let (irq_cycle, frame_cycles) = (sequence.irq_cycle, sequence.frame_cycles);
 
         let quarter_frame = self.cycle_counter == step_1
             || self.cycle_counter == step_2
@@ -462,11 +462,7 @@ impl FrameCounter {
     /// - 29829: None (no clocks)
     /// - 37281: HalfFrame (envelope + length)
     fn clock_five_step(&mut self) -> (bool, bool) {
-        let (step_1_base, step_2_base, step_3_base, step_5_base) = match self.tv_system {
-            TimingMode::Ntsc | TimingMode::Dendy => (7457, 14913, 22371, 37281),
-            TimingMode::Pal => (8313, 16627, 24939, 41565),
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => (7457, 14913, 22371, 37281),
-        };
+        let [step_1_base, step_2_base, step_3_base, step_5_base] = self.region.five_step;
 
         // The 5-step sequence length is odd for both PAL and NTSC , which causes the relative phase to
         // alternate; we model that as a +1 cycle offset every other sequence.

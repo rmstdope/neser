@@ -88,6 +88,13 @@ impl Cpu {
 
     pub fn execute(&mut self) {
         if self.halted {
+            // A KIL/STP opcode halts only the CPU; the console's clock keeps running, so
+            // the PPU keeps rendering frames (nr-3xu). The bus activity of a jammed 6502
+            // is unspecified on the NESdev wiki; like Mesen2, re-run the jam opcode's two
+            // cycles (fetch, then a dummy read of the next byte), keep PC on it, and take
+            // no interrupt: only a reset leaves this state.
+            self.read(self.pc);
+            self.dummy_read(self.pc.wrapping_add(1));
             return;
         }
 
