@@ -11,3 +11,4 @@ pub mod hdma;
 mod memory_map;
 mod oam_dma;
 mod serial;
+mod tick_sequence;

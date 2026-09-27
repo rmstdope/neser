@@ -4,10 +4,11 @@ use crate::gb::bus::GbBus;
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
 use crate::gb::bus::oam_dma::OamDma;
 use crate::gb::bus::serial::Serial;
+use crate::gb::bus::tick_sequence::{TickParts, TickSequence};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
-use crate::gb::ppu::{Ppu, StopDisplayMode, timing::PpuMode};
+use crate::gb::ppu::{Ppu, StopDisplayMode};
 use crate::gb::sgb::SgbState;
 use crate::gb::timer::Timer;
 
@@ -67,15 +68,6 @@ pub struct DmgBus {
 }
 
 impl DmgBus {
-    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
-        const LCDC_TILE_DATA: u8 = 0x10;
-
-        addr == 0xFF40
-            && self.ppu.is_lcd_enabled()
-            && self.ppu.mode() == PpuMode::PixelTransfer
-            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
-    }
-
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
         // The boot ROM and initial div_counter depend on the hardware variant.
         // Production (DMG-A/B/C) scroll-animation ROM: div_counter = 5036.
@@ -181,69 +173,10 @@ impl DmgBus {
         }
     }
 
-    /// Advance system timers, PPU, and APU by `m_cycles` M-cycles.
-    ///
-    /// Propagates any timer interrupt to the IF register ($FF0F bit 2).
-    /// Propagates PPU VBlank (bit 0) and STAT (bit 1) interrupts.
-    /// Clocks the serial port off the DIV counter (see [`Serial::clock`]) and
-    /// raises IF bit 3 when a transfer completes.
-    ///
-    /// PPU interrupt propagation is **deferred by one tick**: interrupts
-    /// accumulated during the *previous* `tick()` call are propagated to IF
-    /// at the start of the current call, before the PPU advances.  This
-    /// models the real hardware behavior where the STAT interrupt line
-    /// update from one M-cycle is sampled by the interrupt controller on
-    /// the following M-cycle boundary.  Timer and serial IF updates remain
-    /// immediate (set during the same tick they occur in).
-    ///
-    /// The APU frame sequencer is clocked by DIV-APU falling edges from the
-    /// timer (bit 12 of the 16-bit internal counter = DIV bit 4).
+    /// Advance the bus by `m_cycles` M-cycles: see the shared sequence in
+    /// `tick_sequence.rs`.
     pub fn tick(&mut self, m_cycles: u8) {
-        self.tick_before_ppu(m_cycles);
-        self.ppu.tick_dots(u32::from(m_cycles) * 4);
-        self.tick_after_ppu(m_cycles);
-    }
-
-    fn tick_before_ppu(&mut self, m_cycles: u8) {
-        // Propagate PPU interrupts accumulated during the previous tick.
-        self.if_reg |= self.ppu.take_pending_interrupts();
-
-        for _ in 0..m_cycles {
-            let pre_counter = self.timer.raw_counter();
-            let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
-            if self.timer.interrupt_pending {
-                self.if_reg |= 0x04;
-                self.timer.interrupt_pending = false;
-            }
-
-            // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
-            for _ in 0..div_apu_rising {
-                self.apu.clock_div_apu_secondary();
-            }
-            // Falling edge steps the APU frame sequencer.
-            for _ in 0..div_apu_falling {
-                self.apu.clock_div_apu();
-            }
-
-            if self
-                .serial
-                .clock(pre_counter, self.timer.raw_counter(), false)
-            {
-                self.if_reg |= 0x08;
-            }
-
-            if let Some((index, src)) = self.oam_dma.step() {
-                self.ppu.oam[index] = self.read_raw(src);
-            }
-        }
-    }
-
-    fn tick_after_ppu(&mut self, m_cycles: u8) {
-        // PPU interrupts are now buffered in ppu.pending_interrupts and
-        // will be propagated to IF at the start of the NEXT tick() call.
-        self.apu.tick(m_cycles);
-        // Tick the cartridge (for MBC3 RTC)
-        self.cart.tick(u32::from(m_cycles));
+        TickSequence::tick(self, m_cycles);
     }
 
     /// Returns `true` when an audio sample is ready to be retrieved.
@@ -286,14 +219,6 @@ impl DmgBus {
             // mirrors WRAM here (same as echo RAM, clearing bit 13).
             0xE000..=0xFFFF => self.wram[(addr - 0xE000) as usize],
         }
-    }
-
-    fn dma_conflict_active(&self) -> bool {
-        self.oam_dma.holds_bus() && !matches!(self.oam_dma.source(), 0x80..=0x9F)
-    }
-
-    fn dma_conflict_byte(&self) -> u8 {
-        self.read_raw(self.oam_dma.conflict_address())
     }
 
     fn cartridge_header_logo(&self) -> [u8; 48] {
@@ -510,6 +435,40 @@ impl MemoryMap for DmgBus {
     }
 }
 
+impl TickSequence for DmgBus {
+    fn tick_parts(&mut self) -> TickParts<'_> {
+        TickParts {
+            ppu: &mut self.ppu,
+            timer: &mut self.timer,
+            apu: &mut self.apu,
+            if_reg: &mut self.if_reg,
+            serial: &mut self.serial,
+            oam_dma: &mut self.oam_dma,
+        }
+    }
+
+    fn oam_dma(&self) -> &OamDma {
+        &self.oam_dma
+    }
+
+    fn dma_read(&self, addr: u16) -> u8 {
+        self.read_raw(addr)
+    }
+
+    /// While a DMA from anywhere but VRAM copies, the CPU sees only HRAM and `$FF46`.
+    fn dma_conflicts_with(&self, addr: u16) -> bool {
+        self.oam_dma.holds_bus()
+            && !matches!(self.oam_dma.source(), 0x80..=0x9F)
+            && !matches!(addr, 0xFF46 | 0xFF80..=0xFFFE)
+    }
+
+    fn tick_after_ppu(&mut self, m_cycles: u8) {
+        self.apu.tick(m_cycles);
+        // The cartridge clock (MBC3 RTC).
+        self.cart.tick(u32::from(m_cycles));
+    }
+}
+
 impl GbBus for DmgBus {
     fn serial_output(&self) -> &[u8] {
         self.serial.output()
@@ -524,30 +483,15 @@ impl GbBus for DmgBus {
     }
 
     fn tick(&mut self, m_cycles: u8) {
-        DmgBus::tick(self, m_cycles);
+        TickSequence::tick(self, m_cycles);
     }
 
     fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
-        if self.needs_mode3_lcdc_write_phase(addr, val) {
-            self.tick_before_ppu(1);
-            self.ppu.tick_dots(3);
-            self.write(addr, val);
-            self.ppu.tick_dots(1);
-            self.tick_after_ppu(1);
-        } else {
-            self.tick(1);
-            if !self.dma_conflict_active() || matches!(addr, 0xFF46 | 0xFF80..=0xFFFE) {
-                self.write(addr, val);
-            }
-        }
+        self.cpu_write_m_cycle(addr, val);
     }
 
     fn read_cpu_m_cycle(&mut self, addr: u16) -> u8 {
-        if self.dma_conflict_active() && !matches!(addr, 0xFF46 | 0xFF80..=0xFFFE) {
-            self.dma_conflict_byte()
-        } else {
-            self.read(addr)
-        }
+        self.cpu_read_m_cycle(addr)
     }
 
     fn enter_stop_mode(&mut self) {
@@ -616,6 +560,7 @@ impl GbBus for DmgBus {
 mod tests {
     use super::*;
     use crate::gb::cartridge::load_cartridge;
+    use crate::gb::ppu::timing::PpuMode;
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
