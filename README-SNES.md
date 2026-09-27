@@ -67,6 +67,25 @@ this. Click the game to capture the mouse (that click also fires), then:
 
 Escape (or leaving the window) releases the mouse; the next click recaptures it without firing.
 
+### Playing an SNES Mouse game
+
+Loading a game that cannot be played without the SNES Mouse (Mario Paint, Mario & Wario) plugs
+the mouse into port 1 for that game, on desktop and web; port 2 stays a controller. Setting
+`snes-controller-port1` yourself wins over this. Games that also play with a pad are left alone,
+because they switch the pad off when they sense a mouse; choose `mouse` for a port to use it
+with them. Click the game to capture the mouse (that click never reaches the game), then:
+
+| SNES Mouse | Press |
+|---|---|
+| Move the game's pointer | Move the mouse |
+| Left button | Left click |
+| Right button | Right click (two-finger click on a trackpad) |
+
+Moving the mouse across the picture moves the game's pointer across the game screen at any
+window size; a game's own speed setting still applies on top. While the mouse is connected the
+controller keys for its port do nothing. Escape (or leaving the window) releases the mouse; the
+next click recaptures it, again without reaching the game.
+
 Equivalent config keys in `neser.conf`:
 
 ```text

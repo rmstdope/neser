@@ -501,5 +501,7 @@ nes-vertical_overscan=8
 # A recognised Super Scope game (Super Scope 6, Yoshi's Safari, Battle Clash, Metal Combat,
 # T2: The Arcade Game and others) gets the Super Scope on port 2 automatically for that
 # game, unless snes-controller-port2 is set here or on the command line: a set value wins.
+# Likewise a game that needs the SNES Mouse (Mario Paint, Mario & Wario) gets the mouse on
+# port 1 automatically for that game, unless snes-controller-port1 is set: a set value wins.
 #snes-controller-port1=standard
 #snes-controller-port2=standard

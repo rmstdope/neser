@@ -15,6 +15,8 @@
 //! falls out naturally.
 
 mod mouse_controller;
+mod mouse_games;
+pub mod mouse_motion;
 mod multitap;
 mod standard_controller;
 mod super_scope;
@@ -23,10 +25,35 @@ mod super_scope_games;
 use serde::{Deserialize, Serialize};
 
 pub use mouse_controller::MouseController;
+pub use mouse_games::is_snes_mouse_game;
 pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
 pub use super_scope::SuperScopeController;
 pub use super_scope_games::is_super_scope_game;
+
+/// The peripheral a recognised game is played with, plugged in for it when it loads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GamePeripheral {
+    /// Nothing special: the configured devices.
+    None,
+    /// A Super Scope game: the scope goes into port 2.
+    SuperScope,
+    /// A game that needs the SNES Mouse: the mouse goes into port 1.
+    Mouse,
+}
+
+impl GamePeripheral {
+    /// The peripheral the game with this raw header title is played with.
+    pub fn of_title(title_bytes: &[u8]) -> Self {
+        if is_super_scope_game(title_bytes) {
+            Self::SuperScope
+        } else if is_snes_mouse_game(title_bytes) {
+            Self::Mouse
+        } else {
+            Self::None
+        }
+    }
+}
 
 /// The 12 logical buttons of a standard SNES controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -728,6 +755,17 @@ impl InputPorts {
             1 => self.port2.is_superscope(),
             _ => false,
         }
+    }
+
+    /// The state of the SNES Mouse on the given physical port, or `None` when that port has
+    /// no mouse.
+    pub fn mouse_state(&self, port: u8) -> Option<SnesControllerState> {
+        let device = match port {
+            0 => &self.port1,
+            1 => &self.port2,
+            _ => return None,
+        };
+        device.is_mouse().then(|| device.capture_state())
     }
 
     /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
