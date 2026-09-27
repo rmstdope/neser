@@ -9,15 +9,15 @@ import { isSupportedWebRomName } from "./rom_extensions";
  * The served tree is made of symlinks into the repository's `roms/` (web/roms/automated_tests ->
  * ../../roms/nes/automated_tests), so each top-level entry is followed and its own resolved target
  * is the containment root for everything beneath it: a nested symlink leaving that tree is skipped,
- * and a directory already walked is never walked again.
+ * and a directory already walked under the same top-level entry is never walked again. An
+ * unreadable directory is skipped rather than failing the build.
  */
 export function findRomFiles(servedDir: string): string[] {
     const results: string[] = [];
-    const visited = new Set<string>();
-    for (const entry of readdirSync(servedDir)) {
+    for (const entry of tryReaddir(servedDir)) {
         const fullPath = join(servedDir, entry);
         const rootReal = tryRealpath(fullPath);
-        if (rootReal) walk(fullPath, entry, rootReal, visited, results);
+        if (rootReal) walk(fullPath, entry, rootReal, new Set<string>(), results);
     }
     return results.sort();
 }
@@ -30,7 +30,7 @@ function walk(path: string, relPath: string, rootReal: string, visited: Set<stri
     if (stat.isDirectory()) {
         if (visited.has(real)) return;
         visited.add(real);
-        for (const entry of readdirSync(path)) {
+        for (const entry of tryReaddir(path)) {
             walk(join(path, entry), `${relPath}/${entry}`, rootReal, visited, results);
         }
     } else if (stat.isFile() && isSupportedWebRomName(relPath)) {
@@ -45,6 +45,10 @@ function isWithin(rootReal: string, targetReal: string): boolean {
 
 function tryRealpath(path: string): string | undefined {
     try { return realpathSync(path); } catch { return undefined; }
+}
+
+function tryReaddir(path: string): string[] {
+    try { return readdirSync(path); } catch { return []; }
 }
 
 function tryStat(path: string): Stats | undefined {

@@ -59,7 +59,8 @@ async function fetchManifestRomList(baseUrl: string, fetchFn: typeof fetch): Pro
         .filter((rom): rom is string => typeof rom === "string" && isSupportedWebRomName(rom))
         .map((rom) => {
             const path = rom.replace(/^\//, "");
-            return { path, url: new URL(path, baseRoot).toString() };
+            const encoded = path.split("/").map(encodeURIComponent).join("/");
+            return { path, url: new URL(encoded, baseRoot).toString() };
         })
         .sort((a, b) => a.path.localeCompare(b.path));
 }

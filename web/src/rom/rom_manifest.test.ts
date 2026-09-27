@@ -56,3 +56,13 @@ it("findRomFiles does not follow a nested symlink out of its top-level tree, nor
 
     expect(findRomFiles(served)).toEqual(["tree/inner/kept.nes"]);
 });
+
+it("findRomFiles lists a directory under every top-level entry that reaches it", () => {
+    touch(join(root, "tree", "sub", "game.nes"));
+    const served = join(root, "served");
+    mkdirSync(served);
+    symlinkSync(join(root, "tree"), join(served, "a"));
+    symlinkSync(join(root, "tree", "sub"), join(served, "b"));
+
+    expect(findRomFiles(served)).toEqual(["a/sub/game.nes", "b/game.nes"]);
+});

@@ -345,3 +345,16 @@ it("fetchRomList crawls when the manifest is missing or malformed", async () => 
         expect(entries.map((entry: any) => entry.path)).toEqual(["root.nes"]);
     }
 });
+
+it("fetchRomList encodes manifest file names into URLs and keeps them readable as paths", async () => {
+    const base = "https://example.com/roms/";
+    const { fetchFn } = recordingFetch(new Map([
+        [`${base}roms.json`, JSON.stringify({ roms: ["dir #1/100% (a?b).nes"] })]
+    ]));
+
+    const entries = await fetchRomList(base, fetchFn as any, 4);
+
+    expect(entries).toEqual([
+        { path: "dir #1/100% (a?b).nes", url: `${base}dir%20%231/100%25%20(a%3Fb).nes` }
+    ]);
+});
