@@ -350,9 +350,12 @@ pub struct MapperContext {
     pub prg_rom: Vec<u8>,
     /// CHR ROM bytes (empty when CHR-RAM).
     pub chr_rom: Vec<u8>,
-    /// PRG-RAM size in 8KB units (minimum 1).
+    /// Raw PRG-RAM size in 8KB units: 1 when the header leaves the size unspecified, and
+    /// possibly 0. Size PRG-RAM through [`header_prg_ram_banks_8k`](Self::header_prg_ram_banks_8k),
+    /// which applies the header-sizing rule; override it only through the board exceptions.
     pub prg_ram_banks_8k: u8,
-    /// Whether PRG-RAM size was explicitly specified by header metadata.
+    /// Whether PRG-RAM size was explicitly specified by header metadata. Read it through
+    /// [`header_prg_ram_banks_8k`](Self::header_prg_ram_banks_8k), not directly.
     pub prg_ram_size_specified: bool,
     /// Whether PRG-RAM is battery backed.
     pub battery_backed_prg_ram: bool,
@@ -446,8 +449,12 @@ impl MapperContext {
     }
 
     /// Board exception: the header's PRG-RAM size clamped into `banks_8k`; a header that
-    /// leaves the size unspecified gets the minimum.
+    /// leaves the size unspecified gets the minimum. The range must not be empty.
     pub fn clamp_board_prg_ram(&mut self, banks_8k: std::ops::RangeInclusive<u8>) {
+        debug_assert!(
+            banks_8k.start() <= banks_8k.end(),
+            "clamp_board_prg_ram needs a non-empty range, got {banks_8k:?}"
+        );
         let banks = self
             .header_prg_ram_banks_8k()
             .clamp(*banks_8k.start(), *banks_8k.end());
