@@ -90,8 +90,9 @@ The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin ro
 
 | Script | Description |
 | -------- | ------------- |
-| `scripts/build_web.sh` | Builds the WASM target with `cargo build --target wasm32-unknown-unknown --features wasm`, runs `wasm-bindgen` to generate JS glue code into `web/pkg/`, then bundles the web frontend with `npx vite build` into `dist/`. |
-| `scripts/run_web.sh` | Symlinks `web/roms/` into `dist/` for ROM directory browsing, then starts a local HTTP server (`python3 -m http.server`) in `dist/` for testing the browser frontend. |
+| `scripts/build_web.sh` | Builds the WASM target with `cargo build --target wasm32-unknown-unknown --features wasm`, runs `wasm-bindgen` (the one `scripts/find_wasm_bindgen.sh` finds) to generate JS glue code into `web/pkg/`, then bundles the web frontend with `npx vite build` into `dist/`. |
+| `scripts/run_web.sh` | Symlinks `web/roms/` into `dist/` for ROM directory browsing, then starts a local HTTP server (`python3 -m http.server`, port `NESER_WEB_PORT` or 8000) in `dist/` for testing the browser frontend. |
+| `scripts/find_wasm_bindgen.sh` | Prints the `wasm-bindgen` CLI for `build_web.sh`: the one on `PATH`, else the copy in wasm-pack's cache (`WASM_PACK_CACHE`, or the platform cache's `.wasm-pack`) whose version matches the `wasm-bindgen` crate pinned in `Cargo.lock`. |
 | `scripts/test-dir.sh` | Runs Rust tests for specific source directories. Converts directory paths (e.g., `src/nes/cartridge`) to `cargo test` module filters. Supports `--list` and `--skip-integration` (skips the `nes`/`gb`/`gba`/`snes` `integration_tests` modules, matching CI's unit-only fallback). CI mirrors the same path-to-filter mapping to conditionally run tests based on changed files. |
 | `scripts/refresh_65816_processor_tests_subset.sh` | Refreshes a local full-corpus cache of SNES 65816 ProcessorTests from upstream (`SingleStepTests/ProcessorTests`) into `roms/snes/automated_tests/processor_tests/65816/full/v1`. This cache is intentionally git-ignored to keep repository size manageable. |
 | `scripts/refresh_65816_processor_tests_subset.py` | Deterministically selects a committed 65816 CI subset from the local full corpus, requires paired emulation/native vectors for selected opcodes when available, truncates selected files to a configurable per-file vector cap (default 32) to keep committed assets compact, writes `v1/*.json`, and emits a machine-readable coverage report with tree-integrity metadata. |
@@ -661,7 +662,7 @@ status comments in step with the bead.
 | ------ | ------------- |
 | `Cargo.toml` | Rust project manifest. Defines the feature flags `native` (default — desktop frontend), `wasm` (WebAssembly frontend), and `tui` (terminal ROM launcher), plus an internal `frontend` meta-feature. The library crate type is both `rlib` (for tests) and `cdylib` (for WASM). Debug builds use `opt-level = 1` to keep audio smooth; dependencies use `opt-level = 3`. |
 | `build.rs` | Compile-time code generation — scans for `.autorun` files and generates Rust test functions for each. |
-| `playwright.config.mjs` | Playwright configuration for web integration tests. |
+| `playwright.config.ts` | Playwright configuration for web integration tests: serves `dist/` through `scripts/build_web.sh` and `scripts/run_web.sh` on `NESER_WEB_PORT` (8000 when unset), which `.cerebro/cerebro/scripts/smoke-port` sets per session. |
 | `vite.config.js` | Vite bundler configuration — root: `web/`, build output: `dist/`, dev/preview server on port 8000, Vitest test pattern. |
 | `package.json` | Node.js project for web frontend — Vite bundler, Vitest unit tests, and Playwright integration tests. |
 | `scripts/pyproject.toml` | Tooling configuration for the Python tools — ruff (lint + format, line length 120), mypy (silent by default, strict for the shared data-access modules), and PEP 735 dependency groups (`test`, `dev`, `deploy`) with exact pins. Declares no `[project]` table and no build backend; the modules are imported from the repository root as `scripts.<tool>.<module>` rather than installed. |

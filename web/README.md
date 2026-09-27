@@ -37,6 +37,15 @@ npm test
 npm run test:integration:web
 ```
 
+The integration suite builds the app with `scripts/build_web.sh` and serves it with
+`scripts/run_web.sh` on port 8000, or on `NESER_WEB_PORT` when that is set. A fleet session runs it
+as `.cerebro/cerebro/scripts/smoke-port -- npm run test:integration:web`, which gives each session
+its own port (`port_base`/`port_env` in `.cerebro/project.conf`) so it never tests another
+session's server. `build_web.sh` runs `wasm-bindgen` from `PATH`, or else wasm-pack's cached copy
+of the version `Cargo.lock` pins (`scripts/find_wasm_bindgen.sh`). The browser the suite needs is
+installed with `npx playwright install --only-shell chromium`, which a prepared worktree has already
+run.
+
 ## GBA performance benchmark
 Build the WASM package, copy a local GBA ROM into `web/roms/`, start the dev
 server, then open the benchmark page:
