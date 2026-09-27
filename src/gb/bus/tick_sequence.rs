@@ -306,9 +306,28 @@ mod tests {
         let mut bus = TickBus::new(4);
         bus.map_write(0xFF01, 0x41);
         bus.map_write(0xFF02, 0x81); // internal clock, 8192 Hz
-        let done = ticks_until_serial_interrupt(&mut bus, 1024).expect("transfer completes");
-        assert!(done > 900, "normal clock: done at {done}");
-        assert_eq!(bus.map.serial.output(), &[0x41]);
+        let mut m_cycles = 0;
+        while bus.map.if_reg & 0x08 == 0 {
+            assert!(
+                bus.map.serial.output().is_empty(),
+                "no byte out before IF bit 3"
+            );
+            assert_eq!(
+                bus.map.serial.sc & 0x80,
+                0x80,
+                "SC bit 7 held before IF bit 3"
+            );
+            bus.tick(1);
+            m_cycles += 1;
+            assert!(m_cycles <= 1024, "transfer never completed");
+        }
+        assert!(m_cycles > 900, "normal clock: done at {m_cycles}");
+        assert_eq!(
+            bus.map.serial.output(),
+            &[0x41],
+            "the byte is out on that tick"
+        );
+        assert_eq!(bus.map.serial.sc & 0x80, 0, "and SC bit 7 clears on it");
     }
 
     #[test]
