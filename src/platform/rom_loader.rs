@@ -102,6 +102,14 @@ pub fn load_console(app_context: &SharedAppContext, rom_path: &str) -> Result<Co
     app_context
         .borrow_mut()
         .add_toast(cartridge_load_toast_message(rom_path, result.is_ok()));
+    if result
+        .as_ref()
+        .is_ok_and(|console| console.as_snes().is_some_and(|snes| snes.has_superscope()))
+    {
+        app_context
+            .borrow_mut()
+            .add_toast(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED);
+    }
 
     result
 }
@@ -487,6 +495,51 @@ mod tests {
 
         // Then it fails rather than producing an unusable console
         assert!(result.is_err(), "an invalid cartridge should not load");
+    }
+
+    fn toasts_of(app_context: &SharedAppContext) -> Vec<String> {
+        app_context
+            .borrow_mut()
+            .visible_toasts(std::time::Instant::now())
+    }
+
+    #[test]
+    fn load_console_says_when_a_super_scope_is_connected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let rom_path = write_rom(
+            &dir,
+            "sfc",
+            &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
+        );
+        let app_context = make_app_context();
+
+        load_console(&app_context, &rom_path).expect("SNES ROM should load");
+
+        assert_eq!(
+            toasts_of(&app_context),
+            [
+                cartridge_load_toast_message(&rom_path, true),
+                crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn load_console_says_nothing_of_a_scope_for_other_games() {
+        let dir = TempDir::new().expect("create temp dir");
+        let rom_path = write_rom(
+            &dir,
+            "sfc",
+            &crate::snes::test_support::minimal_lorom(b"SNES TEST ROM"),
+        );
+        let app_context = make_app_context();
+
+        load_console(&app_context, &rom_path).expect("SNES ROM should load");
+
+        assert_eq!(
+            toasts_of(&app_context),
+            [cartridge_load_toast_message(&rom_path, true)]
+        );
     }
 
     #[test]

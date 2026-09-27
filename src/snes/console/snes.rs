@@ -479,12 +479,9 @@ impl Emulator for Snes {
             },
         );
         let mut cpu = Cpu::new(bus);
+        // The frontends say "Super Scope connected" after a load (`rom_loader::load_console`,
+        // `WasmSnes::load_rom`): a toast from here would need a clock the web build lacks.
         cpu.configure_controllers(port1, port2);
-        if cpu.has_superscope() {
-            self.app_context
-                .borrow_mut()
-                .add_toast(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED);
-        }
         cpu.do_reset();
         self.cpu = Some(cpu);
         self.rom_path = Some(PathBuf::from(name));
@@ -1031,17 +1028,8 @@ mod tests {
         assert!(!snes.is_ready_to_render());
     }
 
-    fn scope_toasts(snes: &Snes) -> usize {
-        snes.app_context
-            .borrow_mut()
-            .visible_toasts(Instant::now())
-            .iter()
-            .filter(|t| t.as_str() == crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED)
-            .count()
-    }
-
     #[test]
-    fn a_super_scope_game_loads_with_the_scope_on_port2_and_says_so() {
+    fn a_super_scope_game_loads_with_the_scope_on_port2() {
         let mut snes = make_snes();
         snes.load_rom(
             &crate::snes::test_support::minimal_lorom(b"METAL COMBAT"),
@@ -1051,7 +1039,6 @@ mod tests {
 
         assert!(snes.has_superscope_on_port(1), "scope plugged into port 2");
         assert!(!snes.has_superscope_on_port(0), "port 1 stays a controller");
-        assert_eq!(scope_toasts(&snes), 1);
         assert_eq!(
             snes.app_context.borrow().config().snes.controller_port2,
             SnesControllerType::Standard,
@@ -1074,11 +1061,10 @@ mod tests {
         .expect("load ROM");
 
         assert!(!snes.has_superscope());
-        assert_eq!(scope_toasts(&snes), 0);
     }
 
     #[test]
-    fn a_scope_chosen_in_settings_says_so_for_any_game() {
+    fn a_scope_chosen_in_settings_is_plugged_in_for_any_game() {
         let mut config = snes_test_config();
         config
             .snes
@@ -1089,7 +1075,6 @@ mod tests {
             .expect("load ROM");
 
         assert!(snes.has_superscope_on_port(1));
-        assert_eq!(scope_toasts(&snes), 1);
     }
 
     #[test]
