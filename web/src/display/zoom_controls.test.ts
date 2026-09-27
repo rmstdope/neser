@@ -3,6 +3,8 @@ import {
     advanceZoomState,
     findNextVisibleZoomHeight,
     nextViewportZoomBlocks,
+    probeNextZoomHeight,
+    probeZoomAvailability,
 } from "./zoom_controls";
 
 function createZoomInput(overrides: Partial<{ direction: "in" | "out"; currentHeight: number; step: number; previousDisplayHeight: number; nextDisplayHeight: number }> = {}) {
@@ -111,4 +113,76 @@ it("findNextVisibleZoomHeight returns null when no visible zoom-in step exists",
     });
 
     expect(next).toBe(null);
+});
+
+const ASPECT = 256 / 240;
+const cssWidthFor = (height: number) => `${Math.round(height * ASPECT)}px`;
+
+/**
+ * A windowed canvas as the page lays it out: `height: auto` and `max-width: 100%` of a container
+ * `containerWidth` wide, so its displayed height follows its CSS width. Backing-store writes are
+ * recorded, since each reallocates the GL drawing buffer.
+ */
+function layoutCanvas(startHeight: number, containerWidth: number) {
+    const backingStoreWrites: string[] = [];
+    const startWidth = cssWidthFor(startHeight);
+    return {
+        backingStoreWrites,
+        style: { width: startWidth },
+        get clientHeight() {
+            const displayedWidth = Math.min(parseFloat(this.style.width), containerWidth);
+            return Math.round(displayedWidth / ASPECT);
+        },
+        get width() { return Math.round(parseFloat(startWidth)); },
+        set width(value: number) { backingStoreWrites.push(`width=${value}`); },
+        get height() { return startHeight; },
+        set height(value: number) { backingStoreWrites.push(`height=${value}`); },
+    };
+}
+
+it("probeNextZoomHeight returns the next step up without touching the backing store", () => {
+    const canvas = layoutCanvas(720, 4000);
+    const next = probeNextZoomHeight({ canvas, direction: "in", currentHeight: 720, step: 120, cssWidthFor });
+
+    expect(next).toBe(840);
+    expect(canvas.backingStoreWrites).toEqual([]);
+    expect(canvas.style.width).toBe(cssWidthFor(720));
+});
+
+it("probeNextZoomHeight skips steps the container clamps away and returns the first visible decrease", () => {
+    // A container 384 px wide shows every height from 360 up at 360 px.
+    const canvas = layoutCanvas(720, 384);
+    const next = probeNextZoomHeight({ canvas, direction: "out", currentHeight: 720, step: 120, cssWidthFor });
+
+    expect(next).toBe(240);
+    expect(canvas.backingStoreWrites).toEqual([]);
+    expect(canvas.style.width).toBe(cssWidthFor(720));
+});
+
+it("probeNextZoomHeight returns null when no step changes the displayed height, and restores the CSS width", () => {
+    const canvas = layoutCanvas(720, 384);
+    const next = probeNextZoomHeight({ canvas, direction: "in", currentHeight: 720, step: 120, cssWidthFor });
+
+    expect(next).toBe(null);
+    expect(canvas.backingStoreWrites).toEqual([]);
+    expect(canvas.style.width).toBe(cssWidthFor(720));
+});
+
+it("probeZoomAvailability reports both directions without touching the backing store", () => {
+    const roomy = layoutCanvas(720, 4000);
+    expect(probeZoomAvailability({ canvas: roomy, currentHeight: 720, step: 120, cssWidthFor }))
+        .toEqual({ canZoomIn: true, canZoomOut: true });
+
+    const clamped = layoutCanvas(720, 384);
+    expect(probeZoomAvailability({ canvas: clamped, currentHeight: 720, step: 120, cssWidthFor }))
+        .toEqual({ canZoomIn: false, canZoomOut: true });
+
+    const atMinimum = layoutCanvas(240, 4000);
+    expect(probeZoomAvailability({ canvas: atMinimum, currentHeight: 240, step: 120, cssWidthFor }))
+        .toEqual({ canZoomIn: true, canZoomOut: false });
+
+    for (const canvas of [roomy, clamped, atMinimum]) {
+        expect(canvas.backingStoreWrites).toEqual([]);
+    }
+    expect(clamped.style.width).toBe(cssWidthFor(720));
 });

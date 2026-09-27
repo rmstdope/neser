@@ -43,6 +43,60 @@ export function findNextVisibleZoomHeight({
     }
 }
 
+/** The part of a canvas a zoom probe uses: its CSS width, and the height it is displayed at. */
+export interface ZoomProbeCanvas {
+    style: { width: string };
+    readonly clientHeight: number;
+}
+
+/**
+ * Finds the next zoom height that visibly changes the displayed height, by trying each candidate's
+ * CSS width only. The windowed canvas has `height: auto`, so its displayed height follows its CSS
+ * width at the backing store's aspect ratio, and the backing store (whose every assignment
+ * reallocates the GL drawing buffer) is never touched. The CSS width is restored before returning.
+ */
+export function probeNextZoomHeight({
+    canvas,
+    direction,
+    currentHeight,
+    step,
+    cssWidthFor,
+}: {
+    canvas: ZoomProbeCanvas;
+    direction: "in" | "out";
+    currentHeight: number;
+    step: number;
+    cssWidthFor: (height: number) => string;
+}): number | null {
+    const originalWidth = canvas.style.width;
+    try {
+        return findNextVisibleZoomHeight({
+            direction,
+            currentHeight,
+            step,
+            measureDisplayHeight: (height) => {
+                canvas.style.width = cssWidthFor(height);
+                return canvas.clientHeight;
+            },
+        });
+    } finally {
+        canvas.style.width = originalWidth;
+    }
+}
+
+/** Whether a zoom step in each direction would visibly change the displayed height. */
+export function probeZoomAvailability(args: {
+    canvas: ZoomProbeCanvas;
+    currentHeight: number;
+    step: number;
+    cssWidthFor: (height: number) => string;
+}): { canZoomIn: boolean; canZoomOut: boolean } {
+    return {
+        canZoomIn: probeNextZoomHeight({ ...args, direction: "in" }) !== null,
+        canZoomOut: probeNextZoomHeight({ ...args, direction: "out" }) !== null,
+    };
+}
+
 function didDisplayMoveInDirection(direction: "in" | "out", previousDisplayHeight: number, nextDisplayHeight: number) {
     return direction === "in"
         ? nextDisplayHeight > previousDisplayHeight
