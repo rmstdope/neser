@@ -247,9 +247,6 @@ impl DebuggerController {
         let mut previous_scanline = nes.ppu().borrow().scanline();
 
         for _ in 0..MAX_STEPS {
-            if nes.cpu_ref().is_halted() {
-                break;
-            }
             nes.run_cpu_tick();
             let scanline = nes.ppu().borrow().scanline();
             if scanline < previous_scanline {
@@ -264,9 +261,6 @@ impl DebuggerController {
         let start_scanline = nes.ppu().borrow().scanline();
 
         for _ in 0..MAX_STEPS {
-            if nes.cpu_ref().is_halted() {
-                break;
-            }
             nes.run_cpu_tick();
             let scanline = nes.ppu().borrow().scanline();
             if scanline != start_scanline {
@@ -369,7 +363,7 @@ impl DebuggerController {
             return;
         }
 
-        while !nes.is_ready_to_render() && !nes.cpu_ref().is_halted() {
+        while !nes.is_ready_to_render() {
             if self.check_breakpoint_hit(nes.cpu_ref().pc(), nes.cpu_ref().current_interrupt()) {
                 break;
             }
@@ -1005,9 +999,50 @@ mod tests {
         ctrl.run_frame(&mut nes, &tracing, &mut |_| {});
 
         assert!(
-            nes.is_ready_to_render() || nes.cpu_ref().is_halted(),
+            nes.is_ready_to_render(),
             "run_frame should reach frame boundary"
         );
+    }
+
+    /// A NES whose reset target is a KIL: the CPU jams on its first instruction.
+    fn nes_jammed_at_reset() -> Nes {
+        let mut nes = nes_with_nop_loop();
+        let mut prg_rom = vec![0x02u8; 0x8000]; // KIL everywhere
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        let cart = Cartridge::from_parts(prg_rom, vec![], NametableLayout::Horizontal);
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+        nes.run_cpu_tick();
+        assert!(nes.cpu_ref().is_halted());
+        nes
+    }
+
+    /// nr-3xu: a jammed CPU halts only the CPU, so the desktop frontend's frame
+    /// loop still reaches the frame boundary instead of freezing the console.
+    #[test]
+    fn test_run_frame_reaches_frame_boundary_with_a_jammed_cpu() {
+        let mut ctrl = default_controller();
+        let mut nes = nes_jammed_at_reset();
+
+        ctrl.run_frame(&mut nes, &Tracing::default(), &mut |_| {});
+
+        assert!(nes.is_ready_to_render(), "the PPU finishes the frame");
+    }
+
+    /// nr-3xu: the debugger's run-to-next-frame and run-to-next-scanline advance
+    /// the PPU while the CPU is jammed.
+    #[test]
+    fn test_run_to_next_frame_and_scanline_advance_with_a_jammed_cpu() {
+        let mut nes = nes_jammed_at_reset();
+
+        let scanline = nes.ppu().borrow().scanline();
+        DebuggerController::run_to_next_scanline(&mut nes);
+        assert_ne!(nes.ppu().borrow().scanline(), scanline);
+
+        let frame = nes.ppu().borrow().timing().frame_count();
+        DebuggerController::run_to_next_frame(&mut nes);
+        assert_ne!(nes.ppu().borrow().timing().frame_count(), frame);
     }
 
     #[test]
