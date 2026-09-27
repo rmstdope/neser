@@ -77,6 +77,9 @@ pub(crate) const GBA_CLI_FLAGS: &[CliFlag] = &[
     },
 ];
 
+/// GBA boolean flags that accept an optional value (the flag alone means true).
+pub(crate) const GBA_OPTIONAL_BOOL_FLAGS: &[&str] = &["--gba-color-correction"];
+
 /// Valid values for the `gba-hardware` option (used in error messages).
 const VALID_HARDWARE_MODELS: &str = "agb, sp, micro";
 

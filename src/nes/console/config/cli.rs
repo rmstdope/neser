@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::gba::console::config::GBA_FILTER_NAMES;
-use crate::platform::config::{CliFlag, Config, OPTIONAL_BOOL_FLAGS, ParseResult, parse_bool};
+use crate::platform::config::{CliFlag, Config, ParseResult, is_optional_bool_flag, parse_bool};
 use std::path::Path;
 
 pub(crate) const CLI_FLAGS: &[CliFlag] = &[
@@ -191,6 +191,17 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
         ),
         has_value: true,
     },
+];
+
+/// NES boolean flags that accept an optional value (`--nes-dmc` alone means true).
+pub(crate) const NES_OPTIONAL_BOOL_FLAGS: &[&str] = &[
+    "--nes-oam-dram-decay",
+    "--nes-enable-4-score",
+    "--nes-pulse1",
+    "--nes-pulse2",
+    "--nes-triangle",
+    "--nes-noise",
+    "--nes-dmc",
 ];
 
 impl NesConfig {
@@ -630,7 +641,7 @@ impl Config {
                     i += 2;
                 }
                 // For optional boolean flags, check if next arg is a boolean value
-                else if OPTIONAL_BOOL_FLAGS.contains(&arg.as_str()) {
+                else if is_optional_bool_flag(arg) {
                     i += 1;
                     // Peek at next argument to see if it's a boolean value
                     if i < args.len() && parse_bool(&args[i]).is_ok() {

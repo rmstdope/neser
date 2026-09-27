@@ -14,7 +14,7 @@ use bitflags::bitflags;
 pub mod cli;
 pub mod defaults;
 
-pub(crate) use cli::CLI_FLAGS;
+pub(crate) use cli::{CLI_FLAGS, NES_OPTIONAL_BOOL_FLAGS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HardwareModel {

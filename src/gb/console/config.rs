@@ -55,6 +55,9 @@ pub(crate) const GB_CLI_FLAGS: &[CliFlag] = &[
     },
 ];
 
+/// Game Boy boolean flags that accept an optional value (the flag alone means true).
+pub(crate) const GB_OPTIONAL_BOOL_FLAGS: &[&str] = &["--cgb-color-correction"];
+
 /// Valid values for the `gb-dmg-variant` option (used in error messages).
 const VALID_DMG_VARIANTS: &str = "dmg-0, dmg-a, dmg-b, dmg-c";
 

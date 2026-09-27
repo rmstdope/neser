@@ -21,7 +21,7 @@ mod video;
 
 pub use cli::ParseResult;
 pub(crate) use cli::{
-    CliFlag, OPTIONAL_BOOL_FLAGS, all_cli_flags, has_negation_flag, parse_bool, parse_bool_arg,
+    CliFlag, all_cli_flags, has_negation_flag, is_optional_bool_flag, parse_bool, parse_bool_arg,
     parse_cli_string_arg, parse_hex_u8, parse_u32_arg, print_help, validate_args,
 };
 
