@@ -387,4 +387,83 @@ mod tests {
             );
         }
     }
+
+    /// Per nesdev (PPU sprite evaluation): "Sprite evaluation does not happen on the
+    /// pre-render scanline. Because evaluation applies to the next line's sprite
+    /// rendering, no sprites will be rendered on the first scanline." A sprite whose
+    /// last rows fall on line 240 is evaluated on line 239 for a line that is never
+    /// drawn; its rows must not appear on scanline 0 of the next frame (nr-3co).
+    #[test]
+    fn sprite_evaluated_on_line_239_is_not_drawn_on_scanline_0() {
+        assert_no_sprite_on_scanline_0(TimingMode::Ntsc, 262);
+    }
+
+    /// PAL and Dendy have their pre-render line at 311, not 261.
+    #[test]
+    fn sprite_evaluated_on_line_239_is_not_drawn_on_scanline_0_pal_and_dendy() {
+        assert_no_sprite_on_scanline_0(TimingMode::Pal, 312);
+        assert_no_sprite_on_scanline_0(TimingMode::Dendy, 312);
+    }
+
+    fn assert_no_sprite_on_scanline_0(timing: TimingMode, scanlines_per_frame: u64) {
+        let mut ppu = Ppu::new_for_testing(timing);
+
+        // Tile 1: solid, pattern value 3 on every row.
+        let mut chr_rom = vec![0u8; 0x2000];
+        for row in 0..8 {
+            chr_rom[0x10 + row] = 0xFF;
+            chr_rom[0x18 + row] = 0xFF;
+        }
+        let cartridge = InesRomBuilder::new()
+            .chr_rom_data(chr_rom)
+            .build_cartridge();
+        ppu.set_cartridge(Rc::new(RefCell::new(cartridge)));
+
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0x0F); // Backdrop: black
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x13, false);
+        ppu.write_data(0x14); // Sprite palette 0, colour 3: magenta
+
+        // Sprite 0 at Y=235: drawn on scanlines 236-243, so its rows for 236-239 are
+        // visible and the row for 240 is evaluated on line 239.
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data(235);
+        ppu.write_oam_data(1);
+        ppu.write_oam_data(0x00);
+        ppu.write_oam_data(64);
+        for _ in 1..64 {
+            ppu.write_oam_data(0xFF);
+            ppu.write_oam_data(0);
+            ppu.write_oam_data(0);
+            ppu.write_oam_data(0);
+        }
+
+        ppu.write_control(0b0000_0000);
+        ppu.write_mask(0b0001_0100); // Sprites on, no left clipping
+
+        ppu.run_ppu_cycles(2 * scanlines_per_frame * 341);
+
+        let screen_buffer = ppu.screen_buffer();
+        let magenta = Nes::lookup_system_palette(0x14);
+        let black = Nes::lookup_system_palette(0x0F);
+
+        // The sprite itself is drawn at the bottom of the screen ...
+        for y in 236..240 {
+            assert_eq!(
+                screen_buffer.get_pixel(64, y),
+                magenta,
+                "sprite row at y={y}"
+            );
+        }
+        // ... and nothing of it on scanline 0.
+        for x in 0..256 {
+            assert_eq!(
+                screen_buffer.get_pixel(x, 0),
+                black,
+                "{timing:?}: scanline 0 pixel x={x} must be backdrop: no sprites render on the first scanline"
+            );
+        }
+    }
 }
