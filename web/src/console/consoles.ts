@@ -1,10 +1,11 @@
 /**
  * The one list of consoles the web frontend runs, and what the web layer does differently for each.
  *
- * Adding a console to the web is one row here plus its wasm binding (its ROM extensions are a row
- * in Rust's `platform::rom_extensions`, which reaches the page through that binding) (and that binding's arm of
- * `ActiveEmulator` in app.ts). Facts the core reports at runtime — screen size, frame rate, the
- * audio sample rate it is configured to — stay with the binding and are not copied here.
+ * Adding a console to the web is one row here plus its wasm binding (and that binding's arm of
+ * `ActiveEmulator` in app.ts). Its ROM extensions are not here: they are a row in Rust's
+ * `platform::rom_extensions`, which reaches the page through the binding. Facts the core reports
+ * at runtime — screen size, frame rate, the audio sample rate it is configured to — stay with the
+ * binding and are not copied here.
  */
 
 export const CONSOLE_KINDS = ["nes", "gb", "gba", "snes"] as const;
