@@ -285,10 +285,15 @@ mypy settings and pins the dependencies as [PEP 735][pep735] dependency groups.
 Create the virtualenv once, from the repository root:
 
 ```bash
-python3 -m venv .venv
+./scripts/setup-venv.sh                    # or PYTHON=python3.14 ./scripts/setup-venv.sh
 source .venv/bin/activate
-python -m pip install --group scripts/pyproject.toml:test --group scripts/pyproject.toml:dev
 ```
+
+The script creates `.venv` if it is missing and installs the `test` and `dev`
+groups exactly as CI does. Every Cerebro-prepared worktree runs it on install.
+`scripts/gate-full.sh` uses `.venv/bin/python` and never the system `python3`,
+so the full gate stops at once, with one line naming this script, when `.venv`
+is missing.
 
 The `test` group holds the runtime dependencies of the tools; `dev` holds ruff
 and mypy. A third group, `deploy`, is only needed for `scripts/deploy.py`.
