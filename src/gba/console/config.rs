@@ -680,4 +680,37 @@ mod tests {
             "GBA CLI flags should include --gba-color-correction"
         );
     }
+
+    /// The GBA keys and flags, parsed through the full `Config`.
+    mod config_parsing {
+        use crate::platform::config::Config;
+
+        #[test]
+        fn test_config_file_gba_trace_channels() {
+            let mut config = Config::default();
+
+            config.apply_config_value("gba-trace-cpu", "1").unwrap();
+            config.apply_config_value("gba-trace-bus", "2").unwrap();
+            config.apply_config_value("gba-trace-dma", "3").unwrap();
+            config.apply_config_value("gba-trace-swi", "4").unwrap();
+            config
+                .apply_config_value("gba-trace-mgba-log", "9")
+                .unwrap();
+
+            assert_eq!(config.gba.tracing.cpu, 1);
+            assert_eq!(config.gba.tracing.bus, 2);
+            assert_eq!(config.gba.tracing.dma, 3);
+            assert_eq!(config.gba.tracing.swi, 4);
+            assert_eq!(config.gba.tracing.mgba_log, 5);
+        }
+
+        #[test]
+        fn test_config_file_gba_bios_path_sets_gba_config() {
+            let mut config = Config::with_defaults();
+            config
+                .apply_config_value("gba-bios-path", "/tmp/gba_bios.bin")
+                .unwrap();
+            assert_eq!(config.gba.bios_path.as_deref(), Some("/tmp/gba_bios.bin"));
+        }
+    }
 }

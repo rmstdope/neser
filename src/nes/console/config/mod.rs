@@ -1,10 +1,8 @@
 //! Configuration for the NES emulator.
 //!
-//! The `Config` struct holds all configurable options for the emulator instance.
-//! Configuration values are loaded with the following priority (highest to lowest):
-//! 1. Command-line arguments
-//! 2. Config file (neser.conf)
-//! 3. Default values
+//! [`NesConfig`] holds the NES section of the all-systems `Config`, and parses
+//! its own `--nes-*` flags and `nes-*` config-file keys. The `Config` itself is
+//! declared and parsed in `platform::config`.
 
 use crate::nes::console::TimingMode;
 use crate::nes::input::ControllerType;

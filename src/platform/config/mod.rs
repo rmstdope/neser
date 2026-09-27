@@ -216,7 +216,8 @@ impl Default for FrontendConfig {
 /// [`GbConfig`](crate::gb::console::config::GbConfig) (Game Boy-specific settings),
 /// [`GbaConfig`](crate::gba::console::config::GbaConfig) (GBA-specific settings),
 /// and [`SnesConfig`](crate::snes::console::config::SnesConfig) (SNES-specific settings).
-/// Parsing from CLI arguments and config files populates all sub-configs.
+/// Parsing from CLI arguments and config files (in `parse.rs`) offers every key
+/// and flag to each sub-config, and each takes only its own.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// Generic frontend configuration.

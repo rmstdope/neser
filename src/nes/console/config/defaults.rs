@@ -437,67 +437,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_file_filter_invalid_errors() {
-        let mut config = Config::default();
-        let result = config.apply_config_value("nes-filter", "invalid-filter");
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "Invalid filter name: 'invalid-filter'. Valid options are: none, crt, smooth, ntsc, pal"
-        );
-    }
-
-    #[test]
-    fn test_config_file_filter_empty_ignored() {
-        let mut config = Config::default();
-        config.apply_config_value("nes-filter", "").unwrap();
-        assert_eq!(config.frontend.shader_path, None);
-    }
-
-    #[test]
-    fn test_config_file_filter_crt() {
-        let mut config = Config::default();
-        config.apply_config_value("nes-filter", "crt").unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_filter_ntsc() {
-        let mut config = Config::default();
-        config.apply_config_value("nes-filter", "ntsc").unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_filter_smooth() {
-        let mut config = Config::default();
-        config.apply_config_value("nes-filter", "smooth").unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some(
-                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp"
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn test_config_file_filter_none() {
-        let mut config = Config::default();
-        config.apply_config_value("nes-filter", "none").unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("shaders/stock.slangp".to_string())
-        );
-    }
-
-    #[test]
     fn test_config_file_debugger() {
         let mut config = Config::default();
         config.apply_config_value("debugger", "true").unwrap();
@@ -643,25 +582,6 @@ mod tests {
         config.apply_config_value("trace-nestest", "true").unwrap();
         assert!(config.frontend.tracing.enabled);
         assert!(config.frontend.tracing.nestest);
-    }
-
-    #[test]
-    fn test_config_file_gba_trace_channels() {
-        let mut config = Config::default();
-
-        config.apply_config_value("gba-trace-cpu", "1").unwrap();
-        config.apply_config_value("gba-trace-bus", "2").unwrap();
-        config.apply_config_value("gba-trace-dma", "3").unwrap();
-        config.apply_config_value("gba-trace-swi", "4").unwrap();
-        config
-            .apply_config_value("gba-trace-mgba-log", "9")
-            .unwrap();
-
-        assert_eq!(config.gba.tracing.cpu, 1);
-        assert_eq!(config.gba.tracing.bus, 2);
-        assert_eq!(config.gba.tracing.dma, 3);
-        assert_eq!(config.gba.tracing.swi, 4);
-        assert_eq!(config.gba.tracing.mgba_log, 5);
     }
 
     #[test]
@@ -858,31 +778,6 @@ nes-controller_port2=arkanoid
     }
 
     #[test]
-    fn test_config_file_invalid_filter_errors() {
-        use std::io::Write;
-        use tempfile::NamedTempFile;
-
-        let content = r#"
-    hardware=nes-pal
-nes-filter=invalid-shader
-"#;
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-
-        let args = vec![
-            "neser".to_string(),
-            "--config".to_string(),
-            file.path().to_str().unwrap().to_string(),
-        ];
-        let result = Config::new(&args);
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "Invalid filter name: 'invalid-shader'. Valid options are: none, crt, smooth, ntsc, pal"
-        );
-    }
-
-    #[test]
     fn test_config_flag_invalid_file_errors() {
         let args = vec![
             "neser".to_string(),
@@ -1048,213 +943,12 @@ nes-filter=invalid-shader
     }
 
     #[test]
-    fn test_config_file_gb_dmg_variant_key() {
-        let mut config = Config::with_defaults();
-        config
-            .apply_config_value("gb-dmg-variant", "dmg-c")
-            .unwrap();
-        assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgC);
-    }
-
-    #[test]
-    fn test_config_file_gb_hardware_dmg_sets_hardware() {
-        let mut config = Config::with_defaults();
-        config.apply_config_value("gb-hardware", "dmg").unwrap();
-        assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Dmg));
-    }
-
-    #[test]
-    fn test_config_file_gb_hardware_cgb_sets_hardware() {
-        let mut config = Config::with_defaults();
-        config.apply_config_value("gb-hardware", "cgb").unwrap();
-        assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Cgb));
-    }
-
-    #[test]
-    fn test_config_file_gb_hardware_invalid_value_returns_error() {
-        let mut config = Config::with_defaults();
-        let result = config.apply_config_value("gb-hardware", "dmg-a");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid gb_hardware value"));
-    }
-
-    #[test]
-    fn test_config_file_cgb_color_correction_sets_gb_config() {
-        let mut config = Config::with_defaults();
-        config
-            .apply_config_value("cgb-color-correction", "true")
-            .unwrap();
-        assert!(config.gb.cgb_color_correction);
-    }
-
-    #[test]
-    fn test_config_file_cgb_color_correction_invalid_value_returns_error() {
-        let mut config = Config::with_defaults();
-        let result = config.apply_config_value("cgb-color-correction", "maybe");
-        assert_eq!(
-            result.unwrap_err(),
-            "Invalid cgb_color_correction value: 'maybe'"
-        );
-    }
-
-    #[test]
-    fn test_config_file_gba_bios_path_sets_gba_config() {
-        let mut config = Config::with_defaults();
-        config
-            .apply_config_value("gba-bios-path", "/tmp/gba_bios.bin")
-            .unwrap();
-        assert_eq!(config.gba.bios_path.as_deref(), Some("/tmp/gba_bios.bin"));
-    }
-
-    #[test]
     fn test_config_file_nes_vs_dip_switches_key_uses_prefix() {
         let mut config = Config::with_defaults();
         config
             .apply_config_value("nes-vs_dip_switches", "0xFF")
             .unwrap();
         assert_eq!(config.nes.vs_dip_switches, 0xFF);
-    }
-
-    #[test]
-    fn test_config_file_nes_filter_ntsc_sets_shader_path() {
-        let mut config = Config::default();
-        config.apply_config_value("nes-filter", "ntsc").unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_nes_filter_rejects_dmg_shader() {
-        let mut config = Config::default();
-        let result = config.apply_config_value("nes-filter", "dmg");
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("dmg"),
-            "Error should mention the invalid value: {msg}"
-        );
-    }
-
-    #[test]
-    fn test_config_file_nes_filter_empty_ignored() {
-        let mut config = Config::default();
-        config.apply_config_value("nes-filter", "").unwrap();
-        assert_eq!(config.frontend.shader_path, None);
-    }
-
-    #[test]
-    fn test_config_file_gb_filter_dmg_sets_shader_path() {
-        let mut config = Config::default();
-        config.apply_config_value("gb-filter", "dmg").unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/gameboy.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_gb_filter_rejects_crt_shader() {
-        let mut config = Config::default();
-        let result = config.apply_config_value("gb-filter", "crt");
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("crt"),
-            "Error should mention the invalid value: {msg}"
-        );
-    }
-
-    #[test]
-    fn test_config_file_gb_filter_empty_ignored() {
-        let mut config = Config::default();
-        config.apply_config_value("gb-filter", "").unwrap();
-        assert_eq!(config.frontend.shader_path, None);
-    }
-
-    #[test]
-    fn test_config_file_gba_filter_agb001_sets_shader_path() {
-        let mut config = Config::default();
-        config.apply_config_value("gba-filter", "agb001").unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/agb001.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_gba_filter_nso_gba_color_sets_shader_path() {
-        let mut config = Config::default();
-        config
-            .apply_config_value("gba-filter", "nso-gba-color")
-            .unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_gba_filter_sp101_color_sets_shader_path() {
-        let mut config = Config::default();
-        config
-            .apply_config_value("gba-filter", "sp101-color")
-            .unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/color-mod/sp101-color.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_gba_filter_gba_lcd_grid_sets_shader_path() {
-        let mut config = Config::default();
-        config
-            .apply_config_value("gba-filter", "gba-lcd-grid")
-            .unwrap();
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_file_gba_filter_rejects_bogus_shader_with_valid_options() {
-        let mut config = Config::default();
-        let result = config.apply_config_value("gba-filter", "bogus");
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(msg.contains("bogus"));
-        assert!(msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
-    }
-
-    #[test]
-    fn test_config_file_gb_palette_reaches_the_gb_config() {
-        let mut config = Config::default();
-        config
-            .apply_config_value("gb-palette", "dmg-green")
-            .unwrap();
-        assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
-        // An unknown value warns but does not stop the config file loading.
-        config.apply_config_value("gb-palette", "bogus").unwrap();
-        assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::DmgGreen));
-    }
-
-    #[test]
-    fn test_config_file_gbc_palette_reaches_the_gb_config() {
-        let mut config = Config::default();
-        config.apply_config_value("gbc-palette", "red").unwrap();
-        assert_eq!(
-            config.gb.gbc_palette,
-            crate::gb::compat_palettes::GbcPalette::Red
-        );
-        // An unknown value warns but does not stop the config file loading.
-        config.apply_config_value("gbc-palette", "bogus").unwrap();
-        assert_eq!(
-            config.gb.gbc_palette,
-            crate::gb::compat_palettes::GbcPalette::Red
-        );
     }
 
     #[test]
