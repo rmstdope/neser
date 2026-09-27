@@ -714,6 +714,56 @@ mod tests {
         }
     }
 
+    fn bios_word(offset: u32) -> u32 {
+        let i = offset as usize;
+        u32::from_le_bytes(EMBEDDED_BIOS[i..i + 4].try_into().unwrap())
+    }
+
+    /// Run one CpuSet (0x0B) or CpuFastSet (0x0C) call and return the console.
+    fn run_copy_swi(swi: u32, src: u32, dst: u32, control: u32, mem: &[(u32, &[u8])]) -> Gba {
+        let mut code = arm_load_const(0, src);
+        code.extend(arm_load_const(1, dst));
+        code.extend(arm_load_const(2, control));
+        code.push(arm_swi(swi));
+        code.push(ARM_IDLE);
+        let mut gba = boot_and_setup_memory(&code, mem);
+        run_until_idle(&mut gba, 500_000);
+        gba
+    }
+
+    #[test]
+    fn bios_cpu_set_word_copy_and_fill_between_unaligned_normal_memory_do_not_rotate() {
+        let mut src_data = Vec::new();
+        src_data.extend_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+        src_data.extend_from_slice(&0xCAFE_BABEu32.to_le_bytes());
+        let mem = [(0x0200_0100u32, src_data.as_slice())];
+
+        let mut gba = run_copy_swi(0x0B, 0x0200_0103, 0x0200_0201, 2 | (1 << 26), &mem);
+        assert_eq!(
+            gba.bus_mut().read32(0x0200_0200),
+            0xDEAD_BEEF,
+            "copy word 0"
+        );
+        assert_eq!(
+            gba.bus_mut().read32(0x0200_0204),
+            0xCAFE_BABE,
+            "copy word 1"
+        );
+
+        let fill = 2 | (1 << 24) | (1 << 26);
+        let mut gba = run_copy_swi(0x0B, 0x0200_0102, 0x0200_0203, fill, &mem);
+        assert_eq!(
+            gba.bus_mut().read32(0x0200_0200),
+            0xDEAD_BEEF,
+            "fill word 0"
+        );
+        assert_eq!(
+            gba.bus_mut().read32(0x0200_0204),
+            0xDEAD_BEEF,
+            "fill word 1"
+        );
+    }
+
     #[test]
     fn bios_cpu_set_fill_mode() {
         // CpuSet fill: replicate first source word, 32-bit, count=4
@@ -772,6 +822,56 @@ mod tests {
                 0x1000_0000 + i,
                 "CpuFastSet word {i}"
             );
+        }
+    }
+
+    #[test]
+    fn bios_cpu_fast_set_between_unaligned_normal_memory_copies_and_fills_aligned_words() {
+        let mut src_data = Vec::new();
+        for i in 0u32..8 {
+            src_data.extend_from_slice(&(0x1000_0000 + i).to_le_bytes());
+        }
+        let mem = [(0x0200_0100u32, src_data.as_slice())];
+
+        let mut gba = run_copy_swi(0x0C, 0x0200_0101, 0x0200_0202, 8, &mem);
+        for i in 0u32..8 {
+            let got = gba.bus_mut().read32(0x0200_0200 + i * 4);
+            assert_eq!(got, 0x1000_0000 + i, "copy word {i}");
+        }
+
+        let mut gba = run_copy_swi(0x0C, 0x0200_0107, 0x0200_0203, 8 | (1 << 24), &mem);
+        for i in 0u32..8 {
+            let got = gba.bus_mut().read32(0x0200_0200 + i * 4);
+            assert_eq!(got, 0x1000_0001, "fill word {i}");
+        }
+    }
+
+    // A source in the BIOS region is not taken by the HLE path, so these run the
+    // assembly routine itself. The source starts past word 0, which the embedded
+    // BIOS reads as zero for its own copy routines.
+    #[test]
+    fn bios_cpu_fast_set_assembly_path_leaves_alignment_to_the_bus() {
+        let mut gba = run_copy_swi(0x0C, 0x0000_0012, 0x0200_0201, 8, &[]);
+        for i in 0u32..8 {
+            let got = gba.bus_mut().read32(0x0200_0200 + i * 4);
+            assert_eq!(got, bios_word(0x10 + i * 4), "normal-memory copy word {i}");
+        }
+
+        let mut gba = run_copy_swi(0x0C, 0x0000_0011, 0x0200_0203, 8 | (1 << 24), &[]);
+        for i in 0u32..8 {
+            let got = gba.bus_mut().read32(0x0200_0200 + i * 4);
+            assert_eq!(got, bios_word(0x10), "normal-memory fill word {i}");
+        }
+
+        for base in [0x0E00_0000u32, 0x0F00_0000] {
+            for lane in 1..4u32 {
+                let mut gba = run_copy_swi(0x0C, 0x0000_0010, base + lane, 8, &[]);
+                for i in 0u32..8 {
+                    let got = gba.bus_mut().read8(base + lane + i * 4);
+                    let expected = (bios_word(0x10 + i * 4) >> (8 * lane)) as u8;
+                    assert_eq!(got, expected, "SRAM {base:#010X} lane {lane} word {i}");
+                }
+            }
         }
     }
 

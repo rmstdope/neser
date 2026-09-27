@@ -103,14 +103,6 @@ fn data_word_access_is_sequential(prev_addr: u32, addr: u32) -> bool {
     true
 }
 
-fn align_cpu_fast_set_addr(addr: u32) -> u32 {
-    if matches!((addr >> 24) & 0xF, 0xE | 0xF) {
-        addr
-    } else {
-        addr & !3
-    }
-}
-
 fn cpu_fast_set_source_requires_bios_execution(addr: u32) -> bool {
     !(0x0200_0000..0x1000_0000).contains(&addr)
 }
@@ -774,8 +766,9 @@ impl Arm7tdmi {
     }
 
     fn hle_bios_cpu_fast_set<B: Bus>(&mut self, bus: &mut B) -> Option<u32> {
-        let mut src = align_cpu_fast_set_addr(self.regs.r[0]);
-        let mut dst = align_cpu_fast_set_addr(self.regs.r[1]);
+        // The bus aligns each word access, except on the 8-bit cart RAM bus.
+        let mut src = self.regs.r[0];
+        let mut dst = self.regs.r[1];
         let control = self.regs.r[2];
         let fill = control & (1 << 24) != 0;
         let count = ((control & 0x001F_FFFF).saturating_add(7)) & !7;
