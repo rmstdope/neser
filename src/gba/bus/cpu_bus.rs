@@ -1,7 +1,6 @@
 use super::addressing::{
     dma_addr_uses_gamepak, gamepak_nonseq_wait_is_slowest, gamepak_second_access_fast,
-    open_bus_no_cart_byte, open_bus_no_cart_halfword, open_bus_no_cart_word, timer_control_index,
-    vram_offset,
+    open_bus_no_cart_byte, open_bus_no_cart_halfword, open_bus_no_cart_word, vram_offset,
 };
 use super::gba_bus::{GbaBus, emit_gba_bus_trace_line};
 use super::io_write::IoWidth;
