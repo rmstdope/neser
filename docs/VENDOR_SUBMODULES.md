@@ -92,7 +92,7 @@ resolved as strictly as shader stages: a renamed texture raises rather than bein
 - **Appearance is not covered.** No test renders through a shader. If a bump changes how a preset
   looks, only running the emulator will show it. Check the presets you care about by hand.
 - **Preset paths are duplicated.** `src/platform/shaders.rs` is the source of truth, but the same
-  paths appear as string literals in `src/nes/console/config/cli.rs` tests. If an upstream rename
+  paths appear as string literals in the filter tests of `src/platform/config/parse.rs`. If an upstream rename
   forces a path change, update both.
 
 ## Per-submodule notes

@@ -17,11 +17,12 @@ mod autorun;
 mod cartridge;
 mod debugger;
 pub(crate) mod headless;
+mod parse;
 mod video;
 
 pub use cli::ParseResult;
 pub(crate) use cli::{
-    CliFlag, OPTIONAL_BOOL_FLAGS, all_cli_flags, has_negation_flag, parse_bool, parse_bool_arg,
+    CliFlag, all_cli_flags, has_negation_flag, is_optional_bool_flag, parse_bool, parse_bool_arg,
     parse_cli_string_arg, parse_hex_u8, parse_u32_arg, print_help, validate_args,
 };
 
@@ -215,7 +216,8 @@ impl Default for FrontendConfig {
 /// [`GbConfig`](crate::gb::console::config::GbConfig) (Game Boy-specific settings),
 /// [`GbaConfig`](crate::gba::console::config::GbaConfig) (GBA-specific settings),
 /// and [`SnesConfig`](crate::snes::console::config::SnesConfig) (SNES-specific settings).
-/// Parsing from CLI arguments and config files populates all sub-configs.
+/// Parsing from CLI arguments and config files (in `parse.rs`) offers every key
+/// and flag to each sub-config, and each takes only its own.
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// Generic frontend configuration.

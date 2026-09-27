@@ -571,6 +571,7 @@ impl WasmNes {
         {
             let mut ctx = app_context.borrow_mut();
             ctx.config_mut()
+                .nes
                 .apply_hardware_value(mode)
                 .map_err(|e| JsValue::from_str(&e))?;
         }
@@ -601,6 +602,7 @@ impl WasmNes {
         {
             let mut ctx = app_context.borrow_mut();
             ctx.config_mut()
+                .nes
                 .apply_expansion_port_value(port)
                 .map_err(|e| JsValue::from_str(&e))?;
         }

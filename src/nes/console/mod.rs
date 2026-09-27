@@ -16,12 +16,12 @@ pub use cartridge_catalog::{
 };
 #[allow(unused_imports)] // Used by frontend features
 pub use config::ApuChannels;
-pub(crate) use config::CLI_FLAGS;
 pub use config::ExpansionPort;
 pub use config::HardwareMode;
 #[allow(unused_imports)] // Used by integration tests and lib consumers
 pub use config::HardwareModel;
 pub use config::NesConfig;
+pub(crate) use config::{CLI_FLAGS, NES_FILTER_NAMES, NES_OPTIONAL_BOOL_FLAGS};
 pub use nes::Nes;
 pub use nes::SaveState;
 

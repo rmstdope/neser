@@ -1,8 +1,6 @@
 use super::*;
 
-use crate::gba::console::config::GBA_FILTER_NAMES;
-use crate::platform::config::{CliFlag, Config, OPTIONAL_BOOL_FLAGS, ParseResult, parse_bool};
-use std::path::Path;
+use crate::platform::config::{CliFlag, Config};
 
 pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
@@ -193,10 +191,23 @@ pub(crate) const CLI_FLAGS: &[CliFlag] = &[
     },
 ];
 
+/// NES boolean flags that accept an optional value (`--nes-dmc` alone means true).
+pub(crate) const NES_OPTIONAL_BOOL_FLAGS: &[&str] = &[
+    "--nes-oam-dram-decay",
+    "--nes-enable-4-score",
+    "--nes-pulse1",
+    "--nes-pulse2",
+    "--nes-triangle",
+    "--nes-noise",
+    "--nes-dmc",
+];
+
 impl NesConfig {
     /// Apply command-line arguments to NES configuration.
     ///
-    /// Parses NES-specific CLI flags (hardware, controllers, expansion,  4-score, APU channels, zapper, OAM, overscan).
+    /// Parses NES-specific CLI flags (4-score, APU channels, zapper, OAM, overscan,
+    /// hardware, expansion port, palette, controllers). `--nes-filter` is the
+    /// platform's, as it picks the frontend shader.
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
         use crate::platform::config::{has_negation_flag, parse_bool_arg, parse_u32_arg};
 
@@ -305,11 +316,59 @@ impl NesConfig {
             self.vertical_overscan = v.min(16) as u8;
         }
 
+        // Parse hardware mode
+        let hardware_arg = crate::platform::config::parse_cli_string_arg(args, "--nes-hardware");
+        if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
+            self.hardware_mode = hardware_mode;
+            self.hardware_mode_explicit = true;
+            self.hardware_model = hardware_model;
+            self.hardware_model_explicit = true;
+
+            if let Some(hardware) = hardware_arg.as_deref()
+                && (hardware.eq_ignore_ascii_case("playchoice10")
+                    || hardware.eq_ignore_ascii_case("playchoice-10"))
+            {
+                self.expansion_port = ExpansionPort::Playchoice10;
+                self.expansion_port_explicit = true;
+            }
+        }
+
+        // Parse expansion port
+        if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
+            self.expansion_port = expansion_port;
+            self.expansion_port_explicit = true;
+        }
+
+        // Preset system palette
+        if let Some(palette) = crate::platform::config::parse_cli_string_arg(args, "--nes-palette")
+        {
+            self.palette = NesPalette::from_config_id(&palette).ok_or_else(|| {
+                format!(
+                    "Invalid --nes-palette value: '{palette}'. Valid options are: {}",
+                    NesPalette::config_id_list()
+                )
+            })?;
+        }
+
+        // Controller ports
+        if let Some(controller_port1) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-controller-port1")
+        {
+            self.controller_port1 =
+                Self::parse_controller_arg("--nes-controller-port1", &controller_port1)?;
+            self.controller_port1_explicit = true;
+        }
+        if let Some(controller_port2) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-controller-port2")
+        {
+            self.controller_port2 =
+                Self::parse_controller_arg("--nes-controller-port2", &controller_port2)?;
+            self.controller_port2_explicit = true;
+        }
+
         Ok(())
     }
-}
 
-impl Config {
     pub(crate) fn parse_hardware_value(value: &str) -> Option<(HardwareMode, HardwareModel)> {
         if value.eq_ignore_ascii_case("nes-ntsc") {
             Some((HardwareMode::Nes, HardwareModel::NesNtsc))
@@ -331,7 +390,9 @@ impl Config {
     fn parse_hardware_arg(
         args: &[String],
     ) -> Result<Option<(HardwareMode, HardwareModel)>, String> {
-        if let Some(hardware) = Self::parse_string_arg(args, "--nes-hardware") {
+        if let Some(hardware) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-hardware")
+        {
             if let Some(parsed) = Self::parse_hardware_value(&hardware) {
                 Ok(Some(parsed))
             } else {
@@ -346,7 +407,9 @@ impl Config {
     }
 
     fn parse_expansion_port_arg(args: &[String]) -> Result<Option<ExpansionPort>, String> {
-        if let Some(expansion_port) = Self::parse_string_arg(args, "--nes-expansion-port") {
+        if let Some(expansion_port) =
+            crate::platform::config::parse_cli_string_arg(args, "--nes-expansion-port")
+        {
             let parsed = ExpansionPort::parse(&expansion_port).ok_or_else(|| {
                 format!(
                     "Invalid --nes-expansion-port value: '{}'. Valid options are: none, famicom-four-players, arkanoid, zapper, power-pad, vs-system, playchoice10",
@@ -367,24 +430,24 @@ impl Config {
                     value
                 )
             })?;
-        self.nes.hardware_mode = hardware_mode;
-        self.nes.hardware_mode_explicit = true;
-        self.nes.hardware_model = hardware_model;
-        self.nes.hardware_model_explicit = true;
+        self.hardware_mode = hardware_mode;
+        self.hardware_mode_explicit = true;
+        self.hardware_model = hardware_model;
+        self.hardware_model_explicit = true;
 
         if value.eq_ignore_ascii_case("playchoice10") || value.eq_ignore_ascii_case("playchoice-10")
         {
-            self.nes.expansion_port = ExpansionPort::Playchoice10;
-            self.nes.expansion_port_explicit = true;
+            self.expansion_port = ExpansionPort::Playchoice10;
+            self.expansion_port_explicit = true;
         }
 
         Ok(())
     }
 
     pub(crate) fn apply_expansion_port_value(&mut self, value: &str) -> Result<(), String> {
-        self.nes.expansion_port = ExpansionPort::parse(value)
+        self.expansion_port = ExpansionPort::parse(value)
             .ok_or_else(|| format!("Invalid nes-expansion_port value: '{}'", value))?;
-        self.nes.expansion_port_explicit = true;
+        self.expansion_port_explicit = true;
         Ok(())
     }
 
@@ -403,276 +466,44 @@ impl Config {
         })
     }
 
-    /// Create a new Config with only default values (no config files or args).
-    #[cfg(test)]
-    pub fn with_defaults() -> Self {
-        Self::default()
-    }
-
-    /// Create a new Config from command-line arguments.
-    ///
-    /// Configuration is loaded in the following order (later overrides earlier):
-    /// 1. Default values
-    /// 2. ~/.neser/neser.conf (user-wide config, if it exists)
-    /// 3. ./neser.conf (project-specific config, if it exists)
-    /// 4. --config <file> (explicit config file, if specified)
-    /// 5. Command-line arguments
-    ///
-    /// If --config is specified with a non-existent file, an error is returned.
-    ///
-    /// # Arguments
-    /// * `args` - Command-line arguments (including program name at index 0).
-    ///
-    /// # Returns
-    /// - `Ok(ParseResult::Help)` if --help or -h was specified
-    /// - `Ok(ParseResult::Version)` if --version was specified
-    /// - `Ok(ParseResult::Config(config))` on successful parse
-    /// - `Err(message)` on validation error
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(args: &[String]) -> Result<ParseResult, String> {
-        // Check for help first
-        if args.iter().any(|a| a == "--help" || a == "-h") {
-            return Ok(ParseResult::Help);
-        }
-        if args.iter().any(|a| a == "--version") {
-            return Ok(ParseResult::Version);
-        }
-
-        // Validate arguments
-        crate::platform::config::validate_args(args)?;
-
-        // Step 1: Start with defaults
-        let mut config = Self::default();
-
-        // Step 2: Load config files in priority order
-        // Check if --config was specified
-        if let Some(config_path) = Self::parse_config_arg(args) {
-            // Explicit config file - must exist
-            let path = Path::new(&config_path);
-            if !path.exists() {
-                return Err(format!("Config file not found: {}", config_path));
-            }
-            config.load_from_file(path)?;
-        } else {
-            // Load from default locations (later overrides earlier)
-            // First: ~/.neser/neser.conf
-            if let Some(home) = std::env::var_os("HOME") {
-                let home_config = Path::new(&home).join(".neser").join(Self::CONFIG_FILE_NAME);
-                config.load_from_file(&home_config)?;
-            }
-            // Second: ./neser.conf (overrides user config)
-            config.load_from_file(Path::new(Self::CONFIG_FILE_NAME))?;
-        }
-
-        // Step 3: Apply command-line arguments (override config file and defaults)
-        config.apply_args(args)?;
-
-        config.validate_controller_ports()?;
-
-        Ok(ParseResult::Config(Box::new(config)))
-    }
-
-    /// Print help text to stdout.
-    pub fn print_help() {
-        crate::platform::config::print_help();
-    }
-
-    /// Apply command-line arguments to the config.
-    /// Arguments override any values set by defaults or config file.
-    pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
-        // Delegate to sub-config apply_args() methods
-        self.frontend.apply_args(args)?;
-        self.nes.apply_args(args)?;
-
-        // Parse hardware mode (TODO: move to NesConfig in task 8)
-        let hardware_arg = Self::parse_string_arg(args, "--nes-hardware");
-        if let Some((hardware_mode, hardware_model)) = Self::parse_hardware_arg(args)? {
-            self.nes.hardware_mode = hardware_mode;
-            self.nes.hardware_mode_explicit = true;
-            self.nes.hardware_model = hardware_model;
-            self.nes.hardware_model_explicit = true;
-
-            if let Some(hardware) = hardware_arg.as_deref()
-                && (hardware.eq_ignore_ascii_case("playchoice10")
-                    || hardware.eq_ignore_ascii_case("playchoice-10"))
-            {
-                self.nes.expansion_port = ExpansionPort::Playchoice10;
-                self.nes.expansion_port_explicit = true;
-            }
-        }
-
-        // Parse expansion port (TODO: move to NesConfig in task 8)
-        if let Some(expansion_port) = Self::parse_expansion_port_arg(args)? {
-            self.nes.expansion_port = expansion_port;
-            self.nes.expansion_port_explicit = true;
-        }
-
-        // Preset system palette
-        if let Some(palette) = Self::parse_string_arg(args, "--nes-palette") {
-            self.nes.palette = NesPalette::from_config_id(&palette).ok_or_else(|| {
-                format!(
-                    "Invalid --nes-palette value: '{palette}'. Valid options are: {}",
-                    NesPalette::config_id_list()
-                )
-            })?;
-        }
-
-        // Controller ports (TODO: move to NesConfig in task 8)
-        if let Some(controller_port1) = Self::parse_string_arg(args, "--nes-controller-port1") {
-            self.nes.controller_port1 =
-                Self::parse_controller_arg("--nes-controller-port1", &controller_port1)?;
-            self.nes.controller_port1_explicit = true;
-        }
-        if let Some(controller_port2) = Self::parse_string_arg(args, "--nes-controller-port2") {
-            self.nes.controller_port2 =
-                Self::parse_controller_arg("--nes-controller-port2", &controller_port2)?;
-            self.nes.controller_port2_explicit = true;
-        }
-
-        // Display argument (only applies if fullscreen is set)
-        // TODO: Move to FrontendConfig in task 8
-        if self.frontend.fullscreen
-            && let Some(display) = Self::parse_display_arg(args)?
+    /// Reject NES setups the hardware cannot have: controller overrides in
+    /// Famicom mode, a Famicom expansion device on an NES, or two
+    /// mouse-emulated controllers.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.hardware_mode == HardwareMode::Famicom
+            && (self.controller_port1_explicit || self.controller_port2_explicit)
         {
-            self.frontend.fullscreen_display = Some(display);
+            return Err(
+                "In Famicom mode, --controller-port1 and --controller-port2 are not allowed because ports 1 and 2 are hardwired joypads".to_string(),
+            );
         }
 
-        // Shader paths (NES and GB filter names)
-        // TODO: Move to FrontendConfig in task 8
-        if let Some(filter_name) = Self::parse_named_arg(args, "--nes-filter") {
-            self.frontend.shader_path = Some(Self::map_filter_name_for(
-                &filter_name,
-                &["none", "crt", "smooth", "ntsc", "pal"],
-            )?);
+        if self.hardware_mode == HardwareMode::Nes && self.expansion_port.is_famicom_only() {
+            return Err("famicom expansion_port requires hardware=famicom".to_string());
         }
 
-        if let Some(filter_name) = Self::parse_named_arg(args, "--gb-filter") {
-            self.frontend.shader_path =
-                Some(Self::map_filter_name_for(&filter_name, &["none", "dmg"])?);
+        let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
+            .iter()
+            .filter(|controller| {
+                matches!(
+                    **controller,
+                    ControllerType::Arkanoid | ControllerType::Zapper | ControllerType::SnesMouse
+                )
+            })
+            .count();
+
+        if mouse_emulated_controller_count > 1 {
+            return Err(
+                "No more than one mouse-emulated controller can be configured (Arkanoid/Zapper)"
+                    .to_string(),
+            );
         }
-
-        if let Some(filter_name) = Self::parse_named_arg(args, "--gba-filter") {
-            self.frontend.shader_path =
-                Some(Self::map_filter_name_for(&filter_name, GBA_FILTER_NAMES)?);
-        }
-
-        // ROM path from positional argument
-        // TODO: Move to FrontendConfig in task 8
-        if let Some(path) = Self::parse_rom_arg(args)? {
-            self.frontend.rom_path = Some(path);
-        }
-
-        // GB hardware (parsed by GB config module)
-        self.gb.apply_args(args)?;
-
-        // GBA hardware (parsed by GBA config module)
-        self.gba.apply_args(args)?;
-
-        // SNES hardware (parsed by SNES config module)
-        self.snes.apply_args(args)?;
-
-        // Must follow the positional ROM argument above, which is what the
-        // headless capture mode requires.
-        crate::platform::config::headless::validate_rom_path(&self.frontend)?;
 
         Ok(())
     }
+}
 
-    /// Parse the --display argument from command-line args.
-    fn parse_display_arg(args: &[String]) -> Result<Option<i32>, String> {
-        for i in 0..args.len() {
-            if args[i] == "--display" {
-                if i + 1 >= args.len() {
-                    return Err("Missing value for --display".to_string());
-                }
-                let value = &args[i + 1];
-                let parsed: i32 = value
-                    .parse()
-                    .map_err(|_| format!("Invalid --display value: {value}"))?;
-                if parsed < 0 {
-                    return Err("--display must be >= 0".to_string());
-                }
-                return Ok(Some(parsed));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Parse a named flag argument (e.g., `--nes-filter`) from command-line args.
-    fn parse_named_arg(args: &[String], flag: &str) -> Option<String> {
-        for i in 0..args.len() {
-            if args[i] == flag && i + 1 < args.len() {
-                return Some(args[i + 1].clone());
-            }
-        }
-        None
-    }
-
-    /// Parse the --config argument from command-line args.
-    pub(crate) fn parse_config_arg(args: &[String]) -> Option<String> {
-        for i in 0..args.len() {
-            if args[i] == "--config" && i + 1 < args.len() {
-                return Some(args[i + 1].clone());
-            }
-        }
-        None
-    }
-
-    /// Parse a positional ROM path from command-line args.
-    fn parse_rom_arg(args: &[String]) -> Result<Option<String>, String> {
-        let mut i = 1; // Skip program name
-        let mut rom_path: Option<String> = None;
-        while i < args.len() {
-            let arg = &args[i];
-
-            if let Some(flag) = crate::platform::config::all_cli_flags().find(|f| f.flag == arg) {
-                if flag.has_value {
-                    i += 2;
-                }
-                // For optional boolean flags, check if next arg is a boolean value
-                else if OPTIONAL_BOOL_FLAGS.contains(&arg.as_str()) {
-                    i += 1;
-                    // Peek at next argument to see if it's a boolean value
-                    if i < args.len() && parse_bool(&args[i]).is_ok() {
-                        i += 1; // Skip the boolean value
-                    }
-                } else {
-                    i += 1;
-                }
-                continue;
-            }
-
-            if let Some((flag_part, _)) = arg.split_once('=')
-                && crate::platform::config::all_cli_flags().any(|f| f.flag == flag_part)
-            {
-                i += 1;
-                continue;
-            }
-
-            if arg.starts_with('-') {
-                i += 1;
-                continue;
-            }
-
-            if rom_path.is_some() {
-                return Err(format!(
-                    "Unexpected positional argument: {arg}\nTry --help for usage."
-                ));
-            }
-
-            rom_path = Some(arg.clone());
-            i += 1;
-        }
-
-        Ok(rom_path)
-    }
-
-    /// Parse a string argument from command-line args.
-    ///
-    /// Supports both `--flag value` and `--flag=value` forms.
-    fn parse_string_arg(args: &[String], flag: &str) -> Option<String> {
-        crate::platform::config::parse_cli_string_arg(args, flag)
-    }
+impl Config {
     pub fn apply_rom_timing_mode(
         &mut self,
         rom_timing_mode: crate::nes::cartridge::TimingMode,
@@ -893,43 +724,6 @@ impl Config {
 
         parts.join(" | ")
     }
-
-    fn validate_controller_ports(&self) -> Result<(), String> {
-        if self.nes.hardware_mode == HardwareMode::Famicom
-            && (self.nes.controller_port1_explicit || self.nes.controller_port2_explicit)
-        {
-            return Err(
-                "In Famicom mode, --controller-port1 and --controller-port2 are not allowed because ports 1 and 2 are hardwired joypads".to_string(),
-            );
-        }
-
-        if self.nes.hardware_mode == HardwareMode::Nes && self.nes.expansion_port.is_famicom_only()
-        {
-            return Err("famicom expansion_port requires hardware=famicom".to_string());
-        }
-
-        let mouse_emulated_controller_count =
-            [self.nes.controller_port1, self.nes.controller_port2]
-                .iter()
-                .filter(|controller| {
-                    matches!(
-                        **controller,
-                        ControllerType::Arkanoid
-                            | ControllerType::Zapper
-                            | ControllerType::SnesMouse
-                    )
-                })
-                .count();
-
-        if mouse_emulated_controller_count > 1 {
-            return Err(
-                "No more than one mouse-emulated controller can be configured (Arkanoid/Zapper)"
-                    .to_string(),
-            );
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -1016,18 +810,18 @@ mod tests {
 
     #[test]
     fn test_parse_hardware_value_dendy_returns_nes_dendy() {
-        let result = Config::parse_hardware_value("dendy");
+        let result = NesConfig::parse_hardware_value("dendy");
         assert_eq!(result, Some((HardwareMode::Nes, HardwareModel::Dendy)));
     }
 
     #[test]
     fn test_parse_hardware_value_dendy_is_case_insensitive() {
         assert_eq!(
-            Config::parse_hardware_value("DENDY"),
+            NesConfig::parse_hardware_value("DENDY"),
             Some((HardwareMode::Nes, HardwareModel::Dendy))
         );
         assert_eq!(
-            Config::parse_hardware_value("Dendy"),
+            NesConfig::parse_hardware_value("Dendy"),
             Some((HardwareMode::Nes, HardwareModel::Dendy))
         );
     }
@@ -1035,11 +829,11 @@ mod tests {
     #[test]
     fn test_parse_hardware_value_playchoice10_returns_nes_ntsc() {
         assert_eq!(
-            Config::parse_hardware_value("playchoice10"),
+            NesConfig::parse_hardware_value("playchoice10"),
             Some((HardwareMode::Nes, HardwareModel::NesNtsc))
         );
         assert_eq!(
-            Config::parse_hardware_value("playchoice-10"),
+            NesConfig::parse_hardware_value("playchoice-10"),
             Some((HardwareMode::Nes, HardwareModel::NesNtsc))
         );
     }
@@ -1465,65 +1259,6 @@ mod tests {
         ];
         let result = config_new(args);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_config_cmdline_filter_crt() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "crt".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_filter_ntsc() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "ntsc".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/ntsc/ntsc-256px-composite.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_filter_smooth() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "smooth".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some(
-                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp"
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_filter_none() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "none".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("shaders/stock.slangp".to_string())
-        );
     }
 
     #[test]
@@ -3615,93 +3350,6 @@ mod tests {
     }
 
     #[test]
-    fn test_gb_dmg_variant_arg_sets_gb_config() {
-        let args = vec![
-            "neser".to_string(),
-            "--gb-dmg-variant".to_string(),
-            "dmg-0".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::Dmg0);
-    }
-
-    #[test]
-    fn test_gb_dmg_variant_default_is_dmg_b() {
-        let config = Config::with_defaults();
-        assert_eq!(config.gb.dmg_variant, crate::gb::model::DmgModel::DmgB);
-    }
-
-    #[test]
-    fn test_gb_dmg_variant_invalid_value_returns_error() {
-        let args = vec![
-            "neser".to_string(),
-            "--gb-dmg-variant".to_string(),
-            "invalid".to_string(),
-        ];
-        let result = Config::new(&args);
-        assert!(result.is_err(), "Invalid variant should produce an error");
-    }
-
-    #[test]
-    fn test_gb_dmg_variant_all_values() {
-        for (input, expected) in [
-            ("dmg-0", crate::gb::model::DmgModel::Dmg0),
-            ("dmg-a", crate::gb::model::DmgModel::DmgA),
-            ("dmg-b", crate::gb::model::DmgModel::DmgB),
-            ("dmg-c", crate::gb::model::DmgModel::DmgC),
-        ] {
-            let args = vec![
-                "neser".to_string(),
-                "--gb-dmg-variant".to_string(),
-                input.to_string(),
-            ];
-            let config = parse_config(args);
-            assert_eq!(config.gb.dmg_variant, expected, "variant={input}");
-        }
-    }
-
-    #[test]
-    fn test_gb_hardware_arg_is_valid() {
-        let args = vec![
-            "neser".to_string(),
-            "--gb-hardware".to_string(),
-            "dmg".to_string(),
-        ];
-        let result = config_new(args);
-        assert!(result.is_ok());
-        match result.unwrap() {
-            ParseResult::Config(config) => {
-                assert_eq!(config.gb.hardware, Some(crate::gb::model::GbHardware::Dmg));
-            }
-            ParseResult::Help => panic!("Expected Config, got Help"),
-            ParseResult::Version => panic!("Expected Config, got Version"),
-        }
-    }
-
-    #[test]
-    fn test_cgb_color_correction_arg_with_value_keeps_rom_path() {
-        let config = parse_config(vec![
-            "neser".to_string(),
-            "--cgb-color-correction".to_string(),
-            "true".to_string(),
-            "game.gbc".to_string(),
-        ]);
-        assert!(config.gb.cgb_color_correction);
-        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.gbc"));
-    }
-
-    #[test]
-    fn test_cgb_color_correction_bare_flag_keeps_rom_path() {
-        let config = parse_config(vec![
-            "neser".to_string(),
-            "--cgb-color-correction".to_string(),
-            "game.gbc".to_string(),
-        ]);
-        assert!(config.gb.cgb_color_correction);
-        assert_eq!(config.frontend.rom_path.as_deref(), Some("game.gbc"));
-    }
-
-    #[test]
     fn test_old_hardware_arg_is_rejected() {
         let args = vec![
             "neser".to_string(),
@@ -3728,167 +3376,6 @@ mod tests {
         ];
         let result = config_new(args);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_config_cmdline_nes_filter_crt_sets_shader_path() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "crt".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_nes_filter_rejects_dmg_shader() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "dmg".to_string(),
-        ];
-        let result = config_new(args);
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("dmg"),
-            "Error should mention the invalid value: {msg}"
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_nes_filter_accepts_smooth() {
-        let args = vec![
-            "neser".to_string(),
-            "--nes-filter".to_string(),
-            "smooth".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some(
-                "vendor/slang-shaders/edge-smoothing/xbrz/xbrz-freescale-multipass.slangp"
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gb_filter_dmg_sets_shader_path() {
-        let args = vec![
-            "neser".to_string(),
-            "--gb-filter".to_string(),
-            "dmg".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/gameboy.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gb_filter_rejects_crt_shader() {
-        let args = vec![
-            "neser".to_string(),
-            "--gb-filter".to_string(),
-            "crt".to_string(),
-        ];
-        let result = config_new(args);
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(
-            msg.contains("crt"),
-            "Error should mention the invalid value: {msg}"
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gb_filter_none_sets_stock_shader() {
-        let args = vec![
-            "neser".to_string(),
-            "--gb-filter".to_string(),
-            "none".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("shaders/stock.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gba_filter_agb001_sets_shader_path() {
-        let args = vec![
-            "neser".to_string(),
-            "--gba-filter".to_string(),
-            "agb001".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/agb001.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gba_filter_nso_gba_color_sets_shader_path() {
-        let args = vec![
-            "neser".to_string(),
-            "--gba-filter".to_string(),
-            "nso-gba-color".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/color-mod/NSO-gba-color.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gba_filter_sp101_color_sets_shader_path() {
-        let args = vec![
-            "neser".to_string(),
-            "--gba-filter".to_string(),
-            "sp101-color".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/color-mod/sp101-color.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gba_filter_gba_lcd_grid_sets_shader_path() {
-        let args = vec![
-            "neser".to_string(),
-            "--gba-filter".to_string(),
-            "gba-lcd-grid".to_string(),
-        ];
-        let config = parse_config(args);
-        assert_eq!(
-            config.frontend.shader_path,
-            Some("vendor/slang-shaders/handheld/console-border/gba-lcd-grid-v2.slangp".to_string())
-        );
-    }
-
-    #[test]
-    fn test_config_cmdline_gba_filter_rejects_bogus_shader_with_valid_options() {
-        let args = vec![
-            "neser".to_string(),
-            "--gba-filter".to_string(),
-            "bogus".to_string(),
-        ];
-        let result = config_new(args);
-        assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(msg.contains("bogus"));
-        assert!(msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
     }
 
     #[test]
@@ -3925,79 +3412,6 @@ mod tests {
             let config = parse_config(vec!["--nes-palette".to_string(), value.to_string()]);
             assert_eq!(config.nes.palette, NesPalette::Mesen, "{value}");
         }
-    }
-
-    #[test]
-    fn test_help_lists_the_gb_palette_flag() {
-        let help = crate::platform::config::cli::help_text();
-        assert!(
-            help.contains(
-                "Game Boy preset palette: grey, dmg-green, pocket, light (default: grey)"
-            ),
-            "help text:\n{help}"
-        );
-    }
-
-    #[test]
-    fn test_cli_gb_palette_invalid_refuses_start() {
-        let result = config_new(vec!["--gb-palette".to_string(), "bogus".to_string()]);
-        assert_eq!(
-            result.unwrap_err(),
-            "Invalid --gb-palette value: 'bogus'. Valid options are: grey, dmg-green, pocket, light"
-        );
-    }
-
-    #[test]
-    fn test_headless_takes_the_cli_gb_palette() {
-        let config = parse_config(vec![
-            "neser".to_string(),
-            "--headless".to_string(),
-            "--output".to_string(),
-            "shot.png".to_string(),
-            "--gb-palette".to_string(),
-            "pocket".to_string(),
-            "game.gb".to_string(),
-        ]);
-        assert!(config.frontend.headless_capture.is_some());
-        assert_eq!(config.gb.palette, Some(crate::gb::ppu::GbPalette::Pocket));
-    }
-
-    #[test]
-    fn test_help_lists_the_gbc_palette_flag() {
-        let help = crate::platform::config::cli::help_text();
-        assert!(
-            help.contains(
-                "Colour palette for original Game Boy games on a Game Boy Color: auto, brown, red, \u{2026} (default: auto)"
-            ),
-            "help text:\n{help}"
-        );
-    }
-
-    #[test]
-    fn test_cli_gbc_palette_invalid_refuses_start() {
-        let result = config_new(vec!["--gbc-palette".to_string(), "bogus".to_string()]);
-        assert_eq!(
-            result.unwrap_err(),
-            "Invalid --gbc-palette value: 'bogus'. Valid options are: auto, brown, red, dark-brown, blue, dark-blue, grayscale, pastel-mix, orange, yellow, green, dark-green, reverse"
-        );
-    }
-
-    #[test]
-    fn test_headless_takes_the_cli_gbc_palette() {
-        let config = parse_config(vec![
-            "neser".to_string(),
-            "--headless".to_string(),
-            "--output".to_string(),
-            "shot.png".to_string(),
-            "--gbc-palette".to_string(),
-            "red".to_string(),
-            "game.gb".to_string(),
-        ]);
-        assert!(config.frontend.headless_capture.is_some());
-        assert_eq!(
-            config.gb.gbc_palette,
-            crate::gb::compat_palettes::GbcPalette::Red
-        );
     }
 
     #[test]
