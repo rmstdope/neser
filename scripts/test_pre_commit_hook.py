@@ -26,11 +26,11 @@ GIT_ENV = {
 }
 
 
-def _fake_ruff(path: Path, name: str) -> None:
-    """A `ruff` that appends `name` to $RUFF_MARKER and succeeds."""
+def _fake_ruff(path: Path, name: str, exit_code: int = 0) -> None:
+    """A `ruff` that appends `name` to $RUFF_MARKER and exits with `exit_code`."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'#!/bin/sh\necho {name} >> "$RUFF_MARKER"\n', encoding="utf-8")
+    path.write_text(f'#!/bin/sh\necho {name} >> "$RUFF_MARKER"\nexit {exit_code}\n', encoding="utf-8")
     path.chmod(0o755)
 
 
@@ -90,6 +90,15 @@ class PreCommitRuffTests(unittest.TestCase):
         result = self._run_hook()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(".venv/bin/ruff", result.stdout + result.stderr)
+
+    def test_a_failing_formatter_aborts_the_commit(self) -> None:
+        """When the resolved ruff fails, the commit is refused."""
+
+        _fake_ruff(self.tree / ".venv/bin/ruff", "venv", exit_code=1)
+        self._stage("a.py")
+        result = self._run_hook()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ruff format failed", result.stdout + result.stderr)
 
     def test_no_python_staged_needs_no_ruff(self) -> None:
         """A commit without Python goes through even with no ruff installed."""

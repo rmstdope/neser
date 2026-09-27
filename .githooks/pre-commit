@@ -55,7 +55,7 @@ if [ -n "$staged_py" ]; then
     if [ -z "$ruff_bin" ]; then
         echo "ERROR: ruff not found (looked for $(git rev-parse --show-toplevel)/.venv/bin/ruff and on PATH);"
         echo "       refusing to commit unformatted Python."
-        echo "       Install it with: pip install --group scripts/pyproject.toml:dev"
+        echo "       Create it with: ./scripts/setup-venv.sh (or put ruff on PATH)"
         exit 1
     fi
 
