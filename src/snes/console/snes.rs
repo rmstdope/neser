@@ -697,7 +697,7 @@ mod tests {
         let snes = make_snes();
         assert_eq!(
             snes.allowed_shaders(),
-            crate::snes::console::config::SNES_FILTER_NAMES
+            ["none", "crt", "smooth", "ntsc", "pal"]
         );
     }
 

@@ -79,3 +79,24 @@ export function filterOnConsoleSwitch(
 export function defaultFilterForConsole(console: ConsoleKind): string {
     return CONSOLES[console].defaultFilter;
 }
+
+/**
+ * Whether the WebGL filter pipeline must be rebuilt after a console switch.
+ *
+ * A changed filter always needs it. NTSC also needs it when the frame size
+ * differs from the one its pass-1 target was built for (`width * 4` by
+ * `height`): NTSC carries over between NES (240 wide) and SNES (256 wide)
+ * games, and a stale target computes the composite pattern at the wrong
+ * sample rate. Single-pass filters read the live frame size every frame.
+ */
+export function filterPipelineNeedsRebuild(
+    previousFilter: string,
+    nextFilter: string,
+    filters: Record<string, FilterDef>,
+    ntscTarget: { width: number; height: number },
+    frame: { width: number; height: number },
+): boolean {
+    if (previousFilter !== nextFilter) return true;
+    if (filters[nextFilter]?.type !== "ntsc") return false;
+    return ntscTarget.width !== frame.width * 4 || ntscTarget.height !== frame.height;
+}

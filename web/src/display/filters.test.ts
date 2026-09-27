@@ -3,6 +3,7 @@ import {
     filterKeysForConsole,
     cycleFilterKey,
     filterOnConsoleSwitch,
+    filterPipelineNeedsRebuild,
     type FilterDef,
 } from "./filters";
 
@@ -189,5 +190,35 @@ describe("filterOnConsoleSwitch", () => {
 
     it("touched: SNES keeps a chosen look even on the first game", () => {
         expect(filterOnConsoleSwitch("crt", allKeys, filters, "snes", false)).toBe("crt");
+    });
+});
+
+// ===========================================================================
+// filterPipelineNeedsRebuild
+// ===========================================================================
+describe("filterPipelineNeedsRebuild", () => {
+    const nesFrame = { width: 240, height: 224 };
+    const snesFrame = { width: 256, height: 224 };
+    const builtForNes = { width: 240 * 4, height: 224 };
+
+    it("rebuilds when the filter changes", () => {
+        expect(filterPipelineNeedsRebuild("ntsc", "stock", filters, builtForNes, nesFrame)).toBe(true);
+    });
+
+    it("keeps NTSC as built when the frame size is the one it was built for", () => {
+        expect(filterPipelineNeedsRebuild("ntsc", "ntsc", filters, builtForNes, nesFrame)).toBe(false);
+    });
+
+    it("rebuilds NTSC carried from an NES game to a wider SNES frame", () => {
+        expect(filterPipelineNeedsRebuild("ntsc", "ntsc", filters, builtForNes, snesFrame)).toBe(true);
+    });
+
+    it("rebuilds NTSC carried from an SNES game to a narrower NES frame", () => {
+        const builtForSnes = { width: 256 * 4, height: 224 };
+        expect(filterPipelineNeedsRebuild("ntsc", "ntsc", filters, builtForSnes, nesFrame)).toBe(true);
+    });
+
+    it("keeps CRT across a size change: it reads the live frame size every frame", () => {
+        expect(filterPipelineNeedsRebuild("crt", "crt", filters, builtForNes, snesFrame)).toBe(false);
     });
 });

@@ -105,7 +105,7 @@ import {
     shouldKeepPointerLocked,
 } from "./input/pointer_lock";
 import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from "./ui/emulation_controls";
-import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
+import { cycleFilterKey, filterOnConsoleSwitch, filterPipelineNeedsRebuild, type FilterDef } from "./display/filters";
 import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
 import { paletteButtonVisible } from "./display/palette_button";
 import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./display/render_pipeline";
@@ -318,7 +318,7 @@ interface AutorunFileInput extends HTMLInputElement {
 }
 
 let currentFilter = "ntsc"; // Start with NTSC filter as requested
-/** True until a look is chosen or a game loads: the first game then starts on its console's default. */
+/** True until a look is chosen or a game has loaded: the first game then starts on its console's default. */
 let filterUntouched = true;
 const filterKeys = Object.keys(filters);
 let shaderProgram: ShaderProgram | null = null;
@@ -1010,9 +1010,15 @@ function updateEmulatorKindUI() {
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
     const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind, filterUntouched);
-    filterUntouched = false;
-    if (newFilter !== currentFilter) {
-        currentFilter = newFilter;
+    const rebuild = filterPipelineNeedsRebuild(
+        currentFilter,
+        newFilter,
+        filters,
+        { width: ntscPass1Width, height: ntscPass1Height },
+        { width, height },
+    );
+    currentFilter = newFilter;
+    if (rebuild) {
         initWebGL();
     }
     filterToggleBtn.disabled = false;
@@ -1526,6 +1532,7 @@ async function start(): Promise<boolean> {
 
         const wasCaptured = superScopeSession.captured() || snesMouseSession.captured();
         emulator!.inst.load_rom(romBytes, romName);
+        filterUntouched = false;
         superScopeSession = createSuperScopeSession();
         snesMouseSession = createSnesMouseSession();
         if (

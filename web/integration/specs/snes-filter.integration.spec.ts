@@ -75,4 +75,30 @@ test.describe("SNES screen filters (nr-gtx)", () => {
         await loadSnesRom(page);
         await expect(filter).toHaveText("Filter: None");
     });
+
+    test("Given a Filter press before any game, then the first SNES game keeps the chosen look", async ({ page }) => {
+        await openApp(page);
+        const filter = page.locator(FILTER_SELECTOR);
+
+        await filter.click();
+        await expect(filter).toHaveText("Filter: CRT");
+
+        await loadSnesRom(page);
+        await expect(filter).toHaveText("Filter: CRT");
+    });
+
+    test("Given a first NES ROM that fails to load, then the first SNES game still starts on None", async ({ page }) => {
+        await openApp(page);
+        const filter = page.locator(FILTER_SELECTOR);
+
+        await page.locator("#rom").setInputFiles({
+            name: "broken.nes",
+            mimeType: "application/octet-stream",
+            buffer: Buffer.from("not a ROM")
+        });
+        await expect(page.locator("#status")).toContainText("Failed to load ROM");
+
+        await loadSnesRom(page);
+        await expect(filter).toHaveText("Filter: None");
+    });
 });
