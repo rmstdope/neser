@@ -50,7 +50,6 @@ test.describe("Palette button (does what F8 does)", () => {
         await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "Palette: NesDev" })).toBeVisible();
         await expect(palette).toBeFocused();
 
-        await palette.blur();
         await page.keyboard.press("F8");
         await expect(palette).toHaveText("Palette: Smooth");
 
@@ -89,6 +88,15 @@ test.describe("Palette button (does what F8 does)", () => {
         await expect(palette).toHaveText("Palette: Light");
         await palette.click();
         await expect(palette).toHaveText("Palette: Grey");
+        await palette.click();
+        await palette.click();
+        await expect(palette).toHaveText("Palette: Pocket");
+
+        // Another original Game Boy game straight after (the same core is reused): it starts
+        // from its own starting palette, Grey with the filter off, not the last choice.
+        await loadGbRom(page, "dmg-acid2.gb");
+        await expect(filter).toHaveText("Filter: None");
+        await expect(palette).toHaveText("Palette: Grey");
 
         await loadGbRom(page, "cgb-acid2.gbc");
         await expect(palette).toBeHidden();
@@ -96,10 +104,5 @@ test.describe("Palette button (does what F8 does)", () => {
         await loadGbaRomFromFileInput(page);
         await waitForRunningState(page);
         await expect(palette).toBeHidden();
-
-        // Back to an original Game Boy game: its starting palette again, not the last choice.
-        await loadGbRom(page, "dmg-acid2.gb");
-        const start = (await filter.textContent()) === "Filter: Game Boy" ? "DMG Green" : "Grey";
-        await expect(palette).toHaveText(`Palette: ${start}`);
     });
 });
