@@ -256,7 +256,7 @@ jobs:
               # script prints as a nextest filter (it is written only there).
               echo "mode=unit" >> "$GITHUB_OUTPUT"
               echo "filter=" >> "$GITHUB_OUTPUT"
-              echo "Running all unit tests (excluding NES/GB/GBA/SNES integration)"
+              echo "Running all unit tests (excluding every console's integration tests)"
             fi
           fi
       - name: Run tests (shard ${{ matrix.shard }}/4)

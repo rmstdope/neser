@@ -12,7 +12,7 @@
 #   ./scripts/test-dir.sh src/nes --skip-integration  # nes unit tests only
 #
 # Options:
-#   --skip-integration   Exclude nes/gb/gba/snes integration_tests modules
+#   --skip-integration   Exclude every console's integration_tests module
 #   --list               List matching tests without running them
 #   --print-nextest-skip-expr
 #                        Print the cargo-nextest filter that excludes the same

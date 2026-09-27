@@ -17,13 +17,6 @@ ROOT = Path(__file__).resolve().parent.parent
 TEST_DIR = ROOT / "scripts" / "test-dir.sh"
 CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 
-SLOW_MODULES = [
-    "nes::integration_tests",
-    "gb::integration_tests",
-    "gba::integration_tests",
-    "snes::integration_tests",
-]
-
 
 def run_test_dir(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -46,9 +39,15 @@ def modules_in(expression: str) -> list[str]:
 class NextestSkipExpressionTest(unittest.TestCase):
     """``--print-nextest-skip-expr`` prints the filter CI's unit-only run uses."""
 
-    def test_prints_nextest_expression_for_every_slow_module(self) -> None:
-        expected = "not (" + " | ".join(f"test({m})" for m in SLOW_MODULES) + ")"
-        self.assertEqual(printed_expression(), expected)
+    def test_prints_a_nextest_negation_of_integration_modules(self) -> None:
+        """The list itself lives only in test-dir.sh, so this pins its shape, not its entries."""
+
+        expression = printed_expression()
+        self.assertRegex(expression, r"^not \(test\([^)]+\)( \| test\([^)]+\))*\)$")
+        modules = modules_in(expression)
+        self.assertGreater(len(modules), 0)
+        for module in modules:
+            self.assertRegex(module, r"^\w+::integration_tests$")
 
     def test_needs_no_directory_argument(self) -> None:
         result = subprocess.run([str(TEST_DIR), "--print-nextest-skip-expr"], capture_output=True, text=True)
@@ -68,7 +67,6 @@ class SkipIntegrationTest(unittest.TestCase):
 
         skipped = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--skip"]
         self.assertEqual(skipped, modules_in(printed_expression()))
-        self.assertEqual(skipped, SLOW_MODULES)
 
 
 class CiReadsSkipListTest(unittest.TestCase):
