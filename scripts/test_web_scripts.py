@@ -216,6 +216,36 @@ class WebIntegrationJobTest(unittest.TestCase):
         build = next(i for i, step in enumerate(self.steps) if "bash scripts/build_web.sh" in step)
         self.assertLess(build, self._step("Run web integration tests"))
 
+    def test_typechecks_against_the_bindings_the_build_generated(self) -> None:
+        """tsc needs web/pkg/neser.d.ts, which only the build step writes (nr-n48)."""
+        typecheck = self._step("Type-check web frontend")
+        self.assertIn("run: npx tsc --noEmit -p tsconfig.json\n", self.steps[typecheck])
+        self.assertLess(self._step("Build web app"), typecheck)
+
+    def test_a_tsconfig_change_runs_the_job(self) -> None:
+        ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        web_integration_filter = re.search(r"\n {12}web_integration:\n((?: {14}- .*\n)+)", ci)
+        assert web_integration_filter is not None, "ci.yml has no web_integration path filter"
+        self.assertIn("- 'tsconfig.json'", web_integration_filter.group(1))
+
+
+class GateTypecheckTest(unittest.TestCase):
+    """Given the full gate, when it reaches the web legs, then it type-checks the web TypeScript (nr-n48)."""
+
+    def setUp(self) -> None:
+        self.gate = (SCRIPTS_ROOT / "gate-full.sh").read_text(encoding="utf-8")
+
+    def _line(self, command: str) -> int:
+        lines = self.gate.splitlines()
+        self.assertIn(command, lines)
+        return lines.index(command)
+
+    def test_builds_the_bindings_then_typechecks_before_npm_test(self) -> None:
+        build = self._line("step sh scripts/build_web.sh --no-bundle")
+        typecheck = self._line("step npx tsc --noEmit -p tsconfig.json")
+        self.assertLess(build, typecheck)
+        self.assertLess(typecheck, self._line("step npm test"))
+
 
 if __name__ == "__main__":
     unittest.main()

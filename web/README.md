@@ -9,14 +9,19 @@
 ```bash
 # 1. Build WASM
 cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
-wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path --no-typescript
+wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path
 
 # 2. Bundle with Vite (outputs to dist/)
 npx vite build
 
 # Or use the convenience script which does both:
 bash scripts/build_web.sh
+# or only step 1 (web/pkg, its TypeScript types included), without bundling:
+bash scripts/build_web.sh --no-bundle
 ```
+
+wasm-bindgen writes the bindings' TypeScript declarations to `web/pkg/neser.d.ts`, and `app.ts`'s
+`../pkg/neser` import is typed from that file; nothing under `web/types/` restates them.
 
 ## Run locally
 ```bash
@@ -32,6 +37,9 @@ bash scripts/run_web.sh
 ```bash
 # Unit tests (Vitest)
 npm test
+
+# Type-check (needs web/pkg, so build it first; Vite and Vitest do not check types)
+bash scripts/build_web.sh --no-bundle && npx tsc --noEmit -p tsconfig.json
 
 # Integration tests (Playwright)
 npm run test:integration:web

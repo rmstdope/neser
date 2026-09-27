@@ -142,6 +142,7 @@ exactly this list before opening a pull request. Before merging to main, every i
 - Run `ruff check scripts` and fix all findings (do not add `noqa` without a stated reason)
 - Run `ruff format scripts` and fix any formatting issues
 - Run `mypy --config-file scripts/pyproject.toml scripts` and fix all type errors
+- Run `sh scripts/build_web.sh --no-bundle && npx tsc --noEmit -p tsconfig.json` and fix all type errors (nothing else type-checks `web/`: Vite and Vitest strip types unchecked; the build writes the wasm bindings' own types to the gitignored `web/pkg/neser.d.ts`, which tsc needs)
 - Run `npm test` and ensure all tests pass (runs Vitest for web frontend JS unit tests)
 
 Note that it is ok to commit to a feature branch that does not pass all checkpoints, but it is NOT ok to merge to main if any checkpoint fails. Always ensure that all checkpoints pass before merging to main.

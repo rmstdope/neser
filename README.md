@@ -261,6 +261,7 @@ cargo clippy --target wasm32-unknown-unknown --no-default-features --features wa
 cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
 cargo test --no-default-features --lib
 npm test
+sh scripts/build_web.sh --no-bundle && npx tsc --noEmit -p tsconfig.json
 ruff check scripts
 ruff format --check scripts
 mypy --config-file scripts/pyproject.toml scripts
