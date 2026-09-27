@@ -233,6 +233,13 @@ impl MMC1Mapper {
         mapper
     }
 
+    /// Removes SNROM's CHR A16 PRG-RAM /CE gate, for a board that passes the SNROM test
+    /// but routes CHR bank bit 4 elsewhere. PRG-RAM then follows the $E000 WRAM disable
+    /// bit alone. The gate is decided once at construction, so this survives reset.
+    pub(crate) fn without_chr_a16_prg_ram_gate(&mut self) {
+        self.snrom = false;
+    }
+
     /// Returns the current value of the control register ($8000-$9FFF).
     pub(crate) fn control(&self) -> u8 {
         self.control

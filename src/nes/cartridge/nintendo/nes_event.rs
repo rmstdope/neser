@@ -21,6 +21,9 @@ use crate::nes::cartridge::mmc1::MMC1Mapper;
 /// - bit 4 set: timer reset/disabled, pending IRQ cleared
 /// - bit 4 clear: timer armed
 /// - bits 0-3: countdown value (in CPU cycles, with 0 treated as 1)
+///
+/// PRG-RAM at $6000-$7FFF is gated by the $E000 WRAM disable bit only; CHR bank bit 4
+/// never gates it here, unlike on MMC1 SNROM.
 pub struct NesEventMapper {
     inner: MMC1Mapper,
     irq_counter: u8,
@@ -45,6 +48,11 @@ impl NesEventMapper {
         // Board exception: NES-EVENT carries 8 KiB of PRG-RAM whatever the header says.
         ctx.set_board_prg_ram(1);
         let mut inner = MMC1Mapper::new(ctx);
+        // The board passes MMC1's SNROM test (CHR-RAM, 256 KiB PRG, 8 KiB RAM), but its
+        // CHR bank 0 bit 4 is the timer control (nesdev NES-EVENT: "0: Run timer /
+        // 1: Reset timer"), not PRG-RAM /CE. Only $E000's "W = WRAM disable (same as
+        // MMC1)" gates the RAM.
+        inner.without_chr_a16_prg_ram_gate();
         Self::force_timer_disable_bit_on_powerup(&mut inner);
         let chr_bank_0 = Self::chr_bank_0_from_mapper(&inner);
 
@@ -261,6 +269,82 @@ mod tests {
         ] {
             assert_eq!(NesEventMapper::new(ctx).wram_size(), 8 * 1024);
         }
+    }
+
+    /// A NES-EVENT image as the board is built: 256 KiB PRG-ROM and CHR-RAM
+    /// (nesdev NES-EVENT: "8K of CHR RAM"), with the board's 8 KiB PRG-RAM.
+    fn nes_event_board() -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new_for_test(
+            105,
+            banked_data(16 * 1024, 16),
+            vec![],
+            NametableLayout::Horizontal,
+        ))
+        .expect("Mapper 105 should be implemented")
+    }
+
+    const OPEN_BUS: u8 = 0x5A;
+
+    fn assert_prg_ram_read_write(mapper: &mut dyn Mapper, value: u8, when: &str) {
+        mapper.write_prg(0x6000, value);
+        mapper.write_prg(0x7FFF, !value);
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, OPEN_BUS),
+            value,
+            "$6000 must read back {when}"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, OPEN_BUS),
+            !value,
+            "$7FFF must read back {when}"
+        );
+    }
+
+    #[test]
+    fn nes_event_prg_ram_is_readable_and_writable_while_timer_is_reset() {
+        // nesdev NES-EVENT, $A000 bit 4: "0: Run timer / 1: Reset timer". It is the
+        // timer control, not SNROM's PRG-RAM /CE, so the RAM answers while it is set.
+        let mut mapper = nes_event_board();
+        assert_prg_ram_read_write(mapper.as_mut(), 0x11, "at power-on (timer reset)");
+
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10000);
+        assert_prg_ram_read_write(mapper.as_mut(), 0x22, "with the timer bit set");
+
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
+        assert_prg_ram_read_write(mapper.as_mut(), 0x33, "with the timer running");
+    }
+
+    #[test]
+    fn nes_event_prg_ram_follows_e000_wram_disable_bit() {
+        // nesdev NES-EVENT, $E000: "W = WRAM disable (same as MMC1)".
+        let mut mapper = nes_event_board();
+        assert_prg_ram_read_write(mapper.as_mut(), 0x44, "while WRAM is enabled");
+
+        write_mmc1_register(mapper.as_mut(), 0xE000, 0b10000);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, OPEN_BUS), OPEN_BUS);
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, OPEN_BUS), OPEN_BUS);
+        mapper.write_prg(0x6000, 0x99);
+
+        write_mmc1_register(mapper.as_mut(), 0xE000, 0b00000);
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, OPEN_BUS),
+            0x44,
+            "re-enabled WRAM keeps its data and ignored the disabled write"
+        );
+    }
+
+    #[test]
+    fn nes_event_prg_ram_stays_enabled_after_reset() {
+        // Reset forces the timer bit again; the RAM must still answer.
+        let mut mapper = nes_event_board();
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
+        mapper.reset();
+        assert_eq!(
+            mapper.registers_snapshot()[2] & 0x10,
+            0x10,
+            "reset re-forces the timer bit"
+        );
+        assert_prg_ram_read_write(mapper.as_mut(), 0x55, "after reset");
     }
 
     const PRG_BANKS_16K: usize = 11;
