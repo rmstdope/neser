@@ -504,6 +504,9 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | File | Description |
 | ------ | ------------- |
 | `src/platform/frontend_toasts.rs` | System-agnostic toast message formatters (gamepad connection/disconnection, cartridge load, gamepad initialization). |
+| `src/snes/frontend_toasts.rs` | The SNES peripheral messages both frontends show: the Super Scope's "connected", "mouse released" and "Turbo on/off" words (`web/src/input/super_scope.ts` repeats them for the web's own capture handling). |
+| `src/snes/input/super_scope_games.rs` | The header titles of the Super Scope games (`is_super_scope_game`); `SnesConfig::effective_controller_ports` plugs the scope into port 2 for them per load unless the player set port 2 (`controller_port2_explicit`). |
+| `web/src/input/super_scope.ts` | Pure capture state for playing a Super Scope game on the web: only a click on the game captures the pointer (a lock the page asked for on choosing a game is given back), the capturing click fires unless the mouse had been released, aim follows the locked pointer's movement, and the Select/Start keys are Turbo/Pause. |
 | `src/nes/frontend_toasts.rs` | NES-specific toast message formatters (emulator timing mode, hardware mode/model selection). |
 
 #### Tests

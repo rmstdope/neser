@@ -497,5 +497,8 @@ nes-vertical_overscan=8
 #   - superscope: Super Scope light gun
 # Note: multitap is currently supported on port 2. Configuring multitap on port 1
 # falls back to a standard controller.
+# A recognised Super Scope game (Super Scope 6, Yoshi's Safari, Battle Clash, Metal Combat,
+# T2: The Arcade Game and others) gets the Super Scope on port 2 automatically for that
+# game, unless snes-controller-port2 is set here or on the command line: a set value wins.
 #snes-controller-port1=standard
 #snes-controller-port2=standard
