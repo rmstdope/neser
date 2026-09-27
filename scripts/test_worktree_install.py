@@ -57,7 +57,7 @@ class WorktreeInstallTests(unittest.TestCase):
         self.assertTrue(_declared("install_shell"))
 
     def test_install_sets_hooks_path(self) -> None:
-        """install_shell sets core.hooksPath to .githooks in a fresh worktree, before any later step can fail."""
+        """install_shell sets core.hooksPath to .githooks in a fresh worktree, before the npm and venv steps."""
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -70,7 +70,7 @@ class WorktreeInstallTests(unittest.TestCase):
             self.assertEqual(_hooks_path(tree), "", "a fresh repository must start without core.hooksPath")
 
             # The temporary tree has no package.json or setup-venv.sh, so the later install steps
-            # fail here; the hooks path is set first so it holds even then, which is what is pinned.
+            # fail here; the hooks path is set before them, so it holds even then (that order is what is pinned).
             subprocess.run(
                 ["bash", "-euo", "pipefail", "-c", _declared("install_shell")],
                 cwd=tree,
