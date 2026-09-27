@@ -4,7 +4,7 @@
 #
 # Converts directory paths under src/ to Rust module filters and passes them
 # to `cargo test --lib`. Only test execution is filtered; the full crate is
-# still compiled.
+# still compiled. A directory that matches no test fails before anything runs.
 #
 # Usage:
 #   ./scripts/test-dir.sh src/nes/cartridge          # run cartridge tests
@@ -101,6 +101,34 @@ done
 
 CARGO_FLAGS="${CARGO_TEST_ARGS:---all-features}"
 
+# The --skip arguments --skip-integration adds, used by the zero-match check and the run alike.
+SKIPS=()
+if $SKIP_INTEGRATION; then
+    for module in "${SLOW_MODULES[@]}"; do
+        SKIPS+=(--skip "$module")
+    done
+fi
+
+# A directory whose module is not compiled under $CARGO_FLAGS (src/frontends/native under
+# --no-default-features, say) would otherwise pass as "0 passed; N filtered out" (nr-5ku). List
+# each directory's tests first and stop, naming it, if it has none. The list reuses the build the
+# run needs, so it costs only libtest's listing.
+for i in "${!DIRS[@]}"; do
+    LIST_CMD=(cargo test $CARGO_FLAGS --lib -- "${FILTERS[$i]}")
+    if [ ${#SKIPS[@]} -gt 0 ]; then
+        LIST_CMD+=("${SKIPS[@]}")
+    fi
+    if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+        LIST_CMD+=("${EXTRA_ARGS[@]}")
+    fi
+    LIST_CMD+=(--list)
+    COUNT=$("${LIST_CMD[@]}" | grep -c ': test$' || true)
+    if [ "$COUNT" -eq 0 ]; then
+        echo "test-dir: ${DIRS[$i]} matches no test under 'cargo test $CARGO_FLAGS --lib'" >&2
+        exit 1
+    fi
+done
+
 # Build the cargo test command
 CMD=(cargo test $CARGO_FLAGS --lib --)
 
@@ -110,10 +138,8 @@ for f in "${FILTERS[@]}"; do
 done
 
 # Add --skip for integration tests if requested
-if $SKIP_INTEGRATION; then
-    for module in "${SLOW_MODULES[@]}"; do
-        CMD+=(--skip "$module")
-    done
+if [ ${#SKIPS[@]} -gt 0 ]; then
+    CMD+=("${SKIPS[@]}")
 fi
 
 # Add --list if requested
