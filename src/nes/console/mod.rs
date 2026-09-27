@@ -1,6 +1,7 @@
 mod cartridge_catalog;
 mod config;
 mod nes;
+mod runner;
 pub mod save_state_io;
 
 use crate::platform::app_context::SharedAppContext;
