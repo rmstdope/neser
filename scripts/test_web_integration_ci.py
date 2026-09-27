@@ -44,6 +44,19 @@ class WebIntegrationShardsTest(unittest.TestCase):
         shards = [int(entry) for entry in matrix.group(1).split(",")]
         self.assertEqual(shards, list(range(1, int(total.group(1)) + 1)))
 
+    def test_shards_are_weighted_toward_the_heavy_tail(self) -> None:
+        """Playwright splits by test count in file order, and the slow specs sort last.
+
+        An even split left shard 2 with 281 worker-seconds against shard 1's 169 on run
+        36317969389, so shard 1 takes twice the tests. One weight per matrix entry.
+        """
+
+        weights = re.search(r'PWTEST_SHARD_WEIGHTS: "([0-9:]+)"', self.job)
+        matrix = re.search(r"shard: \[([^\]]*)\]", self.job)
+        assert weights is not None and matrix is not None
+        self.assertEqual(weights.group(1), "2:1")
+        self.assertEqual(len(weights.group(1).split(":")), len(matrix.group(1).split(",")))
+
     def test_each_shard_uploads_its_own_failure_artifact(self) -> None:
         upload = re.search(r"- name: Upload Playwright test results\n((?: {8}.*\n)+)", self.job)
         assert upload is not None, "no upload step"
