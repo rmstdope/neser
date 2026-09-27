@@ -374,9 +374,6 @@ mod tests {
         assert_prg_ram_read_write(mapper.as_mut(), 0x55, "after reset");
     }
 
-    const PRG_BANKS_16K: usize = 11;
-    const CHR_BANKS_4K: usize = 9;
-
     fn write_mmc1_register<M: Mapper + ?Sized>(mapper: &mut M, addr: u16, value: u8) {
         // MMC1 serial protocol in this codebase requires two cpu_cycle() ticks
         // between writes so consecutive-write filtering does not drop the bit.
@@ -387,34 +384,23 @@ mod tests {
         }
     }
 
-    fn make_mapper() -> Box<dyn Mapper> {
-        let prg_rom = banked_data(16 * 1024, PRG_BANKS_16K);
-        let chr_rom = banked_data(4 * 1024, CHR_BANKS_4K);
-        create_mapper(MapperContext::new_for_test(
-            105,
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
-        ))
-        .expect("Mapper 105 should be implemented")
-    }
-
     #[test]
     fn mapper_105_is_registered() {
-        let prg_rom = banked_data(16 * 1024, PRG_BANKS_16K);
-        let chr_rom = banked_data(4 * 1024, CHR_BANKS_4K);
-        let result = create_mapper(MapperContext::new_for_test(
-            105,
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
-        ));
-        assert!(result.is_ok(), "Mapper 105 must be registered");
+        assert!(
+            create_mapper(MapperContext::new_for_test(
+                105,
+                banked_data(16 * 1024, 16),
+                vec![],
+                NametableLayout::Horizontal,
+            ))
+            .is_ok(),
+            "Mapper 105 must be registered"
+        );
     }
 
     #[test]
     fn mapper_105_mirroring_modes_are_selectable_via_control_register() {
-        let mut mapper = make_mapper();
+        let mut mapper = nes_event_board();
 
         write_mmc1_register(mapper.as_mut(), 0x8000, 0b00000);
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
@@ -607,6 +593,48 @@ mod tests {
         assert!(
             !mapper.irq_pending(),
             "restarted from 0, not from where it was"
+        );
+    }
+
+    fn irq_counter(mapper: &dyn Mapper) -> u32 {
+        let regs = mapper.registers_snapshot();
+        let bytes = &regs[NesEventMapper::IRQ_COUNTER_IDX..NesEventMapper::IRQ_COUNTER_IDX + 4];
+        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+
+    #[test]
+    fn nes_event_timer_counts_only_while_bit_clear() {
+        // nesdev NES-EVENT, $A000 bit 4: "0: Run timer / 1: Reset timer". The counter
+        // is clocked by M2 only while it runs.
+        let mut mapper = nes_event_board();
+        for _ in 0..500 {
+            mapper.cpu_cycle();
+        }
+        assert_eq!(
+            irq_counter(mapper.as_ref()),
+            0,
+            "held at power-on (bit set)"
+        );
+
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
+        let started = irq_counter(mapper.as_ref());
+        for _ in 0..500 {
+            mapper.cpu_cycle();
+        }
+        assert_eq!(
+            irq_counter(mapper.as_ref()),
+            started + 500,
+            "one count per M2"
+        );
+
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10000);
+        for _ in 0..500 {
+            mapper.cpu_cycle();
+        }
+        assert_eq!(
+            irq_counter(mapper.as_ref()),
+            0,
+            "held again once the bit is set"
         );
     }
 
