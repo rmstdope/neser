@@ -67,9 +67,11 @@ def render_scroller_sentence(day: datetime.date, version: str, highlights: str) 
 
 
 def _replace_once(pattern: re.Pattern[str], text: str, version: str, what: str) -> str:
-    updated, count = pattern.subn(lambda m: f"{m.group(1)}{version}{m.group(3)}", text, count=1)
-    if count != 1:
+    updated, count = pattern.subn(lambda m: f"{m.group(1)}{version}{m.group(3)}", text)
+    if count == 0:
         raise ValueError(f"could not find {what}")
+    if count > 1:
+        raise ValueError(f"found {what} {count} times; expected exactly one")
     return updated
 
 
@@ -143,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--kind", choices=[kind.value for kind in ReleaseKind], required=True)
     parser.add_argument("--print-version", action="store_true", help="print the next version and change nothing")
+    parser.add_argument(
+        "--current-version",
+        help="bump from this version instead of the tree's Cargo.toml (with --print-version, e.g. main's version)",
+    )
     parser.add_argument("--highlights", help="the short list of the most important changes, one sentence or a few")
     parser.add_argument("--notes", type=Path, help="the approved release notes, copied to docs/releases/v<version>.md")
     parser.add_argument("--date", type=datetime.date.fromisoformat, help="release date (default: today)")
@@ -150,8 +156,10 @@ def main(argv: list[str] | None = None) -> int:
 
     kind = ReleaseKind(args.kind)
     if args.print_version:
-        print(bump_version(current_version(args.repo_root), kind))
+        print(bump_version(args.current_version or current_version(args.repo_root), kind))
         return 0
+    if args.current_version:
+        parser.error("--current-version only goes with --print-version; applying reads the tree")
     if not args.highlights or not args.notes:
         parser.error("--highlights and --notes are required to apply a release (or pass --print-version)")
 

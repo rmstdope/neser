@@ -9,6 +9,7 @@ from scripts.prepare_release import (
     ReleaseKind,
     apply_release,
     bump_version,
+    current_version,
     format_release_date,
     main,
     render_scroller_sentence,
@@ -105,6 +106,10 @@ class FileEditTests(unittest.TestCase):
             'const SCROLLER_TEXT = "September 27, 2026: Version 1.3.0 - New things.";\nconst SCROLLER_SPEED = 1.6;\n',
         )
 
+    def test_a_duplicated_anchor_fails_instead_of_editing_the_first(self) -> None:
+        with self.assertRaises(ValueError):
+            update_cargo_lock(CARGO_LOCK + CARGO_LOCK, "1.3.0")
+
     def test_missing_anchors_fail_loudly(self) -> None:
         with self.assertRaises(ValueError):
             update_cargo_toml('[package]\nname = "other"\n', "1.3.0")
@@ -155,6 +160,22 @@ class ApplyReleaseTests(unittest.TestCase):
         self.assertIn('version = "1.2.0"', (root / "Cargo.toml").read_text(encoding="utf-8"))
 
 
+class RealTreeTests(unittest.TestCase):
+    """The anchors hold against this repository's own files, so a rename is found here and not at release time."""
+
+    repo_root = Path(__file__).resolve().parents[1]
+
+    def test_cargo_toml_and_lock_have_the_neser_version(self) -> None:
+        version = current_version(self.repo_root)
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+        lock = (self.repo_root / "Cargo.lock").read_text(encoding="utf-8")
+        self.assertIn(f'name = "neser"\nversion = "{version}"', update_cargo_lock(lock, version))
+
+    def test_app_ts_has_the_scroller_sentence(self) -> None:
+        app_ts = (self.repo_root / "web" / "src" / "app.ts").read_text(encoding="utf-8")
+        self.assertIn('const SCROLLER_TEXT = "x";', update_scroller_text(app_ts, "x"))
+
+
 class MainTests(unittest.TestCase):
     def test_print_version_only_reports_the_next_version(self) -> None:
         root = ApplyReleaseTests().make_repo()
@@ -167,6 +188,16 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(out.getvalue().strip(), "2.0.0")
         self.assertIn('version = "1.2.0"', (root / "Cargo.toml").read_text(encoding="utf-8"))
+
+    def test_print_version_can_bump_a_given_version(self) -> None:
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--kind", "minor", "--current-version", "3.4.5", "--print-version"])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue().strip(), "3.5.0")
 
     def test_apply_requires_highlights_and_notes(self) -> None:
         root = ApplyReleaseTests().make_repo()

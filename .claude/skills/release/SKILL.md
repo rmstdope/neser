@@ -32,13 +32,19 @@ Then establish the ground, from the main checkout (never from another agent's wo
 git fetch origin --tags
 LAST=$(git describe --tags --abbrev=0 origin/main)          # the previous release
 SINCE=$(git log -1 --format=%cI "$LAST")                      # when it was cut
-python -m scripts.prepare_release --kind <kind> --print-version   # the version this release gets
-gh run list --branch main --workflow ci.yml --limit 1 --json conclusion,headSha   # main must be green
+CURRENT=$(git show origin/main:Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+.venv/bin/python -m scripts.prepare_release --kind <kind> --current-version "$CURRENT" --print-version
+gh run list --branch main --workflow ci.yml --limit 1 --json status,conclusion,headSha   # main must be green
 gh pr list --state open --search "chore(release)" --json number,title                # no release in flight
 ```
 
-Main red or a release PR already open: stop and say so. A release never ships a red main, and two
-releases in flight would race the version.
+The version comes from `origin/main`'s `Cargo.toml`, not the checkout's: the main checkout is
+routinely on some branch. The number is provisional until step 4, where the script computes it
+again in the release worktree and names the branch and the tag from it.
+
+Main red or a release PR already open: stop and say so; main still in progress (`status` not
+`completed`): wait for it. A release never ships a red main, and two releases in flight would
+race the version.
 
 ## 2. What shipped, in the player's words
 
@@ -87,7 +93,7 @@ just read, so it gets CI and their approval, not a reviewer sub-agent (agreed 20
 .cerebro/cerebro/scripts/prepare-worktree --path .cerebro/worktrees/release-v<version> \
     --branch release-v<version> --from origin/main
 cd .cerebro/worktrees/release-v<version>
-python -m scripts.prepare_release --kind <kind> --highlights "<sentence without the date and version>" --notes <scratch notes file>
+.venv/bin/python -m scripts.prepare_release --kind <kind> --highlights "<sentence without the date and version>" --notes <scratch notes file>
 git status --porcelain            # exactly: Cargo.toml, Cargo.lock, web/src/app.ts, docs/releases/v<version>.md
 cargo metadata --format-version 1 --offline > /dev/null   # the lockfile still parses with the new version
 ./scripts/gate-full.sh            # every pull request runs the full gate before it is opened
@@ -97,15 +103,24 @@ gh pr create --title "chore(release): v<version>" --body "Release v<version>: ve
 ```
 
 `--highlights` takes only the changes; the script prepends the date and the version. Then wait
-for CI inside a tool call, not by ending the turn:
+for every check, inside a tool call and not by ending the turn. Branch protection requires only
+two of the checks, so the skill waits for all of them itself:
 
 ```bash
-until gh pr checks <n> 2>/dev/null | grep -qv pending; do sleep 60; done; gh pr checks <n>
-gh pr merge <n> --squash --delete-branch
+until [ "$(gh pr checks <n> --json state -q 'all(.[]; .state != "PENDING")')" = true ]; do sleep 60; done
+gh pr checks <n>                  # exits 0 only when every check passed; read it before merging
 ```
 
 A red check is read before it is believed; a flake is re-run once; anything else stops the
-release and goes to the navigator. Never `--auto`, never a push to main.
+release and goes to the navigator. With everything green, ask once more with the question tool,
+"CI is green on <PR url>; merge and tag v<version>?", because the tag is forever and the
+navigator approved the words in step 3, not the moment. On yes:
+
+```bash
+gh pr merge <n> --squash --delete-branch
+```
+
+Never `--auto`, never a push to main.
 
 ## 5. Tag the merge commit, then watch the workflow
 
@@ -113,9 +128,11 @@ The branch's own commits are gone after the squash; the tag goes on the commit m
 
 ```bash
 git fetch origin main
-MERGE=$(git log origin/main -1 --format=%H --grep "chore(release): v<version>")
+MERGE=$(git log origin/main -1 --format=%H --fixed-strings --grep "chore(release): v<version>")
+[ -n "$MERGE" ] || { echo "no chore(release): v<version> commit on origin/main"; exit 1; }
 git tag -a v<version> "$MERGE" -m "NESER v<version>"
 git push origin v<version>
+cd <repo root> && git worktree remove .cerebro/worktrees/release-v<version>
 until RUN=$(gh run list --workflow release.yml --branch v<version> --limit 1 --json databaseId -q '.[0].databaseId') && [ -n "$RUN" ]; do sleep 30; done
 gh run watch "$RUN" --exit-status
 gh release view v<version> --json url,body -q '.url + "\n" + .body' | head -5   # the body is the approved notes
