@@ -43,9 +43,10 @@ describe("selectRenderPipeline", () => {
         ).toBe("ntsc");
     });
 });
+
 describe("SCREEN_CONTEXT_ATTRIBUTES", () => {
-    // Every screen draw is one full-viewport quad, so multisampling changes no pixel, while it
-    // costs synchronous GPU round trips on every canvas resize (nr-v5x).
+    // Every screen draw is one full-viewport quad, so multisampling changes no visible pixel, while
+    // it costs synchronous GPU round trips on every canvas resize (nr-v5x).
     it("requests the screen context without antialiasing", () => {
         expect(SCREEN_CONTEXT_ATTRIBUTES.antialias).toBe(false);
     });
