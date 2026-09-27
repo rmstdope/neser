@@ -70,6 +70,12 @@ pub struct MMC3Mapper {
 
     /// Use alternate (NEC) IRQ behavior: only fire on 1→0 transition
     use_alternate_irq: bool,
+
+    /// MMC6 (mapper 4, submapper 1): 1 KB PRG-RAM at $7000-$7FFF, enabled by
+    /// $8000 bit 5 and gated per 512-byte half by `mmc6_protect` ($A001).
+    mmc6: bool,
+    /// MMC6 $A001 (HhLl xxxx); forced to $00 while $8000 bit 5 is clear.
+    mmc6_protect: u8,
 }
 
 // ============================================================================
@@ -84,6 +90,10 @@ impl MMC3Mapper {
 
     const PRG_RAM_ENABLE_MASK: u8 = 0b1000_0000;
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
+
+    const MMC6_SUBMAPPER: u8 = 1;
+    const MMC6_PRG_RAM_SIZE: usize = 0x0400; // 1KB
+    const MMC6_RAM_ENABLE_MASK: u8 = 0b0010_0000; // $8000 bit 5
 
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let crc32 = ctx.crc32;
@@ -149,7 +159,12 @@ impl MMC3Mapper {
         prg_ram_banks_8k: u8,
         use_alternate_irq: bool,
     ) -> Self {
-        let prg_ram_size = prg_ram_banks_8k as usize * Self::PRG_RAM_SIZE;
+        let mmc6 = ctx.mapper == 4 && ctx.submapper == Self::MMC6_SUBMAPPER;
+        let prg_ram_size = if mmc6 {
+            Self::MMC6_PRG_RAM_SIZE
+        } else {
+            prg_ram_banks_8k as usize * Self::PRG_RAM_SIZE
+        };
         let has_prg_ram = prg_ram_size > 0;
         let mirroring = ctx.mirroring;
 
@@ -185,6 +200,9 @@ impl MMC3Mapper {
 
             a12_detector: A12RisingEdgeDetector::new(3),
             use_alternate_irq,
+
+            mmc6,
+            mmc6_protect: 0,
         };
         mapper.base.set_mirroring(mirroring);
         mapper.update_banks();
@@ -262,6 +280,38 @@ impl MMC3Mapper {
         }
         self.prg_ram_enabled = (value & Self::PRG_RAM_ENABLE_MASK) != 0;
         self.prg_ram_write_protected = (value & Self::PRG_RAM_WRITE_PROTECT_MASK) != 0;
+    }
+
+    fn mmc6_ram_enabled(&self) -> bool {
+        (self.bank_select & Self::MMC6_RAM_ENABLE_MASK) != 0
+    }
+
+    /// MMC6 read of $6000-$7FFF: `None` is open bus.
+    /// Refs: https://www.nesdev.org/wiki/MMC6
+    fn mmc6_read(&self, addr: u16) -> Option<u8> {
+        if addr < 0x7000 {
+            return None;
+        }
+        let read_low = (self.mmc6_protect & 0x20) != 0;
+        let read_high = (self.mmc6_protect & 0x80) != 0;
+        if !read_low && !read_high {
+            return None;
+        }
+        let offset = (addr as usize) & (Self::MMC6_PRG_RAM_SIZE - 1);
+        let readable = if offset < 0x200 { read_low } else { read_high };
+        Some(if readable { self.prg_ram[offset] } else { 0 })
+    }
+
+    fn mmc6_write(&mut self, addr: u16, value: u8) {
+        if addr < 0x7000 {
+            return;
+        }
+        let offset = (addr as usize) & (Self::MMC6_PRG_RAM_SIZE - 1);
+        // A half is writable only while it is also readable.
+        let rw_bits = if offset < 0x200 { 0x30 } else { 0xC0 };
+        if self.mmc6_protect & rw_bits == rw_bits {
+            self.prg_ram[offset] = value;
+        }
     }
 
     #[cfg(test)]
@@ -683,6 +733,127 @@ mod tests {
             open_bus,
             "open-bus read should be returned when PRG-RAM is absent"
         );
+    }
+
+    // --- MMC6 (mapper 4, submapper 1), https://www.nesdev.org/wiki/MMC6 ---
+
+    fn create_mmc6_mapper() -> Box<dyn Mapper> {
+        let ctx = MapperContext::new_for_test(
+            4,
+            banked_data(8 * 1024, 16),
+            banked_data(1024, 16),
+            NametableLayout::Horizontal,
+        )
+        .with_submapper(1);
+        create_mapper(ctx).expect("MMC6 (mapper 4.1) should be implemented")
+    }
+
+    /// $8000 bit 5 = 1 enables PRG-RAM; $A001 = HhLl xxxx.
+    fn mmc6_enable(mapper: &mut Box<dyn Mapper>, a001: u8) {
+        mapper.write_prg(0x8000, 0x20);
+        mapper.write_prg(0xA001, a001);
+    }
+
+    #[test]
+    fn test_mmc6_a001_f0_reads_and_writes_both_halves() {
+        // $A001 = $F0 enables reading and writing both 512-byte halves. On the MMC3,
+        // bit 6 would write-protect; StarTropics writes $F0 and needs its RAM (nr-cl1).
+        let mut mapper = create_mmc6_mapper();
+        mmc6_enable(&mut mapper, 0xF0);
+        mapper.write_prg(0x7000, 0xAA);
+        mapper.write_prg(0x7200, 0xBB);
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0xAA);
+        assert_eq!(mapper.read_prg_open_bus(0x7200, 0x5C), 0xBB);
+    }
+
+    #[test]
+    fn test_mmc6_has_1k_prg_ram_mirrored_through_7000_7fff() {
+        let mut mapper = create_mmc6_mapper();
+        assert_eq!(mapper.wram_size(), 1024);
+        mmc6_enable(&mut mapper, 0xF0);
+        mapper.write_prg(0x7001, 0x11);
+        mapper.write_prg(0x73FF, 0x22);
+        assert_eq!(mapper.read_prg_open_bus(0x7401, 0x5C), 0x11);
+        assert_eq!(mapper.read_prg_open_bus(0x7C01, 0x5C), 0x11);
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, 0x5C), 0x22);
+        mapper.write_prg(0x7E05, 0x33);
+        assert_eq!(mapper.read_prg_open_bus(0x7205, 0x5C), 0x33);
+    }
+
+    #[test]
+    fn test_mmc6_6000_6fff_is_open_bus() {
+        let mut mapper = create_mmc6_mapper();
+        mmc6_enable(&mut mapper, 0xF0);
+        mapper.write_prg(0x6000, 0x44);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5C), 0x5C);
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0x00);
+    }
+
+    #[test]
+    fn test_mmc6_only_one_half_readable_the_other_reads_zero() {
+        let mut mapper = create_mmc6_mapper();
+        mmc6_enable(&mut mapper, 0xF0);
+        mapper.write_prg(0x7000, 0xAA);
+        mapper.write_prg(0x7200, 0xBB);
+        mapper.write_prg(0xA001, 0x20); // read $7000-$71FF only
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0xAA);
+        assert_eq!(mapper.read_prg_open_bus(0x7200, 0x5C), 0x00);
+        mapper.write_prg(0xA001, 0x80); // read $7200-$73FF only
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0x00);
+        assert_eq!(mapper.read_prg_open_bus(0x7200, 0x5C), 0xBB);
+    }
+
+    #[test]
+    fn test_mmc6_neither_half_readable_is_open_bus() {
+        let mut mapper = create_mmc6_mapper();
+        mmc6_enable(&mut mapper, 0x00);
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0x5C);
+        assert_eq!(mapper.read_prg_open_bus(0x7200, 0x5C), 0x5C);
+    }
+
+    #[test]
+    fn test_mmc6_write_needs_read_enable_of_that_half() {
+        let mut mapper = create_mmc6_mapper();
+        mmc6_enable(&mut mapper, 0xF0);
+        mapper.write_prg(0x7000, 0xAA);
+        mapper.write_prg(0x7200, 0xBB);
+        // Write enable without read enable for the low half; high half read-only.
+        mapper.write_prg(0xA001, 0x90);
+        mapper.write_prg(0x7000, 0x01);
+        mapper.write_prg(0x7200, 0x02);
+        mapper.write_prg(0xA001, 0xA0);
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0xAA);
+        assert_eq!(mapper.read_prg_open_bus(0x7200, 0x5C), 0xBB);
+    }
+
+    #[test]
+    fn test_mmc6_8000_bit5_clear_disables_ram_and_ignores_a001() {
+        let mut mapper = create_mmc6_mapper();
+        mmc6_enable(&mut mapper, 0xF0);
+        mapper.write_prg(0x7000, 0xAA);
+        mapper.write_prg(0x8000, 0x00); // PRG-RAM disabled: $A001 forced to $00
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0x5C);
+        mapper.write_prg(0xA001, 0xF0); // ignored while disabled
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0x5C);
+        mapper.write_prg(0x8000, 0x20); // re-enabled, but $A001 is still $00
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0x5C);
+        mapper.write_prg(0xA001, 0x30);
+        assert_eq!(mapper.read_prg_open_bus(0x7000, 0x5C), 0xAA);
+    }
+
+    #[test]
+    fn test_mmc6_save_state_keeps_a001() {
+        let mut mapper = create_mmc6_mapper();
+        mmc6_enable(&mut mapper, 0x30);
+        mapper.write_prg(0x7000, 0xAA);
+        let registers = mapper.registers_snapshot();
+        let wram = mapper.wram_snapshot();
+
+        let mut restored = create_mmc6_mapper();
+        restored.restore_registers(&registers);
+        restored.load_wram_snapshot(&wram);
+        assert_eq!(restored.read_prg_open_bus(0x7000, 0x5C), 0xAA);
+        assert_eq!(restored.read_prg_open_bus(0x7200, 0x5C), 0x00);
     }
 
     #[test]
@@ -1461,6 +1632,7 @@ impl Mapper for MMC3Mapper {
 
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
+            0x6000..=0x7FFF if self.mmc6 => self.mmc6_read(addr).unwrap_or(0),
             0x6000..=0x7FFF => {
                 if self.prg_ram.is_empty() || !self.prg_ram_enabled {
                     return 0;
@@ -1475,6 +1647,7 @@ impl Mapper for MMC3Mapper {
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         match addr {
+            0x6000..=0x7FFF if self.mmc6 => self.mmc6_read(addr).unwrap_or(open_bus),
             0x6000..=0x7FFF => {
                 if self.prg_ram.is_empty() || !self.prg_ram_enabled {
                     return open_bus;
@@ -1493,6 +1666,7 @@ impl Mapper for MMC3Mapper {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
+            0x6000..=0x7FFF if self.mmc6 => self.mmc6_write(addr, value),
             0x6000..=0x7FFF => {
                 if self.prg_ram.is_empty() || !self.prg_ram_enabled || self.prg_ram_write_protected
                 {
@@ -1508,6 +1682,10 @@ impl Mapper for MMC3Mapper {
                     // Bank select
                     trace_mapper!(1; "MMC3 bank_select=${:02X}", value);
                     self.bank_select = value;
+                    if self.mmc6 && !self.mmc6_ram_enabled() {
+                        // PRG-RAM disabled: the MMC6 holds $A001 at $00.
+                        self.mmc6_protect = 0;
+                    }
                 } else {
                     // Bank data
                     let reg = self.selected_reg();
@@ -1523,10 +1701,18 @@ impl Mapper for MMC3Mapper {
                     self.base.set_mirroring_hv((value & 1) != 0);
                     trace_mapper!(1; "MMC3 mirroring={:?}", self.base.mirroring());
                 } else {
-                    // PRG RAM protect
-                    // - bit 7: PRG-RAM enable
-                    // - bit 6: PRG-RAM write protect
-                    self.update_prg_ram_control(value);
+                    if self.mmc6 {
+                        // MMC6 PRG RAM protect: HhLl xxxx, ignored while
+                        // $8000 bit 5 has PRG-RAM disabled.
+                        if self.mmc6_ram_enabled() {
+                            self.mmc6_protect = value & 0xF0;
+                        }
+                    } else {
+                        // PRG RAM protect
+                        // - bit 7: PRG-RAM enable
+                        // - bit 6: PRG-RAM write protect
+                        self.update_prg_ram_control(value);
+                    }
                 }
             }
             0xC000..=0xDFFF => {
@@ -1628,6 +1814,10 @@ impl Mapper for MMC3Mapper {
         snapshot.push(self.a12_detector.prev_a12() as u8);
         snapshot.push(self.a12_detector.current_a12() as u8);
         snapshot.push(self.a12_detector.a12_low_cycles());
+        if self.mmc6 {
+            // [16]: MMC6 $A001
+            snapshot.push(self.mmc6_protect);
+        }
         snapshot
     }
 
@@ -1656,6 +1846,10 @@ impl Mapper for MMC3Mapper {
             self.a12_detector.set_prev_a12(data[13] != 0);
             self.a12_detector.set_current_a12(data[14] != 0);
             self.a12_detector.set_a12_low_cycles(data[15]);
+        }
+
+        if self.mmc6 {
+            self.mmc6_protect = data.get(16).copied().unwrap_or(0) & 0xF0;
         }
 
         self.update_banks();
