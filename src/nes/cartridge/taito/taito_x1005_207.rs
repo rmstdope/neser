@@ -396,7 +396,7 @@ mod tests {
         use crate::nes::cartridge::mapper::supported_mappers;
         assert!(
             supported_mappers().contains(&207),
-            "Mapper 207 must be in the SUPPORTED_MAPPERS list"
+            "Mapper 207 must be in the mapper registry"
         );
     }
 
