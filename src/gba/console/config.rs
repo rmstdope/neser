@@ -251,8 +251,9 @@ impl GbaConfig {
 
     /// Apply a config file key-value pair to this config.
     ///
-    /// Accepts `gba-hardware`, `gba-bios-path`, `skip-bios-intro`, and
-    /// `gba-color-correction` keys.
+    /// Accepts `gba-hardware`, `gba-bios-path`, `skip-bios-intro`,
+    /// `gba-color-correction` and `gba-trace-*` keys. Every config-file key is
+    /// offered here, so keys this config does not own are ignored.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {
@@ -279,9 +280,8 @@ impl GbaConfig {
                 let level = Self::parse_trace_level(&key, value)?;
                 self.set_trace_level(&key, level);
             }
-            _ => {
-                return Err(format!("Unknown GBA config key: {key}"));
-            }
+            // Not a GBA key: another section of the config owns it.
+            _ => {}
         }
         Ok(())
     }
@@ -412,11 +412,12 @@ mod tests {
     }
 
     #[test]
-    fn test_config_file_unknown_key() {
+    fn gba_config_ignores_keys_it_does_not_own() {
         let mut config = GbaConfig::default();
-        let result = config.apply_config_value("unknown-key", "value");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown GBA config key"));
+        let before = format!("{config:?}");
+        assert!(config.apply_config_value("unknown-key", "value").is_ok());
+        assert!(config.apply_config_value("gb-hardware", "cgb").is_ok());
+        assert_eq!(format!("{config:?}"), before);
     }
 
     #[test]

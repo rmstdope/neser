@@ -216,6 +216,8 @@ impl Config {
         // Delegate to sub-configs first
         self.frontend.apply_config_value(&key, value)?;
         self.nes.apply_config_value(&key, value)?;
+        self.gb.apply_config_value(&key, value)?;
+        self.gba.apply_config_value(&key, value)?;
         self.snes.apply_config_value(&key, value)?;
 
         // Handle keys that need Config-level coordination or haven't been moved yet.
@@ -264,43 +266,6 @@ impl Config {
                 self.nes.controller_port2 =
                     Self::parse_controller_arg("nes_controller_port2", value)?;
                 self.nes.controller_port2_explicit = true;
-            }
-            "gb_dmg_variant" => {
-                self.gb.apply_config_value("gb_dmg_variant", value)?;
-            }
-            "gb_hardware" => {
-                self.gb.apply_config_value("gb_hardware", value)?;
-            }
-            "gb_cgb_variant" => {
-                self.gb.apply_config_value("gb_cgb_variant", value)?;
-            }
-            "gb_boot_animation" => {
-                self.gb.apply_config_value("gb_boot_animation", value)?;
-            }
-            "cgb_color_correction" => {
-                self.gb.apply_config_value("cgb_color_correction", value)?;
-            }
-            "gb_palette" => {
-                self.gb.apply_config_value("gb_palette", value)?;
-            }
-            "gbc_palette" => {
-                self.gb.apply_config_value("gbc_palette", value)?;
-            }
-            "gba_hardware" => {
-                self.gba.apply_config_value("gba_hardware", value)?;
-            }
-            "gba_bios_path" => {
-                self.gba.apply_config_value("gba_bios_path", value)?;
-            }
-            "skip_bios_intro" => {
-                self.gba.apply_config_value("skip_bios_intro", value)?;
-            }
-            "gba_color_correction" => {
-                self.gba.apply_config_value("gba_color_correction", value)?;
-            }
-            "gba_trace_cpu" | "gba_trace_bus" | "gba_trace_dma" | "gba_trace_swi"
-            | "gba_trace_mgba_log" => {
-                self.gba.apply_config_value(&key, value)?;
             }
             _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
         }

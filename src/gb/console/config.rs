@@ -186,7 +186,8 @@ impl GbConfig {
     ///
     /// Accepts `gb-dmg-variant`, `gb-cgb-variant`, `gb-hardware`,
     /// `gb-boot-animation`, `gb-palette`, `gbc-palette` and
-    /// `cgb-color-correction` keys.
+    /// `cgb-color-correction` keys. Every config-file key is offered here, so
+    /// keys this config does not own are ignored.
     pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         let key = key.replace('-', "_");
         match key.as_str() {
@@ -231,9 +232,8 @@ impl GbConfig {
                 self.cgb_color_correction = crate::platform::config::parse_bool(value)
                     .map_err(|_| format!("Invalid cgb_color_correction value: '{value}'"))?;
             }
-            _ => {
-                return Err(format!("Unknown GB config key: {key}"));
-            }
+            // Not a Game Boy key: another section of the config owns it.
+            _ => {}
         }
         Ok(())
     }
@@ -263,6 +263,15 @@ fn invalid_gbc_palette_warning(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gb_config_ignores_keys_it_does_not_own() {
+        let mut config = GbConfig::default();
+        let before = format!("{config:?}");
+        assert!(config.apply_config_value("audio", "true").is_ok());
+        assert!(config.apply_config_value("gba-hardware", "sp").is_ok());
+        assert_eq!(format!("{config:?}"), before);
+    }
 
     #[test]
     fn test_gb_config_default_values() {
