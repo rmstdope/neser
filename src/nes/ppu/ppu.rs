@@ -297,7 +297,7 @@ impl Ppu {
     /// Create a new modular PPU instance
     pub fn new(tv_system: TimingMode, ram_init_mode: crate::nes::console::RamInitMode) -> Self {
         let mut sprites = Sprites::new(ram_init_mode);
-        sprites.set_oam_decay_enabled(matches!(tv_system, TimingMode::Ntsc));
+        sprites.set_oam_decay_enabled(tv_system.region().oam_decay);
 
         Self {
             timing: Timing::new(tv_system),
@@ -383,8 +383,7 @@ impl Ppu {
     }
 
     pub fn set_oam_dram_decay_enabled(&mut self, enabled: bool) {
-        let is_ntsc = matches!(self.timing.tv_system(), TimingMode::Ntsc);
-        let effective_enabled = enabled && is_ntsc;
+        let effective_enabled = enabled && self.timing.region().oam_decay;
         self.sprites.set_oam_decay_enabled(effective_enabled);
     }
 
@@ -617,7 +616,7 @@ impl Ppu {
             // cycles (based on Visual NES findings, ref Mesen2 NesPpu.cpp).
             // Outside rendering, it takes effect immediately.
             let scanline = self.timing.scanline();
-            let prerender = tick::prerender_scanline(self.timing.tv_system());
+            let prerender = self.timing.region().prerender_scanline;
             let is_rendering_scanline = scanline
                 < crate::nes::ppu::timing::LAST_VISIBLE_SCANLINE_PLUS_ONE
                 || scanline == prerender;
@@ -857,7 +856,7 @@ impl Ppu {
     fn is_on_rendering_scanline(&self) -> bool {
         let scanline = self.timing.scanline();
         let is_visible_scanline = scanline < 240;
-        let is_prerender = scanline == tick::prerender_scanline(self.timing.tv_system());
+        let is_prerender = scanline == self.timing.region().prerender_scanline;
         is_visible_scanline || is_prerender
     }
 
@@ -1113,7 +1112,7 @@ impl Ppu {
         self.sprites.restore_state(&SpritesState {
             oam_data,
             secondary_oam,
-            oam_decay_enabled: matches!(self.timing.tv_system(), TimingMode::Ntsc),
+            oam_decay_enabled: self.timing.region().oam_decay,
             oam_decay_cycle: state.oam_decay_cycle,
             oam_row_last_refresh_cycle: state.oam_row_last_refresh_cycle,
             sprites_found: state.sprites_found,
@@ -1195,7 +1194,7 @@ struct RecentPixel {
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PpuDebugState {
     pub timing: super::timing::TimingDebugState,
     pub status: super::status::StatusDebugState,
@@ -1304,12 +1303,6 @@ mod tests {
         let ppu = Ppu::new_for_testing(TimingMode::Ntsc);
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
-    }
-
-    #[test]
-    fn test_prerender_scanline_helper() {
-        assert_eq!(tick::prerender_scanline(TimingMode::Ntsc), 261);
-        assert_eq!(tick::prerender_scanline(TimingMode::Pal), 311);
     }
 
     #[test]
@@ -1457,7 +1450,7 @@ mod tests {
         let debug_state = PpuDebugState {
             timing: timing::TimingDebugState {
                 total_cycles: 999,
-                tv_system: TimingMode::Ntsc,
+                region: TimingMode::Ntsc.region(),
                 scanline: 120,
                 pixel: 200,
                 frame_count: 7,
