@@ -240,27 +240,41 @@ mod tests {
     #[test]
     fn a_timer_overflow_raises_if_bit_2_inside_the_tick() {
         let mut bus = TickBus::new(4);
+        bus.map_write(0xFF06, 0x42); // TMA
         bus.map_write(0xFF07, 0x05); // timer on, one increment per 4 M-cycles
         bus.map_write(0xFF05, 0xFF);
         let mut m_cycles = 0;
-        while bus.map.if_reg & 0x04 == 0 {
+        while bus.map_read(0xFF05) != 0x42 {
+            assert_eq!(bus.map.if_reg & 0x04, 0, "IF bit 2 before TIMA reloads");
             bus.tick(1);
             m_cycles += 1;
-            assert!(m_cycles <= 8, "TIMA overflow never reached IF");
+            assert!(m_cycles <= 8, "TIMA never reloaded from TMA");
         }
-        assert_eq!(bus.map.if_reg & 0x04, 0x04);
+        assert_eq!(
+            bus.map.if_reg & 0x04,
+            0x04,
+            "IF bit 2 rises in the same tick TIMA reloads"
+        );
     }
 
     #[test]
-    fn ppu_interrupts_raised_before_a_tick_reach_if_at_its_start() {
+    fn ppu_interrupts_reach_if_at_the_start_of_the_next_tick() {
         let mut bus = TickBus::new(4);
         bus.map_write(0xFF40, 0x91);
         bus.map.if_reg = 0;
-        // Run the PPU alone into VBlank: its interrupt waits in the PPU.
-        bus.map.ppu.tick_dots(145 * 456);
-        assert_eq!(bus.map.if_reg & 0x01, 0);
+        let mut m_cycles = 0;
+        while bus.map.ppu.mode() != PpuMode::VBlank {
+            bus.tick(1);
+            m_cycles += 1;
+            assert!(m_cycles <= 154 * 114, "the PPU never reached VBlank");
+        }
+        assert_eq!(
+            bus.map.if_reg & 0x01,
+            0,
+            "the tick that raised VBlank does not show it in IF"
+        );
         bus.tick(1);
-        assert_eq!(bus.map.if_reg & 0x01, 0x01);
+        assert_eq!(bus.map.if_reg & 0x01, 0x01, "the next tick does");
     }
 
     #[test]

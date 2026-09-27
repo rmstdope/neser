@@ -1360,8 +1360,8 @@ mod tests {
 
     // ── SameSuite channel_1_sweep Round 3 ─────────────────────────────────
 
-    /// Drives an [`Apu`] the way `CgbBus::tick_before_ppu` / `tick_after_ppu`
-    /// do: a simulated 16-bit DIV counter advancing 4 T-cycles per M-cycle,
+    /// Drives an [`Apu`] the way the Game Boy buses' `TickSequence::tick_before_ppu`
+    /// and `tick_after_ppu` do: a simulated 16-bit DIV counter advancing 4 T-cycles per M-cycle,
     /// with the DIV-APU edge events dispatched *before* that M-cycle's `tick`.
     ///
     /// This is what lets a unit test reproduce a SameSuite `SubTest` faithfully:

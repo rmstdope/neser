@@ -2359,7 +2359,7 @@ mod tests {
     fn test_double_speed_ppu_gets_half_dots_per_mcycle() {
         // Given: CGB bus in normal speed, LCD enabled.
         // Warm up past the LCD-enable transient so subsequent ticks
-        // advance by exactly m_cycles × dots_per_mcycle.
+        // advance by exactly m_cycles × dots_per_m_cycle.
         let mut bus = make_bus();
         enable_lcd(&mut bus);
         bus.tick(10); // warm-up
