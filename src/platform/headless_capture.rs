@@ -89,8 +89,7 @@ pub fn run(
     rom_path: &str,
     capture: &HeadlessCapture,
 ) -> Result<(), String> {
-    let mut console = load_console(app_context, rom_path)?;
-    console.reset(false);
+    let mut console = loaded_console(app_context, rom_path)?;
 
     let mut done = 0u32;
     if let Some(every) = capture.every {
@@ -111,6 +110,13 @@ pub fn run(
     }
     advance_frames(&mut console, capture.frames - done, done)?;
     write_frame(&console, &capture.output)
+}
+
+/// The console a capture runs, as it stands before its first frame.
+fn loaded_console(app_context: &SharedAppContext, rom_path: &str) -> Result<Console, String> {
+    let mut console = load_console(app_context, rom_path)?;
+    console.reset(false);
+    Ok(console)
 }
 
 /// Where the checkpoint at `frame` goes: `<stem>_<frame>.png` next to
