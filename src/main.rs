@@ -1,23 +1,12 @@
-// Modules shared between lib.rs and main.rs may have public APIs consumed only
-// by the library or test code, producing dead_code warnings in the binary crate.
-#![allow(dead_code)]
-
-mod frontends;
-mod gb;
-mod gba;
-mod nes;
-mod platform;
-mod snes;
-
-use nes::console::{
+use neser::nes::console::{
     CartridgeCatalogOptions, Config, Nes, ParseResult, default_catalog_csv_path,
     refresh_cartridge_catalog,
 };
-use platform::app_context::AppContext;
-use platform::autorun::AutorunFormat;
-use platform::debugging::log_info;
+use neser::platform::app_context::AppContext;
+use neser::platform::autorun::AutorunFormat;
+use neser::platform::debugging::log_info;
 #[cfg(feature = "native")]
-use platform::rom_loader::LaunchError;
+use neser::platform::rom_loader::LaunchError;
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -61,7 +50,7 @@ fn refresh_startup_cartridge_catalog(app_context: &Rc<RefCell<AppContext>>) {
 }
 
 fn convert_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
-    use platform::autorun::{AUTORUN_VERSION, autorun_path_for_rom, convert_autorun_file};
+    use neser::platform::autorun::{AUTORUN_VERSION, autorun_path_for_rom, convert_autorun_file};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
     if !path.exists() {
@@ -86,7 +75,7 @@ fn trim_autorun_checkpoints_for_rom(
     checkpoints_to_trim: usize,
     format: AutorunFormat,
 ) -> Result<String, String> {
-    use platform::autorun::{
+    use neser::platform::autorun::{
         autorun_path_for_rom, load_autorun_file, save_autorun_file, trim_recording,
     };
     use std::path::PathBuf;
@@ -107,11 +96,11 @@ fn trim_autorun_checkpoints_for_rom(
 }
 
 fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<String, String> {
-    use nes::autorun::headless_playback::recalculate_checkpoint_crcs_with_progress;
-    use nes::cartridge::Cartridge;
-    use nes::console::RamInitMode;
-    use platform::autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file};
-    use platform::config::FrontendConfig;
+    use neser::nes::autorun::headless_playback::recalculate_checkpoint_crcs_with_progress;
+    use neser::nes::cartridge::Cartridge;
+    use neser::nes::console::RamInitMode;
+    use neser::platform::autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file};
+    use neser::platform::config::FrontendConfig;
     use std::io::{self, Write};
 
     let path = autorun_path_for_rom(&PathBuf::from(rom_path));
@@ -190,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .config()
             .frontend
             .include_unofficial_roms;
-        return frontends::tui::run_tui(&search_paths, rebuild, include_unofficial);
+        return neser::frontends::tui::run_tui(&search_paths, rebuild, include_unofficial);
     }
 
     refresh_startup_cartridge_catalog(&app_context);
@@ -237,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize global tracing state (only active in debug builds)
     let tracing_config = app_context.borrow().config().frontend.tracing;
-    platform::debugging::init_tracing(tracing_config);
+    neser::platform::debugging::init_tracing(tracing_config);
 
     // Handle --headless: capture a frame to PNG and exit.
     //
@@ -246,7 +235,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `native` (so without winit/glutin/egui/cpal) still captures, while the
     // same binary run without --headless exits with "No frontend feature
     // enabled". Moving this into the native cfg would silently remove that.
-    if platform::headless_capture::run_if_requested(&app_context)? {
+    if neser::platform::headless_capture::run_if_requested(&app_context)? {
         return Ok(());
     }
 
@@ -270,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_native_frontend(
     app_context: Rc<RefCell<AppContext>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use frontends::native::rom_browser::{BrowserResult, RomBrowserApp};
+    use neser::frontends::native::rom_browser::{BrowserResult, RomBrowserApp};
 
     let rom_path = app_context.borrow().config().frontend.rom_path.clone();
 
@@ -279,7 +268,7 @@ fn run_native_frontend(
         match run_native_emulator(app_context, &rom_path, None) {
             Ok(()) => Ok(()),
             Err(LaunchError::Firmware(problem)) => {
-                let game = platform::rom_loader::game_name(&rom_path);
+                let game = neser::platform::rom_loader::game_name(&rom_path);
                 eprintln!("{}", problem.cli_message(&game));
                 std::process::exit(1);
             }
@@ -288,7 +277,7 @@ fn run_native_frontend(
     } else {
         // No ROM path — launch the ROM browser in a loop.
         // After emulation ends, return to the browser for another selection.
-        let mut event_loop = frontends::native::create_event_loop()?;
+        let mut event_loop = neser::frontends::native::create_event_loop()?;
         let mut browser = RomBrowserApp::new(app_context.clone());
         loop {
             match browser.run(&mut event_loop)? {
@@ -300,9 +289,9 @@ fn run_native_frontend(
                     let result =
                         run_native_emulator(app_context.clone(), &rom_path, Some(&mut event_loop));
                     if let Err(e) = &result {
-                        crate::platform::debugging::log_info(format!("Emulator error: {e:?}"));
+                        neser::platform::debugging::log_info(format!("Emulator error: {e:?}"));
                     }
-                    let game = platform::rom_loader::game_name(&rom_path);
+                    let game = neser::platform::rom_loader::game_name(&rom_path);
                     match result.err().and_then(|e| e.strip_lines(&game)) {
                         Some(lines) => browser.set_launch_error(lines),
                         None => browser.clear_launch_error(),
@@ -321,15 +310,15 @@ fn run_native_emulator(
     rom_path: &str,
     event_loop: Option<&mut winit::event_loop::EventLoop<()>>,
 ) -> Result<(), LaunchError> {
-    use frontends::native::{NativeAudio, NativeEventLoop};
-    use platform::audio::EmulatorAudio;
+    use neser::frontends::native::{NativeAudio, NativeEventLoop};
+    use neser::platform::audio::EmulatorAudio;
 
     // A DSP game without its genuine firmware (missing, wrong size or not genuine) is refused
     // before anything else (no audio device, no window), so the frontend can word the refusal
     // for where the player is.
     if let Ok(rom_bytes) = std::fs::read(rom_path)
         && let Some(problem) =
-            platform::rom_loader::firmware_problem(&app_context, rom_path, &rom_bytes)
+            neser::platform::rom_loader::firmware_problem(&app_context, rom_path, &rom_bytes)
     {
         return Err(LaunchError::Firmware(problem));
     }
@@ -357,7 +346,8 @@ fn run_native_emulator(
 
     // Headless autorun is only supported in playback mode because
     // record/extend have no guaranteed termination condition.
-    let headless = autorun_headless && autorun_mode == platform::autorun::AutorunMode::Playback;
+    let headless =
+        autorun_headless && autorun_mode == neser::platform::autorun::AutorunMode::Playback;
 
     // Create audio output unless disabled or headless.
     let mut audio_sample_rate = None;
@@ -379,8 +369,8 @@ fn run_native_emulator(
         Some(audio)
     };
 
-    let mut console =
-        platform::rom_loader::load_console(&app_context, rom_path).map_err(LaunchError::Load)?;
+    let mut console = neser::platform::rom_loader::load_console(&app_context, rom_path)
+        .map_err(LaunchError::Load)?;
 
     if let Some(actual_rate) = audio_sample_rate {
         console.set_audio_sample_rate(actual_rate);
@@ -391,7 +381,7 @@ fn run_native_emulator(
         NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
     // Initialize autorun AFTER loading so checkpoint state restore is not overwritten.
-    if autorun_mode != platform::autorun::AutorunMode::None {
+    if autorun_mode != neser::platform::autorun::AutorunMode::None {
         native_loop
             .init_autorun(
                 autorun_mode,
@@ -426,7 +416,7 @@ fn run_native_emulator(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::autorun::AUTORUN_VERSION;
+    use neser::platform::autorun::AUTORUN_VERSION;
     use tempfile::TempDir;
 
     #[test]
