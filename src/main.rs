@@ -386,13 +386,11 @@ fn run_native_emulator(
         console.set_audio_sample_rate(actual_rate);
     }
 
-    console.reset(false);
-
     let tracing = app_context.borrow().config().frontend.tracing;
     let mut native_loop =
         NativeEventLoop::new(app_context.clone(), console, audio, tracing, headless);
 
-    // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
+    // Initialize autorun AFTER loading so checkpoint state restore is not overwritten.
     if autorun_mode != platform::autorun::AutorunMode::None {
         native_loop
             .init_autorun(

@@ -7,8 +7,8 @@
 //! the two paths from drifting — in particular, a duplicated loader that forgot
 //! `apply_rom_timing_mode` would silently capture PAL NES ROMs at NTSC timing.
 //!
-//! Resetting the console is deliberately left to the caller, so the native path
-//! can keep configuring audio before its `reset`.
+//! The console comes back powered on and ready to run, as the web frontend's
+//! `load_rom` leaves it: no caller resets it again (nr-sc7).
 
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::emulator::{Console, SystemType};
@@ -93,7 +93,7 @@ pub fn detect_system_type(path: &str) -> SystemType {
 ///
 /// Adds a cartridge-load toast to `app_context` on both success and failure,
 /// and applies the NES ROM's timing mode to the configuration. The returned
-/// console has **not** been reset.
+/// console is powered on and ready to run; do not reset it.
 pub fn load_console(app_context: &SharedAppContext, rom_path: &str) -> Result<Console, String> {
     let result = build_console(app_context, rom_path);
 
