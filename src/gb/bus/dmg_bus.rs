@@ -1,6 +1,7 @@
 use crate::gb::apu::Apu;
 use crate::gb::boot_rom::{DMG_BOOT_ROM, DMG0_BOOT_ROM};
 use crate::gb::bus::GbBus;
+use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
@@ -542,62 +543,72 @@ impl DmgBus {
     }
 }
 
-impl GbBus for DmgBus {
-    fn read(&mut self, addr: u16) -> u8 {
-        if self.boot_rom_active && addr <= 0x00FF {
-            return self.boot_rom[addr as usize];
-        }
-        match addr {
-            0x0000..=0x7FFF => self.cart.read(addr),
-            0x8000..=0x9FFF => self.ppu.read_vram(addr),
-            0xA000..=0xBFFF => self.cart.read(addr),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
-            0xFE00..=0xFE9F => {
-                if self.dma_oam_blocked {
-                    return 0xFF;
-                }
-                self.ppu.read_oam(addr)
-            }
-            0xFEA0..=0xFEFF => {
-                if self.dma_oam_blocked {
-                    return 0xFF;
-                }
-                self.ppu.read_forbidden_zone()
-            }
-            0xFF00 => {
-                let value = self.joypad.read();
-                self.sgb.as_ref().map_or(value, |sgb| sgb.read_p1(value))
-            }
-            0xFF01 => self.sb,
-            0xFF02 => self.sc | 0x7E, // bits 6-1 unused on DMG, always read as 1
-            0xFF04..=0xFF07 => self.timer.read(addr),
-            0xFF0F => self.if_reg | 0xE0,
-            0xFF10..=0xFF3F => self.apu.read_register(addr),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
-            0xFF46 => self.dma_source,
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            0xFFFF => self.ie_reg,
-            _ => {
-                println!("[DMG] Unmapped read: ${:04X}", addr);
-                0xFF
-            }
+impl MemoryMap for DmgBus {
+    fn view(&self) -> MapView<'_> {
+        let (low, high) = self.wram.split_at(0x1000);
+        MapView {
+            cart: self.cart.as_ref(),
+            ppu: &self.ppu,
+            wram: [
+                low.try_into().expect("4 KB half"),
+                high.try_into().expect("4 KB half"),
+            ],
+            hram: &self.hram,
+            timer: &self.timer,
+            apu: &self.apu,
+            joypad: &self.joypad,
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            sb: self.sb,
+            sc: self.sc,
+            dma_source: self.dma_source,
+            dma_oam_blocked: self.dma_oam_blocked,
         }
     }
 
-    fn write(&mut self, addr: u16, val: u8) {
+    fn view_mut(&mut self) -> MapViewMut<'_> {
+        let (low, high) = self.wram.split_at_mut(0x1000);
+        MapViewMut {
+            cart: self.cart.as_mut(),
+            ppu: &mut self.ppu,
+            wram: [
+                low.try_into().expect("4 KB half"),
+                high.try_into().expect("4 KB half"),
+            ],
+            hram: &mut self.hram,
+            timer: &mut self.timer,
+            apu: &mut self.apu,
+            joypad: &mut self.joypad,
+            if_reg: &mut self.if_reg,
+            ie_reg: &mut self.ie_reg,
+            sb: &mut self.sb,
+            dma_oam_blocked: self.dma_oam_blocked,
+        }
+    }
+
+    fn model_peek(&self, addr: u16) -> Option<u8> {
         match addr {
-            0x0000..=0x7FFF => self.cart.write(addr, val),
-            0x8000..=0x9FFF => self.ppu.write_vram(addr, val),
-            0xA000..=0xBFFF => self.cart.write(addr, val),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val,
-            0xFE00..=0xFE9F => {
-                if !self.dma_oam_blocked {
-                    self.ppu.write_oam(addr, val);
-                }
+            0x0000..=0x00FF if self.boot_rom_active => Some(self.boot_rom[addr as usize]),
+            // Debugger reads of the OAM-bug zone must not corrupt OAM.
+            0xFEA0..=0xFEFF => Some(0xFF),
+            0xFF00 => {
+                let value = self.joypad.read();
+                Some(self.sgb.as_ref().map_or(value, |sgb| sgb.read_p1(value)))
             }
-            0xFEA0..=0xFEFF => {}
+            _ => None,
+        }
+    }
+
+    fn model_read(&mut self, addr: u16) -> Option<u8> {
+        match addr {
+            0xFEA0..=0xFEFF if self.dma_oam_blocked => Some(0xFF),
+            0xFEA0..=0xFEFF => Some(self.ppu.read_forbidden_zone()),
+            _ => self.model_peek(addr),
+        }
+    }
+
+    fn model_write(&mut self, addr: u16, val: u8) -> bool {
+        match addr {
             0xFF00 => {
                 let previous_select = self.joypad.read() & 0x30;
                 if let Some(sgb) = &mut self.sgb {
@@ -605,7 +616,6 @@ impl GbBus for DmgBus {
                 }
                 self.joypad.write(val);
             }
-            0xFF01 => self.sb = val,
             0xFF02 => {
                 // Clock-alignment step when *starting* an
                 // internal-clock transfer and serial_master_clock is currently
@@ -625,35 +635,6 @@ impl GbBus for DmgBus {
                 }
                 // External clock (bit 0 clear): store SC but never start a transfer.
             }
-            0xFF04..=0xFF07 => {
-                let div_apu_edge = self.timer.write(addr, val);
-                // If a DIV-APU falling edge occurred (DIV write with bit 4 HIGH),
-                // clock the APU frame sequencer.
-                if div_apu_edge {
-                    self.apu.clock_div_apu();
-                }
-                // Immediately fire any write-triggered TIMA overflow, so the interrupt is
-                // visible to service_interrupts() at the start of the next instruction.
-                if self.timer.fire_write_overflow_if_pending() {
-                    self.if_reg |= 0x04;
-                    self.timer.take_interrupt();
-                }
-            }
-            0xFF0F => self.if_reg = val & 0x1F,
-            0xFF26 => {
-                // NR52 special handling: pass DIV-APU bit state for power-on skip logic.
-                let div_apu_high = self.timer.is_div_apu_bit_high();
-                self.apu.write_nr52_with_div_state(val, div_apu_high);
-            }
-            0xFF10..=0xFF25 | 0xFF27..=0xFF3F => self.apu.write_register(addr, val),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => {
-                self.ppu.write_register(addr, val);
-                // Immediately flush any interrupt generated by the register write
-                // (e.g. STAT LYC=LY match on LCD re-enable), so the interrupt is visible to
-                // service_interrupts() at the start of the next instruction.
-                self.if_reg |= self.ppu.take_pending_interrupts();
-            }
-            0xFF46 => self.do_oam_dma(val),
             0xFF50 => {
                 if self.boot_rom_active
                     && matches!(self.model.boot_variant(), DmgBootVariant::Production)
@@ -664,12 +645,23 @@ impl GbBus for DmgBus {
                 }
                 self.boot_rom_active = false;
             }
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
-            0xFFFF => self.ie_reg = val,
-            _ => {
-                println!("[DMG] Unmapped write: ${:04X} = ${:02X}", addr, val);
-            }
+            _ => return false,
         }
+        true
+    }
+
+    fn start_oam_dma(&mut self, val: u8) {
+        self.do_oam_dma(val);
+    }
+}
+
+impl GbBus for DmgBus {
+    fn read(&mut self, addr: u16) -> u8 {
+        self.map_read(addr)
+    }
+
+    fn write(&mut self, addr: u16, val: u8) {
+        self.map_write(addr, val);
     }
 
     fn tick(&mut self, m_cycles: u8) {
@@ -757,44 +749,7 @@ impl GbBus for DmgBus {
     }
 
     fn read_for_debugger(&self, addr: u16) -> u8 {
-        // Debugger reads mirror normal read() address decoding (including register
-        // readback behavior like `if_reg | 0xE0` and `sc | 0x7E`) but avoid side
-        // effects such as OAM corruption or serial transfer state changes.
-        // Boot ROM is checked — debugger should see what CPU will actually execute.
-        if self.boot_rom_active && addr <= 0x00FF {
-            return self.boot_rom[addr as usize];
-        }
-        match addr {
-            0x0000..=0x7FFF => self.cart.read(addr),
-            0x8000..=0x9FFF => self.ppu.read_vram(addr),
-            0xA000..=0xBFFF => self.cart.read(addr),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize],
-            0xFE00..=0xFE9F => {
-                if self.dma_oam_blocked {
-                    return 0xFF;
-                }
-                // Direct OAM read to avoid OAM corruption side effects that
-                // read_oam() triggers during Mode 2 (debugger reads must be
-                // side-effect-free).
-                self.ppu.oam[(addr - 0xFE00) as usize]
-            }
-            0xFEA0..=0xFEFF => 0xFF,
-            0xFF00 => {
-                let value = self.joypad.read();
-                self.sgb.as_ref().map_or(value, |sgb| sgb.read_p1(value))
-            }
-            0xFF01 => self.sb,
-            0xFF02 => self.sc | 0x7E,
-            0xFF04..=0xFF07 => self.timer.read(addr),
-            0xFF0F => self.if_reg | 0xE0,
-            0xFF10..=0xFF3F => self.apu.read_register(addr),
-            0xFF40..=0xFF45 | 0xFF47..=0xFF4B => self.ppu.read_register(addr),
-            0xFF46 => self.dma_source,
-            0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
-            0xFFFF => self.ie_reg,
-            _ => 0xFF,
-        }
+        self.map_peek(addr)
     }
 }
 
@@ -1158,6 +1113,29 @@ mod tests {
         // $FF08 (unmapped) — $FF01 (SB) now starts at $00, so use only unmapped ranges
         assert_eq!(bus.read(0xFF08), 0xFF);
         assert_eq!(bus.read(0xFF4E), 0xFF);
+    }
+
+    #[test]
+    fn dmg_bus_peeks_through_the_shared_map() {
+        use crate::gb::bus::memory_map::MemoryMap;
+        let mut bus = make_bus();
+        bus.write(0xC010, 0x5A);
+        bus.write(0xFF80, 0xA5);
+        assert_eq!(MemoryMap::map_peek(&bus, 0xE010), 0x5A);
+        assert_eq!(MemoryMap::map_peek(&bus, 0xFF80), 0xA5);
+    }
+
+    #[test]
+    fn dmg_has_no_cgb_registers_at_ff4c_to_ff7f() {
+        let mut bus = make_bus();
+        for addr in 0xFF4C..=0xFF7Fu16 {
+            if addr == 0xFF50 {
+                continue; // boot ROM disable, write-only
+            }
+            bus.write(addr, 0x00);
+            assert_eq!(bus.read(addr), 0xFF, "${addr:04X}");
+            assert_eq!(bus.read_for_debugger(addr), 0xFF, "${addr:04X}");
+        }
     }
 
     // ── Joypad ($FF00) ────────────────────────────────────────────────────────
