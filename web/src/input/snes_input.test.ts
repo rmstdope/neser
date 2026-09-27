@@ -21,7 +21,6 @@ function makeSnesStub({
     multitapPorts = [] as number[],
 } = {}) {
     const calls = {
-        addMouseDelta: [] as { port: number; dx: number; dy: number }[],
         setMouseLeftButton: [] as { port: number; pressed: boolean }[],
         setMouseRightButton: [] as { port: number; pressed: boolean }[],
         setSuperScopePosition: [] as { port: number; x: number; y: number }[],
@@ -37,9 +36,6 @@ function makeSnesStub({
         has_superscope: () => superScopePorts.length > 0,
         has_superscope_on_port: (port: number) => superScopePorts.includes(port),
         is_multitap_on_port: (port: number) => multitapPorts.includes(port),
-        add_mouse_delta: (port: number, dx: number, dy: number) => {
-            calls.addMouseDelta.push({ port, dx, dy });
-        },
         set_mouse_left_button: (port: number, pressed: boolean) => {
             calls.setMouseLeftButton.push({ port, pressed });
         },

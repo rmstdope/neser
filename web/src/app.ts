@@ -3164,7 +3164,10 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
     // SNES peripherals: handle mouse and superscope buttons.
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
-        if (isSnesMouseActive(snesInst) && clickCaptureSession()?.captured()) {
+        // Presses reach the SNES Mouse only while captured; a release always does, so a
+        // press forwarded with a capturing click never stays held when the lock arrives late
+        // or is refused.
+        if (isSnesMouseActive(snesInst) && (!pressed || clickCaptureSession()?.captured())) {
             for (const port of snesMousePorts()) {
                 applySnesMouseButton(snesInst, port, event.button, pressed);
             }

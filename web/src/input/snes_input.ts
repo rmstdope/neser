@@ -11,7 +11,6 @@ export interface SnesInputBridge {
     has_superscope(): boolean;
     has_superscope_on_port(port: number): boolean;
     is_multitap_on_port(port: number): boolean;
-    add_mouse_delta(port: number, dx: number, dy: number): void;
     set_mouse_left_button(port: number, pressed: boolean): void;
     set_mouse_right_button(port: number, pressed: boolean): void;
     set_superscope_position(port: number, x: number, y: number): void;
