@@ -1913,3 +1913,42 @@ fn wasm_gb_palette_label_is_empty_without_a_dmg_game() {
     let gb = WasmGb::new();
     assert_eq!(gb.palette_label(), "");
 }
+
+// ── "Game Boy games run on" (nr-zdy.4) ─────────────────────────────────────
+
+#[wasm_bindgen_test]
+fn wasm_gb_original_game_runs_in_colour_when_chosen() {
+    let mut gb = WasmGb::new();
+    gb.set_original_games_on_color(true);
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    assert!(gb.is_color());
+    assert!(gb.is_original_game());
+    assert!(gb.palette_label().starts_with("Palette: Auto"));
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_original_game_runs_on_game_boy_by_default() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    assert!(!gb.is_color());
+    assert!(gb.is_original_game());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_choice_applies_on_reset_not_at_once() {
+    let mut gb = WasmGb::new();
+    gb.set_original_games_on_color(true);
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    gb.set_original_games_on_color(false);
+    assert!(gb.is_color(), "the running game carries on");
+    gb.reset(true);
+    assert!(!gb.is_color());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_colour_game_is_not_an_original_game() {
+    let mut gb = WasmGb::new();
+    assert!(!gb.is_original_game());
+    gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
+    assert!(!gb.is_original_game());
+}
