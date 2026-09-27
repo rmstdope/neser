@@ -1135,7 +1135,12 @@ impl MemoryMap for CgbBus {
             0xFF70 if self.ppu.dmg_compat => 0xFF,
             0xFF70 => self.svbk | 0xF8,
             // $FF4E, $FF50, HDMA1-4 (write-only) and the unused CGB I/O.
-            0xFF4C..=0xFF7F => 0xFF,
+            0xFF4E
+            | 0xFF50..=0xFF54
+            | 0xFF56..=0xFF67
+            | 0xFF6D..=0xFF6F
+            | 0xFF71
+            | 0xFF78..=0xFF7F => 0xFF,
             _ => return None,
         };
         Some(value)
@@ -1208,7 +1213,7 @@ impl MemoryMap for CgbBus {
             0xFF70 if self.ppu.dmg_compat => {}
             0xFF70 => self.svbk = val & 0x07,
             // $FF4E, the read-only PCM registers and the unused CGB I/O.
-            0xFF4C..=0xFF7F => {}
+            0xFF4E | 0xFF56..=0xFF67 | 0xFF6D..=0xFF6F | 0xFF71 | 0xFF76..=0xFF7F => {}
             _ => return false,
         }
         true
