@@ -11,6 +11,9 @@ use bitflags::bitflags;
 
 pub mod cli;
 pub mod defaults;
+pub mod rom_hints;
+
+pub use rom_hints::RomHints;
 
 pub(crate) use cli::{CLI_FLAGS, NES_OPTIONAL_BOOL_FLAGS};
 

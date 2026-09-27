@@ -3,11 +3,11 @@ use crate::nes::bus::{Bus, BusState, MapperState, SharedBus};
 #[cfg(test)]
 use crate::nes::cartridge::TimingMode;
 use crate::nes::cartridge::{Cartridge, RomDb, load_rom_db};
-use crate::nes::console::ApuChannels;
 #[cfg(test)]
 use crate::nes::console::Config;
 #[cfg(test)]
 use crate::nes::console::NesConfig;
+use crate::nes::console::{ApuChannels, RomHints};
 use crate::nes::cpu::lookup;
 use crate::nes::cpu::opcode::{AddrMode, Mnemonic};
 use crate::nes::cpu::{Cpu, CpuState};
@@ -218,73 +218,12 @@ impl Nes {
         let zapper_port = self.rom_db.default_zapper_on_port(cartridge_crc32);
         let arkanoid_port = crate::nes::cartridge::default_arkanoid_on_port(cartridge_crc32);
         let power_pad_port = self.rom_db.default_power_pad_on_port(cartridge_crc32);
-        let has_famicom_four_players_expansion = self
-            .rom_db
-            .has_famicom_four_players_expansion(cartridge_crc32);
-        let has_arkanoid_famicom_expansion =
-            self.rom_db.has_arkanoid_famicom_expansion(cartridge_crc32);
-        let has_zapper_famicom_expansion =
-            self.rom_db.has_zapper_famicom_expansion(cartridge_crc32);
-        let has_power_pad_famicom_expansion =
-            self.rom_db.has_power_pad_famicom_expansion(cartridge_crc32);
-        let has_nes_four_score_expansion =
-            self.rom_db.has_nes_four_score_expansion(cartridge_crc32);
-        let is_japan_region = self.rom_db.is_japan_region(cartridge_crc32);
 
-        // Auto-detect Famicom hardware mode for Japan-region ROMs
+        let hints = RomHints::resolve(&cartridge, &self.rom_db);
         self.app_context
             .borrow_mut()
             .config_mut()
-            .apply_rom_db_famicom_region_hint(is_japan_region);
-
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_famicom_four_players_hint(has_famicom_four_players_expansion);
-
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_arkanoid_famicom_hint(has_arkanoid_famicom_expansion);
-
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_zapper_famicom_hint(has_zapper_famicom_expansion);
-
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_power_pad_famicom_hint(has_power_pad_famicom_expansion);
-
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_nes_four_score_hint(has_nes_four_score_expansion);
-
-        // Auto-detect VS System mode from cartridge VS metadata
-        let is_vs_system =
-            cartridge.vs_ppu_type().is_some() || cartridge.vs_hardware_type().is_some();
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_vs_system_hint(is_vs_system);
-
-        let is_playchoice10 = matches!(
-            cartridge.hardware_type(),
-            crate::nes::cartridge::HardwareType::Playchoice10
-        );
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_playchoice10_hint(is_playchoice10);
-
-        // Auto-detect VS System swapped controller wiring from ROM DB expansion type
-        let vs_controllers_swapped = self.rom_db.has_vs_swapped_controllers(cartridge_crc32);
-        self.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_vs_controllers_swapped_hint(vs_controllers_swapped);
+            .apply_rom_hints(&hints);
 
         // Propagate any hardware-mode change from ROM DB hint to the live PPU
         let is_famicom = self.app_context.borrow().config().nes.hardware_mode
@@ -3257,6 +3196,15 @@ mod tests {
         );
     }
 
+    /// A cartridge the console's ROM database lists with the Famicom four-players adapter.
+    fn famicom_four_players_cartridge(nes: &mut Nes) -> Cartridge {
+        const CRC: u32 = 0x2459_8791;
+        nes.rom_db = RomDb::from_csv_content(&format!("1,Game,,{CRC:08X},,,,,,,,,,,,,,,,,3\n"));
+        let mut cartridge = load_test_cartridge(&create_minimal_rom());
+        cartridge.set_crc32_for_test(CRC);
+        cartridge
+    }
+
     #[test]
     fn test_insert_cartridge_syncs_famicom_four_player_mode_to_bus() {
         use crate::nes::console::{ExpansionPort, HardwareMode};
@@ -3267,14 +3215,10 @@ mod tests {
             Config::default(),
         ));
 
-        // Manually apply the Famicom four-player hint (simulating ROM DB auto-detect)
-        // This updates the config but insert_cartridge must also sync the bus.
-        nes.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_famicom_four_players_hint(true);
+        // The ROM database says this cartridge uses the Famicom four-players adapter.
+        let cartridge = famicom_four_players_cartridge(&mut nes);
+        nes.insert_cartridge(cartridge);
 
-        // Verify config was set correctly
         assert_eq!(
             nes.app_context.borrow().config().nes.hardware_mode,
             HardwareMode::Famicom
@@ -3283,11 +3227,6 @@ mod tests {
             nes.app_context.borrow().config().nes.expansion_port,
             ExpansionPort::FamicomFourPlayers
         );
-
-        // Now insert cartridge — this should sync the bus with the updated config
-        let rom_data = create_minimal_rom();
-        let cartridge = load_test_cartridge(&rom_data);
-        nes.insert_cartridge(cartridge);
 
         // Set player 3's A button (port 3 maps to four_score_extra_button_states[0])
         nes.bus.borrow_mut().set_button(3, Button::A, true);
@@ -3341,14 +3280,8 @@ mod tests {
             "PPU should start without Famicom emphasis in NES mode"
         );
 
-        // Manually set the ROM DB hint so insert_cartridge triggers Famicom auto-detect
-        nes.app_context
-            .borrow_mut()
-            .config_mut()
-            .apply_rom_db_famicom_four_players_hint(true);
-
-        let rom_data = create_minimal_rom();
-        let cartridge = load_test_cartridge(&rom_data);
+        // The ROM database says this cartridge uses the Famicom four-players adapter.
+        let cartridge = famicom_four_players_cartridge(&mut nes);
         nes.insert_cartridge(cartridge);
 
         // After insert_cartridge, the PPU emphasis should now reflect Famicom mode
