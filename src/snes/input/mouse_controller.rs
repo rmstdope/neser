@@ -185,17 +185,30 @@ impl SnesController for MouseController {
     }
 
     fn capture_state(&self) -> SnesControllerState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            speed,
+            left_button,
+            right_button,
+            accum_dx,
+            accum_dy,
+            report_dx,
+            report_dy,
+            packet: _, // derived: rebuilt by build_packet on restore
+            shift_index,
+            strobe,
+        } = self;
         SnesControllerState {
             pressed: 0,
-            shift: self.shift_index,
-            strobe: self.strobe,
-            mouse_speed: self.speed,
-            mouse_left_button: self.left_button,
-            mouse_right_button: self.right_button,
-            mouse_accum_dx: self.accum_dx,
-            mouse_accum_dy: self.accum_dy,
-            mouse_report_dx: self.report_dx,
-            mouse_report_dy: self.report_dy,
+            shift: shift_index,
+            strobe,
+            mouse_speed: speed,
+            mouse_left_button: left_button,
+            mouse_right_button: right_button,
+            mouse_accum_dx: accum_dx,
+            mouse_accum_dy: accum_dy,
+            mouse_report_dx: report_dx,
+            mouse_report_dy: report_dy,
             superscope_x: 0,
             superscope_y: 0,
             superscope_trigger: false,

@@ -121,6 +121,10 @@ pub struct SnesApuState {
     pub resample_phase: f32,
     #[serde(default = "default_pending_samples")]
     pub pending_samples: Vec<(f32, f32)>,
+    /// Whether the SPC700 has deadlocked on the glitchy internal-speed divider.
+    /// Absent from older states, which were all saved running.
+    #[serde(default)]
+    pub spc_frozen: bool,
 }
 
 /// SNES APU bootstrap model: SPC700 + ARAM + IPL overlay + communication ports.
@@ -380,37 +384,89 @@ impl SnesApu {
     }
 
     pub fn capture_state(&self) -> SnesApuState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref spc700,
+            ref aram,
+            ipl: _, // transient: IPL ROM image, not machine state
+            main_to_spc_ports,
+            main_to_spc_latch,
+            pending_main_port_update,
+            aux_regs,
+            spc_to_main_ports,
+            control,
+            test,
+            spc_frozen,
+            ref timers,
+            spc_cycle_budget,
+            spc_per_master_den: _, // derived: retuned from the saved video region before restore
+            #[cfg(test)]
+                spc_cycles_executed: _, // transient: test-only counter
+            ref dsp,
+            dsp_addr,
+            sample_acc,
+            cycles_per_sample,
+            native_sample_acc,
+            native_cycles_per_sample,
+            native_samples: _, // transient: resampler input, cleared on restore
+            resample_phase,
+            ref pending_samples,
+        } = self;
         SnesApuState {
-            aram: self.aram.to_vec(),
-            main_to_spc_ports: self.main_to_spc_ports,
-            main_to_spc_latch: self.main_to_spc_latch,
-            pending_main_port_update: self.pending_main_port_update,
-            aux_regs: Some(self.aux_regs),
-            spc_to_main_ports: self.spc_to_main_ports,
-            control: self.control,
-            test: self.test,
-            spc_cycle_budget: self.spc_cycle_budget,
-            timers: self.timers.clone(),
-            dsp: self.dsp.clone(),
-            dsp_addr: self.dsp_addr,
-            spc700: self.spc700.capture_state(),
-            sample_acc: self.sample_acc,
-            cycles_per_sample: self.cycles_per_sample,
-            native_sample_acc: self.native_sample_acc,
-            native_cycles_per_sample: self.native_cycles_per_sample,
-            resample_phase: self.resample_phase,
-            pending_samples: self.pending_samples.iter().copied().collect(),
+            aram: aram.to_vec(),
+            main_to_spc_ports,
+            main_to_spc_latch,
+            pending_main_port_update,
+            aux_regs: Some(aux_regs),
+            spc_to_main_ports,
+            control,
+            test,
+            spc_cycle_budget,
+            timers: timers.clone(),
+            dsp: dsp.clone(),
+            dsp_addr,
+            spc700: spc700.capture_state(),
+            sample_acc,
+            cycles_per_sample,
+            native_sample_acc,
+            native_cycles_per_sample,
+            resample_phase,
+            pending_samples: pending_samples.iter().copied().collect(),
+            spc_frozen,
         }
     }
 
     pub fn restore_state(&mut self, state: &SnesApuState) -> Result<(), String> {
-        if !state.aram.is_empty() && state.aram.len() != ARAM_SIZE {
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &SnesApuState {
+            ref aram,
+            main_to_spc_ports,
+            main_to_spc_latch,
+            pending_main_port_update,
+            aux_regs,
+            spc_to_main_ports,
+            control,
+            test,
+            spc_cycle_budget,
+            ref timers,
+            ref dsp,
+            dsp_addr,
+            ref spc700,
+            sample_acc,
+            cycles_per_sample,
+            native_sample_acc,
+            native_cycles_per_sample,
+            resample_phase,
+            ref pending_samples,
+            spc_frozen,
+        } = state;
+        if !aram.is_empty() && aram.len() != ARAM_SIZE {
             return Err(format!(
                 "APU ARAM size mismatch (expected {ARAM_SIZE}, found {})",
-                state.aram.len()
+                aram.len()
             ));
         }
-        if state.aram.is_empty() {
+        if aram.is_empty() {
             // Backward-compat: older save-states didn't include APU ARAM/control.
             self.aram = [0; ARAM_SIZE];
             self.aram[0x00F8] = 0x00;
@@ -437,36 +493,34 @@ impl SnesApu {
             return Ok(());
         }
 
-        if state.aram.len() == ARAM_SIZE {
-            self.aram.copy_from_slice(&state.aram);
+        if aram.len() == ARAM_SIZE {
+            self.aram.copy_from_slice(aram);
         }
-        let mut normalized_dsp = state.dsp.clone();
+        let mut normalized_dsp = dsp.clone();
         normalized_dsp.normalize_after_restore()?;
-        let restored_dsp_addr = state.dsp_addr;
+        let restored_dsp_addr = dsp_addr;
 
-        self.main_to_spc_ports = state.main_to_spc_ports;
+        self.main_to_spc_ports = main_to_spc_ports;
         // Backward-compat: save-states predating the CPU write latch default
         // it to zeros. In the current format a zero latch alongside nonzero
         // visible ports can only occur with an update pending, so a
         // no-pending mismatch identifies a legacy state; seed the latch from
         // the visible values.
-        self.main_to_spc_latch = if !state.pending_main_port_update
-            && state.main_to_spc_latch == [0; 4]
-            && state.main_to_spc_ports != [0; 4]
+        self.main_to_spc_latch = if !pending_main_port_update
+            && main_to_spc_latch == [0; 4]
+            && main_to_spc_ports != [0; 4]
         {
-            state.main_to_spc_ports
+            main_to_spc_ports
         } else {
-            state.main_to_spc_latch
+            main_to_spc_latch
         };
-        self.pending_main_port_update = state.pending_main_port_update;
-        self.aux_regs = state
-            .aux_regs
-            .unwrap_or([self.aram[0x00F8], self.aram[0x00F9]]);
-        self.spc_to_main_ports = state.spc_to_main_ports;
-        self.control = state.control;
-        self.test = state.test;
-        self.spc_cycle_budget = state.spc_cycle_budget;
-        self.timers = state.timers.clone();
+        self.pending_main_port_update = pending_main_port_update;
+        self.aux_regs = aux_regs.unwrap_or([self.aram[0x00F8], self.aram[0x00F9]]);
+        self.spc_to_main_ports = spc_to_main_ports;
+        self.control = control;
+        self.test = test;
+        self.spc_cycle_budget = spc_cycle_budget;
+        self.timers = timers.clone();
         // Older save-states predate the serialized timer global gate; always
         // re-derive it from the restored TEST value (without running the
         // edge detector, so no tick is injected by the restore itself).
@@ -474,22 +528,22 @@ impl SnesApu {
             .restore_global_enabled(test_reg_allows_timers(self.test));
         self.dsp = normalized_dsp;
         self.dsp_addr = restored_dsp_addr;
-        self.sample_acc = sanitize_non_negative_f32(state.sample_acc);
-        self.cycles_per_sample = sanitize_non_negative_f32(state.cycles_per_sample);
-        self.native_sample_acc = sanitize_non_negative_f32(state.native_sample_acc);
+        self.sample_acc = sanitize_non_negative_f32(sample_acc);
+        self.cycles_per_sample = sanitize_non_negative_f32(cycles_per_sample);
+        self.native_sample_acc = sanitize_non_negative_f32(native_sample_acc);
         self.native_cycles_per_sample = sanitize_positive_f32(
-            state.native_cycles_per_sample,
+            native_cycles_per_sample,
             self.spc_per_master_den as f32 / NATIVE_AUDIO_SAMPLE_RATE_HZ,
         );
-        self.resample_phase = sanitize_non_negative_f32(state.resample_phase);
+        self.resample_phase = sanitize_non_negative_f32(resample_phase);
         self.native_samples.clear();
-        self.pending_samples = state
-            .pending_samples
+        self.pending_samples = pending_samples
             .iter()
             .copied()
             .take(MAX_PENDING_SAMPLES)
             .collect();
-        self.spc700.restore_state(&state.spc700);
+        self.spc700.restore_state(spc700);
+        self.spc_frozen = spc_frozen;
         Ok(())
     }
 
@@ -1601,6 +1655,33 @@ mod tests {
         assert!(
             apu.spc_frozen_for_test(),
             "an internal access at internal speed 2 must freeze the SPC700"
+        );
+    }
+
+    #[test]
+    fn save_state_round_trips_the_spc_freeze() {
+        let mut frozen = SnesApu::new(None);
+        frozen.write_spc_memory_for_test(0x00F0, 0x8A);
+        frozen.write_spc_memory_for_test(0x00F0, 0x0A);
+        assert!(frozen.spc_frozen_for_test());
+        let frozen_state = frozen.capture_state();
+        let running_state = SnesApu::new(None).capture_state();
+
+        let mut restored = SnesApu::new(None);
+        restored
+            .restore_state(&frozen_state)
+            .expect("restore frozen state");
+        assert!(
+            restored.spc_frozen_for_test(),
+            "a state saved after the speed-2 deadlock must restore frozen"
+        );
+
+        restored
+            .restore_state(&running_state)
+            .expect("restore running state");
+        assert!(
+            !restored.spc_frozen_for_test(),
+            "a state saved before the deadlock must restore running"
         );
     }
 

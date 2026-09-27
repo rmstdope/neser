@@ -199,7 +199,12 @@ impl Sdd1 {
     }
 
     pub fn capture_state(&self) -> Sdd1State {
-        self.state.clone()
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let Self {
+            rom: _, // transient: the cartridge ROM
+            state,
+        } = self;
+        state.clone()
     }
 
     pub fn restore_state(&mut self, state: &Sdd1State) {

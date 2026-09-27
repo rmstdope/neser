@@ -88,11 +88,15 @@ impl Sa1Arithmetic {
     /// Restores the raw register state captured by [`Self::raw`]. Bits of `control` outside
     /// MCNT's two mode bits are dropped, as a `$2250` write would drop them.
     pub(crate) fn restore_raw(&mut self, control: u8, ma: u16, mb: u16, mr: u64, overflow: bool) {
-        self.control = control & (MCNT_DIVIDE | MCNT_SUM);
-        self.ma = ma;
-        self.mb = mb;
-        self.mr = mr & MR_MASK;
-        self.overflow = overflow;
+        // A whole-struct literal names every field, so a new one fails to build until it is
+        // saved or marked transient.
+        *self = Self {
+            control: control & (MCNT_DIVIDE | MCNT_SUM),
+            ma,
+            mb,
+            mr: mr & MR_MASK,
+            overflow,
+        };
     }
 
     fn execute(&mut self) {

@@ -104,15 +104,21 @@ impl SnesController for Multitap {
     }
 
     fn capture_multitap_state(&self) -> Option<MultitapState> {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref players,
+            select_high,
+            strobe_high,
+        } = self;
         Some(MultitapState {
             players: [
-                self.players[0].capture_state(),
-                self.players[1].capture_state(),
-                self.players[2].capture_state(),
-                self.players[3].capture_state(),
+                players[0].capture_state(),
+                players[1].capture_state(),
+                players[2].capture_state(),
+                players[3].capture_state(),
             ],
-            select_high: self.select_high,
-            strobe_high: self.strobe_high,
+            select_high,
+            strobe_high,
         })
     }
 
