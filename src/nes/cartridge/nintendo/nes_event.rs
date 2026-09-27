@@ -322,6 +322,7 @@ mod tests {
 
         write_mmc1_register(mapper.as_mut(), 0xE000, 0b10000);
         assert_eq!(mapper.read_prg_open_bus(0x6000, OPEN_BUS), OPEN_BUS);
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, OPEN_BUS), OPEN_BUS);
         mapper.write_prg(0x6000, 0x99);
 
         write_mmc1_register(mapper.as_mut(), 0xE000, 0b00000);
@@ -336,7 +337,13 @@ mod tests {
     fn nes_event_prg_ram_stays_enabled_after_reset() {
         // Reset forces the timer bit again; the RAM must still answer.
         let mut mapper = nes_event_board();
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
         mapper.reset();
+        assert_eq!(
+            mapper.registers_snapshot()[2] & 0x10,
+            0x10,
+            "reset re-forces the timer bit"
+        );
         assert_prg_ram_read_write(mapper.as_mut(), 0x55, "after reset");
     }
 
