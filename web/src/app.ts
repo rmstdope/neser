@@ -74,10 +74,13 @@ import {
     type ClickCaptureSession,
 } from "./input/super_scope";
 import { activeCaptureSession, createSnesMouseSession } from "./input/snes_mouse";
-import { computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./display/canvas_size";
 import {
-    findNextVisibleZoomHeight,
-} from "./display/zoom_controls";
+    assignBackingStoreSize,
+    computeFullscreenCanvasSize,
+    computeWindowedCanvasSize,
+    computeHandheldCanvasSize,
+} from "./display/canvas_size";
+import { probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
 import {
     browserStorage,
@@ -3358,8 +3361,7 @@ let currentHeight = INITIAL_HEIGHT;
 function applyCanvasSize(size: { cssWidth: string; cssHeight: string; pixelWidth: number; pixelHeight: number }) {
     canvas.style.width = size.cssWidth;
     canvas.style.height = size.cssHeight;
-    canvas.width = size.pixelWidth;
-    canvas.height = size.pixelHeight;
+    assignBackingStoreSize(canvas, size.pixelWidth, size.pixelHeight);
 }
 
 function updateCanvasSize(newHeight: number) {
@@ -3417,25 +3419,9 @@ function updateShortcutHelpScale() {
     shortcutHelpOverlay.style.fontSize = `${fontSizePx}px`;
 }
 
-function measureDisplayHeightAt(height: number) {
-    updateCanvasSize(height);
-    return canvas.clientHeight;
-}
-
-function probeNextVisibleZoomHeight(direction: "in" | "out") {
-    const startHeight = currentHeight;
-    const nextHeight = findNextVisibleZoomHeight({
-        direction,
-        currentHeight: startHeight,
-        step: SCALE_STEP,
-        measureDisplayHeight: measureDisplayHeightAt,
-    });
-
-    if (nextHeight === null) {
-        updateCanvasSize(startHeight);
-    }
-
-    return nextHeight;
+/** The windowed CSS width a zoom height would get; probes set only this, never the backing store. */
+function windowedCssWidthFor(height: number) {
+    return computeWindowedCanvasSize(height, NES_ASPECT_RATIO, window.devicePixelRatio || 1).cssWidth;
 }
 
 /** Returns the element currently used as the fullscreen root (may be screenWrap or documentElement on handheld). */
@@ -3455,11 +3441,15 @@ function updateZoomButtonState() {
         return;
     }
 
-    const startHeight = currentHeight;
-    const canZoomOut = probeNextVisibleZoomHeight("out") !== null;
-    updateCanvasSize(startHeight);
-    const canZoomIn = probeNextVisibleZoomHeight("in") !== null;
-    updateCanvasSize(startHeight);
+    // The windowed size at the current height, which the probes measure from and leave in place.
+    // It costs no reallocation when the canvas already has it, the usual case.
+    updateCanvasSize(currentHeight);
+    const { canZoomIn, canZoomOut } = probeZoomAvailability({
+        canvas,
+        currentHeight,
+        step: SCALE_STEP,
+        cssWidthFor: windowedCssWidthFor,
+    });
 
     screenMinusBtn.disabled = !canZoomOut;
     screenPlusBtn.disabled = !canZoomIn;
@@ -3471,10 +3461,14 @@ function applyZoom(direction: "in" | "out") {
         return;
     }
 
-    const startHeight = currentHeight;
-    const nextHeight = probeNextVisibleZoomHeight(direction);
+    const nextHeight = probeNextZoomHeight({
+        canvas,
+        direction,
+        currentHeight,
+        step: SCALE_STEP,
+        cssWidthFor: windowedCssWidthFor,
+    });
     if (nextHeight === null) {
-        updateCanvasSize(startHeight);
         updateZoomButtonState();
         return;
     }
