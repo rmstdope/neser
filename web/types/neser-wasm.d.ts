@@ -25,6 +25,7 @@ declare module "*/pkg/neser" {
         free(): void;
         [Symbol.dispose](): void;
         drain_toasts(): unknown[];
+        /** F8 and the Palette button: the corner message for the page to show. */
         cycle_palette(): string;
         palette_label(): string;
         frame_rate_hz(): number;
@@ -102,11 +103,13 @@ declare module "*/pkg/neser" {
         free(): void;
         [Symbol.dispose](): void;
         /**
-         * F8: next palette's name for an original Game Boy game, or the colour-correction
-         * message in a Game Boy Color game; "" when no game runs.
+         * F8 and the Palette button: the corner message for the page to show (the new
+         * palette, or the colour correction in a Game Boy Color game); "" when nothing changed.
          */
         cycle_palette(): string;
         palette_label(): string;
+        /** The Colors button's label: the colour correction's state in its corner message's words. */
+        color_label(): string;
         /** Whether Game Boy Color LCD colour correction is on (F8 or the Colors button). */
         cgb_color_correction(): boolean;
         drain_toasts(): unknown[];
@@ -138,6 +141,12 @@ declare module "*/pkg/neser" {
     export class WasmGba {
         free(): void;
         [Symbol.dispose](): void;
+        /** F8 and the Colors button: switch the colour correction; the corner message for the page to show. */
+        cycle_palette(): string;
+        /** The Colors button's label: the colour correction's state in its corner message's words. */
+        color_label(): string;
+        color_correction(): boolean;
+        set_color_correction(enabled: boolean): void;
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
@@ -161,6 +170,8 @@ declare module "*/pkg/neser" {
     export class WasmSnes {
         free(): void;
         [Symbol.dispose](): void;
+        /** F8: the corner message for the page to show; "" while F8 changes nothing here. */
+        cycle_palette(): string;
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;

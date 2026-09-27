@@ -1,30 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-    cgbColorButtonLabel,
-    cgbColorButtonVisible,
-    cgbColorToastMessage,
-    createCgbColorControl
-} from "./cgb_color_correction";
-
-describe("cgbColorButtonLabel", () => {
-    it("names the raw state when correction is off", () => {
-        expect(cgbColorButtonLabel(false)).toBe("Colors: Raw");
-    });
-
-    it("names the GBC screen state when correction is on", () => {
-        expect(cgbColorButtonLabel(true)).toBe("Colors: GBC screen");
-    });
-});
-
-describe("cgbColorToastMessage", () => {
-    it("shows the GBC screen message when correction is switched on", () => {
-        expect(cgbColorToastMessage(true)).toBe("Colors: GBC screen");
-    });
-
-    it("shows the raw message when correction is switched off", () => {
-        expect(cgbColorToastMessage(false)).toBe("Colors: Raw");
-    });
-});
+import { cgbColorButtonVisible, createCgbColorControl } from "./cgb_color_correction";
 
 describe("cgbColorButtonVisible", () => {
     it("is shown while a colour Game Boy game is running", () => {
@@ -71,10 +46,11 @@ describe("createCgbColorControl", () => {
             set_cgb_color_correction: (enabled: boolean) => {
                 coreState = enabled;
             },
-            cgb_color_correction: () => coreState
+            cgb_color_correction: () => coreState,
+            color_label: () => (coreState ? "core:on" : "core:off")
         };
         const control = createCgbColorControl({
-            refreshButton: () => events.push(`button:${cgbColorButtonLabel(control.enabled())}`),
+            refreshButton: () => events.push(`button:${core.color_label()}`),
             showMessage: (message) => events.push(`message:${message}`)
         });
         return { control, core, events, setCore: (enabled: boolean) => (coreState = enabled) };
@@ -84,35 +60,30 @@ describe("createCgbColorControl", () => {
         expect(setup().control.enabled()).toBe(false);
     });
 
-    it("a button click switches the running game, relabels and shows the message", () => {
+    it("a button click switches the running game, relabels and shows the core's words", () => {
         const { control, core, events } = setup();
         control.click(core);
         expect(core.cgb_color_correction()).toBe(true);
-        expect(events).toEqual(["button:Colors: GBC screen", "message:Colors: GBC screen"]);
+        expect(control.enabled()).toBe(true);
+        expect(events).toEqual(["button:core:on", "message:core:on"]);
         control.click(core);
         expect(core.cgb_color_correction()).toBe(false);
-        expect(events.slice(2)).toEqual(["button:Colors: Raw", "message:Colors: Raw"]);
+        expect(events.slice(2)).toEqual(["button:core:off", "message:core:off"]);
     });
 
-    it("a button click without a Game Boy game still switches the page's state", () => {
-        const { control } = setup();
-        control.click(null);
-        expect(control.enabled()).toBe(true);
-    });
-
-    it("after F8 it follows the game's state and relabels, leaving the message to F8", () => {
+    it("follows the game's state without a message, so F8's choice carries to the next game", () => {
         const { control, core, events, setCore } = setup();
         setCore(true);
-        control.afterF8(core);
+        control.follow(core);
         expect(control.enabled()).toBe(true);
-        expect(events).toEqual(["button:Colors: GBC screen"]);
+        expect(events).toEqual([]);
     });
 
-    it("a click after F8 switches from the state F8 chose", () => {
+    it("a click switches from the game's state, even one F8 changed", () => {
         const { control, core, setCore } = setup();
         setCore(true);
-        control.afterF8(core);
         control.click(core);
         expect(core.cgb_color_correction()).toBe(false);
+        expect(control.enabled()).toBe(false);
     });
 });

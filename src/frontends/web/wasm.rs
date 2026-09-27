@@ -155,15 +155,11 @@ impl WasmNes {
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
-    /// Cycle to the next preset NES system palette and queue a toast.
-    ///
-    /// Returns the new palette's display name.
+    /// F8 and the Palette button: cycle to the next preset NES system
+    /// palette and return the corner message for the page to show.
     #[wasm_bindgen]
     pub fn cycle_palette(&mut self) -> String {
-        let palette = self.nes.cycle_palette();
-        let message = palette_toast_message(palette);
-        self.pending_toasts.push(message);
-        palette.display_name().to_string()
+        self.nes.f8_action().unwrap_or_default()
     }
 
     /// The palette in use, as the Palette button names it ("Palette: <name>",

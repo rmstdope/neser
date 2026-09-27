@@ -1000,12 +1000,15 @@ fn drained(gb: &mut WasmGb) -> Vec<String> {
 }
 
 #[wasm_bindgen_test]
-fn wasm_gb_cycle_palette_queues_the_toast() {
+fn wasm_gb_cycle_palette_returns_the_toast_for_the_page_to_show() {
     let mut gb = WasmGb::new();
     gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
     drained(&mut gb);
-    assert_eq!(gb.cycle_palette(), "DMG Green");
-    assert_eq!(drained(&mut gb), vec!["Palette: DMG Green".to_string()]);
+    assert_eq!(gb.cycle_palette(), "Palette: DMG Green");
+    assert!(
+        drained(&mut gb).is_empty(),
+        "the page shows what it returned"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -1019,8 +1022,8 @@ fn wasm_gb_cycle_palette_on_game_boy_color_hardware_cycles_the_gbc_palette() {
         .hardware = Some(crate::gb::model::GbHardware::Cgb);
     gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
     drained(&mut gb);
-    assert_eq!(gb.cycle_palette(), "Brown");
-    assert_eq!(drained(&mut gb), vec!["Palette: Brown".to_string()]);
+    assert_eq!(gb.cycle_palette(), "Palette: Brown");
+    assert!(drained(&mut gb).is_empty());
 }
 
 #[wasm_bindgen_test]
@@ -1033,12 +1036,13 @@ fn wasm_gb_cycle_palette_in_a_colour_game_switches_color_correction() {
 
     assert_eq!(gb.cycle_palette(), "Colors: GBC screen");
     assert!(gb.cgb_color_correction());
-    assert_eq!(drained(&mut gb), vec!["Colors: GBC screen".to_string()]);
+    assert_eq!(gb.color_label(), "Colors: GBC screen");
     assert_ne!(gb.render_frame_rgba(), raw, "picture changes at once");
 
     assert_eq!(gb.cycle_palette(), "Colors: Raw");
     assert!(!gb.cgb_color_correction());
-    assert_eq!(drained(&mut gb), vec!["Colors: Raw".to_string()]);
+    assert_eq!(gb.color_label(), "Colors: Raw");
+    assert!(drained(&mut gb).is_empty());
     assert_eq!(gb.render_frame_rgba(), raw);
 }
 
@@ -1082,7 +1086,7 @@ fn wasm_gb_lcd_filter_starts_dmg_green_and_reports_its_colours() {
         vec![br, bg, bb, 0xFF, fr, fg, fb, 0xFF]
     );
     gb.set_lcd_filter_active(false);
-    assert_eq!(gb.cycle_palette(), "Pocket");
+    assert_eq!(gb.cycle_palette(), "Palette: Pocket");
 }
 
 #[wasm_bindgen_test]
@@ -1204,14 +1208,15 @@ fn wasm_gba_cycle_palette_switches_color_correction_with_toast() {
 
     assert_eq!(gba.cycle_palette(), "Colors: GBA screen");
     assert!(gba.color_correction());
-    assert_eq!(
-        drained_gba(&mut gba),
-        vec!["Colors: GBA screen".to_string()]
-    );
+    assert_eq!(gba.color_label(), "Colors: GBA screen");
 
     assert_eq!(gba.cycle_palette(), "Colors: Raw");
     assert!(!gba.color_correction());
-    assert_eq!(drained_gba(&mut gba), vec!["Colors: Raw".to_string()]);
+    assert_eq!(gba.color_label(), "Colors: Raw");
+    assert!(
+        drained_gba(&mut gba).is_empty(),
+        "the page shows what it returned"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -1939,8 +1944,18 @@ fn wasm_nes_palette_label_follows_cycle_palette() {
     let mut nes = WasmNes::new();
     nes.load_rom(&minimal_nrom(), "test.nes").unwrap();
     assert_eq!(nes.palette_label(), "Palette: Default");
-    nes.cycle_palette();
+    assert_eq!(nes.cycle_palette(), "Palette: NesDev");
     assert_eq!(nes.palette_label(), "Palette: NesDev");
+    assert!(
+        nes.drain_toasts().is_empty(),
+        "the page shows what it returned"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_snes_cycle_palette_changes_nothing() {
+    let mut snes = WasmSnes::new();
+    assert_eq!(snes.cycle_palette(), "");
 }
 
 #[wasm_bindgen_test]

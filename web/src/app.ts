@@ -102,8 +102,7 @@ import {
 } from "./input/pointer_lock";
 import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
-import { cgbColorButtonLabel, cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
-import { gbaColorButtonLabel } from "./display/gba_color_correction";
+import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
 import { paletteButtonVisible } from "./display/palette_button";
 import { selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
@@ -809,8 +808,17 @@ const cgbColor = createCgbColorControl({
 let gbaColorCorrection = false;
 const cgbColorToggleBtn = document.getElementById("cgb-color-toggle") as HTMLButtonElement | null;
 
-/** Show the Colors button only while a colour Game Boy or a Game Boy Advance game is running (not paused). */
+/**
+ * Show the Colors button only while a colour Game Boy or a Game Boy Advance game is running (not paused),
+ * labelled in the core's words. It also remembers the running game's choice (F8 may have changed it) so the
+ * next game starts from it.
+ */
 function updateCgbColorButton() {
+    if (emulator?.kind === "gb") {
+        cgbColor.follow(emulator.inst);
+    } else if (emulator?.kind === "gba") {
+        gbaColorCorrection = emulator.inst.color_correction();
+    }
     if (!cgbColorToggleBtn) return;
     const visible = cgbColorButtonVisible({
         kind: emulator?.kind ?? null,
@@ -819,25 +827,15 @@ function updateCgbColorButton() {
         paused,
     });
     cgbColorToggleBtn.style.display = visible ? "" : "none";
-    cgbColorToggleBtn.textContent =
-        emulator?.kind === "gba" ? gbaColorButtonLabel(gbaColorCorrection) : cgbColorButtonLabel(cgbColor.enabled());
-}
-
-/** F8 and the Colors button in a Game Boy Advance game: switch, relabel, show the corner message. */
-function toggleGbaColorCorrection() {
-    if (emulator?.kind !== "gba") return;
-    emulator.inst.cycle_palette();
-    gbaColorCorrection = emulator.inst.color_correction();
-    drainNesToasts(emulator.inst, toastOverlay);
-    updateCgbColorButton();
+    if (emulator?.kind === "gb" || emulator?.kind === "gba") cgbColorToggleBtn.textContent = emulator.inst.color_label();
 }
 
 cgbColorToggleBtn?.addEventListener("click", () => {
     if (emulator?.kind === "gba") {
-        toggleGbaColorCorrection();
-        return;
+        cyclePaletteAction();
+    } else if (emulator?.kind === "gb") {
+        cgbColor.click(emulator.inst);
     }
-    cgbColor.click(emulator?.kind === "gb" ? emulator.inst : null);
 });
 
 /** The Palette button does what F8 does and names the palette in use. */
@@ -2113,22 +2111,18 @@ function debuggerStepInto() {
     showDebuggerPanel();
 }
 
+/**
+ * F8, the Palette button, and the Colors button in a Game Boy Advance game: the running core decides what
+ * that means and returns the corner message ("" when nothing changed). The Game Boy filter sync is a no-op
+ * unless an original Game Boy game's palette changed.
+ */
 function cyclePaletteAction() {
-    if (nes) {
-        nes.cycle_palette();
-        drainNesToasts(nes, toastOverlay);
-    } else if (emulator?.kind === "gb") {
-        // Empty when no game runs: nothing changes, no toast. In a Game Boy
-        // Color game F8 switches the colour correction the Colors button shows;
-        // the filter sync then re-applies the filter's classic colours, a
-        // deliberate no-op, since only an original Game Boy game's palette
-        // changes the filter.
-        if (emulator.inst.cycle_palette() !== "") syncGbPaletteWithFilter(false);
-        drainNesToasts(emulator.inst, toastOverlay);
-        cgbColor.afterF8(emulator.inst);
-    } else if (emulator?.kind === "gba") {
-        toggleGbaColorCorrection();
+    const message = emulator?.inst.cycle_palette() ?? "";
+    if (message !== "") {
+        toastOverlay.show(message);
+        syncGbPaletteWithFilter(false);
     }
+    updateCgbColorButton();
     updatePaletteButton();
 }
 

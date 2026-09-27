@@ -195,6 +195,13 @@ impl WasmSnes {
         }
     }
 
+    /// F8: whatever F8 does in the running game, returning the corner
+    /// message for the page to show; `""` while F8 changes nothing here.
+    #[wasm_bindgen]
+    pub fn cycle_palette(&mut self) -> String {
+        self.snes.f8_action().unwrap_or_default()
+    }
+
     /// Drain any pending toast messages.
     #[wasm_bindgen]
     pub fn drain_toasts(&mut self) -> Vec<JsValue> {
