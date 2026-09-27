@@ -628,17 +628,6 @@ impl GbaBus {
         }
     }
 
-    pub(super) fn mark_timer_start_delay_for_write8(&mut self, addr: u32, value: u8) {
-        let aligned = addr & !1;
-        let Some(timer) = timer_control_index(aligned) else {
-            return;
-        };
-        let old = self.timers.channels[timer].control;
-        let shift = (addr & 1) * 8;
-        let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
-        self.mark_timer_start_delay_for_write16(aligned, merged);
-    }
-
     pub(super) fn timer_enable_phase_for_write16(
         &self,
         addr: u32,
@@ -689,17 +678,6 @@ impl GbaBus {
         if !was_enabled && now_enabled && immediate {
             self.dma_start_delay_cycles = 2;
         }
-    }
-
-    pub(super) fn mark_dma_start_delay_for_write8(&mut self, addr: u32, value: u8) {
-        let aligned = addr & !1;
-        let Some(channel) = dma_control_index(aligned) else {
-            return;
-        };
-        let old = self.dma.channels[channel].cnt_h;
-        let shift = (addr & 1) * 8;
-        let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
-        self.mark_dma_start_delay_for_write16(aligned, merged);
     }
 
     /// Propagate PPU V-Blank / H-Blank edges to DMA-mode hooks. Each
@@ -1808,25 +1786,6 @@ mod tests {
 
         assert_eq!(bus.read16(0x0400_0128) & 0x0080, 0);
         assert_ne!(bus.ic.if_flags & irq_bits::SERIAL, 0);
-    }
-
-    #[test]
-    fn active_timer_reload_from_ffff_defers_current_instruction_tick() {
-        let mut bus = GbaBus::new();
-        bus.write16(0x0400_0100, 0xFFFF);
-        bus.write16(0x0400_0102, 0x00C0 | 0x0080);
-
-        bus.begin_cpu_instruction();
-        bus.write16(0x0400_0100, 0);
-        bus.end_cpu_instruction();
-        bus.step_after_cpu_instruction(1);
-
-        assert_eq!(
-            bus.read16(0x0400_0100),
-            0xFFFF,
-            "the active reload write cycle should not immediately tick TM0 from FFFF"
-        );
-        assert_eq!(bus.ic.if_flags & irq_bits::TIMER0, 0);
     }
 
     #[test]

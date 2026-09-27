@@ -1,9 +1,9 @@
 use super::addressing::{
     dma_addr_uses_gamepak, gamepak_nonseq_wait_is_slowest, gamepak_second_access_fast,
-    open_bus_no_cart_byte, open_bus_no_cart_halfword, open_bus_no_cart_word, timer_control_index,
-    vram_offset,
+    open_bus_no_cart_byte, open_bus_no_cart_halfword, open_bus_no_cart_word, vram_offset,
 };
 use super::gba_bus::{GbaBus, emit_gba_bus_trace_line};
+use super::io_write::IoWidth;
 use super::memory::{
     EWRAM_SIZE, IWRAM_SIZE, OAM_SIZE, PRAM_SIZE, read_le_u16, read_le_u32, write_le_u16,
     write_le_u32,
@@ -268,67 +268,11 @@ impl Bus for GbaBus {
         if region != 0x4 {
             self.last_bus_value = value;
         }
-        let touches_io = region == 0x4;
         match region {
             0x0 | 0x1 => { /* BIOS is read-only */ }
             0x2 => write_le_u32(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u32(&mut self.iwram, aligned as usize, value),
-            0x4 => {
-                if self.write_mgba_debug32(aligned, value) {
-                    return;
-                }
-                // FIFO A and B need full 32-bit word writes.
-                if aligned == 0x0400_00A0 {
-                    self.apu.write_fifo_a_word(value);
-                } else if aligned == 0x0400_00A4 {
-                    self.apu.write_fifo_b_word(value);
-                } else if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
-                    self.apu.write16(aligned, value as u16);
-                    // Only write the upper halfword if it is also within range.
-                    if aligned + 2 <= 0x0400_00A6 {
-                        self.apu.write16(aligned + 2, (value >> 16) as u16);
-                    }
-                } else {
-                    // Intercept HALTCNT: write32 to 0x04000300 covers POSTFLG (byte 0),
-                    // HALTCNT (byte 1), and two unused bytes.
-                    if aligned == 0x0400_0300 {
-                        let haltcnt_byte = ((value >> 8) & 0xFF) as u8;
-                        if haltcnt_byte & 0x80 == 0 {
-                            self.halt_requested = true;
-                        }
-                    }
-                    let high = (value >> 16) as u16;
-                    let timer_enable_phase = self.timer_enable_phase_for_write16(aligned + 2, high);
-                    self.defer_active_timer_reload_write_cycle(aligned);
-                    self.prestep_timer_disable_for_write16(aligned + 2, high);
-                    self.mark_timer_start_delay_for_write16(aligned + 2, high);
-                    self.mark_dma_start_delay_for_write16(aligned + 2, (value >> 16) as u16);
-                    self.io.write32(
-                        aligned,
-                        value,
-                        &mut self.ic,
-                        &mut self.timers,
-                        &mut self.dma,
-                        &mut self.ppu,
-                        &mut self.keypad,
-                    );
-                    if let Some((timer, phase)) = timer_enable_phase {
-                        self.timers.align_prescaler_phase(timer, phase);
-                    }
-                    // WAITCNT is at 0x0400_0204; a 32-bit write spans 0x204-0x207.
-                    if aligned == 0x0400_0204 {
-                        self.waitstates.recalculate(value as u16);
-                    }
-                    // SIOCNT is at 0x0400_0128 (low halfword of a 32-bit write).
-                    if aligned == 0x0400_0128 {
-                        self.write_siocnt(value as u16);
-                    }
-                    // RCNT is at 0x0400_0134 (low halfword of a 32-bit write).
-                    if aligned == 0x0400_0134 {
-                        self.sio.write_rcnt(value as u16);
-                    }
-                }
-            }
+            0x4 => self.write_io(aligned, value, IoWidth::Word),
             0x5 => write_le_u32(&mut self.pram, aligned as usize, value),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -344,9 +288,6 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
-        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
-            self.run_pending_dma();
-        }
     }
 
     fn write16(&mut self, addr: u32, value: u16) {
@@ -357,55 +298,11 @@ impl Bus for GbaBus {
             self.last_bus_value =
                 (self.last_bus_value & !(0xFFFFu32 << shift)) | ((value as u32) << shift);
         }
-        let touches_io = region == 0x4;
         match region {
             0x0 | 0x1 => {}
             0x2 => write_le_u16(&mut self.ewram, aligned as usize, value),
             0x3 => write_le_u16(&mut self.iwram, aligned as usize, value),
-            0x4 => {
-                if self.write_mgba_debug16(aligned, value) {
-                    return;
-                }
-                if (0x0400_0060..=0x0400_00A6).contains(&aligned) {
-                    self.apu.write16(aligned, value);
-                } else {
-                    // Intercept HALTCNT: write16 to 0x04000300 covers POSTFLG (low byte)
-                    // and HALTCNT (high byte).
-                    if aligned == 0x0400_0300 {
-                        let haltcnt_byte = (value >> 8) as u8;
-                        if haltcnt_byte & 0x80 == 0 {
-                            self.halt_requested = true;
-                        }
-                    }
-                    let timer_enable_phase = self.timer_enable_phase_for_write16(aligned, value);
-                    self.defer_active_timer_reload_write_cycle(aligned);
-                    self.prestep_timer_disable_for_write16(aligned, value);
-                    self.mark_timer_start_delay_for_write16(aligned, value);
-                    self.mark_dma_start_delay_for_write16(aligned, value);
-                    self.io.write16(
-                        aligned,
-                        value,
-                        &mut self.ic,
-                        &mut self.timers,
-                        &mut self.dma,
-                        &mut self.ppu,
-                        &mut self.keypad,
-                    );
-                    if let Some((timer, phase)) = timer_enable_phase {
-                        self.timers.align_prescaler_phase(timer, phase);
-                    }
-                    self.trace_dma_cnt_h_write(aligned, value);
-                    if aligned == 0x0400_0204 {
-                        self.waitstates.recalculate(value);
-                    }
-                    if aligned == 0x0400_0128 {
-                        self.write_siocnt(value);
-                    }
-                    if aligned == 0x0400_0134 {
-                        self.sio.write_rcnt(value);
-                    }
-                }
-            }
+            0x4 => self.write_io(aligned, value as u32, IoWidth::Half),
             0x5 => write_le_u16(&mut self.pram, aligned as usize, value),
             0x6 => {
                 let off = vram_offset(aligned);
@@ -421,9 +318,6 @@ impl Bus for GbaBus {
             }
             _ => {}
         }
-        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
-            self.run_pending_dma();
-        }
     }
 
     fn write8(&mut self, addr: u32, value: u8) {
@@ -437,62 +331,11 @@ impl Bus for GbaBus {
             self.last_bus_value =
                 (self.last_bus_value & !(0xFFu32 << shift)) | ((value as u32) << shift);
         }
-        let touches_io = region == 0x4;
         match region {
             0x0 | 0x1 => {}
             0x2 => self.ewram[(addr as usize) % EWRAM_SIZE] = value,
             0x3 => self.iwram[(addr as usize) % IWRAM_SIZE] = value,
-            0x4 => {
-                if self.write_mgba_debug8(addr, value) {
-                    return;
-                }
-                if addr == 0x0400_0410 {
-                    self.undoc_0x410 = value;
-                } else if addr == 0x0400_0301 {
-                    // HALTCNT — bit 7 clear = halt mode, bit 7 set = stop mode (deferred).
-                    if value & 0x80 == 0 {
-                        self.halt_requested = true;
-                    }
-                } else if (0x0400_0060..=0x0400_00A7).contains(&addr) {
-                    self.apu.write8(addr, value);
-                } else {
-                    let aligned = addr & !1;
-                    let old =
-                        self.timers.channels[timer_control_index(aligned).unwrap_or(0)].control;
-                    let shift = (addr & 1) * 8;
-                    let merged = (old & !(0xFFu16 << shift)) | ((value as u16) << shift);
-                    let timer_enable_phase = self.timer_enable_phase_for_write16(aligned, merged);
-                    self.prestep_timer_disable_for_write16(aligned, merged);
-                    self.mark_timer_start_delay_for_write8(addr, value);
-                    self.mark_dma_start_delay_for_write8(addr, value);
-                    self.io.write8(
-                        addr,
-                        value,
-                        &mut self.ic,
-                        &mut self.timers,
-                        &mut self.dma,
-                        &mut self.ppu,
-                        &mut self.keypad,
-                    );
-                    if let Some((timer, phase)) = timer_enable_phase {
-                        self.timers.align_prescaler_phase(timer, phase);
-                    }
-                    if aligned == 0x0400_0204 {
-                        self.waitstates
-                            .recalculate(self.io.backing_u16(0x0400_0204));
-                    }
-                    // Byte writes to SIOCNT/RCNT must update the Sio module.
-                    // Merge the written byte into the current register value.
-                    if aligned == 0x0400_0128 {
-                        let merged = self.io.backing_u16(0x0400_0128);
-                        self.write_siocnt(merged);
-                    }
-                    if aligned == 0x0400_0134 {
-                        let merged = self.io.backing_u16(0x0400_0134);
-                        self.sio.write_rcnt(merged);
-                    }
-                }
-            }
+            0x4 => self.write_io(addr, value as u32, IoWidth::Byte),
             0x5 => {
                 // Byte writes to PRAM duplicate the byte to a halfword.
                 let off = (addr as usize & !1) % PRAM_SIZE;
@@ -516,9 +359,6 @@ impl Bus for GbaBus {
             0x8..=0xD => {}
             0xE | 0xF => self.cart_write8(addr, value),
             _ => {}
-        }
-        if touches_io && self.dma.any_pending() && self.dma_start_delay_cycles == 0 {
-            self.run_pending_dma();
         }
     }
 
