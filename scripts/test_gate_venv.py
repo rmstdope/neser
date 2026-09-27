@@ -91,8 +91,9 @@ class SetupVenvTests(_Sandbox):
         recorder = f'#!/usr/bin/env bash\necho "venv-python $*" >> "{self.log}"\n'
         self.fake_tool(
             "python3",
-            'if [[ "$1 $2" == "-m venv" ]]; then mkdir -p "$3/bin"; '
-            f"printf '%s' '{recorder}' > \"$3/bin/python\"; chmod +x \"$3/bin/python\"; fi",
+            'if [[ "$1 $2" == "-m venv" ]]; then dir="${@: -1}"; '
+            'if [[ "$3" == "--clear" ]]; then rm -rf "$dir"; fi; mkdir -p "$dir/bin"; '
+            f"printf '%s' '{recorder}' > \"$dir/bin/python\"; chmod +x \"$dir/bin/python\"; fi",
         )
 
     def test_setup_venv_installs_ci_groups(self) -> None:
@@ -105,7 +106,7 @@ class SetupVenvTests(_Sandbox):
         self.assertEqual(
             self.calls(),
             [
-                "python3 -m venv .venv",
+                "python3 -m venv --clear .venv",
                 "venv-python -m pip install --upgrade pip>=25.1",
                 "venv-python -m pip install --group scripts/pyproject.toml:test --group scripts/pyproject.toml:dev",
             ],
@@ -120,8 +121,22 @@ class SetupVenvTests(_Sandbox):
         result = self.run_script(setup)
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("python3 -m venv .venv", self.calls())
+        self.assertNotIn("python3 -m venv --clear .venv", self.calls())
         self.assertEqual(len(self.calls()), 2)
+
+    def test_setup_venv_rebuilds_venv_whose_interpreter_is_gone(self) -> None:
+        # A Homebrew upgrade that removes the old Python leaves .venv/bin/python dangling.
+        # `python -m venv` without --clear keeps the dangling link, so pip then cannot start.
+        setup = self.copy_script(SETUP)
+        self._fake_python3()
+        (self.repo / ".venv/bin").mkdir(parents=True)
+        (self.repo / ".venv/bin/python").symlink_to("/nonexistent/python3.13")
+
+        result = self.run_script(setup)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls()[0], "python3 -m venv --clear .venv")
+        self.assertEqual(len(self.calls()), 3)
 
 
 class DeclarationTests(unittest.TestCase):

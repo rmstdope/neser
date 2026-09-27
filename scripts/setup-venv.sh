@@ -11,8 +11,11 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# A .venv whose interpreter is gone (a Homebrew upgrade removed the old Python) fails -x through
+# its dangling link, and `venv` without --clear would keep that link. Such a venv is unusable, so
+# rebuilding it from nothing loses nothing.
 if [[ ! -x .venv/bin/python ]]; then
-  "${PYTHON:-python3}" -m venv .venv
+  "${PYTHON:-python3}" -m venv --clear .venv
 fi
 .venv/bin/python -m pip install --upgrade "pip>=25.1"
 .venv/bin/python -m pip install --group scripts/pyproject.toml:test --group scripts/pyproject.toml:dev
