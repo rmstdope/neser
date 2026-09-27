@@ -2,40 +2,7 @@
 
 use std::path::PathBuf;
 
-/// The console platform a ROM targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Platform {
-    Nes,
-    Gb,
-    Gbc,
-    Gba,
-    Snes,
-}
-
-impl Platform {
-    /// Short display label for the platform.
-    pub fn label(self) -> &'static str {
-        match self {
-            Platform::Nes => "NES",
-            Platform::Gb => "GB",
-            Platform::Gbc => "GBC",
-            Platform::Gba => "GBA",
-            Platform::Snes => "SNES",
-        }
-    }
-
-    /// TheGamesDB platform ID for metadata matching.
-    /// Must stay in sync with PLATFORMS in scripts/metadata_scraper/main.py.
-    pub fn thegamesdb_id(self) -> i64 {
-        match self {
-            Platform::Nes => 7,
-            Platform::Gb => 4,
-            Platform::Gbc => 41,
-            Platform::Gba => 5,
-            Platform::Snes => 6,
-        }
-    }
-}
+pub use crate::platform::rom_extensions::Platform;
 
 /// A discovered ROM enriched with metadata from the iNES header and ROM database.
 #[derive(Debug, Clone, PartialEq, Eq)]

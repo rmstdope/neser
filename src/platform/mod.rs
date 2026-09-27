@@ -12,6 +12,7 @@ pub mod image_cache;
 pub mod metadata;
 pub mod png_utils;
 pub mod ram_init;
+pub mod rom_extensions;
 pub mod rom_loader;
 pub mod save_state;
 pub mod shaders;
