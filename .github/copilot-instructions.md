@@ -23,7 +23,8 @@ Always select the appropriate skill for a specific task. Be sure to ALWAYS expli
 chat what skills that are currently being used. Always follow the instructions in the skills to the
 letter. The hardware research skills (`nes-hardware-research`, `gb-hardware-research`,
 `gba-hardware-research`, `snes-hardware-research`) are the way to answer any question about what
-the hardware does; `mapper-verification-roms` governs every verification ROM.
+the hardware does; `mapper-verification-roms` governs every verification ROM. A release is cut only through the
+`release` skill, and only when the navigator asks for one.
 
 ## Producer review
 
