@@ -10,10 +10,9 @@ use crate::nes::frontend_toasts::{
 use crate::nes::input::{Button, ControllerType, SnesButton};
 use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::autorun::crc32;
-use crate::platform::frontend_toasts::{
-    cartridge_load_toast_message, gamepad_init_toast_message as shared_gamepad_init_toast_message,
-};
+use crate::platform::frontend_toasts::gamepad_init_toast_message as shared_gamepad_init_toast_message;
 use crate::wasm_autorun::WasmAutorunState;
+use crate::web_console::{WebConsole, web_console_bindings};
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -21,10 +20,7 @@ use wasm_bindgen::prelude::*;
 /// Provides a minimal WASM bridge for running the emulator in the browser.
 #[wasm_bindgen]
 pub struct WasmNes {
-    nes: Nes,
-    audio_muted: bool,
-    rom_loaded: bool,
-    pending_toasts: Vec<String>,
+    web: WebConsole<Nes>,
     app_context: SharedAppContext,
     /// True while the debugger is open and the emulator is paused.
     debugger_paused: bool,
@@ -40,6 +36,8 @@ pub struct WasmNes {
     frame_rgba_buffer: Vec<u8>,
 }
 
+web_console_bindings!(WasmNes);
+
 impl Default for WasmNes {
     fn default() -> Self {
         Self::new()
@@ -48,15 +46,11 @@ impl Default for WasmNes {
 
 #[wasm_bindgen]
 impl WasmNes {
-    fn drain_audio_samples(&mut self) {
-        while self.nes.get_sample().is_some() {}
-    }
-
     fn run_until_frame_ready(&mut self) {
         if self.debugger_paused {
             return;
         }
-        self.nes.run_one_frame();
+        self.web.core_mut().run_one_frame();
     }
 
     fn overscan(&self) -> (u32, u32) {
@@ -73,10 +67,7 @@ impl WasmNes {
         console_error_panic_hook::set_once();
         let app_context = Rc::new(RefCell::new(AppContext::new_with_config(Config::default())));
         WasmNes {
-            nes: Nes::new(app_context.clone()),
-            audio_muted: false,
-            rom_loaded: false,
-            pending_toasts: Vec::new(),
+            web: WebConsole::new(Nes::new(app_context.clone())),
             app_context,
             debugger_paused: false,
             debugger_view_state: DebuggerViewState::default(),
@@ -94,12 +85,10 @@ impl WasmNes {
         {
             *app_context.borrow_mut().config_mut() = Config::default();
         }
-        self.rom_loaded = false;
-        let cart = match Cartridge::load_from_file(rom, rom_name, Some(self.nes.rom_db())) {
+        let cart = match Cartridge::load_from_file(rom, rom_name, Some(self.web.core().rom_db())) {
             Ok(cart) => cart,
             Err(err) => {
-                self.pending_toasts
-                    .push(cartridge_load_toast_message(rom_name, false));
+                let _ = self.web.record_load(rom_name, Err(err.to_string()));
                 return Err(JsValue::from_str(&err.to_string()));
             }
         };
@@ -109,61 +98,30 @@ impl WasmNes {
             .borrow_mut()
             .config_mut()
             .apply_rom_timing_mode(rom_timing_mode);
-        self.nes = Nes::new(app_context.clone());
-        self.nes.load_cartridge(cart);
+        *self.web.core_mut() = Nes::new(app_context.clone());
+        self.web.core_mut().load_cartridge(cart);
         log_hardware_selection(&app_context, applied);
         self.debugger_view_state = DebuggerViewState::default();
-        self.rom_loaded = true;
-        self.pending_toasts
-            .push(cartridge_load_toast_message(rom_name, true));
-        self.pending_toasts.push(emulator_timing_toast_message(
-            self.nes
-                .app_context()
-                .borrow()
-                .config()
-                .nes
-                .hardware_model
-                .timing_mode(),
+        let _ = self.web.record_load(rom_name, Ok(()));
+        let config = app_context.borrow().config().clone();
+        self.web.push_toast(emulator_timing_toast_message(
+            config.nes.hardware_model.timing_mode(),
         ));
-        {
-            let config = self.nes.app_context().borrow().config().clone();
-            self.pending_toasts.push(hardware_mode_toast_message(
-                config.nes.hardware_mode,
-                config.nes.hardware_model,
-                config.nes.expansion_port,
-                config.nes.four_score_enabled,
-            ));
-        }
+        self.web.push_toast(hardware_mode_toast_message(
+            config.nes.hardware_mode,
+            config.nes.hardware_model,
+            config.nes.expansion_port,
+            config.nes.four_score_enabled,
+        ));
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
-    }
-
-    /// The console's own app context, where its core raises toasts.
-    #[cfg(all(test, target_arch = "wasm32"))]
-    pub(crate) fn core_app_context_for_test(&self) -> SharedAppContext {
-        self.app_context.clone()
-    }
-
-    #[wasm_bindgen]
-    pub fn drain_toasts(&mut self) -> Vec<JsValue> {
-        // The page shows only what this returns, so the core's toasts are forwarded here too.
-        let core_toasts = self.app_context.borrow_mut().take_toasts();
-        self.pending_toasts.extend(core_toasts);
-        self.pending_toasts.drain(..).map(JsValue::from).collect()
-    }
-
-    /// F8 and the Palette button: cycle to the next preset NES system
-    /// palette and return the corner message for the page to show.
-    #[wasm_bindgen]
-    pub fn cycle_palette(&mut self) -> String {
-        self.nes.f8_action().unwrap_or_default()
     }
 
     /// The palette in use, as the Palette button names it ("Palette: <name>",
     /// the toast's words).
     #[wasm_bindgen]
     pub fn palette_label(&self) -> String {
-        palette_toast_message(self.nes.current_palette())
+        palette_toast_message(self.web.core().current_palette())
     }
 
     /// Reset the emulator without ejecting the cartridge.
@@ -172,7 +130,7 @@ impl WasmNes {
     /// `soft_reset = false` performs a hard reset.
     #[wasm_bindgen]
     pub fn reset(&mut self, soft_reset: bool) {
-        self.nes.reset(soft_reset);
+        self.web.core_mut().reset(soft_reset);
         self.debugger_view_state = DebuggerViewState::default();
     }
 
@@ -185,13 +143,13 @@ impl WasmNes {
     /// is paused and the last rendered frame is returned without advancing.
     #[wasm_bindgen]
     pub fn render_frame(&mut self) -> Vec<u8> {
-        if !self.rom_loaded {
+        if !self.web.rom_loaded() {
             let pixel_count = self.screen_width() as usize * self.screen_height() as usize;
             return vec![0u8; pixel_count * 3];
         }
         let (h, v) = self.overscan();
         self.run_until_frame_ready();
-        self.nes.get_screen_buffer().cropped_snapshot(h, v)
+        self.web.core().get_screen_buffer().cropped_snapshot(h, v)
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGBA8888).
@@ -224,7 +182,7 @@ impl WasmNes {
             }
         }
 
-        if !self.rom_loaded {
+        if !self.web.rom_loaded() {
             self.frame_rgba_buffer.fill(0);
             for chunk in self.frame_rgba_buffer.as_chunks_mut::<4>().0 {
                 chunk[3] = 0xFF;
@@ -255,7 +213,7 @@ impl WasmNes {
 
         if self.autorun_state.is_some() {
             // Autorun path: compute CRC from RGB for compatibility with existing recordings.
-            let rgb = self.nes.get_screen_buffer().cropped_snapshot(h, v);
+            let rgb = self.web.core().get_screen_buffer().cropped_snapshot(h, v);
             let screen_crc = crc32(&rgb);
 
             // ── Autorun post-frame: record or verify ─────────────────────────────────────────
@@ -275,7 +233,7 @@ impl WasmNes {
 
             // Phase 2: if a checkpoint is needed, gather NES state and store it.
             if needs_checkpoint {
-                let state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+                let state_bytes = self.web.core().save_state().to_bytes().unwrap_or_default();
                 if let Some(ref mut state) = self.autorun_state {
                     state.record_checkpoint(screen_crc, state_bytes);
                 }
@@ -286,9 +244,11 @@ impl WasmNes {
         } else {
             // Fast path: write crop + RGB→RGBA directly into the pre-alloc buffer.
             // No intermediate Vec is allocated.
-            self.nes
-                .get_screen_buffer()
-                .write_cropped_rgba_into(h, v, &mut self.frame_rgba_buffer);
+            self.web.core().get_screen_buffer().write_cropped_rgba_into(
+                h,
+                v,
+                &mut self.frame_rgba_buffer,
+            );
         }
 
         // SAFETY: see doc comment on this function.
@@ -326,8 +286,12 @@ impl WasmNes {
                 6 => Button::Left,
                 _ => Button::Right,
             };
-            self.nes.set_button(1, btn, controller1 & (1 << bit) != 0);
-            self.nes.set_button(2, btn, controller2 & (1 << bit) != 0);
+            self.web
+                .core_mut()
+                .set_button(1, btn, controller1 & (1 << bit) != 0);
+            self.web
+                .core_mut()
+                .set_button(2, btn, controller2 & (1 << bit) != 0);
         }
     }
 
@@ -388,10 +352,10 @@ impl WasmNes {
         // Compute screen CRC and save state before borrowing autorun_state mutably.
         let screen_crc = {
             let (h, v) = self.overscan();
-            let rgb = self.nes.get_screen_buffer().cropped_snapshot(h, v);
+            let rgb = self.web.core().get_screen_buffer().cropped_snapshot(h, v);
             crc32(&rgb)
         };
-        let save_state_bytes = self.nes.save_state().to_bytes().unwrap_or_default();
+        let save_state_bytes = self.web.core().save_state().to_bytes().unwrap_or_default();
         let bytes = if let Some(ref mut state) = self.autorun_state {
             state.finalize_recording(screen_crc, save_state_bytes)
         } else {
@@ -488,7 +452,9 @@ impl WasmNes {
             7 => Button::Right,
             _ => return, // Invalid button, ignore
         };
-        self.nes.set_button(controller, nes_button, pressed);
+        self.web
+            .core_mut()
+            .set_button(controller, nes_button, pressed);
 
         // Track button state bitmask for autorun recording
         let bitmask = match controller {
@@ -532,12 +498,15 @@ impl WasmNes {
             _ => return false,
         };
 
-        self.nes.set_snes_button(controller, snes_button, pressed)
+        self.web
+            .core_mut()
+            .set_snes_button(controller, snes_button, pressed)
     }
 
     #[wasm_bindgen]
     pub fn is_four_score_enabled(&self) -> bool {
-        self.nes
+        self.web
+            .core()
             .app_context()
             .borrow()
             .config()
@@ -554,7 +523,8 @@ impl WasmNes {
     pub fn set_controller_type(&mut self, port: u8, controller_type: &str) -> Result<(), JsValue> {
         let controller_type = ControllerType::parse(controller_type)
             .ok_or_else(|| JsValue::from_str("invalid controller type"))?;
-        self.nes
+        self.web
+            .core()
             .bus()
             .borrow_mut()
             .set_controller_type(port, controller_type);
@@ -577,7 +547,8 @@ impl WasmNes {
                 .apply_hardware_value(mode)
                 .map_err(|e| JsValue::from_str(&e))?;
         }
-        self.nes
+        self.web
+            .core()
             .bus()
             .borrow_mut()
             .sync_controller_modes_from_config();
@@ -586,7 +557,7 @@ impl WasmNes {
         // configuration, and that it will apply on the next ROM load.
         {
             let config = app_context.borrow().config().clone();
-            self.pending_toasts.push(hardware_mode_toast_message(
+            self.web.push_toast(hardware_mode_toast_message(
                 config.nes.hardware_mode,
                 config.nes.hardware_model,
                 config.nes.expansion_port,
@@ -608,7 +579,8 @@ impl WasmNes {
                 .apply_expansion_port_value(port)
                 .map_err(|e| JsValue::from_str(&e))?;
         }
-        self.nes
+        self.web
+            .core()
             .bus()
             .borrow_mut()
             .sync_controller_modes_from_config();
@@ -648,19 +620,20 @@ impl WasmNes {
     /// This is used by the JavaScript frontend to determine whether to suppress joypad input for that port.
     #[wasm_bindgen]
     pub fn is_mouse_emulated_controller(&self, port: u8) -> bool {
-        self.nes.controller_input_type(port) == Some(crate::nes::input::ControllerInput::Mouse)
+        self.web.core().controller_input_type(port)
+            == Some(crate::nes::input::ControllerInput::Mouse)
     }
 
     /// Check if a Super NES mouse is active on a specific port.
     #[wasm_bindgen]
     pub fn is_snes_mouse_active(&self, port: u8) -> bool {
-        (1..=2).contains(&port) && self.nes.has_snes_mouse()
+        (1..=2).contains(&port) && self.web.core().has_snes_mouse()
     }
 
     /// Check if the expansion port has a mouse-controlled device (e.g. Famicom Arkanoid).
     #[wasm_bindgen]
     pub fn has_expansion_mouse_controller(&self) -> bool {
-        self.nes.has_expansion_mouse_controller()
+        self.web.core().has_expansion_mouse_controller()
     }
 
     /// Check if a Zapper light gun is active on the specified port.
@@ -668,7 +641,7 @@ impl WasmNes {
     /// This is used by the JavaScript frontend to show/hide the crosshair cursor.
     #[wasm_bindgen]
     pub fn is_zapper_active(&self, port: u8) -> bool {
-        self.nes.is_zapper_active(port)
+        self.web.core().is_zapper_active(port)
     }
 
     /// Set the mouse X position for any mouse-emulated controller.
@@ -677,7 +650,7 @@ impl WasmNes {
     /// * `position` - The mouse-emulated controller position value (0..=255)
     #[wasm_bindgen]
     pub fn set_mouse_x_position(&mut self, position: u8) {
-        self.nes.set_mouse_x_position(position);
+        self.web.core_mut().set_mouse_x_position(position);
     }
 
     /// Set the mouse Y position for any mouse-emulated controller.
@@ -691,7 +664,7 @@ impl WasmNes {
     /// * `position` - The mouse-emulated controller position value (useful range 0..=239)
     #[wasm_bindgen]
     pub fn set_mouse_y_position(&mut self, position: u8) {
-        self.nes.set_mouse_y_position(position);
+        self.web.core_mut().set_mouse_y_position(position);
     }
 
     /// Set the mouse left button state for any mouse-emulated controller.
@@ -700,19 +673,20 @@ impl WasmNes {
     /// * `pressed` - true if pressed, false if released
     #[wasm_bindgen]
     pub fn set_mouse_left_button(&mut self, pressed: bool) {
-        self.nes.set_mouse_left_button(pressed);
+        self.web.core_mut().set_mouse_left_button(pressed);
     }
 
     /// Set the mouse right button state for any mouse-emulated controller.
     #[wasm_bindgen]
     pub fn set_mouse_right_button(&mut self, pressed: bool) {
-        self.nes.set_mouse_right_button(pressed);
+        self.web.core_mut().set_mouse_right_button(pressed);
     }
 
     /// Get the nominal TV-system refresh rate in Hz for the loaded ROM or system default (if not ROM loaded).
     #[wasm_bindgen]
     pub fn frame_rate_hz(&self) -> f64 {
-        self.nes
+        self.web
+            .core()
             .app_context()
             .borrow()
             .config()
@@ -722,61 +696,20 @@ impl WasmNes {
             .frame_rate_hz()
     }
 
-    /// Get all available audio samples from the emulator.
-    ///
-    /// Returns a Float32Array containing all pending audio samples.
-    /// Each sample is typically in the range 0.0 to ~1.177. The base APU mixer
-    /// (pulse + TND) produces values up to roughly 0.966, and expansion audio
-    /// from certain mappers (e.g., VRC6, MMC5, Namco 163) can increase this
-    /// further. A conservative maximum of 1.177 is used for normalization.
-    /// Call this after each frame to retrieve accumulated audio samples.
-    #[wasm_bindgen]
-    pub fn get_audio_samples(&mut self) -> Vec<f32> {
-        if self.audio_muted {
-            self.drain_audio_samples();
-            return Vec::new();
-        }
-        let mut samples = Vec::new();
-        while let Some(sample) = self.nes.get_sample() {
-            samples.push(sample);
-        }
-        samples
-    }
-
-    /// Set the emulator audio output sample rate in Hz.
-    #[wasm_bindgen]
-    pub fn set_audio_sample_rate(&mut self, sample_rate: f32) {
-        self.nes.set_audio_sample_rate(sample_rate);
-    }
-
     /// Serialize the current emulator state to JSON bytes.
     #[wasm_bindgen]
     pub fn save_state_bytes(&self) -> Vec<u8> {
-        self.nes.save_state().to_bytes().unwrap_or_default()
+        self.web.core().save_state().to_bytes().unwrap_or_default()
     }
 
     /// Load a previously saved emulator state from JSON bytes.
     #[wasm_bindgen]
     pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         let state = SaveState::from_bytes(bytes).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        self.nes
+        self.web
+            .core_mut()
             .load_state(&state)
             .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
-    /// Set audio mute state.
-    #[wasm_bindgen]
-    pub fn set_audio_muted(&mut self, muted: bool) {
-        self.audio_muted = muted;
-        if muted {
-            self.drain_audio_samples();
-        }
-    }
-
-    /// Returns true if audio is muted.
-    #[wasm_bindgen]
-    pub fn is_audio_muted(&self) -> bool {
-        self.audio_muted
     }
 
     // --- Debugger API ---
@@ -790,14 +723,14 @@ impl WasmNes {
     /// Open the debugger: pause the emulator.
     #[wasm_bindgen]
     pub fn debugger_open(&mut self) {
-        self.nes.set_cpu_trace_enabled(true);
+        self.web.core_mut().set_cpu_trace_enabled(true);
         self.debugger_paused = true;
     }
 
     /// Continue execution: close the debugger and resume the emulator.
     #[wasm_bindgen]
     pub fn debugger_continue(&mut self) {
-        self.nes.set_cpu_trace_enabled(false);
+        self.web.core_mut().set_cpu_trace_enabled(false);
         self.debugger_paused = false;
     }
 
@@ -805,35 +738,36 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn debugger_step_into(&mut self) {
         self.debugger_paused = true;
-        self.nes.run_cpu_tick();
+        self.web.core_mut().run_cpu_tick();
     }
 
     /// Step over: like step into, but treats JSR as a single unit (runs until the return address).
     #[wasm_bindgen]
     pub fn debugger_step_over(&mut self) {
         self.debugger_paused = true;
-        step_over_instruction(&mut self.nes);
+        step_over_instruction(self.web.core_mut());
     }
 
     /// Run until the next frame boundary is crossed and keep the debugger open.
     #[wasm_bindgen]
     pub fn debugger_run_to_next_frame(&mut self) {
         self.debugger_paused = true;
-        self.nes.run_to_next_frame();
+        self.web.core_mut().run_to_next_frame();
     }
 
     /// Run until the scanline changes and keep the debugger open.
     #[wasm_bindgen]
     pub fn debugger_run_to_next_scanline(&mut self) {
         self.debugger_paused = true;
-        self.nes.run_to_next_scanline();
+        self.web.core_mut().run_to_next_scanline();
     }
 
     /// Run until the next NMI handler entry and keep the debugger open.
     #[wasm_bindgen]
     pub fn debugger_run_to_nmi(&mut self) {
         self.debugger_paused = true;
-        self.nes
+        self.web
+            .core_mut()
             .run_to_interrupt_entry(0xFFFA, crate::nes::cpu::InterruptKind::Nmi);
     }
 
@@ -841,14 +775,15 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn debugger_run_to_irq(&mut self) {
         self.debugger_paused = true;
-        self.nes
+        self.web
+            .core_mut()
             .run_to_interrupt_entry(0xFFFE, crate::nes::cpu::InterruptKind::Irq);
     }
 
     /// Returns the current CPU program counter value (useful for testing step behaviour).
     #[wasm_bindgen]
     pub fn debugger_cpu_pc(&self) -> u16 {
-        self.nes.cpu_ref().pc()
+        self.web.core().cpu_ref().pc()
     }
 
     /// Take a snapshot of the current CPU/PPU/APU state and return it as a JSON string.
@@ -859,7 +794,7 @@ impl WasmNes {
     /// `prg_hexdump_base`, `prg_hexdump_bytes`, `oam` (256-element array).
     #[wasm_bindgen]
     pub fn debugger_snapshot_json(&mut self) -> String {
-        let snap = self.debugger_view_state.snapshot(&self.nes);
+        let snap = self.debugger_view_state.snapshot(self.web.core());
         serialize_debugger_snapshot_json(&snap)
     }
 
@@ -868,7 +803,7 @@ impl WasmNes {
     pub fn debugger_hexdump_prev_16(&mut self) {
         let visible_base = self
             .debugger_view_state
-            .snapshot(&self.nes)
+            .snapshot(self.web.core())
             .prg_hexdump_base;
         self.debugger_view_state
             .nudge_prg_hexdump_base_by_bytes_from(visible_base, -16);
@@ -879,7 +814,7 @@ impl WasmNes {
     pub fn debugger_hexdump_next_16(&mut self) {
         let visible_base = self
             .debugger_view_state
-            .snapshot(&self.nes)
+            .snapshot(self.web.core())
             .prg_hexdump_base;
         self.debugger_view_state
             .nudge_prg_hexdump_base_by_bytes_from(visible_base, 16);
@@ -915,7 +850,7 @@ impl WasmNes {
     /// Each element is `{"addr":<u16>,"bytes":[<u8>...],"text":"<str>","is_current":<bool>}`.
     #[wasm_bindgen]
     pub fn debugger_disasm_json(&mut self) -> String {
-        let snap = self.debugger_view_state.snapshot(&self.nes);
+        let snap = self.debugger_view_state.snapshot(self.web.core());
         let mut json = String::from('[');
         for (i, line) in snap.cpu_disasm.iter().enumerate() {
             if i > 0 {
@@ -945,7 +880,7 @@ impl WasmNes {
     }
 
     fn ppu_viewer_snapshot(&self) -> PpuViewerSnapshot {
-        PpuViewerSnapshot::from_nes(&self.nes)
+        PpuViewerSnapshot::from_nes(self.web.core())
     }
 
     /// Returns the PPU pattern table viewer image as RGBA bytes.
@@ -983,7 +918,11 @@ impl WasmNes {
     #[cfg(test)]
     #[wasm_bindgen]
     pub fn push_audio_sample_for_test(&mut self, sample: f32) {
-        self.nes.apu().borrow_mut().push_sample_for_test(sample);
+        self.web
+            .core()
+            .apu()
+            .borrow_mut()
+            .push_sample_for_test(sample);
     }
 }
 

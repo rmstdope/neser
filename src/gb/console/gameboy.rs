@@ -1000,6 +1000,10 @@ impl Emulator for GameBoy {
         // DMG: 4,194,304 Hz clock / 70,224 cycles per frame ≈ 59.7275 fps
         std::time::Duration::from_secs_f64(70_224.0 / 4_194_304.0)
     }
+
+    fn f8_action(&mut self) -> Option<String> {
+        GameBoy::f8_action(self)
+    }
 }
 
 #[cfg(test)]
