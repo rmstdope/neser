@@ -1065,7 +1065,7 @@ fn wasm_gb_cgb_color_correction_reports_what_was_set() {
 }
 
 #[wasm_bindgen_test]
-fn wasm_gb_cycle_palette_without_a_dmg_game_is_silent() {
+fn wasm_gb_cycle_palette_without_a_game_is_silent() {
     let mut gb = WasmGb::new();
     assert_eq!(gb.cycle_palette(), "");
     assert!(drained(&mut gb).is_empty());
