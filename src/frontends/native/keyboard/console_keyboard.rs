@@ -126,8 +126,8 @@ fn handle_single_joypad_key_pressed(
     match key_code {
         KeyCode::KeyH => app_state.help_overlay_visible = !app_state.help_overlay_visible,
         KeyCode::F5 => return KeyOutcome::ToggleDebugger,
-        // Cycles the Game Boy shade palette; the event loop ignores it for
-        // systems without palettes.
+        // Cycles the Game Boy palette or switches Game Boy Color colour
+        // correction; the event loop ignores it for systems without either.
         KeyCode::F8 => return KeyOutcome::CyclePalette,
         KeyCode::F6 => {
             crate::nes::console::save_state_io::save_state_to_disk(console);

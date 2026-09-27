@@ -20,6 +20,16 @@ use crate::platform::emulator::{Emulator, SystemType};
 use crate::platform::save_state::Stateful;
 use std::path::PathBuf;
 
+/// Corner message for a change of Game Boy Color colour correction (F8, and
+/// the web Colors button, whose labels read the same).
+pub fn cgb_color_correction_toast_message(enabled: bool) -> String {
+    if enabled {
+        "Colors: GBC screen".to_string()
+    } else {
+        "Colors: Raw".to_string()
+    }
+}
+
 /// Wraps either a DMG or CGB console, dispatching all platform operations.
 enum GbConsole {
     Dmg(Box<Gb<DmgBus>>),
@@ -453,7 +463,8 @@ impl GameBoy {
     }
 
     /// The palette in use, in the words F8's toast uses ("Palette: <name>"),
-    /// or `None` where F8 does nothing (no original Game Boy game running).
+    /// or `None` where F8 cycles no palette (no original Game Boy game
+    /// running; in a Game Boy Color game F8 switches colour correction).
     pub fn palette_label(&self) -> Option<String> {
         match &self.gb {
             Some(GbConsole::Dmg(_)) => Some(crate::gb::ppu::dmg_palette::palette_toast_message(
@@ -464,6 +475,29 @@ impl GameBoy {
             ),
             _ => None,
         }
+    }
+
+    /// Whether the Game Boy Color LCD colour correction is on. It lives in the
+    /// shared config, so a runtime choice lasts until the program quits.
+    pub fn cgb_color_correction(&self) -> bool {
+        self.app_context.borrow().config().gb.cgb_color_correction
+    }
+
+    /// F8 in a Game Boy Color game (on CGB or GBA hardware): switches the
+    /// colour correction and returns the new state. `None` for any other
+    /// game, including an original Game Boy game the Game Boy Color
+    /// colourises (nothing changes, no toast). Never writes the settings file.
+    pub fn toggle_cgb_color_correction(&mut self) -> Option<bool> {
+        let Some(GbConsole::Cgb(gb)) = &self.gb else {
+            return None;
+        };
+        if gb.cpu.bus.runs_dmg_game() {
+            return None;
+        }
+        let mut ctx = self.app_context.borrow_mut();
+        let gb_config = &mut ctx.config_mut().gb;
+        gb_config.cgb_color_correction = !gb_config.cgb_color_correction;
+        Some(gb_config.cgb_color_correction)
     }
 
     fn apply_gbc_palette(&mut self) {
@@ -1058,6 +1092,71 @@ mod tests {
             "test frame must change under correction"
         );
         assert_eq!(gb.screen_snapshot(), corrected(&raw));
+    }
+
+    // ── F8: switching CGB colour correction ─────────────────────────────────
+
+    #[test]
+    fn test_toggle_cgb_color_correction_switches_a_cgb_game_both_ways() {
+        let mut gb = make_gameboy();
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        run_frames(&mut gb, 2);
+        let raw = raw_frame(&gb);
+
+        assert_eq!(gb.toggle_cgb_color_correction(), Some(true));
+        assert!(gb.cgb_color_correction());
+        assert_eq!(gb.screen_snapshot(), corrected(&raw), "picture at once");
+
+        assert_eq!(gb.toggle_cgb_color_correction(), Some(false));
+        assert!(!gb.cgb_color_correction());
+        assert_eq!(gb.screen_snapshot(), raw);
+    }
+
+    #[test]
+    fn test_toggle_cgb_color_correction_starts_from_the_setting() {
+        let mut gb = make_gameboy_with_color_correction(None);
+        gb.load_rom(&idling(minimal_cgb_rom()), "test.gbc").unwrap();
+        assert_eq!(gb.toggle_cgb_color_correction(), Some(false));
+    }
+
+    #[test]
+    fn test_toggle_cgb_color_correction_switches_under_gba_hardware() {
+        let mut gb = make_gameboy_with_hardware(GbHardware::Gba);
+        gb.load_rom(&idling(minimal_dual_rom()), "test.gbc")
+            .unwrap();
+        assert_eq!(gb.toggle_cgb_color_correction(), Some(true));
+    }
+
+    #[test]
+    fn test_toggle_cgb_color_correction_leaves_dmg_game_on_cgb_alone() {
+        let mut gb = make_gameboy_with_hardware(GbHardware::Cgb);
+        gb.load_rom(&idling(minimal_rom()), "test.gb").unwrap();
+        assert_eq!(gb.toggle_cgb_color_correction(), None);
+        assert!(!gb.cgb_color_correction());
+    }
+
+    #[test]
+    fn test_toggle_cgb_color_correction_leaves_dmg_hardware_alone() {
+        let mut gb = make_gameboy_with_hardware(GbHardware::Dmg);
+        gb.load_rom(&idling(minimal_rom()), "test.gb").unwrap();
+        assert_eq!(gb.toggle_cgb_color_correction(), None);
+        assert!(!gb.cgb_color_correction());
+    }
+
+    #[test]
+    fn test_toggle_cgb_color_correction_without_rom_does_nothing() {
+        let mut gb = make_gameboy();
+        assert_eq!(gb.toggle_cgb_color_correction(), None);
+        assert!(!gb.cgb_color_correction());
+    }
+
+    #[test]
+    fn test_cgb_color_correction_toast_uses_agreed_words() {
+        assert_eq!(
+            cgb_color_correction_toast_message(true),
+            "Colors: GBC screen"
+        );
+        assert_eq!(cgb_color_correction_toast_message(false), "Colors: Raw");
     }
 
     // ── safety before ROM load ──────────────────────────────────────────────

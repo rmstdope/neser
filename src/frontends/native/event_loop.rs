@@ -857,6 +857,16 @@ impl ApplicationHandler for NativeEventLoop {
                                         enabled,
                                     );
                                 self.console.app_context().borrow_mut().add_toast(&toast);
+                            } else if let Some(enabled) = self
+                                .console
+                                .as_gameboy_mut()
+                                .and_then(|gb| gb.toggle_cgb_color_correction())
+                            {
+                                let toast =
+                                    crate::gb::console::gameboy::cgb_color_correction_toast_message(
+                                        enabled,
+                                    );
+                                self.console.app_context().borrow_mut().add_toast(&toast);
                             }
                         }
                     }

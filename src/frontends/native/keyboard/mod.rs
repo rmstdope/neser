@@ -38,7 +38,8 @@ pub enum KeyOutcome {
     CloseCartridgeSwitch,
     /// Toggle the FPS counter overlay (F1).
     ToggleFps,
-    /// Cycle to the next preset NES system palette (F8).
+    /// F8: cycle the NES or Game Boy palette, or switch Game Boy Color colour
+    /// correction, whichever the running game has.
     CyclePalette,
 }
 
