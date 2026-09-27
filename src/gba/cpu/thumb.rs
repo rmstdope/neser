@@ -28,26 +28,6 @@ use super::registers::{FLAG_C, FLAG_N, FLAG_V, FLAG_Z};
 use super::registers::{Registers, condition_met};
 use crate::gba::bus::WidthClass;
 
-fn is_cart_sram_region(addr: u32) -> bool {
-    matches!((addr >> 24) & 0xF, 0xE | 0xF)
-}
-
-fn thumb_store_word_addr(addr: u32) -> u32 {
-    if is_cart_sram_region(addr) {
-        addr
-    } else {
-        addr & !0x3
-    }
-}
-
-fn thumb_store_halfword_addr(addr: u32) -> u32 {
-    if is_cart_sram_region(addr) {
-        addr
-    } else {
-        addr & !1
-    }
-}
-
 /// Execute one Thumb instruction.
 pub fn execute<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOutcome {
     let top5 = instr >> 11;
@@ -484,7 +464,7 @@ fn exec_format7<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
         if b {
             bus.write8(addr, regs.r[rd] as u8);
         } else {
-            bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
+            bus.write32(addr, regs.r[rd]);
         }
     }
     if l {
@@ -523,7 +503,7 @@ fn exec_format8<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     // S=1, H=1: LDSH (load signed halfword)
     if !s && !h {
         // STRH: 1N(code) + 1N(data)
-        bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
+        bus.write16(addr, regs.r[rd] as u16);
         return ExecOutcome::data_access(0, 1, 0, 0, 1, addr, WidthClass::HalfwordOrByte);
     }
 
@@ -581,7 +561,7 @@ fn exec_format9<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecOu
     } else if b {
         bus.write8(addr, regs.r[rd] as u8);
     } else {
-        bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
+        bus.write32(addr, regs.r[rd]);
     }
     if l {
         let width = if b {
@@ -620,7 +600,7 @@ fn exec_format10<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
             raw
         };
     } else {
-        bus.write16(thumb_store_halfword_addr(addr), regs.r[rd] as u16);
+        bus.write16(addr, regs.r[rd] as u16);
     }
     if l {
         // LDRH: 1S(code) + 1N(data) + 1I
@@ -648,7 +628,7 @@ fn exec_format11<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         let rot = (addr & 0x3) * 8;
         regs.r[rd] = raw.rotate_right(rot);
     } else {
-        bus.write32(thumb_store_word_addr(addr), regs.r[rd]);
+        bus.write32(addr, regs.r[rd]);
     }
     if l {
         // LDR: 1S(code) + 1N(data) + 1I
@@ -713,13 +693,13 @@ fn exec_format14<B: Bus>(regs: &mut Registers, bus: &mut B, instr: u16) -> ExecO
         regs.r[13] = sp;
         for i in 0..8 {
             if reg_list & (1 << i) != 0 {
-                bus.write32(thumb_store_word_addr(sp), regs.r[i]);
+                bus.write32(sp, regs.r[i]);
                 sp = sp.wrapping_add(4);
             }
         }
         if extra {
             // PUSH stores LR.
-            bus.write32(thumb_store_word_addr(sp), regs.r[14]);
+            bus.write32(sp, regs.r[14]);
         }
     } else {
         // POP: read low → high regs from low → high addresses, then update SP.
@@ -1075,12 +1055,53 @@ mod tests {
     }
 
     #[test]
-    fn cart_store_addr_helpers_preserve_lane_bits_only_for_cart_region() {
-        assert_eq!(thumb_store_word_addr(0x0200_0003), 0x0200_0000);
-        assert_eq!(thumb_store_halfword_addr(0x0200_0001), 0x0200_0000);
+    fn thumb_str_strh_to_unaligned_sram_store_lane_byte() {
+        // STR r2, [r0, r1] and STRH r2, [r0, r1]
+        let str_word = 0b0101_000_001_000_010u16;
+        let strh = 0b0101_001_001_000_010u16;
+        for base in [0x0E00_0000, 0x0F00_0000] {
+            for lane in 1..4u32 {
+                for (instr, value) in [(str_word, 0x4433_2211u32), (strh, 0x2211)] {
+                    let mut regs = make_regs();
+                    let mut bus = GbaBus::new();
+                    bus.write8(base, 0);
+                    regs.r[0] = base;
+                    regs.r[1] = lane;
+                    regs.r[2] = value;
 
-        assert_eq!(thumb_store_word_addr(0x0E00_0003), 0x0E00_0003);
-        assert_eq!(thumb_store_halfword_addr(0x0F00_0001), 0x0F00_0001);
+                    execute(&mut regs, &mut bus, instr);
+
+                    let shift = if instr == strh {
+                        8 * (lane & 1)
+                    } else {
+                        8 * lane
+                    };
+                    assert_eq!(
+                        bus.read8(base + lane),
+                        (value >> shift) as u8,
+                        "{instr:#06X} base {base:#010X}, lane {lane}"
+                    );
+                    assert_eq!(bus.read8(base), 0, "{instr:#06X} lane 0 untouched");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn thumb_str_strh_to_unaligned_ewram_store_aligned() {
+        let str_word = 0b0101_000_001_000_010u16;
+        let strh = 0b0101_001_001_000_010u16;
+        let mut regs = make_regs();
+        let mut bus = GbaBus::new();
+        regs.r[0] = 0x0200_0100;
+        regs.r[1] = 3;
+        regs.r[2] = 0x4433_2211;
+        execute(&mut regs, &mut bus, str_word);
+        assert_eq!(bus.read32(0x0200_0100), 0x4433_2211);
+
+        regs.r[1] = 0x11;
+        execute(&mut regs, &mut bus, strh);
+        assert_eq!(bus.read16(0x0200_0110), 0x2211);
     }
 
     // -------------------------------------------------------------------------

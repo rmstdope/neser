@@ -1652,6 +1652,64 @@ mod tests {
         assert_eq!(bus.read32(0x0E00_0010), 0xABAB_ABAB);
     }
 
+    // The bus alone owns the cart-RAM byte-lane rule: callers pass the effective
+    // (possibly unaligned) address and never ask which region it is in.
+    #[test]
+    fn sram_unaligned_word_and_halfword_reads_return_replicated_lane_byte() {
+        for base in [0x0E00_0000u32, 0x0F00_0000] {
+            let mut bus = GbaBus::new();
+            for (lane, byte) in [0x47u8, 0x61, 0x6D, 0x65].into_iter().enumerate() {
+                bus.write8(base + lane as u32, byte);
+            }
+            for (lane, byte) in [0x47u32, 0x61, 0x6D, 0x65].into_iter().enumerate() {
+                let addr = base + lane as u32;
+                assert_eq!(bus.read32(addr), byte * 0x0101_0101, "read32 {addr:#010X}");
+                assert_eq!(
+                    bus.read16(addr) as u32,
+                    byte * 0x0101,
+                    "read16 {addr:#010X}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sram_unaligned_word_and_halfword_writes_store_lane_byte() {
+        for base in [0x0E00_0000u32, 0x0F00_0000] {
+            for lane in 0..4u32 {
+                let mut bus = GbaBus::new();
+                for other in 0..4u32 {
+                    bus.write8(base + other, 0);
+                }
+                bus.write32(base + lane, 0x4433_2211);
+                for other in 0..4u32 {
+                    let expected = if other == lane {
+                        (0x4433_2211u32 >> (8 * lane)) as u8
+                    } else {
+                        0
+                    };
+                    assert_eq!(bus.read8(base + other), expected, "write32 lane {lane}");
+                }
+
+                let mut bus = GbaBus::new();
+                bus.write16(base + lane, 0x2211);
+                let expected = if lane & 1 == 0 { 0x11 } else { 0x22 };
+                assert_eq!(bus.read8(base + lane), expected, "write16 lane {lane}");
+            }
+        }
+    }
+
+    #[test]
+    fn ewram_unaligned_word_and_halfword_access_is_aligned() {
+        let mut bus = GbaBus::new();
+        bus.write32(0x0200_0103, 0x4433_2211);
+        assert_eq!(bus.read32(0x0200_0100), 0x4433_2211);
+        assert_eq!(bus.read32(0x0200_0102), 0x4433_2211);
+        bus.write16(0x0200_0201, 0x6655);
+        assert_eq!(bus.read16(0x0200_0200), 0x6655);
+        assert_eq!(bus.read16(0x0200_0201), 0x6655);
+    }
+
     #[test]
     fn cart_read32_uses_active_save_backend() {
         let mut bus = GbaBus::new();
