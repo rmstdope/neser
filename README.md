@@ -228,6 +228,11 @@ issues were moved onto the board. GitHub issues remain open as the inbox for bug
 requests from outside.
 
 The full pre-merge gate is one script, `./scripts/gate-full.sh` (`--fast` for the quick subset).
+Before its long legs it runs `scripts/chromedriver_match.py`, which picks a ChromeDriver whose major
+version matches the installed Chrome (any `chromedriver` on `PATH` first, then wasm-pack's cache) and
+hands it to `wasm-pack test --chromedriver`; with none it stops at once with one line naming both
+versions. The fix is a matching ChromeDriver first on `PATH`, e.g. from
+[Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/).
 Useful checks on their own:
 
 ```bash

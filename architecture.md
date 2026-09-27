@@ -639,6 +639,7 @@ is what differs here from Cerebro's shared `beads-workflow` skill.
 | `.claude/agents/`, `.claude/skills/*`, `.github/agents/`, `.github/skills/*`, `.github/hooks/` | Relative symlinks into the submodule, written by `.cerebro/cerebro/scripts/sync-symlinks.sh` at every launch, beside the project's own skills. |
 | `.githooks/` | `pre-commit` auto-formats staged Rust and Python, then forwards to the bd hook; the other hooks are thin wrappers forwarding to `.beads/hooks/`. `core.hooksPath` points here. |
 | `scripts/gate-full.sh` | The whole pre-merge checkpoint in one script (`--fast` for the fmt, clippy and unit-test subset). CI runs the same commands job by job. |
+| `scripts/chromedriver_match.py` | Picks a ChromeDriver whose major version matches the installed Chrome (`PATH` first, then wasm-pack's cache) for the gate's `wasm-pack test --chromedriver`, or stops with one line naming the mismatch. |
 
 Work flows: a bead is created unranked, ranked with the navigator by Cerebro, its experience agreed
 by Xavier when it is user-visible, built test-first by a producer in its own worktree, reviewed by a
