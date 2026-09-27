@@ -42,11 +42,19 @@ if [[ $fast_only -eq 1 ]]; then
   exit 0
 fi
 
+# wasm-pack's cached ChromeDriver dies with an opaque "http status: 404" when its major version
+# differs from Chrome's, and it overrides CHROMEDRIVER, so pick a matching driver now, before the
+# long legs, and hand it over with --chromedriver. A mismatch stops the gate here with one line.
+echo
+echo "==> py scripts/chromedriver_match.py"
+chromedriver=$(py scripts/chromedriver_match.py)
+echo "$chromedriver"
+
 step cargo test --no-default-features --lib
 step cargo test --doc
 step cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings
 step cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
-step wasm-pack test --headless --chrome --no-default-features --features wasm
+step wasm-pack test --headless --chrome --chromedriver "$chromedriver" --no-default-features --features wasm
 step py -m unittest discover -s scripts -t . -p "test_*.py"
 step py -m ruff check scripts
 step py -m ruff format --check scripts
