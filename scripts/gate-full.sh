@@ -8,7 +8,9 @@
 #   ./scripts/gate-full.sh --fast     the fast subset only (fmt, host clippy, unit tests)
 #
 # The Python steps use the project's .venv directly rather than `source .venv/bin/activate`,
-# because the activate script hardcodes the path the venv was created at.
+# because the activate script hardcodes the path the venv was created at. There is no fallback to
+# the system python3, which lacks the pinned tools: without .venv the full gate stops before it
+# starts. `./scripts/setup-venv.sh` builds it, and every prepared worktree runs that on install.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -28,8 +30,14 @@ step() {
 }
 
 py() {
-  if [[ -x .venv/bin/python ]]; then .venv/bin/python "$@"; else python3 "$@"; fi
+  .venv/bin/python "$@"
 }
+
+# Checked up front so a missing venv costs seconds, not the Rust legs that run before Python.
+if [[ $fast_only -eq 0 && ! -x .venv/bin/python ]]; then
+  echo "gate-full: no .venv/bin/python; run ./scripts/setup-venv.sh" >&2
+  exit 1
+fi
 
 step cargo fmt --all -- --check
 step cargo clippy --all-targets --all-features -- -D warnings

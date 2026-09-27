@@ -630,7 +630,7 @@ is what differs here from Cerebro's shared `beads-workflow` skill.
 | Path | Description |
 | ---- | ----------- |
 | `.cerebro/cerebro/` | The Cerebro submodule: agent definitions, skills, scripts and the `cerebro-tui` fleet view. Bump with `git submodule update --remote --merge .cerebro/cerebro`. |
-| `.cerebro/project.conf` | Project declaration: name, default branch, application paths, `gate_fast` / `gate_full` (both `scripts/gate-full.sh`), worktree install command. |
+| `.cerebro/project.conf` | Project declaration: name, default branch, application paths, `gate_fast` / `gate_full` (both `scripts/gate-full.sh`), worktree install command (submodules, `npm ci`, `scripts/setup-venv.sh`). |
 | `.cerebro/roster.conf` | The fleet: Cerebro (orchestrator), Xavier (ux), Psylocke (verifier), Moira (user-feedback), Forge (architect), Cyclops and Storm (implementers), and how the fleet view starts each. |
 | `.cerebro/agents.conf` | Which agent CLI and model each role runs on. Shared across clones. |
 | `.cerebro/traps.md` | Traps the fleet has hit and what to do about them. |
@@ -638,8 +638,9 @@ is what differs here from Cerebro's shared `beads-workflow` skill.
 | `.beads/` | The beads work board (prefix `nr`). `config.yaml`, `metadata.json` and `hooks/` are tracked; the embedded Dolt database is git-ignored and syncs through the Dolt remote on `origin` (`refs/dolt/data`) with `bd dolt push` / `bd dolt pull`. A fresh clone runs `bd bootstrap`. |
 | `.claude/agents/`, `.claude/skills/*`, `.github/agents/`, `.github/skills/*`, `.github/hooks/` | Relative symlinks into the submodule, written by `.cerebro/cerebro/scripts/sync-symlinks.sh` at every launch, beside the project's own skills. |
 | `.githooks/` | `pre-commit` auto-formats staged Rust and Python, then forwards to the bd hook; the other hooks are thin wrappers forwarding to `.beads/hooks/`. `core.hooksPath` points here. |
-| `scripts/gate-full.sh` | The whole pre-merge checkpoint in one script (`--fast` for the fmt, clippy and unit-test subset). CI runs the same commands job by job. |
+| `scripts/gate-full.sh` | The whole pre-merge checkpoint in one script (`--fast` for the fmt, clippy and unit-test subset). CI runs the same commands job by job. The Python legs run on `.venv/bin/python` only; without it the full gate stops before its first step. |
 | `scripts/chromedriver_match.py` | Picks a ChromeDriver whose major version matches the installed Chrome (`PATH` first, then wasm-pack's cache) for the gate's `wasm-pack test --chromedriver`, or stops with one line naming the mismatch. |
+| `scripts/setup-venv.sh` | Builds or refreshes `.venv` with pip >= 25.1 and the `test` and `dev` groups of `scripts/pyproject.toml`, as CI's Python job installs them. Run by the worktree install (`install_shell`); `scripts/test_gate_venv.py` pins it, the gate's no-venv stop and the install line. |
 
 Work flows: a bead is created unranked, ranked with the navigator by Cerebro, its experience agreed
 by Xavier when it is user-visible, built test-first by a producer in its own worktree, reviewed by a
