@@ -107,6 +107,13 @@ impl WasmGb {
         }
     }
 
+    /// The palette in use, as the Palette button names it ("Palette: <name>",
+    /// the toast's words), or `""` where F8 does nothing.
+    #[wasm_bindgen]
+    pub fn palette_label(&self) -> String {
+        self.gb.palette_label().unwrap_or_default()
+    }
+
     /// Test access to the console, e.g. to choose the hardware.
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn game_boy_mut(&mut self) -> &mut GameBoy {

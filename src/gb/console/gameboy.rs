@@ -452,6 +452,20 @@ impl GameBoy {
         Some(gbc_palette_toast_message(self.gbc_palette, &header))
     }
 
+    /// The palette in use, in the words F8's toast uses ("Palette: <name>"),
+    /// or `None` where F8 does nothing (no original Game Boy game running).
+    pub fn palette_label(&self) -> Option<String> {
+        match &self.gb {
+            Some(GbConsole::Dmg(_)) => Some(crate::gb::ppu::dmg_palette::palette_toast_message(
+                self.palette,
+            )),
+            Some(GbConsole::Cgb(gb)) if gb.cpu.bus.runs_dmg_game() => Some(
+                gbc_palette_toast_message(self.gbc_palette, &gb.cpu.bus.cartridge_header()),
+            ),
+            _ => None,
+        }
+    }
+
     fn apply_gbc_palette(&mut self) {
         if let Some(GbConsole::Cgb(gb)) = &mut self.gb {
             gb.cpu.bus.set_gbc_palette(self.gbc_palette);
@@ -2151,5 +2165,43 @@ mod tests {
         );
         assert_eq!(cgb.cycle_gbc_palette(), None);
         assert_eq!(cgb.gbc_palette(), GbcPalette::Red);
+    }
+
+    // ── palette_label (the web's Palette button) ────────────────────────────
+
+    #[test]
+    fn test_palette_label_names_the_shade_palette_as_the_toast_does() {
+        let mut gb = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        assert_eq!(gb.palette_label().as_deref(), Some("Palette: Grey"));
+        gb.cycle_palette();
+        assert_eq!(gb.palette_label().as_deref(), Some("Palette: DMG Green"));
+    }
+
+    #[test]
+    fn test_palette_label_follows_the_lcd_filter_start() {
+        let mut gb = loaded(make_gameboy_with_palette(None), &minimal_rom());
+        gb.start_lcd_filter(true);
+        assert_eq!(gb.palette_label().as_deref(), Some("Palette: DMG Green"));
+    }
+
+    #[test]
+    fn test_palette_label_names_the_colourisation_of_a_dmg_game_on_cgb_hardware() {
+        let mut gb = loaded(
+            make_cgb_gameboy_with_gbc_palette(GbcPalette::Auto),
+            &minimal_rom(),
+        );
+        assert_eq!(
+            gb.palette_label().as_deref(),
+            Some("Palette: Auto (Dark Green)")
+        );
+        let toast = gb.cycle_gbc_palette();
+        assert_eq!(gb.palette_label(), toast);
+    }
+
+    #[test]
+    fn test_palette_label_is_none_where_f8_does_nothing() {
+        assert_eq!(make_gameboy().palette_label(), None);
+        let cgb = loaded(make_gameboy_with_palette(None), &minimal_cgb_rom());
+        assert_eq!(cgb.palette_label(), None);
     }
 }

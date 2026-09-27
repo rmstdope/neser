@@ -158,6 +158,13 @@ impl WasmNes {
         palette.display_name().to_string()
     }
 
+    /// The palette in use, as the Palette button names it ("Palette: <name>",
+    /// the toast's words).
+    #[wasm_bindgen]
+    pub fn palette_label(&self) -> String {
+        palette_toast_message(self.nes.current_palette())
+    }
+
     /// Reset the emulator without ejecting the cartridge.
     ///
     /// `soft_reset = true` performs a soft reset.

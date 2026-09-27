@@ -26,6 +26,7 @@ declare module "*/pkg/neser" {
         [Symbol.dispose](): void;
         drain_toasts(): unknown[];
         cycle_palette(): string;
+        palette_label(): string;
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
         is_audio_muted(): boolean;
@@ -102,6 +103,7 @@ declare module "*/pkg/neser" {
         [Symbol.dispose](): void;
         /** F8: next shade palette's name, or "" when no original Game Boy game runs. */
         cycle_palette(): string;
+        palette_label(): string;
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
