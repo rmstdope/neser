@@ -11,7 +11,7 @@ import { CONSOLES, type ConsoleKind } from "../console/consoles";
 
 export interface FilterDef {
     name: string;
-    /** "single" = 1-pass, "ntsc" = 2-pass NTSC, "gb" = 5-pass Game Boy */
+    /** "single" = 1-pass, "ntsc" = 2-pass NTSC, "gb" = 5-pass Game Boy, "gba" = a Game Boy Advance look (display/gba_pipeline.ts) */
     type: string;
     fragmentShader?: string;
     params?: Record<string, number>;
@@ -28,11 +28,12 @@ export function filterKeysForConsole(
         const f = filters[key];
         if (!f) return false;
         const isStock = f.type === "single" && key === "stock";
-        if (family === "stock") return isStock;
         // Game Boy family: stock + gb-type filters only
         if (family === "gb") return isStock || f.type === "gb";
-        // NES family (NES and SNES): everything except gb-type filters
-        return f.type !== "gb";
+        // Game Boy Advance family: stock + gba-type filters only
+        if (family === "gba") return isStock || f.type === "gba";
+        // NES family (NES and SNES): everything except the handheld looks
+        return f.type !== "gb" && f.type !== "gba";
     });
 }
 

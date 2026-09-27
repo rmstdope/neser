@@ -16,8 +16,13 @@ const filters: Record<string, FilterDef> = {
     ntsc: { name: "NTSC", type: "ntsc" },
     crt: { name: "CRT", type: "single", params: {} },
     gameboy: { name: "Game Boy", type: "gb" },
+    agb001: { name: "AGB-001", type: "gba" },
+    nsoGbaColor: { name: "Switch Online", type: "gba" },
+    sp101Color: { name: "GBA SP", type: "gba" },
+    gbaLcdGrid: { name: "LCD Grid", type: "gba" },
 };
-const allKeys = Object.keys(filters); // stock, ntsc, crt, gameboy
+const allKeys = Object.keys(filters); // stock, ntsc, crt, gameboy, then the GBA looks
+const GBA_LOOKS = ["stock", "agb001", "nsoGbaColor", "sp101Color", "gbaLcdGrid"];
 
 // ===========================================================================
 // filterKeysForConsole
@@ -53,8 +58,15 @@ describe("filterKeysForConsole", () => {
         expect(nesKeys).not.toContain("gameboy");
     });
 
-    it("returns only stock for GBA", () => {
-        expect(filterKeysForConsole(allKeys, filters, "gba")).toEqual(["stock"]);
+    it("returns None, AGB-001, Switch Online, GBA SP, LCD Grid for GBA", () => {
+        expect(filterKeysForConsole(allKeys, filters, "gba")).toEqual(GBA_LOOKS);
+    });
+
+    it("gives no other console a GBA look", () => {
+        for (const kind of ["nes", "gb", "snes"] as const) {
+            const keys = filterKeysForConsole(allKeys, filters, kind);
+            for (const look of GBA_LOOKS.slice(1)) expect(keys).not.toContain(look);
+        }
     });
 
     it("returns the NES looks for SNES: stock, ntsc, crt", () => {
@@ -92,8 +104,14 @@ describe("cycleFilterKey", () => {
         expect(cycleFilterKey("gameboy", allKeys, filters, "gb")).toBe("stock");
     });
 
-    it("GBA: stays on stock", () => {
-        expect(cycleFilterKey("stock", allKeys, filters, "gba")).toBe("stock");
+    it("GBA: cycles None → AGB-001 → Switch Online → GBA SP → LCD Grid → None", () => {
+        const seen = [];
+        let key = "stock";
+        for (let i = 0; i < 5; i++) {
+            key = cycleFilterKey(key, allKeys, filters, "gba");
+            seen.push(key);
+        }
+        expect(seen).toEqual([...GBA_LOOKS.slice(1), "stock"]);
     });
 
     // SNES cycling is the NES order: stock → ntsc → crt → stock → …
@@ -162,6 +180,16 @@ describe("filterOnConsoleSwitch", () => {
         expect(filterOnConsoleSwitch("gameboy", allKeys, filters, "gba")).toBe(
             "stock",
         );
+    });
+
+    it("a GBA look gives way to each other console's own starting look", () => {
+        expect(filterOnConsoleSwitch("sp101Color", allKeys, filters, "nes")).toBe("ntsc");
+        expect(filterOnConsoleSwitch("gbaLcdGrid", allKeys, filters, "gb")).toBe("gameboy");
+        expect(filterOnConsoleSwitch("agb001", allKeys, filters, "snes")).toBe("stock");
+    });
+
+    it("keeps a GBA look from one GBA game to the next", () => {
+        expect(filterOnConsoleSwitch("nsoGbaColor", allKeys, filters, "gba")).toBe("nsoGbaColor");
     });
 
     it("keeps NTSC and CRT when switching from NES to SNES", () => {
