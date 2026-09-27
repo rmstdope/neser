@@ -4,7 +4,7 @@
 //! (Zapper, Arkanoid paddle, SNES Mouse) and manages the cursor
 //! grab/release state machine.
 
-use crate::frontends::native::gl_backend::{Crosshair, CrosshairStyle};
+use crate::frontends::native::gl_backend::{Crosshair, LightGun};
 use crate::nes::input::mouse_mapping;
 use crate::platform::emulator::{Console, MouseInputButton};
 
@@ -194,7 +194,7 @@ pub fn zapper_crosshair(console: &Console, last_position: Option<(u8, u8)>) -> O
         last_position.map(|(x, y)| Crosshair {
             x: x as f32,
             y: y as f32,
-            style: CrosshairStyle::Plus,
+            gun: LightGun::Zapper,
         })
     }
 }
@@ -212,7 +212,7 @@ pub fn super_scope_sight(
     last_position.map(|(x, y)| Crosshair {
         x: f32::from(x),
         y: f32::from(y),
-        style: CrosshairStyle::Ring,
+        gun: LightGun::SuperScope,
     })
 }
 
@@ -596,6 +596,7 @@ mod tests {
         let ch = ch.unwrap();
         assert_eq!(ch.x, 100.0);
         assert_eq!(ch.y, 200.0);
+        assert_eq!(ch.gun, LightGun::Zapper);
     }
 
     // ── Super Scope ──────────────────────────────────────────────────────
@@ -693,7 +694,7 @@ mod tests {
             Some(Crosshair {
                 x: 10.0,
                 y: 20.0,
-                style: CrosshairStyle::Ring,
+                gun: LightGun::SuperScope,
             })
         );
         assert_eq!(super_scope_sight(&make_console(), true, Some((1, 2))), None);

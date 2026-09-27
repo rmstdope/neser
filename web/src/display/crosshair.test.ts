@@ -141,7 +141,7 @@ it("createCrosshair clamps position to bounds", async () => {
     crosshair.updatePosition(-10, 300);
 
     const arc = lastOverlayArc ? lastOverlayArc() : null;
-    expect(arc, "Expected crosshair to draw the center dot").toBeTruthy();
+    expect(arc, "Expected the ring sight to be drawn around the aim point").toBeTruthy();
     expect(arc!.x).toBe(0);
     expect(arc!.y).toBe(239);
 
