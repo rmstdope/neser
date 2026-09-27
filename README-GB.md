@@ -101,8 +101,9 @@ cgb-color-correction=true
 ```
 
 It applies to everything shown in color, including black-and-white games the
-Game Boy Color colorizes. In the web frontend, the "Colors" button in the top
-bar switches it while a color game is running.
+Game Boy Color colorizes. F8 switches it while a Game Boy Color game is running
+(desktop and web). In the web frontend, the "Colors" button in the top bar
+switches it while a color game is running.
 
 ## Shade palette
 

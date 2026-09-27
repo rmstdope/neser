@@ -562,7 +562,7 @@ mod tests {
     // ── overlay_text: help overlay ────────────────────────────────────────────
 
     #[test]
-    fn test_help_overlay_lists_f8_for_nes_and_game_boy() {
+    fn test_help_overlay_lists_f8_as_cycle_palette_or_colors() {
         let state = NativeAppState {
             help_overlay_visible: true,
             ..NativeAppState::default()

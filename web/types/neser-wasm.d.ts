@@ -101,13 +101,20 @@ declare module "*/pkg/neser" {
     export class WasmGb {
         free(): void;
         [Symbol.dispose](): void;
-        /** F8: next shade palette's name, or "" when no original Game Boy game runs. */
+        /**
+         * F8: next palette's name for an original Game Boy game, or the colour-correction
+         * message in a Game Boy Color game; "" when no game runs.
+         */
         cycle_palette(): string;
         palette_label(): string;
+        /** Whether Game Boy Color LCD colour correction is on (F8 or the Colors button). */
+        cgb_color_correction(): boolean;
         drain_toasts(): unknown[];
         frame_rate_hz(): number;
         get_audio_samples(): Float32Array;
         is_audio_muted(): boolean;
+        /** Whether a game is shown in colour (a Game Boy Color game, or one it colourises). */
+        is_color(): boolean;
         /** The LCD filter's palette texture: 2x1 RGBA, background then foreground. */
         lcd_filter_palette_rgba(): Uint8Array;
         load_rom(rom: Uint8Array, rom_name: string): void;
@@ -119,6 +126,8 @@ declare module "*/pkg/neser" {
         set_audio_muted(muted: boolean): void;
         set_audio_sample_rate(sample_rate: number): void;
         set_button(controller: number, button: number, pressed: boolean): void;
+        /** Turn Game Boy Color LCD colour correction on or off, from the next frame. */
+        set_cgb_color_correction(enabled: boolean): void;
         set_lcd_filter_active(active: boolean): void;
         start_lcd_filter(active: boolean): void;
     }

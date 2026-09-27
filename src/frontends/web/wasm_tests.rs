@@ -1024,6 +1024,47 @@ fn wasm_gb_cycle_palette_on_game_boy_color_hardware_cycles_the_gbc_palette() {
 }
 
 #[wasm_bindgen_test]
+fn wasm_gb_cycle_palette_in_a_colour_game_switches_color_correction() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
+    drained(&mut gb);
+    gb.render_frame_rgba();
+    let raw = gb.render_frame_rgba();
+
+    assert_eq!(gb.cycle_palette(), "Colors: GBC screen");
+    assert!(gb.cgb_color_correction());
+    assert_eq!(drained(&mut gb), vec!["Colors: GBC screen".to_string()]);
+    assert_ne!(gb.render_frame_rgba(), raw, "picture changes at once");
+
+    assert_eq!(gb.cycle_palette(), "Colors: Raw");
+    assert!(!gb.cgb_color_correction());
+    assert_eq!(drained(&mut gb), vec!["Colors: Raw".to_string()]);
+    assert_eq!(gb.render_frame_rgba(), raw);
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cycle_palette_in_a_dmg_game_on_gbc_leaves_color_correction() {
+    let mut gb = WasmGb::new();
+    gb.game_boy_mut()
+        .app_context()
+        .borrow_mut()
+        .config_mut()
+        .gb
+        .hardware = Some(crate::gb::model::GbHardware::Cgb);
+    gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
+    gb.cycle_palette();
+    assert!(!gb.cgb_color_correction());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_cgb_color_correction_reports_what_was_set() {
+    let mut gb = WasmGb::new();
+    assert!(!gb.cgb_color_correction());
+    gb.set_cgb_color_correction(true);
+    assert!(gb.cgb_color_correction());
+}
+
+#[wasm_bindgen_test]
 fn wasm_gb_cycle_palette_without_a_dmg_game_is_silent() {
     let mut gb = WasmGb::new();
     assert_eq!(gb.cycle_palette(), "");

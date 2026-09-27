@@ -406,6 +406,8 @@ nes-vertical_overscan=8
 # screen showed them: softer and paler than the raw colors. Applies to
 # everything shown in color, including black-and-white games the Game Boy
 # Color colorizes. Screenshots and captures use it too.
+# At runtime, press F8 in a Game Boy Color game to switch it; this setting
+# only decides how each start begins.
 # Default: false (raw colors).
 #cgb-color-correction=false
 

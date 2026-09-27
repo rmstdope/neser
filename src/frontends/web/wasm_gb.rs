@@ -89,8 +89,10 @@ impl WasmGb {
 
     /// F8: cycles an original Game Boy game's palette and queues the toast:
     /// the shade palette on Game Boy hardware, the colourisation on Game Boy
-    /// Color hardware. Returns the new palette's name, or `""` when no
-    /// original Game Boy game is running (nothing changes, no toast).
+    /// Color hardware. In a Game Boy Color game it switches the colour
+    /// correction instead (read the result with `cgb_color_correction`).
+    /// Returns the new palette's name or the correction's message, or `""`
+    /// when no game is running (nothing changes, no toast).
     #[wasm_bindgen]
     pub fn cycle_palette(&mut self) -> String {
         if let Some(palette) = self.gb.cycle_palette() {
@@ -103,7 +105,15 @@ impl WasmGb {
                 self.pending_toasts.push(toast);
                 self.gb.gbc_palette().display_name().to_string()
             }
-            None => String::new(),
+            None => match self.gb.toggle_cgb_color_correction() {
+                Some(enabled) => {
+                    let toast =
+                        crate::gb::console::gameboy::cgb_color_correction_toast_message(enabled);
+                    self.pending_toasts.push(toast.clone());
+                    toast
+                }
+                None => String::new(),
+            },
         }
     }
 
@@ -172,6 +182,13 @@ impl WasmGb {
             .config_mut()
             .gb
             .cgb_color_correction = enabled;
+    }
+
+    /// Whether the Game Boy Color LCD colour correction is on (set by the
+    /// Colors button or switched with F8).
+    #[wasm_bindgen]
+    pub fn cgb_color_correction(&self) -> bool {
+        self.gb.cgb_color_correction()
     }
 
     /// Returns the display width in pixels (always 160 for Game Boy).
