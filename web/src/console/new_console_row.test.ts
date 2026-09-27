@@ -1,5 +1,6 @@
 /**
- * Adding a console to the web is one row in the console table: every module that behaves
+ * Adding a console to the web is one row in the console table (its ROM extensions are a row in
+ * Rust's table, which reaches the page through the wasm binding): every module that behaves
  * differently per console must pick a new row up without being edited. The table is replaced
  * here by the real one plus a made-up console, "next", whose every column is distinctive.
  */
@@ -9,7 +10,6 @@ import type { ConsoleKind, ConsoleProfile } from "./consoles";
 vi.mock("./consoles", async (importOriginal) => {
     const real = await importOriginal<typeof import("./consoles")>();
     const next: ConsoleProfile = {
-        extensions: ["nxt"],
         frameFormat: "rgb",
         audio: { stereo: true, sampleScale: "gba" },
         filterFamily: "gb",
@@ -26,16 +26,18 @@ vi.mock("./consoles", async (importOriginal) => {
         ...real,
         CONSOLE_KINDS: kinds,
         CONSOLES: consoles,
-        consoleKindForExtension: (ext: string) =>
-            kinds.find((kind) => consoles[kind as keyof typeof consoles].extensions.includes(ext.toLowerCase())) ?? null,
     };
 });
 
 const NEXT = "next" as unknown as ConsoleKind;
 
 describe("a console added as one table row", () => {
-    it("has its ROMs recognised and named in the supported list", async () => {
-        const { webRomConsoleKindForName, supportedRomExtensionsText } = await import("../rom/rom_extensions");
+    it("has its ROMs recognised and named in the supported list once the table names it", async () => {
+        const { installRomExtensionTable, webRomConsoleKindForName, supportedRomExtensionsText } = await import(
+            "../rom/rom_extensions"
+        );
+        const { ROM_EXTENSION_TABLE } = await import("../rom/rom_extension_table.fixture");
+        installRomExtensionTable([...ROM_EXTENSION_TABLE, ["nxt", "next"]]);
         expect(webRomConsoleKindForName("GAME.NXT")).toBe("next");
         expect(supportedRomExtensionsText()).toBe(".nes, .gb, .gbc, .cgb, .gba, .sfc, .smc, .nxt");
     });

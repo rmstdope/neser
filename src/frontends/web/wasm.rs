@@ -11,6 +11,7 @@ use crate::nes::input::{Button, ControllerType, SnesButton};
 use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::autorun::crc32;
 use crate::platform::frontend_toasts::gamepad_init_toast_message as shared_gamepad_init_toast_message;
+use crate::platform::rom_extensions::{ROM_EXTENSIONS, console_key};
 use crate::wasm_autorun::WasmAutorunState;
 use crate::web_console::{WebConsole, web_console_bindings};
 use std::cell::RefCell;
@@ -1027,6 +1028,20 @@ fn disasm_line_to_json_object(addr: u16, bytes: &[u8], text: &str, is_current: b
         r#"{{"addr":{},"bytes":{},"text":"{}","is_current":{}}}"#,
         addr, bytes_json, escaped_text, is_current
     )
+}
+
+/// Every supported ROM extension paired with the web console that runs it, as
+/// `[extension, consoleKind]` arrays in the order players read them: the web
+/// page's copy of `platform::rom_extensions::ROM_EXTENSIONS`.
+#[wasm_bindgen]
+pub fn rom_extension_table() -> js_sys::Array {
+    ROM_EXTENSIONS
+        .iter()
+        .map(|&(extension, platform)| {
+            let key = console_key(platform.system_type());
+            js_sys::Array::of2(&JsValue::from_str(extension), &JsValue::from_str(key))
+        })
+        .collect()
 }
 
 #[wasm_bindgen]

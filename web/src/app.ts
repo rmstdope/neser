@@ -4,6 +4,7 @@ import init, {
     WasmGba,
     WasmSnes,
     gamepad_init_toast_message,
+    rom_extension_table,
     snes_dsp_firmware_is_genuine,
     snes_rom_dsp_chip
 } from "../pkg/neser";
@@ -45,7 +46,12 @@ import { createSaveStateContext } from "./save-state/save_state_context";
 import { fetchRomList } from "./rom/rom_list";
 import { handleRomSelection } from "./rom/rom_selection";
 import { shouldCreateFreshEmulatorForRomStart } from "./rom/emulator_lifecycle";
-import { supportedRomExtensionsText, webRomConsoleKindForName, webRomExtensionForName } from "./rom/rom_extensions";
+import {
+    applyRomExtensionTable,
+    supportedRomExtensionsText,
+    webRomConsoleKindForName,
+    webRomExtensionForName
+} from "./rom/rom_extensions";
 import { CONSOLES, type ConsoleKind } from "./console/consoles";
 import { createAutorunContext, parseAutorunFile } from "./rom/autorun_context";
 import { createFrameLimiter } from "./audio/frame_limiter";
@@ -224,6 +230,21 @@ function ensureWasmInitialized() {
         wasmInitPromise = init({ module_or_path: createWasmUrl() });
     }
     return wasmInitPromise;
+}
+
+let romExtensionTableReady: Promise<void> | null = null;
+
+/**
+ * Install the wasm binding's ROM extension table and set the picker's accept list from it, once.
+ * Everything that classifies a ROM by name waits for this: before it, no extension is known.
+ */
+function ensureRomExtensionTable(): Promise<void> {
+    if (!romExtensionTableReady) {
+        romExtensionTableReady = ensureWasmInitialized().then(() => {
+            applyRomExtensionTable(rom_extension_table(), romInput);
+        });
+    }
+    return romExtensionTableReady;
 }
 
 // WebGL shader setup for filters
@@ -1478,9 +1499,17 @@ async function start(): Promise<boolean> {
         return true;
     }
     const romName = romMetadata?.name ?? "selected-rom.nes";
+    // A ROM chosen before the wasm module has loaded waits for its extension table.
+    try {
+        await ensureRomExtensionTable();
+    } catch (err: unknown) {
+        setStatus(`Failed to load ROM: ${err}`, true);
+        updateEmulationButtons();
+        return true;
+    }
     const consoleKind = webRomConsoleKindForName(romName);
 
-    // Reject unsupported file types before any async work.
+    // Reject unsupported file types before any emulator work.
     if (!consoleKind) {
         const ext = webRomExtensionForName(romName);
         toastOverlay.show(`Unsupported file type .${ext} — only ${supportedRomExtensionsText()} are supported`);
@@ -2705,7 +2734,6 @@ async function populateRomSelect() {
     }
 }
 
-populateRomSelect();
 // Set initial button states (all disabled until a ROM is loaded)
 updateEmulationButtons();
 
@@ -2754,13 +2782,15 @@ function showPageLoadGamepadInitToast() {
 // Initialize connectedGamepads to detect any gamepads already connected on page load
 updateConnectedGamepads();
 
-ensureWasmInitialized()
+ensureRomExtensionTable()
     .then(() => {
+        // The built-in ROM list is filtered by the extension table, so it waits for it too.
+        void populateRomSelect();
         updateConnectedGamepads();
         showPageLoadGamepadInitToast();
     })
     .catch((error) => {
-        console.error("Failed to initialize WASM for gamepad init toast", error);
+        console.error("Failed to initialize WASM at start-up", error);
     });
 
 const webShortcutActions = {

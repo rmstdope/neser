@@ -1,5 +1,11 @@
-import { expect, it } from "vitest";
+import { beforeEach, expect, it } from "vitest";
+import { installRomExtensionTable } from "./rom_extensions";
+import { ROM_EXTENSION_TABLE } from "./rom_extension_table.fixture";
 import { fetchRomList, parseDirectoryListing } from "./rom_list";
+
+beforeEach(() => {
+    installRomExtensionTable(ROM_EXTENSION_TABLE);
+});
 
 it("parseDirectoryListing extracts dirs and roms", () => {
     const html = `

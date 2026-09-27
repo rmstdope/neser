@@ -36,13 +36,13 @@ it("findRomFiles follows the top-level symlinks the served ROM tree is made of",
     ]);
 });
 
-it("findRomFiles lists every extension the web picker supports and nothing else", () => {
+it("findRomFiles lists every served file but its own manifest: the browser filters by the wasm table", () => {
     const served = join(root, "served");
-    for (const name of ["a.nes", "b.gb", "c.gbc", "d.cgb", "e.gba", "f.sfc", "g.smc", "notes.txt", "roms.json"]) {
+    for (const name of ["a.nes", "b.sfc", "notes.txt", "roms.json"]) {
         touch(join(served, name));
     }
 
-    expect(findRomFiles(served)).toEqual(["a.nes", "b.gb", "c.gbc", "d.cgb", "e.gba", "f.sfc", "g.smc"]);
+    expect(findRomFiles(served)).toEqual(["a.nes", "b.sfc", "notes.txt"]);
 });
 
 it("findRomFiles does not follow a nested symlink out of its top-level tree, nor loop", () => {

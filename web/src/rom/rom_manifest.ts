@@ -1,10 +1,13 @@
 // Node-only: imported by vite.config.ts to write web/roms/roms.json, never by the browser app.
 import { readdirSync, realpathSync, statSync, type Stats } from "fs";
 import { join, relative, isAbsolute } from "path";
-import { isSupportedWebRomName } from "./rom_extensions";
+
+const MANIFEST_NAME = "roms.json";
 
 /**
- * Every ROM the web picker supports under `servedDir`, as sorted slash-separated paths relative to it.
+ * Every file served under `servedDir` but the manifest itself, as sorted slash-separated paths
+ * relative to it. Which of them are ROMs is the wasm binding's table, which this build-time walk
+ * cannot load, so the browser filters the list (`rom_list.ts`) once start-up has installed it.
  *
  * The served tree is made of symlinks into the repository's `roms/` (web/roms/automated_tests ->
  * ../../roms/nes/automated_tests), so each top-level entry is followed and its own resolved target
@@ -33,7 +36,7 @@ function walk(path: string, relPath: string, rootReal: string, visited: Set<stri
         for (const entry of tryReaddir(path)) {
             walk(join(path, entry), `${relPath}/${entry}`, rootReal, visited, results);
         }
-    } else if (stat.isFile() && isSupportedWebRomName(relPath)) {
+    } else if (stat.isFile() && relPath !== MANIFEST_NAME) {
         results.push(relPath);
     }
 }
