@@ -4,7 +4,7 @@ use crate::platform::emulator::Emulator;
 use crate::snes::console::Snes;
 use crate::snes::console::config::SnesHardware;
 use crate::snes::dsp::{self, DspChip};
-use crate::snes::input::{SnesButton, SnesControllerType};
+use crate::snes::input::{InputPorts, SnesButton, SnesControllerType};
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -360,6 +360,12 @@ fn run_rom_with_capture(
 
 /// A console configured as `config` asks, with `hardware` as its
 /// `snes-hardware` setting, with `rom` loaded.
+/// The loaded game's controller ports, which a scripted input event feeds.
+fn ports(snes: &mut Snes) -> &mut InputPorts {
+    snes.input_ports_mut()
+        .expect("the runner loads a game before scripting input")
+}
+
 fn runner_console(
     rom: &[u8],
     name: &str,
@@ -430,30 +436,30 @@ fn run_rom_with_oracle_and_capture(
                     snes.set_button(port, crate::snes::input::button_to_id(button), pressed);
                 }
                 InputAction::MouseDelta { port, dx, dy } => {
-                    snes.add_mouse_delta(port, dx, dy);
+                    ports(&mut snes).add_mouse_delta(port, dx, dy);
                 }
                 InputAction::MouseButton {
                     port,
                     button,
                     pressed,
                 } => match button {
-                    MouseButton::Left => snes.set_mouse_left_button(port, pressed),
-                    MouseButton::Right => snes.set_mouse_right_button(port, pressed),
+                    MouseButton::Left => ports(&mut snes).set_mouse_left_button(port, pressed),
+                    MouseButton::Right => ports(&mut snes).set_mouse_right_button(port, pressed),
                 },
                 InputAction::SuperScopePosition { port, x, y } => {
-                    snes.set_superscope_position(port, x, y);
+                    ports(&mut snes).set_superscope_position(port, x, y);
                 }
                 InputAction::SuperScopeTrigger { port, pressed } => {
-                    snes.set_superscope_trigger(port, pressed);
+                    ports(&mut snes).set_superscope_trigger(port, pressed);
                 }
                 InputAction::SuperScopeCursor { port, pressed } => {
-                    snes.set_superscope_cursor(port, pressed);
+                    ports(&mut snes).set_superscope_cursor(port, pressed);
                 }
                 InputAction::SuperScopeTurbo { port, pressed } => {
-                    snes.set_superscope_turbo(port, pressed);
+                    ports(&mut snes).set_superscope_turbo(port, pressed);
                 }
                 InputAction::SuperScopePause { port, pressed } => {
-                    snes.set_superscope_pause(port, pressed);
+                    ports(&mut snes).set_superscope_pause(port, pressed);
                 }
             }
             next_input += 1;

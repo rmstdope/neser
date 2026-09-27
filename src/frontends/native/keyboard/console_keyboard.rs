@@ -72,15 +72,18 @@ pub(super) fn handle_super_scope_key(
     key_code: KeyCode,
     pressed: bool,
 ) -> bool {
-    let Some(snes) = console.as_snes_mut() else {
+    let Some(ports) = console
+        .as_snes_mut()
+        .and_then(|snes| snes.input_ports_mut())
+    else {
         return false;
     };
-    let Some(port) = (0..=1u8).find(|&port| snes.has_superscope_on_port(port)) else {
+    let Some(port) = (0..=1u8).find(|&port| ports.has_superscope_on_port(port)) else {
         return false;
     };
     match key_code {
         KeyCode::Digit4 => {
-            if pressed && let Some(on) = snes.toggle_superscope_turbo(port) {
+            if pressed && let Some(on) = ports.toggle_superscope_turbo(port) {
                 console
                     .app_context()
                     .borrow_mut()
@@ -89,7 +92,7 @@ pub(super) fn handle_super_scope_key(
             true
         }
         KeyCode::Digit5 => {
-            snes.set_superscope_pause(port, pressed);
+            ports.set_superscope_pause(port, pressed);
             true
         }
         _ => false,
@@ -331,7 +334,10 @@ mod tests {
     fn scope(console: &Console) -> crate::snes::input::SnesControllerState {
         console
             .as_snes()
-            .and_then(|snes| snes.superscope_state(1))
+            .and_then(|snes| {
+                snes.input_ports()
+                    .and_then(|ports| ports.superscope_state(1))
+            })
             .expect("scope on port 2")
     }
 

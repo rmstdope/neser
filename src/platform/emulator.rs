@@ -171,7 +171,7 @@ impl MouseInputCapability for Snes {
     }
 
     fn mouse_captures_on_click(&self) -> bool {
-        self.has_mouse()
+        self.has_snes_mouse()
     }
 
     fn has_zapper(&self) -> bool {
@@ -179,22 +179,27 @@ impl MouseInputCapability for Snes {
     }
 
     fn has_snes_mouse(&self) -> bool {
-        self.has_mouse()
+        self.input_ports().is_some_and(|ports| ports.has_mouse())
     }
 
     fn has_snes_mouse_on_port(&self, port: u8) -> bool {
-        self.has_mouse_on_port(port)
+        self.input_ports()
+            .is_some_and(|ports| ports.has_mouse_on_port(port))
     }
 
     fn has_super_scope(&self) -> bool {
-        self.has_superscope()
+        self.input_ports()
+            .is_some_and(|ports| ports.has_superscope())
     }
 
     fn set_mouse_position(&mut self, x: u8, y: u8) {
         // The SNES mouse uses relative motion only; the Super Scope aims absolutely.
+        let Some(ports) = self.input_ports_mut() else {
+            return;
+        };
         for port in 0..=1u8 {
-            if self.has_superscope_on_port(port) {
-                self.set_superscope_position(port, i16::from(x), i16::from(y));
+            if ports.has_superscope_on_port(port) {
+                ports.set_superscope_position(port, i16::from(x), i16::from(y));
             }
         }
     }
@@ -204,25 +209,31 @@ impl MouseInputCapability for Snes {
     }
 
     fn add_mouse_delta(&mut self, dx: i16, dy: i16) {
+        let Some(ports) = self.input_ports_mut() else {
+            return;
+        };
         for port in 0..=1u8 {
-            if self.has_mouse_on_port(port) {
-                self.add_mouse_delta(port, dx, dy);
+            if ports.has_mouse_on_port(port) {
+                ports.add_mouse_delta(port, dx, dy);
             }
         }
     }
 
     fn set_mouse_button(&mut self, button: MouseInputButton, pressed: bool) {
+        let Some(ports) = self.input_ports_mut() else {
+            return;
+        };
         for port in 0..=1u8 {
-            if self.has_mouse_on_port(port) {
+            if ports.has_mouse_on_port(port) {
                 match button {
-                    MouseInputButton::Left => self.set_mouse_left_button(port, pressed),
-                    MouseInputButton::Right => self.set_mouse_right_button(port, pressed),
+                    MouseInputButton::Left => ports.set_mouse_left_button(port, pressed),
+                    MouseInputButton::Right => ports.set_mouse_right_button(port, pressed),
                 }
             }
-            if self.has_superscope_on_port(port) {
+            if ports.has_superscope_on_port(port) {
                 match button {
-                    MouseInputButton::Left => self.set_superscope_trigger(port, pressed),
-                    MouseInputButton::Right => self.set_superscope_cursor(port, pressed),
+                    MouseInputButton::Left => ports.set_superscope_trigger(port, pressed),
+                    MouseInputButton::Right => ports.set_superscope_cursor(port, pressed),
                 }
             }
         }
