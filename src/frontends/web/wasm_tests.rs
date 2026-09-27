@@ -1754,3 +1754,27 @@ fn wasm_snes_get_audio_samples_stereo_returns_vec() {
     // Should return a Vec<f32> (stereo samples are interleaved L, R, L, R, ...)
     assert!(samples.len().is_multiple_of(2));
 }
+
+#[wasm_bindgen_test]
+fn wasm_nes_palette_label_follows_cycle_palette() {
+    let mut nes = WasmNes::new();
+    nes.load_rom(&minimal_nrom(), "test.nes").unwrap();
+    assert_eq!(nes.palette_label(), "Palette: Default");
+    nes.cycle_palette();
+    assert_eq!(nes.palette_label(), "Palette: NesDev");
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_palette_label_follows_cycle_palette() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&minimal_gb_rom(), "test.gb").unwrap();
+    assert_eq!(gb.palette_label(), "Palette: Grey");
+    gb.cycle_palette();
+    assert_eq!(gb.palette_label(), "Palette: DMG Green");
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_palette_label_is_empty_without_a_dmg_game() {
+    let gb = WasmGb::new();
+    assert_eq!(gb.palette_label(), "");
+}

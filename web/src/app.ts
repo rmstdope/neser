@@ -91,6 +91,7 @@ import { computeButtonStates } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, type FilterDef } from "./display/filters";
 import { cgbColorButtonLabel, cgbColorButtonVisible } from "./display/cgb_color_correction";
 import { gbaColorButtonLabel } from "./display/gba_color_correction";
+import { paletteButtonVisible } from "./display/palette_button";
 import { selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
@@ -822,6 +823,20 @@ cgbColorToggleBtn?.addEventListener("click", () => {
     updateCgbColorButton();
 });
 
+/** The Palette button does what F8 does and names the palette in use. */
+const paletteCycleBtn = document.getElementById("palette-cycle") as HTMLButtonElement | null;
+
+/** Show the Palette button only where F8 changes something; its label is the core's. */
+function updatePaletteButton() {
+    if (!paletteCycleBtn) return;
+    const label = emulator?.kind === "nes" || emulator?.kind === "gb" ? emulator.inst.palette_label() : "";
+    const visible = paletteButtonVisible({ kind: emulator?.kind ?? null, label, running, paused });
+    paletteCycleBtn.style.display = visible ? "" : "none";
+    if (visible) paletteCycleBtn.textContent = label;
+}
+
+paletteCycleBtn?.addEventListener("click", () => cyclePaletteAction());
+
 // ── Autorun context + DOM elements ───────────────────────────────────────────
 const autorunCtx = createAutorunContext();
 const autorunCreateCheckbox = document.getElementById("autorun-create") as HTMLInputElement | null;
@@ -884,6 +899,7 @@ function updateEmulationButtons() {
         autorunLoadBtn.disabled = romBytes === null || !romFromFile || running;
     }
     updateCgbColorButton();
+    updatePaletteButton();
 }
 
 /** Create a fresh emulator instance and update kind-dependent UI. */
@@ -1457,6 +1473,7 @@ async function start(): Promise<boolean> {
 
         emulator!.inst.load_rom(romBytes, romName);
         syncGbPaletteWithFilter(true);
+        updatePaletteButton();
         drainNesToasts(emulator?.inst ?? null, toastOverlay);
 
         // ── NES-only: Autorun setup (playback/extend – after ROM is loaded) ──
@@ -2040,6 +2057,7 @@ function cyclePaletteAction() {
     } else if (emulator?.kind === "gba") {
         toggleGbaColorCorrection();
     }
+    updatePaletteButton();
 }
 
 function debuggerRunToNextFrame() {
