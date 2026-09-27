@@ -36,4 +36,12 @@ describe("playwright.config", () => {
 
         expect(config.webServer).toMatchObject({ timeout: 600_000 });
     });
+
+    it("runs tests fully parallel so CI shards balance by test, not by file", async () => {
+        // The web-integration CI job runs as --shard=1/2 and --shard=2/2 (nr-ks6). Without
+        // fullyParallel Playwright shards by file, and one file holds a third of the suite.
+        const config = await loadConfig();
+
+        expect(config.fullyParallel).toBe(true);
+    });
 });
