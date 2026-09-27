@@ -318,6 +318,8 @@ interface AutorunFileInput extends HTMLInputElement {
 }
 
 let currentFilter = "ntsc"; // Start with NTSC filter as requested
+/** True until a look is chosen or a game loads: the first game then starts on its console's default. */
+let filterUntouched = true;
 const filterKeys = Object.keys(filters);
 let shaderProgram: ShaderProgram | null = null;
 let ntscPass1Program: ShaderProgram | null = null;
@@ -1007,7 +1009,8 @@ function updateEmulatorKindUI() {
     }
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
-    const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind);
+    const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind, filterUntouched);
+    filterUntouched = false;
     if (newFilter !== currentFilter) {
         currentFilter = newFilter;
         initWebGL();
@@ -2787,6 +2790,7 @@ function updateFilterToggleButtonLabel() {
 }
 
 function toggleFilterAction() {
+    filterUntouched = false;
     cycleFilter();
     syncGbPaletteWithFilter(false);
     updateFilterToggleButtonLabel();

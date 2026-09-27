@@ -13,6 +13,7 @@ use crate::gb::console::config::GB_FILTER_NAMES;
 use crate::gba::console::config::GBA_FILTER_NAMES;
 use crate::nes::console::NES_FILTER_NAMES;
 use crate::platform::shaders::SHADER_PRESETS;
+use crate::snes::console::config::SNES_FILTER_NAMES;
 use std::fs;
 use std::path::Path;
 
@@ -121,6 +122,7 @@ impl Config {
             "nes_filter" => NES_FILTER_NAMES,
             "gb_filter" => GB_FILTER_NAMES,
             "gba_filter" => GBA_FILTER_NAMES,
+            "snes_filter" => SNES_FILTER_NAMES,
             _ => return Ok(()),
         };
         if !value.is_empty() {
@@ -222,6 +224,7 @@ impl Config {
             ("--nes-filter", NES_FILTER_NAMES),
             ("--gb-filter", GB_FILTER_NAMES),
             ("--gba-filter", GBA_FILTER_NAMES),
+            ("--snes-filter", SNES_FILTER_NAMES),
         ] {
             if let Some(filter_name) = Self::parse_named_arg(args, flag) {
                 self.frontend.shader_path = Some(Self::map_filter_name_for(&filter_name, allowed)?);
@@ -348,6 +351,14 @@ mod tests {
         assert_eq!(
             crate::gb::console::config::GB_FILTER_NAMES,
             &["none", "dmg"]
+        );
+    }
+
+    #[test]
+    fn snes_filter_names_are_the_nes_shaders_in_f4_order() {
+        assert_eq!(
+            crate::snes::console::config::SNES_FILTER_NAMES,
+            crate::nes::console::NES_FILTER_NAMES
         );
     }
 
@@ -817,6 +828,62 @@ mod tests {
             assert!(
                 msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid")
             );
+        }
+
+        #[test]
+        fn test_config_cmdline_snes_filter_crt_sets_shader_path() {
+            let args = vec![
+                "neser".to_string(),
+                "--snes-filter".to_string(),
+                "crt".to_string(),
+            ];
+            let config = parse_config(args);
+            assert_eq!(
+                config.frontend.shader_path,
+                Some("vendor/slang-shaders/crt/crt-lottes.slangp".to_string())
+            );
+        }
+
+        #[test]
+        fn test_config_cmdline_snes_filter_rejects_bogus_with_valid_options() {
+            let args = vec![
+                "neser".to_string(),
+                "--snes-filter".to_string(),
+                "bogus".to_string(),
+            ];
+            let msg = config_new(args).unwrap_err();
+            assert_eq!(
+                msg,
+                "Invalid filter name: 'bogus'. Valid options are: none, crt, smooth, ntsc, pal"
+            );
+        }
+
+        #[test]
+        fn test_config_file_snes_filter_pal_sets_shader_path() {
+            let mut config = Config::default();
+            config.apply_config_value("snes-filter", "pal").unwrap();
+            assert_eq!(
+                config.frontend.shader_path,
+                Some(
+                    "vendor/slang-shaders/pal/decoupled-guest-advanced-pal 3-RF.slangp".to_string()
+                )
+            );
+        }
+
+        #[test]
+        fn test_config_file_snes_filter_rejects_bogus_like_nes_filter() {
+            let mut snes = Config::default();
+            let mut nes = Config::default();
+            let snes_msg = snes.apply_config_value("snes-filter", "bogus").unwrap_err();
+            let nes_msg = nes.apply_config_value("nes-filter", "bogus").unwrap_err();
+            assert_eq!(snes_msg, nes_msg);
+        }
+
+        #[test]
+        fn test_config_file_snes_filter_empty_ignored() {
+            let mut config = Config::default();
+            config.apply_config_value("snes-filter", "").unwrap();
+            assert_eq!(config.frontend.shader_path, None);
         }
     }
 }

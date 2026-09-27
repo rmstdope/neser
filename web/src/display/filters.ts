@@ -31,7 +31,7 @@ export function filterKeysForConsole(
         if (family === "stock") return isStock;
         // Game Boy family: stock + gb-type filters only
         if (family === "gb") return isStock || f.type === "gb";
-        // NES family: everything except gb-type filters
+        // NES family (NES and SNES): everything except gb-type filters
         return f.type !== "gb";
     });
 }
@@ -57,13 +57,19 @@ export function cycleFilterKey(
  * If the current filter is not available for the target console,
  * falls back to the console-appropriate default ("gameboy" for GB,
  * "ntsc" for NES) via {@link defaultFilterForConsole}.
+ *
+ * `untouched` is true while nobody has chosen a look and no game has loaded on
+ * this page: the page's initial filter is then not a choice to carry over, so
+ * the target console starts on its own default (None for SNES).
  */
 export function filterOnConsoleSwitch(
     currentFilter: string,
     allFilterKeys: string[],
     filters: Record<string, FilterDef>,
     targetConsole: ConsoleKind,
+    untouched = false,
 ): string {
+    if (untouched) return defaultFilterForConsole(targetConsole);
     const keys = filterKeysForConsole(allFilterKeys, filters, targetConsole);
     if (keys.includes(currentFilter)) return currentFilter;
     return defaultFilterForConsole(targetConsole);
