@@ -1,16 +1,13 @@
 /**
- * Crosshair rendering for the light guns: the NES Zapper's plus and the Super Scope's ring
- * sight. Creates an overlay canvas for drawing the crosshair cursor.
+ * The light guns' sight: the Super Scope's white ring, drawn identically for the NES Zapper.
+ * Creates an overlay canvas for drawing it over the picture.
+ *
+ * `pictureWidth` is the width, in console pixels, of the picture the canvas shows, which the
+ * ring's sizes are measured in: 256 for the Super Scope, the cropped width for the NES.
  */
-
-/** Picture width in console pixels, which the ring sight's sizes are measured in. */
-const PICTURE_WIDTH = 256;
-
-export type CrosshairStyle = "plus" | "ring";
-
 export function createCrosshair(
     targetCanvas: HTMLCanvasElement,
-    { style = "plus" }: { style?: CrosshairStyle } = {},
+    { pictureWidth = 256 }: { pictureWidth?: number } = {},
 ) {
     const parent = targetCanvas.parentElement;
     if (!parent) {
@@ -72,12 +69,12 @@ export function createCrosshair(
     }
     
     /**
-     * The Super Scope's sight, as agreed in docs/ui/nr-yvv-super-scope.html: in picture
+     * The sight, as agreed in docs/ui/nr-yvv-super-scope.html and docs/ui/nr-9qg-zapper-sight.html: in picture
      * pixels a ring of radius 9 and ticks from 4 to 14 off centre, white 1.5 wide over a
      * black 3.5 outline, scaled with the picture.
      */
     function drawRing(cx: number, cy: number) {
-        const scale = overlayCanvas.width / PICTURE_WIDTH;
+        const scale = overlayCanvas.width / pictureWidth;
         const inner = 4 * scale;
         const outer = 14 * scale;
         for (const [color, width] of [["#000", 3.5], ["#fff", 1.5]] as const) {
@@ -111,41 +108,7 @@ export function createCrosshair(
         const scaledX = x * dpr;
         const scaledY = y * dpr;
 
-        if (style === "ring") {
-            drawRing(scaledX, scaledY);
-            return;
-        }
-        
-        // Crosshair dimensions
-        const lineLength = 20 * dpr;
-        const gap = 8 * dpr;
-        const lineWidth = 2 * dpr;
-        
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-        ctx.lineWidth = lineWidth;
-        ctx.lineCap = "round";
-        
-        // Draw outer white lines
-        ctx.beginPath();
-        // Top
-        ctx.moveTo(scaledX, scaledY - gap);
-        ctx.lineTo(scaledX, scaledY - gap - lineLength);
-        // Bottom
-        ctx.moveTo(scaledX, scaledY + gap);
-        ctx.lineTo(scaledX, scaledY + gap + lineLength);
-        // Left
-        ctx.moveTo(scaledX - gap, scaledY);
-        ctx.lineTo(scaledX - gap - lineLength, scaledY);
-        // Right
-        ctx.moveTo(scaledX + gap, scaledY);
-        ctx.lineTo(scaledX + gap + lineLength, scaledY);
-        ctx.stroke();
-        
-        // Draw red center dot
-        ctx.fillStyle = "rgba(255, 0, 0, 0.8)";
-        ctx.beginPath();
-        ctx.arc(scaledX, scaledY, 3 * dpr, 0, Math.PI * 2);
-        ctx.fill();
+        drawRing(scaledX, scaledY);
     }
     
     function show() {

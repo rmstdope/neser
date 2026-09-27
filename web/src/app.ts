@@ -66,7 +66,7 @@ import {
     computeShortcutHelpFontSizePx,
     toggleShortcutHelpVisibility
 } from "./shortcuts/shortcut_help";
-import { createCrosshair, type CrosshairStyle } from "./display/crosshair";
+import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
     superScopeKeyAction,
@@ -354,7 +354,7 @@ let idleScrollerActive = false;
 let idleScroller: { renderFrame: (ts: number) => Uint8Array } | null = null;
 let idleScrollerStartTime = 0;
 let crosshair: ReturnType<typeof createCrosshair> | null = null; // Light-gun sight overlay
-let crosshairStyle: CrosshairStyle = "plus";
+let crosshairPictureWidth = 256; // The picture width the sight overlay was created for
 // Capture state for playing a Super Scope or SNES Mouse game with the mouse; fresh for every
 // game load.
 let superScopeSession = createSuperScopeSession();
@@ -3121,15 +3121,15 @@ function isMouseControllerActive(nesInstance: WasmNes | null) {
     );
 }
 
-function setCrosshairVisible(visible: boolean, style: CrosshairStyle = "plus") {
+function setCrosshairVisible(visible: boolean, pictureWidth = 256) {
     if (visible) {
-        if (crosshair && crosshairStyle !== style) {
+        if (crosshair && crosshairPictureWidth !== pictureWidth) {
             crosshair.destroy();
             crosshair = null;
         }
         if (!crosshair) {
-            crosshair = createCrosshair(canvas, { style });
-            crosshairStyle = style;
+            crosshair = createCrosshair(canvas, { pictureWidth });
+            crosshairPictureWidth = pictureWidth;
         }
         crosshair.show();
         return;
@@ -3148,7 +3148,7 @@ function updateMouseCursorState() {
         if (isSnesSuperScopeActive(snesInst)) {
             // The sight and the hidden pointer belong to a captured mouse only.
             const captured = superScopeSession.captured();
-            setCrosshairVisible(captured, "ring");
+            setCrosshairVisible(captured);
             if (captured && crosshair) {
                 const { x, y } = superScopeSession.position();
                 crosshair.updatePosition(x, y);
@@ -3177,7 +3177,7 @@ function updateMouseCursorState() {
 
     const zapperActive = isZapperActive(nes);
     const pointerLocked = document.pointerLockElement === canvas;
-    setCrosshairVisible(zapperActive && pointerLocked);
+    setCrosshairVisible(zapperActive && pointerLocked, width);
 
     if (zapperActive && pointerLocked) {
         document.body.style.cursor = "none";
