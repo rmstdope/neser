@@ -47,6 +47,15 @@ pub fn has_super_scope(console: &Console) -> bool {
         .is_some_and(|mouse| mouse.has_super_scope())
 }
 
+/// Returns `true` when an SNES Mouse is plugged into the SNES itself: captured only by a
+/// click, which never reaches the game (the NES's SNES-mouse adapter is captured
+/// automatically instead).
+pub fn has_click_captured_mouse(console: &Console) -> bool {
+    console
+        .as_mouse_input()
+        .is_some_and(|mouse| mouse.mouse_captures_on_click())
+}
+
 fn snes_mouse_ports(console: &Console) -> [bool; 2] {
     let Some(mouse) = console.as_mouse_input() else {
         return [false, false];
@@ -116,6 +125,46 @@ pub fn apply_snes_mouse_relative_motion(
     }
 }
 
+/// Moves the SNES's own SNES Mouse by a host movement of (`dx`, `dy`) over a picture drawn
+/// `picture_width` × `picture_height` large (see [`MouseMotionScale`]).
+///
+/// [`MouseMotionScale`]: crate::snes::input::MouseMotionScale
+pub fn apply_snes_console_mouse_motion(
+    console: &mut Console,
+    scale: &mut crate::snes::input::MouseMotionScale,
+    dx: f32,
+    dy: f32,
+    picture_width: f32,
+    picture_height: f32,
+) {
+    if !has_click_captured_mouse(console) {
+        return;
+    }
+    let (counts_x, counts_y) = scale.counts(dx, dy, picture_width, picture_height);
+    if let Some(mouse) = console.as_mouse_input_mut()
+        && (counts_x != 0 || counts_y != 0)
+    {
+        mouse.add_mouse_delta(counts_x, counts_y);
+    }
+}
+
+/// The size the picture is drawn at in a `window_width` × `window_height` window (logical
+/// points): the game screen letterboxed at the console's pixel aspect, as the renderer draws
+/// it.
+pub fn picture_size(console: &Console, window_width: u32, window_height: u32) -> (f32, f32) {
+    let (screen_w, screen_h) = (console.screen_width(), console.screen_height());
+    let aspect = if screen_h == 0 {
+        1.0
+    } else {
+        screen_w as f32 / screen_h as f32 * console.pixel_aspect()
+    };
+    crate::frontends::native::ui_geometry::letterbox_size(
+        window_width as f32,
+        window_height as f32,
+        aspect,
+    )
+}
+
 /// Forwards a mouse button press/release to the appropriate NES controller.
 ///
 /// No-op for consoles without a mouse-driven controller.
@@ -177,10 +226,11 @@ pub fn super_scope_picture_height(frame_height: u32) -> u32 {
     }
 }
 
-/// Let go of the Super Scope's Fire and Cursor. Called whenever the capture ends (Escape,
-/// focus loss), since the button-up of a press held across it never reaches the scope.
-pub fn release_super_scope_buttons(console: &mut Console) {
-    if !has_super_scope(console) {
+/// Let go of the buttons of a device captured on a click (the Super Scope's Fire and Cursor,
+/// the SNES Mouse's buttons). Called whenever the capture ends (Escape, focus loss), since
+/// the button-up of a press held across it never reaches the device.
+pub fn release_captured_buttons(console: &mut Console) {
+    if !has_super_scope(console) && !has_click_captured_mouse(console) {
         return;
     }
     if let Some(mouse) = console.as_mouse_input_mut() {
@@ -193,20 +243,21 @@ pub fn release_super_scope_buttons(console: &mut Console) {
 
 /// Whether the mouse should be captured this frame.
 ///
-/// NES-style devices (`has_mouse_device`: Zapper, Arkanoid, SNES mouse) are captured
-/// automatically while the window is focused, unless Escape released them. A Super Scope
-/// is captured only by a click (see [`click_captures`]), so it merely keeps a capture it
-/// already has while the window stays focused.
+/// NES-style devices (`has_mouse_device`: Zapper, Arkanoid, the NES's SNES-mouse adapter)
+/// are captured automatically while the window is focused, unless Escape released them.
+/// The SNES's devices (`captures_on_click`: Super Scope, SNES Mouse) are captured only by a
+/// click (see [`click_captures`]), so they merely keep a capture they already have while the
+/// window stays focused.
 pub fn desired_mouse_grab(
     has_mouse_device: bool,
-    has_super_scope: bool,
+    captures_on_click: bool,
     grabbed: bool,
     window_focused: bool,
     released_by_escape: bool,
 ) -> bool {
     if has_mouse_device {
         mouse_mapping::should_grab_mouse_input(true, window_focused, released_by_escape)
-    } else if has_super_scope {
+    } else if captures_on_click {
         grabbed && window_focused
     } else {
         false
@@ -214,16 +265,40 @@ pub fn desired_mouse_grab(
 }
 
 /// Whether a press of `button` on the game captures the mouse: either button for the
-/// Super Scope (fire or cursor), the left one for the NES-style devices.
-pub fn click_captures(has_mouse_device: bool, has_super_scope: bool, button: MouseButton) -> bool {
-    has_super_scope || (has_mouse_device && button == MouseButton::Left)
+/// SNES's devices (`captures_on_click`), the left one for the NES-style devices.
+pub fn click_captures(
+    has_mouse_device: bool,
+    captures_on_click: bool,
+    button: MouseButton,
+) -> bool {
+    captures_on_click || (has_mouse_device && button == MouseButton::Left)
 }
 
-/// The message shown when the mouse stops aiming a Super Scope: only when a scope is
-/// connected and the mouse had actually been captured.
-pub fn super_scope_release_toast(has_super_scope: bool, was_grabbed: bool) -> Option<&'static str> {
-    (has_super_scope && was_grabbed)
-        .then_some(crate::snes::frontend_toasts::SUPER_SCOPE_MOUSE_RELEASED)
+/// Whether the click that captures the mouse also reaches the game. Never for the SNES's
+/// own SNES Mouse (`click_captured_mouse`), where it would paint or select something; for
+/// the other devices only on the first capture, not a recapture after Escape or focus loss
+/// (`was_released_by_escape`).
+pub fn forwards_capturing_click(click_captured_mouse: bool, was_released_by_escape: bool) -> bool {
+    !click_captured_mouse && !was_released_by_escape
+}
+
+/// The message shown when a device captured on a click lets go of the mouse: only when the
+/// mouse had actually been captured.
+pub fn mouse_release_toast(
+    has_super_scope: bool,
+    click_captured_mouse: bool,
+    was_grabbed: bool,
+) -> Option<&'static str> {
+    use crate::snes::frontend_toasts::{SNES_MOUSE_RELEASED, SUPER_SCOPE_MOUSE_RELEASED};
+    if !was_grabbed {
+        None
+    } else if has_super_scope {
+        Some(SUPER_SCOPE_MOUSE_RELEASED)
+    } else if click_captured_mouse {
+        Some(SNES_MOUSE_RELEASED)
+    } else {
+        None
+    }
 }
 
 // ── NES-specific internal helpers ─────────────────────────────────────────────
@@ -254,18 +329,6 @@ pub fn accumulate_virtual_cursor(
     let new_y =
         (current.1 + dy * VIRTUAL_CURSOR_SENSITIVITY).clamp(0.0, (window_height as f32) - 1.0);
     (new_x, new_y)
-}
-
-/// Returns `true` when a left-click that also triggers a mouse grab should be
-/// forwarded to the NES controller as a button press.
-///
-/// When the mouse was explicitly released by Escape (`was_released_by_escape`
-/// is `true`), the click serves only to re-grab the cursor and must be
-/// silently discarded so Zapper shots / Arkanoid button presses are not
-/// accidentally triggered.  In all other cases (initial grab) the click is
-/// also forwarded.
-pub fn should_forward_grab_click(was_released_by_escape: bool) -> bool {
-    !was_released_by_escape
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -589,7 +652,7 @@ mod tests {
         update_mouse_button(&mut console, MouseButton::Left, true);
         update_mouse_button(&mut console, MouseButton::Right, true);
 
-        release_super_scope_buttons(&mut console);
+        release_captured_buttons(&mut console);
 
         let state = scope_state(&console);
         assert!(!state.superscope_trigger && !state.superscope_cursor);
@@ -647,11 +710,11 @@ mod tests {
     #[test]
     fn the_release_message_is_for_a_captured_scope_only() {
         assert_eq!(
-            super_scope_release_toast(true, true),
+            mouse_release_toast(true, false, true),
             Some("Mouse released — click the game to aim again")
         );
-        assert_eq!(super_scope_release_toast(true, false), None);
-        assert_eq!(super_scope_release_toast(false, true), None);
+        assert_eq!(mouse_release_toast(true, false, false), None);
+        assert_eq!(mouse_release_toast(false, false, true), None);
     }
 
     // ── Virtual cursor accumulation ───────────────────────────────────────
@@ -688,7 +751,7 @@ mod tests {
         // Given: mouse was NOT released by Escape (initial grab)
         // Then: click is forwarded to the NES controller
         assert!(
-            should_forward_grab_click(false),
+            forwards_capturing_click(false, false),
             "Initial grab click should be forwarded to the NES"
         );
     }
@@ -699,8 +762,121 @@ mod tests {
         // When: user clicks to re-grab
         // Then: the click is NOT forwarded (it is silently discarded)
         assert!(
-            !should_forward_grab_click(true),
+            !forwards_capturing_click(false, true),
             "Re-grab click after Escape should be silently discarded"
         );
+    }
+
+    #[test]
+    fn capturing_click_never_reaches_the_snes_mouse() {
+        assert!(!forwards_capturing_click(true, false), "first capture");
+        assert!(!forwards_capturing_click(true, true), "recapture");
+    }
+
+    // ── SNES Mouse on the SNES ────────────────────────────────────────────
+
+    fn snes_mouse_state(console: &Console) -> crate::snes::input::SnesControllerState {
+        console
+            .as_snes()
+            .and_then(|snes| snes.mouse_state(0))
+            .expect("mouse on port 1")
+    }
+
+    #[test]
+    fn snes_mouse_is_captured_on_click_not_automatically() {
+        let console = make_snes_console_with_mouse();
+        assert!(has_click_captured_mouse(&console));
+        assert!(
+            !has_any_mouse_controller(&console),
+            "the SNES Mouse must not trigger the NES-style automatic grab"
+        );
+        // The NES's SNES-mouse adapter keeps its automatic grab.
+        let nes = make_console_with_controller(1, crate::nes::input::ControllerType::SnesMouse);
+        assert!(!has_click_captured_mouse(&nes));
+        assert!(has_any_mouse_controller(&nes));
+    }
+
+    #[test]
+    fn snes_mouse_never_auto_grabs_and_keeps_a_capture_until_released() {
+        let captures_on_click = has_click_captured_mouse(&make_snes_console_with_mouse());
+        let has_mouse_device = has_any_mouse_controller(&make_snes_console_with_mouse());
+        assert!(!desired_mouse_grab(
+            has_mouse_device,
+            captures_on_click,
+            false,
+            true,
+            false
+        ));
+        assert!(desired_mouse_grab(
+            has_mouse_device,
+            captures_on_click,
+            true,
+            true,
+            false
+        ));
+        assert!(!desired_mouse_grab(
+            has_mouse_device,
+            captures_on_click,
+            true,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn either_button_captures_the_snes_mouse() {
+        assert!(click_captures(false, true, MouseButton::Left));
+        assert!(click_captures(false, true, MouseButton::Right));
+    }
+
+    #[test]
+    fn release_message_names_the_device_and_needs_a_capture() {
+        assert_eq!(
+            mouse_release_toast(false, true, true),
+            Some("Mouse released — click the game to use it again")
+        );
+        assert_eq!(
+            mouse_release_toast(true, false, true),
+            Some("Mouse released — click the game to aim again")
+        );
+        assert_eq!(mouse_release_toast(false, true, false), None);
+        assert_eq!(mouse_release_toast(false, false, true), None);
+    }
+
+    #[test]
+    fn releasing_the_capture_lets_go_of_the_snes_mouse_buttons() {
+        let mut console = make_snes_console_with_mouse();
+        update_mouse_button(&mut console, MouseButton::Left, true);
+        update_mouse_button(&mut console, MouseButton::Right, true);
+        assert!(snes_mouse_state(&console).mouse_left_button);
+
+        release_captured_buttons(&mut console);
+
+        let state = snes_mouse_state(&console);
+        assert!(!state.mouse_left_button);
+        assert!(!state.mouse_right_button);
+    }
+
+    #[test]
+    fn the_picture_is_the_letterboxed_game_screen() {
+        let console = make_snes_console_with_mouse();
+        // 256×224 at 8:7 pixels is wider than tall by 1.306; an 800×600 window is wider
+        // still, so the picture fills the height.
+        let (w, h) = picture_size(&console, 800, 600);
+        assert_eq!(h, 600.0);
+        assert!(
+            (w - 600.0 * (256.0 / 224.0) * (8.0 / 7.0)).abs() < 0.01,
+            "{w}"
+        );
+    }
+
+    #[test]
+    fn snes_console_mouse_motion_is_scaled_to_the_picture() {
+        let mut console = make_snes_console_with_mouse();
+        let mut scale = crate::snes::input::MouseMotionScale::default();
+        // A 1024×896 picture is four times the game screen: 64 points is 16 pixels.
+        apply_snes_console_mouse_motion(&mut console, &mut scale, 64.0, -32.0, 1024.0, 896.0);
+        let state = snes_mouse_state(&console);
+        assert_eq!((state.mouse_accum_dx, state.mouse_accum_dy), (16, -8));
     }
 }

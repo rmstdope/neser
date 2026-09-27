@@ -16,6 +16,7 @@
 
 mod mouse_controller;
 mod mouse_games;
+mod mouse_motion;
 mod multitap;
 mod standard_controller;
 mod super_scope;
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 pub use mouse_controller::MouseController;
 pub use mouse_games::is_snes_mouse_game;
+pub use mouse_motion::MouseMotionScale;
 pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
 pub use super_scope::SuperScopeController;
@@ -723,6 +725,15 @@ impl InputPorts {
 
     /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
     /// `None` when that port has no Super Scope.
+    pub fn mouse_state(&self, port: u8) -> Option<SnesControllerState> {
+        let device = match port {
+            0 => &self.port1,
+            1 => &self.port2,
+            _ => return None,
+        };
+        device.is_mouse().then(|| device.capture_state())
+    }
+
     pub fn superscope_state(&self, port: u8) -> Option<SnesControllerState> {
         let device = match port {
             0 => &self.port1,

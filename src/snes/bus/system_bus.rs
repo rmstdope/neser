@@ -1157,6 +1157,11 @@ impl SnesSystemBus {
     }
 
     /// The Super Scope's state on the given port, or `None` when it has none.
+    /// The SNES Mouse's state on the given port, or `None` when no mouse is plugged in there.
+    pub fn mouse_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
+        self.input.borrow().mouse_state(port)
+    }
+
     pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
         self.input.borrow().superscope_state(port)
     }

@@ -10065,6 +10065,10 @@ impl Cpu<SnesSystemBus> {
         self.bus.toggle_superscope_turbo(port)
     }
 
+    pub fn mouse_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
+        self.bus.mouse_state(port)
+    }
+
     pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
         self.bus.superscope_state(port)
     }

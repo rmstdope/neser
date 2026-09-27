@@ -96,6 +96,12 @@ pub trait MouseInputCapability {
     fn has_super_scope(&self) -> bool {
         false
     }
+    /// Whether an SNES Mouse is plugged into the SNES itself. Like the Super Scope it is
+    /// captured only by a click, which never reaches the game; the NES's SNES-mouse adapter
+    /// is one of the automatically captured devices instead.
+    fn mouse_captures_on_click(&self) -> bool {
+        false
+    }
     fn set_mouse_position(&mut self, x: u8, y: u8);
     fn set_paddle_position(&mut self, x: u8);
     fn add_mouse_delta(&mut self, dx: i16, dy: i16);
@@ -157,6 +163,11 @@ impl MouseInputCapability for Nes {
 
 impl MouseInputCapability for Snes {
     fn has_any_mouse_controller(&self) -> bool {
+        // Neither SNES device is captured automatically: see `mouse_captures_on_click`.
+        false
+    }
+
+    fn mouse_captures_on_click(&self) -> bool {
         self.has_mouse()
     }
 

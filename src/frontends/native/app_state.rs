@@ -205,6 +205,10 @@ pub struct NativeAppState {
     /// the real cursor is kept at the window centre via `Locked` grab.
     pub virtual_cursor: (f32, f32),
 
+    /// Carries the fractions of the SNES's own SNES Mouse movement between host
+    /// movements, so a slow hand in a large window still moves the game's pointer.
+    pub snes_mouse_motion: crate::snes::input::MouseMotionScale,
+
     /// Last known Zapper position in NES coordinates for crosshair rendering.
     pub last_zapper_position: Option<(u8, u8)>,
 

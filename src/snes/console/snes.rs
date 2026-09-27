@@ -396,6 +396,11 @@ impl Snes {
 
     /// The Super Scope's state on the given port (aim, buttons, Turbo), or `None` when no game
     /// is loaded or no scope is on that port.
+    /// The SNES Mouse's state on the given port, or `None` when no mouse is plugged in there.
+    pub fn mouse_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
+        self.cpu.as_ref()?.mouse_state(port)
+    }
+
     pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
         self.cpu.as_ref()?.superscope_state(port)
     }
