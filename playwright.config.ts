@@ -23,6 +23,7 @@ export default defineConfig({
         command: WEB_APP_SERVER_COMMAND,
         url: WEB_APP_URL,
         reuseExistingServer: true,
-        timeout: 120_000
+        // A freshly prepared worktree builds the wasm cold: about two minutes of cargo alone.
+        timeout: 600_000
     }
 });

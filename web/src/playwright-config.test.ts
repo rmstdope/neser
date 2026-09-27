@@ -30,4 +30,10 @@ describe("playwright.config", () => {
         expect(config.use?.baseURL).toBe("http://127.0.0.1:8000");
         expect(config.webServer).toMatchObject({ url: "http://127.0.0.1:8000" });
     });
+
+    it("gives the web server long enough for a cold wasm build in a fresh worktree", async () => {
+        const config = await loadConfig();
+
+        expect(config.webServer).toMatchObject({ timeout: 600_000 });
+    });
 });
