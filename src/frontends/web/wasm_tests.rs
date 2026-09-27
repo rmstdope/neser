@@ -1455,6 +1455,43 @@ fn dsp1_rom_without_firmware_errors_and_loads_once_supplied() {
     );
 }
 
+/// The minimal ROM with the chipset byte `$FFD6` set, and, for a `$Fx` custom chip, the
+/// extended header's subtype byte `$FFBF` (with the `$33` maker code that enables it).
+fn chipset_snes_rom(chipset: u8, subtype: Option<u8>) -> Vec<u8> {
+    let mut rom = minimal_snes_rom();
+    rom[0x7FC0 + 0x16] = chipset;
+    if let Some(subtype) = subtype {
+        rom[0x7FC0 + 0x1A] = 0x33;
+        rom[0x7FBF] = subtype;
+    }
+    rom
+}
+
+/// nr-6sm: a load on the web must never reach `std::time::Instant::now()`, which panics on
+/// wasm32-unknown-unknown. Every enhancement-chip header goes through the chip check in
+/// `Snes::load_rom`; the unknown custom chip (`$F5`/`$7F`, never emulated) is the one that is
+/// sure to keep reaching its warning toast however many chips become emulated.
+#[wasm_bindgen_test]
+fn every_enhancement_chip_header_loads_on_the_web_without_panicking() {
+    let chips: [(&str, u8, Option<u8>); 8] = [
+        ("SA-1", 0x34, None),
+        ("Cx4", 0xF3, Some(0x10)),
+        ("OBC1", 0x25, None),
+        ("Super FX", 0x13, None),
+        ("S-DD1", 0x43, None),
+        ("S-RTC", 0x55, None),
+        ("SPC7110", 0xF5, Some(0x00)),
+        ("unknown custom", 0xF5, Some(0x7F)),
+    ];
+    for (chip, chipset, subtype) in chips {
+        let mut snes = WasmSnes::new();
+        snes.load_rom(&chipset_snes_rom(chipset, subtype), "chip.sfc")
+            .unwrap_or_else(|e| panic!("{chip} loads: {e:?}"));
+        let _ = snes.render_frame_rgba();
+        let _ = snes.drain_toasts();
+    }
+}
+
 #[wasm_bindgen_test]
 fn a_super_scope_game_loads_with_the_scope_on_port2_and_says_so() {
     let mut snes = WasmSnes::new();

@@ -487,7 +487,7 @@ impl Emulator for Snes {
         );
         let mut cpu = Cpu::new(bus);
         // The frontends say "Super Scope connected" after a load (`rom_loader::load_console`,
-        // `WasmSnes::load_rom`): a toast from here would need a clock the web build lacks.
+        // `WasmSnes::load_rom`): the web never shows the context's toasts, only its own queue.
         cpu.configure_controllers(port1, port2);
         cpu.do_reset();
         self.cpu = Some(cpu);
