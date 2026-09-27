@@ -17,6 +17,7 @@ mod dma_bus;
 mod gba_bus;
 pub mod interrupt;
 pub mod io;
+mod io_write;
 pub mod memory;
 pub mod sio;
 pub mod timer;
