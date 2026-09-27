@@ -59,8 +59,7 @@ impl Mapper156 {
             ..Default::default()
         };
         let mut ctx = ctx;
-        ctx.prg_ram_banks_8k = 1;
-        ctx.prg_ram_size_specified = true;
+        ctx.set_board_prg_ram(1);
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
         base.configure_chr_banking(CHR_BANK_SIZE);

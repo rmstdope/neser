@@ -53,8 +53,7 @@ impl Mapper159 {
         // Mapper 159 has no PRG-RAM: $6000–$7FFF reads return open bus
         // (X24C01 EEPROM is not emulated). Suppress any PRG-RAM the header
         // may have specified so the base mapper does not allocate WRAM here.
-        ctx.prg_ram_banks_8k = 0;
-        ctx.prg_ram_size_specified = false;
+        ctx.set_board_prg_ram(0);
         Self {
             inner: BandaiFcgMapper::new_with_variant(ctx, BandaiFcgVariant::Lz93d50),
         }

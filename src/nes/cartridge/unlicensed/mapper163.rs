@@ -95,10 +95,7 @@ impl Mapper163 {
         // Force CHR-RAM (chip-internal).
         ctx.chr_rom = vec![];
         // Mapper 163 always provides 8 KiB of PRG-RAM at $6000-$7FFF.
-        if ctx.prg_ram_banks_8k == 0 {
-            ctx.prg_ram_banks_8k = 1;
-        }
-        ctx.prg_ram_size_specified = true;
+        ctx.clamp_board_prg_ram(1..=u8::MAX);
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
@@ -423,7 +420,7 @@ mod tests {
     #[test]
     fn prg_ram_present_even_when_header_omits_size() {
         // Verifies that PRG-RAM is always allocated even when the iNES header
-        // doesn't explicitly specify PRG-RAM size (prg_ram_size_specified=false).
+        // doesn't explicitly specify PRG-RAM size (header_prg_ram_banks_8k() == 0).
         let mut mapper = Mapper163::new(
             MapperContext::new_for_test(
                 MAPPER_NUMBER,

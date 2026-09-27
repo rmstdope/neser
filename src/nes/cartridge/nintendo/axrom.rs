@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn test_axrom_no_prg_ram_when_size_unspecified() {
         // AxROM boards have no PRG-RAM. When the ROM header doesn't specify
-        // PRG-RAM size (prg_ram_size_specified=false), none should be allocated.
+        // PRG-RAM size (header_prg_ram_banks_8k() == 0), none should be allocated.
         let prg_rom = vec![0; 128 * 1024];
         let mut mapper = create_mapper(
             MapperContext::new_for_test(7, prg_rom, vec![], NametableLayout::Horizontal)

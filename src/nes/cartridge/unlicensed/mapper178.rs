@@ -120,9 +120,7 @@ impl Mapper178 {
         ctx.chr_rom = vec![];
         ctx.chr_ram_size_bytes = Some(8 * 1024);
         // Mapper 178 supports up to 32 KiB (4 banks) of PRG-RAM.
-        let banks = ctx.prg_ram_banks_8k.min(4);
-        ctx.prg_ram_banks_8k = if banks == 0 { 1 } else { banks };
-        ctx.prg_ram_size_specified = true;
+        ctx.clamp_board_prg_ram(1..=4);
 
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(PRG_BANK_SIZE);
