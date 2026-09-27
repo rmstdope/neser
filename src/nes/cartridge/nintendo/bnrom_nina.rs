@@ -100,11 +100,7 @@ impl BnromNinaMapper {
             has_chr_banking: is_nina,
             has_dynamic_mirroring: false,
             has_expansion_audio: false,
-            max_prg_ram_kb: if is_nina {
-                8
-            } else {
-                ctx.prg_ram_banks_8k as usize * 8
-            },
+            max_prg_ram_kb: if is_nina { 8 } else { ctx.header_prg_ram_kb() },
             prg_bank_size_kb: 32,
             chr_bank_size_kb: if is_nina { 4 } else { 8 },
             trainer_jsr: false,

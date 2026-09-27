@@ -1941,6 +1941,41 @@ mod tests {
     }
 
     #[test]
+    fn capability_prg_ram_follows_the_header_rule() {
+        // Mappers that size PRG-RAM from the header report what header_prg_ram_kb() gives:
+        // nothing when the header leaves the size unspecified, the header size otherwise.
+        // 34 is built as BNROM (CHR-RAM, submapper 0); NINA-001 fixes its own 8 KiB.
+        for id in [16u16, 18, 28, 30, 31, 34, 35] {
+            let ctx = || {
+                let chr = if id == 34 {
+                    vec![]
+                } else {
+                    vec![0u8; 8 * 1024]
+                };
+                MapperContext::new_for_test(
+                    id,
+                    vec![0u8; 32 * 1024],
+                    chr,
+                    NametableLayout::Horizontal,
+                )
+            };
+            let unspecified = create_mapper(ctx().with_unspecified_prg_ram_size())
+                .unwrap_or_else(|_| panic!("mapper {id}"));
+            assert_eq!(
+                unspecified.capabilities().max_prg_ram_kb,
+                0,
+                "mapper {id} with an unspecified header size"
+            );
+            let specified = create_mapper(ctx()).unwrap_or_else(|_| panic!("mapper {id}"));
+            assert_eq!(
+                specified.capabilities().max_prg_ram_kb,
+                8,
+                "mapper {id} with 8 KiB in the header"
+            );
+        }
+    }
+
+    #[test]
     fn mmc1_reports_8kb_prg_ram() {
         assert_eq!(make_mapper(1).capabilities().max_prg_ram_kb, 8);
     }

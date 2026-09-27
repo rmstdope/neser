@@ -51,7 +51,7 @@ impl Unrom512Mapper {
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
-            max_prg_ram_kb: ctx.prg_ram_banks_8k as usize * 8,
+            max_prg_ram_kb: ctx.header_prg_ram_kb(),
             ..Default::default()
         };
 
