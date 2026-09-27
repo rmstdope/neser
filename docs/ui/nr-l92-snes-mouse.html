@@ -1,0 +1,28 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>SNES Mouse Play</title><style>
+:root{--bg:#f6f6f4;--fg:#1d1d1f;--mut:#666;--card:#fff;--line:#ddd}
+@media (prefers-color-scheme:dark){:root{--bg:#18181a;--fg:#eee;--mut:#aaa;--card:#232326;--line:#3a3a3e}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--mut);margin:0 0 20px;max-width:760px}
+.grid{display:flex;flex-wrap:wrap;gap:16px}.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;max-width:100%}
+.screen{position:relative;display:inline-block;max-width:100%}canvas{width:512px;max-width:100%;image-rendering:pixelated;border-radius:4px;display:block}
+.toast{position:absolute;left:10px;top:10px;background:rgba(0,0,0,.75);color:#fff;padding:6px 12px;border-radius:6px;font-size:14px;max-width:85%}
+.cap{font-size:13px;color:var(--mut);margin:8px 0 0;max-width:512px}
+table{border-collapse:collapse;margin-top:6px}td,th{border:1px solid var(--line);padding:6px 10px;text-align:left;font-size:14px}th{background:var(--bg)}
+kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 6px;font:13px ui-monospace,monospace}
+.ctx{background:#fff8d6;color:#4a3b00;border-radius:8px;padding:8px 12px;max-width:760px;margin:0 0 16px}@media (prefers-color-scheme:dark){.ctx{background:#3a3310;color:#f3e6a6}}
+</style><body><h1>Playing an SNES Mouse game with the mouse — agreed</h1><p class=sub>Desktop and web. Every recognised SNES Mouse game (SD Gundam GX, Mario Paint and the rest) gets the SNES Mouse connected automatically, in the port the game expects, unless the player chose a controller for that port in their settings. The other port stays a controller. Works like the Super Scope (docs/ui/nr-yvv-super-scope.html), except as noted.</p><div class=grid>
+<div class=box><div class=screen><canvas  data-x='{"hand":1,"hx":120,"hy":100}'></canvas><span class=toast>SNES Mouse connected — click the game to use the mouse</span></div><p class=cap>1. Just loaded. The normal pointer shows over the picture. The message fades after a few seconds.</p></div>
+<div class=box><div class=screen><canvas  data-x='{"hand":1,"hx":120,"hy":100}'></canvas></div><p class=cap>2. First click: the mouse is captured and the desktop pointer disappears. The click goes no further, so <b>no dot is painted</b>. The game draws its own pointer; the emulator draws no sight.</p></div>
+<div class=box><div class=screen><canvas  data-x='{"dots":1,"dx":150,"dy":130,"hand":1,"hx":150,"hy":130}'></canvas></div><p class=cap>3. Playing. Clicks reach the game. Moving the mouse across the picture moves the game's pointer across the game screen at any window size; the game's own speed setting applies on top.</p></div>
+<div class=box><div class=screen><canvas  data-x='{"dots":1,"dx":150,"dy":130}'></canvas><span class=toast>Mouse released — click the game to use it again</span></div><p class=cap>4. After Escape, or when the window loses focus: the normal pointer returns. The next click only captures again.</p></div>
+<div class=box><div class=screen><canvas style="width:300px" data-x='{"hand":1,"hx":120,"hy":100}'></canvas><span class=toast>SNES Mouse connected — click the game to use the mouse</span></div><p class=cap>5. Narrow web window: the message wraps inside the picture.</p></div>
+<div class=box><table><tr><th>SNES Mouse</th><th>What the player does</th></tr><tr><td>Move the game's pointer</td><td>Move the mouse</td></tr><tr><td>Left button</td><td>Left click</td></tr><tr><td>Right button</td><td>Right click (two-finger click on a trackpad)</td></tr><tr><td>Release the mouse</td><td><kbd>Esc</kbd></td></tr></table><p class=cap>The keyboard controller does nothing for the port the mouse is in.</p></div></div>
+<script>
+function scene(c,o){const x=c.getContext('2d');c.width=256;c.height=224;
+x.fillStyle='#f4f0e0';x.fillRect(0,0,256,224);x.fillStyle='#3a6ab0';x.fillRect(0,0,256,22);x.fillStyle='#c33';x.fillRect(0,202,256,22);
+for(let i=0;i<8;i++){x.fillStyle=['#e33','#f90','#fd0','#3b3','#39f','#63c','#000','#fff'][i];x.fillRect(8+i*18,206,14,14)}
+x.strokeStyle='#39f';x.lineWidth=3;x.beginPath();x.moveTo(60,80);x.quadraticCurveTo(120,40,170,110);x.stroke();
+if(o.dots){x.fillStyle='#e33';x.beginPath();x.arc(o.dx,o.dy,4,0,7);x.fill()}
+if(o.hand){const hx=o.hx,hy=o.hy;x.fillStyle='#fff';x.strokeStyle='#000';x.lineWidth=1.5;x.beginPath();x.moveTo(hx,hy);x.lineTo(hx,hy+16);x.lineTo(hx+4,hy+12);x.lineTo(hx+8,hy+19);x.lineTo(hx+11,hy+17);x.lineTo(hx+7,hy+11);x.lineTo(hx+12,hy+11);x.closePath();x.fill();x.stroke()}}
+document.querySelectorAll('canvas').forEach(c=>scene(c,JSON.parse(c.dataset.x||'{}')));
+</script>
