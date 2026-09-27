@@ -7,7 +7,13 @@ fn main() {
     println!("cargo:rerun-if-changed=src/gba/bios/bios.bin");
 
     let root = Path::new("roms/games/mappers");
-    emit_rerun_hints(root);
+    // Cargo counts a missing rerun-if-changed path as changed on every build, and roms/games is
+    // gitignored and absent from most checkouts, so watching it unconditionally rebuilt the crate
+    // on every cargo call (nr-5ku). Watch it only once it exists; after creating it for the first
+    // time, `touch build.rs` so the autorun tests are generated.
+    if root.exists() {
+        emit_rerun_hints(root);
+    }
 
     let mut autorun_files = Vec::new();
     collect_autorun_files(root, &mut autorun_files);
