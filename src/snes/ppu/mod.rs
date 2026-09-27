@@ -63,11 +63,15 @@ pub(super) const CPU_VERSION: u8 = 2;
 pub(super) const VBLANK_START_LINE: u16 = 225;
 /// Dot at which the HBlank flag (HVBJOY bit 6) goes high (approximate; leading edge is a TODO).
 pub(super) const HBLANK_START_DOT: u16 = 274;
-/// Dot on the first VBlank scanline at which the automatic joypad read begins.
-///
-/// fullsnes: auto-joypad reading "begins between H=32.5 and H=95.5 of the first
-/// V-Blank scanline"; we latch at a fixed dot within that range.
-pub(super) const AUTO_JOYPAD_LATCH_DOT: u16 = 32;
+/// Intra-line clock of H=32.5, the earliest point of the first VBlank scanline at which the
+/// auto-joypad busy flag can rise (fullsnes: the read "begins between H=32.5 and H=95.5").
+pub(super) const AUTO_JOYPAD_EARLIEST_BUSY_CLOCK: u64 = 130;
+/// The auto-joypad read starts on a grid of this many absolute master clocks (fullsnes: "some
+/// multiple of 256 cycles after the start of the previous read").
+pub(super) const AUTO_JOYPAD_START_GRID: u64 = 256;
+/// Master clocks between the auto-joypad latch strobe and the busy flag's rise: one step of the
+/// sequencer in `crate::snes::input`, whose step 1 raises the flag.
+pub(super) const AUTO_JOYPAD_STROBE_LEAD: u64 = crate::snes::input::AUTO_JOYPAD_STEP_CLOCKS as u64;
 
 /// Master clocks per dot (normal-speed dots).
 pub(super) const MASTER_CYCLES_PER_DOT: u32 = 4;
@@ -400,8 +404,8 @@ pub struct Ppu {
     /// them desynchronizes frame numbering from Mesen2's per-vblank count
     /// (issue #2990).
     pending_completed_frames: u32,
-    /// One-shot flag set when the first VBlank scanline reaches
-    /// [`AUTO_JOYPAD_LATCH_DOT`], signalling the bus to start an auto-joypad read.
+    /// One-shot flag set on the first VBlank scanline's auto-joypad strobe clock (see
+    /// `Ppu::auto_joypad_strobe_clock`), signalling the bus to start an auto-joypad read.
     auto_joypad_latch: bool,
     /// BGMODE ($2105) bits 0-2: BG screen mode (0-7).
     bg_mode: u8,
@@ -633,6 +637,12 @@ impl Ppu {
         self.total_master_clocks
     }
 
+    /// The intra-line master clock (0 at the start of each scanline).
+    #[cfg(test)]
+    pub(crate) fn line_clock_for_tests(&self) -> u16 {
+        self.line_clock
+    }
+
     /// Whether VBlank NMI generation is enabled (NMITIMEN bit 7).
     pub fn nmi_enabled(&self) -> bool {
         self.nmi_enable
@@ -677,8 +687,8 @@ impl Ppu {
         done
     }
 
-    /// Poll for and consume the one-shot auto-joypad latch signal (set when the
-    /// first VBlank scanline reaches [`AUTO_JOYPAD_LATCH_DOT`]).
+    /// Poll for and consume the one-shot auto-joypad latch signal (set on the first VBlank
+    /// scanline's auto-joypad strobe clock).
     pub fn poll_auto_joypad_latch(&mut self) -> bool {
         let latch = self.auto_joypad_latch;
         self.auto_joypad_latch = false;
