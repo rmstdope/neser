@@ -102,13 +102,14 @@ pub fn load_console(app_context: &SharedAppContext, rom_path: &str) -> Result<Co
     app_context
         .borrow_mut()
         .add_toast(cartridge_load_toast_message(rom_path, result.is_ok()));
-    if result
-        .as_ref()
-        .is_ok_and(|console| console.as_snes().is_some_and(|snes| snes.has_superscope()))
-    {
-        app_context
-            .borrow_mut()
-            .add_toast(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED);
+    if let Some(snes) = result.as_ref().ok().and_then(|console| console.as_snes()) {
+        use crate::snes::frontend_toasts::{SNES_MOUSE_CONNECTED, SUPER_SCOPE_CONNECTED};
+        if snes.has_superscope() {
+            app_context.borrow_mut().add_toast(SUPER_SCOPE_CONNECTED);
+        }
+        if snes.has_mouse() {
+            app_context.borrow_mut().add_toast(SNES_MOUSE_CONNECTED);
+        }
     }
 
     result
@@ -525,7 +526,28 @@ mod tests {
     }
 
     #[test]
-    fn load_console_says_nothing_of_a_scope_for_other_games() {
+    fn load_console_says_when_an_snes_mouse_is_connected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let rom_path = write_rom(
+            &dir,
+            "sfc",
+            &crate::snes::test_support::minimal_lorom(b"MARIOPAINT"),
+        );
+        let app_context = make_app_context();
+
+        load_console(&app_context, &rom_path).expect("SNES ROM should load");
+
+        assert_eq!(
+            toasts_of(&app_context),
+            [
+                cartridge_load_toast_message(&rom_path, true),
+                crate::snes::frontend_toasts::SNES_MOUSE_CONNECTED.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn load_console_says_nothing_of_a_scope_or_mouse_for_other_games() {
         let dir = TempDir::new().expect("create temp dir");
         let rom_path = write_rom(
             &dir,
