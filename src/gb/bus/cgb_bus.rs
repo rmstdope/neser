@@ -21,6 +21,8 @@ const CGB_SPEED_SWITCH_DOTS_DOUBLE_TO_NORMAL: u32 = 0x8002;
 /// Full CGB (Game Boy Color) memory bus.
 ///
 /// Implements the CGB memory map for use with the generic `Gb<CgbBus>` console.
+/// Reads and writes go through the shared map in `memory_map.rs`; this bus
+/// answers only the CGB's own addresses (see its `MemoryMap` impl).
 /// Supports all CGB-specific PPU registers: VRAM bank (`$FF4F`), color palettes
 /// (`$FF68`–`$FF6B`), and object priority mode (`$FF6C`).
 ///

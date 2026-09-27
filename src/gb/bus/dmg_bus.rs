@@ -11,9 +11,10 @@ use crate::gb::timer::Timer;
 
 /// Full DMG memory bus.
 ///
-/// Implements the Game Boy (DMG) memory map, routing reads and writes to the
-/// correct hardware region. Owns the cartridge, static RAM buffers, the Timer
-/// subsystem, the PPU, the APU, and the IF/IE interrupt registers.
+/// Reads and writes go through the shared map in `memory_map.rs`; this bus
+/// answers only the DMG's own addresses (see its `MemoryMap` impl). Owns the
+/// cartridge, static RAM buffers, the Timer subsystem, the PPU, the APU, and
+/// the IF/IE interrupt registers.
 ///
 /// Memory map:
 /// - $0000–$7FFF: Cartridge ROM  (bank 0 fixed + switchable bank)
