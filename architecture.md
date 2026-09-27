@@ -194,7 +194,7 @@ All NES-specific hardware and supporting code lives under `src/nes/`.
 | `src/nes/cartridge/cartridge.rs` | `Cartridge` struct — loads ROM files, parses iNES/NES2.0 headers, creates the appropriate mapper, and manages save files (.sav) and save states (.state). |
 | `src/nes/cartridge/ines.rs` | iNES and NES 2.0 header parser — extracts mapper number, PRG/CHR ROM sizes, mirroring, battery backup, timing mode, and console type. |
 | `src/nes/cartridge/mapper.rs` | `Mapper` trait definition and `mapper_registry!` macro that maps mapper numbers to concrete implementations. Contains the factory function `create_mapper()`. **207 mappers** are currently registered. |
-| `src/nes/cartridge/base_mapper.rs` | `BaseMapper` — shared infrastructure for all mappers: PRG/CHR bank selection (signed index with modulo wrapping), PRG-RAM allocation, mirroring control, and save-state banking snapshots. |
+| `src/nes/cartridge/base_mapper.rs` | `BaseMapper` — shared infrastructure for all mappers: PRG/CHR bank selection (signed index with modulo wrapping), PRG-RAM allocation at the size `MapperContext::header_prg_ram_banks_8k` gives (boards that ignore the header declare it with `set_board_prg_ram` or `clamp_board_prg_ram`), mirroring control, and save-state banking snapshots. |
 | `src/nes/cartridge/common.rs` | Shared types: `ChrMemory` (CHR-ROM/RAM), `PrgRam`, `BankSwitch`, `BankedRom`, and `StateSnapshot` trait for mapper serialization. |
 | `src/nes/cartridge/mapper_templates.rs` | Reusable mapper templates: `SimpleFixedPrgMapper`, `SimpleBankedPrgMapper`, `DualBank32Mapper` for common banking patterns. |
 | `src/nes/cartridge/cpu_cycle_irq.rs` | CPU cycle-based IRQ counter shared by multiple mappers. |
