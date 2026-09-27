@@ -56,10 +56,7 @@ impl WasmNes {
         if self.debugger_paused {
             return;
         }
-        while !self.nes.is_ready_to_render() {
-            self.nes.run_cpu_tick();
-        }
-        self.nes.clear_ready_to_render();
+        self.nes.run_one_frame();
     }
 
     fn overscan(&self) -> (u32, u32) {
@@ -822,28 +819,30 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn debugger_run_to_next_frame(&mut self) {
         self.debugger_paused = true;
-        run_to_next_frame(&mut self.nes);
+        self.nes.run_to_next_frame();
     }
 
     /// Run until the scanline changes and keep the debugger open.
     #[wasm_bindgen]
     pub fn debugger_run_to_next_scanline(&mut self) {
         self.debugger_paused = true;
-        run_to_next_scanline(&mut self.nes);
+        self.nes.run_to_next_scanline();
     }
 
     /// Run until the next NMI handler entry and keep the debugger open.
     #[wasm_bindgen]
     pub fn debugger_run_to_nmi(&mut self) {
         self.debugger_paused = true;
-        run_to_interrupt_entry(&mut self.nes, 0xFFFA, crate::nes::cpu::InterruptKind::Nmi);
+        self.nes
+            .run_to_interrupt_entry(0xFFFA, crate::nes::cpu::InterruptKind::Nmi);
     }
 
     /// Run until the next IRQ handler entry and keep the debugger open.
     #[wasm_bindgen]
     pub fn debugger_run_to_irq(&mut self) {
         self.debugger_paused = true;
-        run_to_interrupt_entry(&mut self.nes, 0xFFFE, crate::nes::cpu::InterruptKind::Irq);
+        self.nes
+            .run_to_interrupt_entry(0xFFFE, crate::nes::cpu::InterruptKind::Irq);
     }
 
     /// Returns the current CPU program counter value (useful for testing step behaviour).
@@ -1118,84 +1117,6 @@ fn step_over_instruction(nes: &mut Nes) {
         }
     } else {
         nes.run_cpu_tick();
-    }
-}
-
-fn run_to_next_frame(nes: &mut Nes) {
-    const MAX_STEPS: usize = 2_000_000;
-
-    let mut previous_scanline = {
-        let ppu = nes.ppu().borrow();
-        ppu.scanline()
-    };
-
-    for _step in 0..MAX_STEPS {
-        nes.run_cpu_tick();
-
-        let scanline = {
-            let ppu = nes.ppu().borrow();
-            ppu.scanline()
-        };
-
-        if scanline < previous_scanline {
-            break;
-        }
-
-        previous_scanline = scanline;
-    }
-}
-
-fn run_to_next_scanline(nes: &mut Nes) {
-    const MAX_STEPS: usize = 100_000;
-
-    let start_scanline = {
-        let ppu = nes.ppu().borrow();
-        ppu.scanline()
-    };
-
-    for _step in 0..MAX_STEPS {
-        nes.run_cpu_tick();
-
-        let scanline = {
-            let ppu = nes.ppu().borrow();
-            ppu.scanline()
-        };
-
-        if scanline != start_scanline {
-            break;
-        }
-    }
-}
-
-fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
-    let memory = nes.bus().borrow();
-    let lo = memory.read_cpu_for_debugger(vector_addr);
-    let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
-    u16::from_le_bytes([lo, hi])
-}
-
-fn run_to_interrupt_entry(nes: &mut Nes, vector_addr: u16, kind: crate::nes::cpu::InterruptKind) {
-    const MAX_STEPS: usize = 2_000_000;
-
-    let target_pc = read_vector_target(nes, vector_addr);
-    let mut has_exited_required_interrupt = nes.cpu_ref().current_interrupt() != Some(kind);
-
-    for _step in 0..MAX_STEPS {
-        if nes.cpu_ref().is_halted() {
-            break;
-        }
-
-        nes.run_cpu_tick();
-
-        let current_interrupt = nes.cpu_ref().current_interrupt();
-        if current_interrupt != Some(kind) {
-            has_exited_required_interrupt = true;
-            continue;
-        }
-
-        if has_exited_required_interrupt && nes.cpu_ref().pc() == target_pc {
-            break;
-        }
     }
 }
 
