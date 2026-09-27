@@ -346,6 +346,58 @@ mod tests {
         boot_rom_unmapped(cgb);
     }
 
+    /// Restore `state` after overwriting its PPU's derived sampler
+    /// configuration (and, when given, its CGB model) with stale values;
+    /// returns the PPU as the restored bus captures it again.
+    fn restore_scrambled_ppu<B: BusSnapshot>(
+        make: fn() -> B,
+        cgb_model: Option<&str>,
+    ) -> serde_json::Value {
+        let mut state = json(&make());
+        let ppu = &mut state["ppu"];
+        ppu["scy_b_stage_only"] = false.into();
+        ppu["pixel_fifo"]["scy_b_stage_only"] = false.into();
+        ppu["pixel_fifo"]["bg_scy_sampler"]["b_stage_only"] = false.into();
+        ppu["pixel_fifo"]["bg_scy_sampler"]["fetch_start_dots"] = 0.into();
+        if let Some(model) = cgb_model {
+            ppu["cgb_model"] = model.into();
+        }
+        let state: BusState = serde_json::from_value(state).expect("a valid state");
+        let mut bus = make();
+        bus.restore_bus_state(&state).expect("same bus type");
+        json(&bus)["ppu"].clone()
+    }
+
+    #[test]
+    fn the_restored_ppu_is_fixed_up_after_load() {
+        // The DMG PPU carries the default CGB model (CGB-E), from which the
+        // fixup derives B-stage-only SCY sampling.
+        let dmg_ppu = restore_scrambled_ppu(dmg, None);
+        assert_eq!(dmg_ppu["cgb_model"], "CgbE");
+        assert_eq!(dmg_ppu["scy_b_stage_only"], true);
+        assert_eq!(
+            dmg_ppu["pixel_fifo"]["bg_scy_sampler"]["b_stage_only"],
+            true
+        );
+        assert_eq!(
+            dmg_ppu["pixel_fifo"]["bg_scy_sampler"]["fetch_start_dots"],
+            9
+        );
+
+        // A CGB-C state restored on a CGB-E bus runs the bus's model.
+        let cgb_ppu = restore_scrambled_ppu(cgb, Some("CgbC"));
+        assert_eq!(cgb_ppu["cgb_model"], "CgbE");
+        assert_eq!(cgb_ppu["scy_b_stage_only"], true);
+        assert_eq!(
+            cgb_ppu["pixel_fifo"]["bg_scy_sampler"]["b_stage_only"],
+            true
+        );
+        assert_eq!(
+            cgb_ppu["pixel_fifo"]["bg_scy_sampler"]["fetch_start_dots"],
+            9
+        );
+    }
+
     fn reset_keeps<B: BusSnapshot + GbBus>(make: fn() -> B) {
         let mut bus = make();
         bus.shared_mut().apu.set_sample_rate(22_050.0);
