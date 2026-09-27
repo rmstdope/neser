@@ -28,8 +28,25 @@ def _declared(key: str) -> str:
     return ""
 
 
-def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+# Git isolated from the developer's own configuration (commit signing, global hooks) and from any
+# GIT_* variables of an enclosing git process, so only the install step can set what is checked.
+GIT_ENV = {
+    **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, env=GIT_ENV, check=True, capture_output=True)
+
+
+def _hooks_path(tree: Path) -> str:
+    """The tree's own core.hooksPath, or "" when it is unset."""
+
+    return subprocess.run(
+        ["git", "config", "--local", "core.hooksPath"], cwd=tree, env=GIT_ENV, capture_output=True, text=True
+    ).stdout.strip()
 
 
 class WorktreeInstallTests(unittest.TestCase):
@@ -51,13 +68,7 @@ class WorktreeInstallTests(unittest.TestCase):
             _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
             tree = base / "tree"
             _git(repo, "worktree", "add", "-q", "-b", "bead", str(tree))
-            self.assertEqual(
-                subprocess.run(
-                    ["git", "config", "--local", "core.hooksPath"], cwd=tree, capture_output=True
-                ).returncode,
-                1,
-                "a fresh repository must start without core.hooksPath",
-            )
+            self.assertEqual(_hooks_path(tree), "", "a fresh repository must start without core.hooksPath")
 
             # A stub npm, so the test proves the git setting without a real `npm ci`.
             bin_dir = base / "bin"
@@ -65,7 +76,7 @@ class WorktreeInstallTests(unittest.TestCase):
             npm = bin_dir / "npm"
             npm.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             npm.chmod(npm.stat().st_mode | stat.S_IXUSR)
-            env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+            env = {**GIT_ENV, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
 
             subprocess.run(
                 ["bash", "-euo", "pipefail", "-c", _declared("install_shell")],
@@ -74,7 +85,7 @@ class WorktreeInstallTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
-            self.assertEqual(_git(tree, "config", "--local", "core.hooksPath"), ".githooks")
+            self.assertEqual(_hooks_path(tree), ".githooks")
 
 
 if __name__ == "__main__":
