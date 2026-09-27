@@ -20,6 +20,15 @@ import gbPass2Frag from "./gb-pass2.frag.glsl?raw";
 import gbPass3Frag from "./gb-pass3.frag.glsl?raw";
 import gbPass4Vert from "./gb-pass4.vert.glsl?raw";
 import gbPass4Frag from "./gb-pass4.frag.glsl?raw";
+import gbaPassVert from "./gba-pass.vert.glsl?raw";
+import gbaAgb001Frag from "./gba-agb001.frag.glsl?raw";
+import gbaNsoColorFrag from "./gba-nso-color.frag.glsl?raw";
+import gbaMultiLutFrag from "./gba-multilut.frag.glsl?raw";
+import gbaSp101ColorFrag from "./gba-sp101-color.frag.glsl?raw";
+import gbaResponseTimeFrag from "./gba-response-time.frag.glsl?raw";
+import gbaLcdGridFrag from "./gba-lcd-grid.frag.glsl?raw";
+import gbaColorFrag from "./gba-color.frag.glsl?raw";
+import gbaBorderFrag from "./gba-border.frag.glsl?raw";
 
 describe("Extracted GLSL shader files", () => {
     it("common vertex shader contains gl_Position", () => {
@@ -81,13 +90,47 @@ describe("Extracted GLSL shader files", () => {
         expect(gbPass4Frag).toContain("u_background");
     });
 
-    it("all 16 shader sources are non-empty strings", () => {
+    it("the GBA pass vertex shader flips only the pass drawn to the screen", () => {
+        expect(gbaPassVert).toContain("u_flipY");
+    });
+
+    it("AGB-001 keeps mGBA's 4x4 sub-pixel pattern and the page opaque", () => {
+        expect(gbaAgb001Frag).toContain("vec3(1.0, 0.2, 0.2)");
+        expect(gbaAgb001Frag).toContain("vec3(0.8)");
+        expect(gbaAgb001Frag).toContain("1.0);");
+    });
+
+    it("Switch Online uses the sRGB profile with darken_screen 0.8", () => {
+        expect(gbaNsoColorFrag).toContain("0.865, 0.0575, 0.0575");
+        expect(gbaNsoColorFrag).toContain("DARKEN_SCREEN 0.8");
+    });
+
+    it("GBA SP runs the 64-entry LUT and then the SP-101 sRGB profile", () => {
+        expect(gbaMultiLutFrag).toContain("LUT_SIZE 64.0");
+        expect(gbaMultiLutFrag).toContain("u_lut");
+        expect(gbaSp101ColorFrag).toContain("0.96, 0.0325, 0.001");
+        expect(gbaSp101ColorFrag).toContain("LUM 0.935");
+    });
+
+    it("LCD Grid runs response time, the cgwg grid, GBA colour and the console border", () => {
+        expect(gbaResponseTimeFrag).toContain("RESPONSE_TIME 0.333");
+        expect(gbaResponseTimeFrag).toContain("u_history7");
+        expect(gbaLcdGridFrag).toContain("LCD_GAMMA 2.6");
+        expect(gbaLcdGridFrag).toContain("u_videoScale");
+        expect(gbaColorFrag).toContain("0.905, 0.10, 0.1575");
+        expect(gbaBorderFrag).toContain("u_border");
+        expect(gbaBorderFrag).toContain("vec2(800.0, 400.0) * u_videoScale");
+    });
+
+    it("every shader source are non-empty strings", () => {
         const all = [
             commonVert, stockFrag, crtFrag,
             ntscPass1Vert, ntscPass1Frag, ntscPass2Vert, ntscPass2Frag,
             gbPass0Vert, gbPass0Frag, gbPass1Vert, gbPass1Frag,
             gbBlurVert, gbPass2Frag, gbPass3Frag,
             gbPass4Vert, gbPass4Frag,
+            gbaPassVert, gbaAgb001Frag, gbaNsoColorFrag, gbaMultiLutFrag, gbaSp101ColorFrag,
+            gbaResponseTimeFrag, gbaLcdGridFrag, gbaColorFrag, gbaBorderFrag,
         ];
         for (const src of all) {
             expect(typeof src).toBe("string");

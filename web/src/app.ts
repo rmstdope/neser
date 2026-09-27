@@ -112,6 +112,15 @@ import {
 } from "./input/pointer_lock";
 import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from "./ui/emulation_controls";
 import { cycleFilterKey, filterOnConsoleSwitch, filterPipelineNeedsRebuild, type FilterDef } from "./display/filters";
+import {
+    buttonFilterKey,
+    filterFailed,
+    filterReady,
+    requestFilter,
+    selectionAt,
+    type FilterSelection,
+} from "./display/filter_selection";
+import { createGbaPipeline, isGbaLook } from "./display/gba_pipeline";
 import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
 import { paletteButtonVisible } from "./display/palette_button";
 import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./display/render_pipeline";
@@ -281,7 +290,12 @@ const filters: Record<string, FilterDef> = {
     gameboy: {
         name: "Game Boy",
         type: "gb"
-    }
+    },
+    // Game Boy Advance looks (display/gba_pipeline.ts), in the order F4 cycles them.
+    agb001: { name: "AGB-001", type: "gba" },
+    nsoGbaColor: { name: "Switch Online", type: "gba" },
+    sp101Color: { name: "GBA SP", type: "gba" },
+    gbaLcdGrid: { name: "LCD Grid", type: "gba" },
 };
 
 // ── GB Dot-Matrix Shader (5-pass) ───────────────────────────────────────
@@ -339,6 +353,10 @@ interface AutorunFileInput extends HTMLInputElement {
 }
 
 let currentFilter = "ntsc"; // Start with NTSC filter as requested
+/** The look the Filter button names; ahead of currentFilter (the drawn look) while a look's images load. */
+let filterSelection: FilterSelection = selectionAt(currentFilter);
+/** The last frame drawn, redrawn when a GBA game's look changes while paused. */
+let lastFrame: { frame: Uint8Array; format: number } | null = null;
 /** True until a look is chosen or a game has loaded: the first game then starts on its console's default. */
 let filterUntouched = true;
 const filterKeys = Object.keys(filters);
@@ -589,13 +607,19 @@ function ensureGbFbos(w: number, h: number) {
     return true;
 }
 
-function loadImageTexture(url: string, linear: boolean): Promise<WebGLTexture | null> {
+/**
+ * Fetch an image into a texture. `rawColor` uploads the stored bytes without the browser's colour
+ * space conversion, as look-up tables need.
+ */
+function loadImageTexture(url: string, linear: boolean, rawColor = false): Promise<WebGLTexture | null> {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
             const tex = gl.createTexture()!;
             gl.bindTexture(gl.TEXTURE_2D, tex);
+            if (rawColor) gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+            if (rawColor) gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             const filt = linear ? gl.LINEAR : gl.NEAREST;
@@ -604,7 +628,7 @@ function loadImageTexture(url: string, linear: boolean): Promise<WebGLTexture | 
             resolve(tex);
         };
         img.onerror = () => {
-            console.error("Failed to load GB texture:", url);
+            console.error("Failed to load filter texture:", url);
             resolve(null);
         };
         img.src = url;
@@ -693,7 +717,17 @@ function setupGbPrograms() {
     return true;
 }
 
+const gbaPipeline = createGbaPipeline(gl, {
+    createProgram,
+    loadImageTexture: (url, linear) => loadImageTexture(url, linear, true),
+    positionBuffer: () => positionBuffer,
+});
+
 function renderFrameWithCurrentPipeline(frame: Uint8Array, sourceFormat: number = gl.RGBA): boolean {
+    lastFrame = { frame, format: sourceFormat };
+    if (isGbaLook(currentFilter)) {
+        return gbaPipeline.render(currentFilter, frame, sourceFormat, width, height, canvas.width, canvas.height);
+    }
     const pipeline = selectRenderPipeline({
         filterType: filters[currentFilter]?.type,
         gbAssetsLoaded,
@@ -733,6 +767,12 @@ function setupFilterPrograms(filterName: string) {
 
     if (filter.type === "gb") {
         return setupGbPrograms();
+    }
+
+    if (filter.type === "gba") {
+        // Drawn by gbaPipeline, which prepared the look before it became the drawn one.
+        shaderProgram = null;
+        return true;
     }
 
     shaderProgram = createProgram(commonVertGlsl, filter.fragmentShader!);
@@ -786,17 +826,44 @@ function initWebGL() {
     return true;
 }
 
+/**
+ * Move the Filter button to the next look at once; the picture follows when the look is ready
+ * (a GBA look's images are fetched the first time), and the button goes back if it cannot be.
+ */
 function cycleFilter() {
     const consoleKind = emulator?.kind ?? "nes";
-    currentFilter = cycleFilterKey(currentFilter, filterKeys, filters, consoleKind);
-
-    // Recreate buffers and textures but keep running state
-    if (!initWebGL()) {
-        console.error("Failed to switch filter");
-        return false;
+    const next = cycleFilterKey(buttonFilterKey(filterSelection), filterKeys, filters, consoleKind);
+    filterSelection = requestFilter(filterSelection, next);
+    if (!isGbaLook(next)) {
+        showFilter(filterReady(filterSelection, next));
+        return;
     }
+    void gbaPipeline.prepare(next).then((ready) => {
+        if (ready) {
+            showFilter(filterReady(filterSelection, next));
+        } else {
+            filterSelection = filterFailed(filterSelection, next);
+            updateFilterToggleButtonLabel();
+        }
+    });
+}
 
-    return true;
+/** Draw with the selection's shown look from now on. */
+function showFilter(selection: FilterSelection) {
+    const changed = selection.shown !== currentFilter;
+    filterSelection = selection;
+    if (changed) {
+        currentFilter = selection.shown;
+        // Recreate buffers and textures but keep running state
+        if (!initWebGL()) {
+            console.error("Failed to switch filter");
+        }
+        syncGbPaletteWithFilter(false);
+        if (paused && emulator?.kind === "gba" && lastFrame) {
+            renderFrameWithCurrentPipeline(lastFrame.frame, lastFrame.format);
+        }
+    }
+    updateFilterToggleButtonLabel();
 }
 
 type ActiveEmulator =
@@ -1039,6 +1106,7 @@ function updateEmulatorKindUI() {
         { width, height },
     );
     currentFilter = newFilter;
+    filterSelection = selectionAt(newFilter);
     if (rebuild) {
         initWebGL();
     }
@@ -2823,13 +2891,12 @@ function toggleShortcutHelp() {
 }
 
 function updateFilterToggleButtonLabel() {
-    filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+    filterToggleBtn.textContent = `Filter: ${filters[buttonFilterKey(filterSelection)].name}`;
 }
 
 function toggleFilterAction() {
     filterUntouched = false;
     cycleFilter();
-    syncGbPaletteWithFilter(false);
     updateFilterToggleButtonLabel();
 }
 
