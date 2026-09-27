@@ -221,8 +221,9 @@ Recommended setup after cloning:
 git config core.hooksPath .githooks
 ```
 
-The hooks in `.githooks` auto-format staged Rust and Python files, then forward to the
-beads hooks under `.beads/hooks` that keep the work board in step with git. Running `bd init`
+The hooks in `.githooks` auto-format staged Rust and Python files (Python with the checkout's
+`.venv/bin/ruff`, or `ruff` on PATH; a commit with staged Python and no ruff is refused), then
+forward to the beads hooks under `.beads/hooks` that keep the work board in step with git. Running `bd init`
 again will point `core.hooksPath` at `.beads/hooks`; set it back to `.githooks` afterwards so
 both keep running.
 

@@ -2,7 +2,8 @@
 # Pre-commit hook: auto-format staged Rust and Python files.
 #
 # If any .rs files are staged, cargo fmt is run; if any .py files are staged,
-# ruff format is run on them. The originally staged files are re-staged with
+# ruff format is run on them (.venv/bin/ruff first, then ruff on PATH; with
+# neither the commit is refused). The originally staged files are re-staged with
 # the formatted content.
 #
 # NOTE: If you staged only a partial hunk (git add -p), re-staging the
@@ -44,23 +45,30 @@ if [ -n "$staged_rs" ]; then
 fi
 
 if [ -n "$staged_py" ]; then
-    # ruff is installed from the dev dependency group; skip rather than block a
-    # commit when it is missing, since CI enforces formatting regardless.
-    if command -v ruff >/dev/null 2>&1; then
-        echo "Running ruff format on staged Python files..."
-        echo "$staged_py" | xargs ruff format --quiet
-        fmt_exit=$?
-
-        if [ $fmt_exit -ne 0 ]; then
-            echo "ruff format failed (exit $fmt_exit). Aborting commit."
-            exit 1
-        fi
-
-        echo "$staged_py" | xargs git add
-    else
-        echo "WARNING: ruff not found on PATH; skipping Python formatting."
-        echo "         Install it with: pip install --group scripts/pyproject.toml:dev"
+    # Fleet sessions never activate the venv, so look in this worktree's own .venv first (the
+    # gate calls .venv/bin/python the same way), then on PATH. With neither, refuse the commit:
+    # skipping only moves the failure to the gate's `ruff format --check`.
+    ruff_bin="$(git rev-parse --show-toplevel)/.venv/bin/ruff"
+    if [ ! -x "$ruff_bin" ]; then
+        ruff_bin=$(command -v ruff)
     fi
+    if [ -z "$ruff_bin" ]; then
+        echo "ERROR: ruff not found (looked for $(git rev-parse --show-toplevel)/.venv/bin/ruff and on PATH);"
+        echo "       refusing to commit unformatted Python."
+        echo "       Install it with: pip install --group scripts/pyproject.toml:dev"
+        exit 1
+    fi
+
+    echo "Running ruff format on staged Python files..."
+    echo "$staged_py" | xargs "$ruff_bin" format --quiet
+    fmt_exit=$?
+
+    if [ $fmt_exit -ne 0 ]; then
+        echo "ruff format failed (exit $fmt_exit). Aborting commit."
+        exit 1
+    fi
+
+    echo "$staged_py" | xargs git add
 fi
 
 run_bd_hook "$@"
