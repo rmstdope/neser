@@ -2117,3 +2117,69 @@ fn snes_web_says_super_scope_connected_once_before_the_load_message() {
     );
     assert!(toasts[1].contains("Metal Combat.sfc"), "{toasts:?}");
 }
+
+// --- nr-iw0: the web frontend runs frames through the NES core's runners ---
+
+/// NROM-128 whose reset target $8000 is a KIL: the CPU jams on its first instruction.
+fn nrom_jammed_at_reset() -> Vec<u8> {
+    let mut data = minimal_nrom_nop_at_8000();
+    data[16] = 0x02; // KIL at $8000
+    data
+}
+
+/// Reads an unsigned integer field from `debugger_snapshot_json`.
+fn snapshot_number(nes: &mut WasmNes, field: &str) -> u64 {
+    let json = nes.debugger_snapshot_json();
+    let key = format!("\"{field}\":");
+    let start = json.find(&key).expect("field present") + key.len();
+    json[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .expect("numeric field")
+}
+
+#[wasm_bindgen_test]
+fn render_frame_keeps_finishing_frames_with_a_jammed_cpu() {
+    let mut nes = WasmNes::new();
+    nes.load_rom(&nrom_jammed_at_reset(), "test.nes")
+        .expect("valid rom");
+    let _ = nes.render_frame();
+    let frame = snapshot_number(&mut nes, "frame_count");
+
+    let _ = nes.render_frame();
+    let _ = nes.render_frame_rgba();
+
+    assert_eq!(snapshot_number(&mut nes, "frame_count"), frame + 2);
+}
+
+#[wasm_bindgen_test]
+fn debugger_run_to_next_scanline_advances_with_a_jammed_cpu() {
+    let mut nes = WasmNes::new();
+    nes.load_rom(&nrom_jammed_at_reset(), "test.nes")
+        .expect("valid rom");
+    nes.debugger_open();
+    nes.debugger_step_into(); // execute the KIL
+    let scanline = snapshot_number(&mut nes, "scanline");
+
+    nes.debugger_run_to_next_scanline();
+
+    assert_ne!(snapshot_number(&mut nes, "scanline"), scanline);
+    assert!(nes.is_debugger_open());
+}
+
+#[wasm_bindgen_test]
+fn debugger_run_to_next_frame_advances_with_a_jammed_cpu() {
+    let mut nes = WasmNes::new();
+    nes.load_rom(&nrom_jammed_at_reset(), "test.nes")
+        .expect("valid rom");
+    nes.debugger_open();
+    nes.debugger_step_into(); // execute the KIL
+    let frame = snapshot_number(&mut nes, "frame_count");
+
+    nes.debugger_run_to_next_frame();
+
+    assert_ne!(snapshot_number(&mut nes, "frame_count"), frame);
+    assert!(nes.is_debugger_open());
+}

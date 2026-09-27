@@ -11,6 +11,7 @@ use crate::nes::cpu::InterruptKind;
 use crate::platform::debugging::Tracing;
 use crate::platform::debugging::breakpoints::{BreakpointKind, BreakpointList, EvalContext};
 use crate::platform::debugging::controller::DebuggerControllerCore;
+use std::ops::ControlFlow;
 
 const JSR_OPCODE: u8 = 0x20;
 
@@ -240,44 +241,8 @@ impl DebuggerController {
         }
     }
 
-    // ── Blocking run-to helpers ────────────────────────────────────────
-
-    fn run_to_next_frame(nes: &mut Nes) {
-        const MAX_STEPS: usize = 2_000_000;
-        let mut previous_scanline = nes.ppu().borrow().scanline();
-
-        for _ in 0..MAX_STEPS {
-            nes.run_cpu_tick();
-            let scanline = nes.ppu().borrow().scanline();
-            if scanline < previous_scanline {
-                break;
-            }
-            previous_scanline = scanline;
-        }
-    }
-
-    fn run_to_next_scanline(nes: &mut Nes) {
-        const MAX_STEPS: usize = 100_000;
-        let start_scanline = nes.ppu().borrow().scanline();
-
-        for _ in 0..MAX_STEPS {
-            nes.run_cpu_tick();
-            let scanline = nes.ppu().borrow().scanline();
-            if scanline != start_scanline {
-                break;
-            }
-        }
-    }
-
-    fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
-        let memory = nes.bus().borrow();
-        let lo = memory.read_cpu_for_debugger(vector_addr);
-        let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
-        u16::from_le_bytes([lo, hi])
-    }
-
     fn arm_run_to_interrupt(&mut self, nes: &Nes, vector_addr: u16, kind: InterruptKind) -> bool {
-        let target = Self::read_vector_target(nes, vector_addr);
+        let target = nes.read_vector_target(vector_addr);
         self.set_temporary_breakpoint_for_interrupt(nes, target, kind);
         true
     }
@@ -317,10 +282,10 @@ impl DebuggerController {
         }
 
         if action.run_to_next_frame {
-            Self::run_to_next_frame(nes);
+            nes.run_to_next_frame();
         }
         if action.run_to_next_scanline {
-            Self::run_to_next_scanline(nes);
+            nes.run_to_next_scanline();
         }
         if action.run_to_nmi {
             should_continue |= self.arm_run_to_interrupt(nes, 0xFFFA, InterruptKind::Nmi);
@@ -363,9 +328,9 @@ impl DebuggerController {
             return;
         }
 
-        while !nes.is_ready_to_render() {
+        nes.run_until_frame_ready(|nes| {
             if self.check_breakpoint_hit(nes.cpu_ref().pc(), nes.cpu_ref().current_interrupt()) {
-                break;
+                return ControlFlow::Break(());
             }
 
             nes.run(tracing);
@@ -373,11 +338,12 @@ impl DebuggerController {
             self.check_post_instruction_breakpoints(nes);
 
             if self.core.is_paused() {
-                break;
+                return ControlFlow::Break(());
             }
 
             audio_drain(nes);
-        }
+            ControlFlow::Continue(())
+        });
     }
 
     /// Run a single CPU instruction with breakpoint evaluation (for headless testing).
@@ -1034,15 +1000,30 @@ mod tests {
     /// the PPU while the CPU is jammed.
     #[test]
     fn test_run_to_next_frame_and_scanline_advance_with_a_jammed_cpu() {
+        let mut ctrl = default_controller();
         let mut nes = nes_jammed_at_reset();
+        ctrl.enter_debugger();
 
         let scanline = nes.ppu().borrow().scanline();
-        DebuggerController::run_to_next_scanline(&mut nes);
+        ctrl.apply_ui_action(
+            &mut nes,
+            DebuggerUiAction {
+                run_to_next_scanline: true,
+                ..Default::default()
+            },
+        );
         assert_ne!(nes.ppu().borrow().scanline(), scanline);
 
         let frame = nes.ppu().borrow().timing().frame_count();
-        DebuggerController::run_to_next_frame(&mut nes);
+        ctrl.apply_ui_action(
+            &mut nes,
+            DebuggerUiAction {
+                run_to_next_frame: true,
+                ..Default::default()
+            },
+        );
         assert_ne!(nes.ppu().borrow().timing().frame_count(), frame);
+        assert!(ctrl.is_paused(), "the debugger stays open");
     }
 
     #[test]

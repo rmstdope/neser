@@ -602,7 +602,7 @@ impl NativeEventLoop {
             let checkpoint_due = self.handle_autorun_after_input();
 
             if let Some(nes) = self.console.as_nes_mut() {
-                crate::nes::autorun::headless_playback::run_one_frame(nes);
+                nes.run_one_frame_discarding_audio();
             }
 
             self.handle_autorun_after_frame(checkpoint_due);

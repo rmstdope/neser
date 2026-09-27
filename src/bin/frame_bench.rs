@@ -24,12 +24,12 @@ fn main() {
     nes.load_cartridge(cart);
 
     for _ in 0..60 {
-        run_one_frame(&mut nes);
+        nes.run_one_frame_discarding_audio();
     }
 
     let start = Instant::now();
     for _ in 0..num_frames {
-        run_one_frame(&mut nes);
+        nes.run_one_frame_discarding_audio();
     }
     let elapsed = start.elapsed();
 
@@ -47,20 +47,10 @@ fn main() {
     for i in 0..5 {
         let run_start = Instant::now();
         for _ in 0..num_frames {
-            run_one_frame(&mut nes);
+            nes.run_one_frame_discarding_audio();
         }
         let run_elapsed = run_start.elapsed();
         let per_frame = run_elapsed.as_secs_f64() * 1000.0 / num_frames as f64;
         println!("  Run {}: {per_frame:.3}ms/frame", i + 1);
     }
-}
-
-fn run_one_frame(nes: &mut Nes) {
-    while !nes.is_ready_to_render() {
-        nes.run_cpu_tick();
-        while nes.sample_ready() {
-            nes.get_sample();
-        }
-    }
-    nes.clear_ready_to_render();
 }
