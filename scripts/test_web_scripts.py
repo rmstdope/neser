@@ -133,5 +133,41 @@ class RunWebPortTest(unittest.TestCase):
                 time.sleep(0.1)
 
 
+def _web_integration_steps() -> list[str]:
+    """Return the text of each step of the ``web-integration`` CI job, in order."""
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = re.search(r"^  web-integration:\n((?:(?:    .*)?\n)+)", ci, re.MULTILINE)
+    assert job is not None, "ci.yml has no web-integration job"
+    steps_block = job.group(1).split("    steps:\n", 1)[1]
+    return [step for step in re.split(r"^      - ", steps_block, flags=re.MULTILINE) if step.strip()]
+
+
+class WebIntegrationJobTest(unittest.TestCase):
+    """Given the web-integration CI job, when it runs, then it compiles the wasm exactly once (nr-1pl)."""
+
+    def setUp(self) -> None:
+        self.steps = _web_integration_steps()
+
+    def _step(self, name: str) -> int:
+        for index, step in enumerate(self.steps):
+            if step.startswith(f"name: {name}\n"):
+                return index
+        self.fail(f"web-integration has no step named {name!r}")
+
+    def test_job_builds_the_web_app_once_with_build_web_sh(self) -> None:
+        job = "".join(self.steps)
+        self.assertEqual(1, job.count("bash scripts/build_web.sh"))
+        self.assertNotIn("cargo build", job)
+        self.assertNotIn("wasm-bindgen target/", job)
+
+    def test_test_step_serves_the_prebuilt_artifacts(self) -> None:
+        test_step = self.steps[self._step("Run web integration tests")]
+        self.assertRegex(test_step, r'\n {10}SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST: "1"\n')
+
+    def test_build_runs_before_the_tests(self) -> None:
+        build = next(i for i, step in enumerate(self.steps) if "bash scripts/build_web.sh" in step)
+        self.assertLess(build, self._step("Run web integration tests"))
+
+
 if __name__ == "__main__":
     unittest.main()
