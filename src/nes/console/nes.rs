@@ -201,7 +201,16 @@ impl Nes {
         self.ppu.borrow_mut().cycle_system_palette()
     }
 
-    /// Insert a cartridge and map it into memory.
+    /// Insert `cartridge` and power the console on, leaving it ready to run: what every
+    /// frontend does to start a game, so none of them resets what it has just loaded.
+    pub fn load_cartridge(&mut self, cartridge: Cartridge) {
+        self.insert_cartridge(cartridge);
+        self.reset(false);
+    }
+
+    /// Insert a cartridge and map it into memory, without powering the console on: the CPU has
+    /// not taken its reset vector until [`reset`](Self::reset). To start a game, use
+    /// [`load_cartridge`](Self::load_cartridge).
     /// Auto-configures Arkanoid or Zapper controllers for known ROMs only when no controller
     /// ports were explicitly configured by the user.
     pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
@@ -1186,14 +1195,13 @@ impl Nes {
         Ok(())
     }
 
-    /// Load a ROM from raw bytes, creating and inserting the cartridge.
+    /// Load a ROM from raw bytes and power the console on, leaving it ready to run.
     ///
-    /// This is a convenience method that combines [`Cartridge::load_from_file`]
-    /// and [`insert_cartridge`](Self::insert_cartridge).
+    /// Combines [`Cartridge::load_from_file`] and [`load_cartridge`](Self::load_cartridge).
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         let cart = Cartridge::load_from_file(bytes, name, Some(&self.rom_db))
             .map_err(|e| e.to_string())?;
-        self.insert_cartridge(cart);
+        self.load_cartridge(cart);
         Ok(())
     }
 
@@ -1645,6 +1653,20 @@ mod tests {
         // The emulator maintains a 1-cycle PPU lead for timing quirks (sprite-0 hit, etc).
         nes.reset(false);
         assert_eq!(nes.ppu.borrow().total_cycles(), 22);
+    }
+
+    /// Loading is the power-on: every frontend runs a console straight after `load_rom`, so
+    /// the CPU must already have taken its reset vector, as after a hard reset.
+    #[test]
+    fn load_rom_leaves_the_console_at_its_reset_vector() {
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        nes.load_rom(&create_minimal_rom(), "test.nes").unwrap();
+
+        assert_eq!(nes.cpu_ref().pc(), 0x8000);
+        assert_eq!(nes.cpu_ref().get_total_cycles(), 7);
     }
 
     #[test]

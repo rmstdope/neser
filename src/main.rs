@@ -139,8 +139,7 @@ fn recalculate_autorun_for_rom(rom_path: &str, format: AutorunFormat) -> Result<
     let mut nes = Nes::new(app_context);
     let cart = Cartridge::load_from_file(&rom_bytes, rom_path, Some(nes.rom_db()))
         .map_err(|e| format!("Failed to load cartridge {}: {e}", rom_path))?;
-    nes.insert_cartridge(cart);
-    nes.reset(false);
+    nes.load_cartridge(cart);
 
     let mut progress_printed = false;
     let updated =

@@ -21,8 +21,7 @@ fn main() {
         .config_mut()
         .apply_rom_timing_mode(rom_timing);
     nes = Nes::new(app_context.clone());
-    nes.insert_cartridge(cart);
-    nes.reset(false);
+    nes.load_cartridge(cart);
 
     for _ in 0..60 {
         run_one_frame(&mut nes);

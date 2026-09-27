@@ -132,8 +132,7 @@ mod tests {
         let Console::Nes(ref mut nes) = console else {
             unreachable!()
         };
-        nes.insert_cartridge(cart);
-        console.reset(false);
+        nes.load_cartridge(cart);
         console
     }
 
