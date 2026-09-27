@@ -104,10 +104,12 @@ gh pr create --title "chore(release): v<version>" --body "Release v<version>: ve
 
 `--highlights` takes only the changes; the script prepends the date and the version. Then wait
 for every check, inside a tool call and not by ending the turn. Branch protection requires only
-two of the checks, so the skill waits for all of them itself:
+two of the checks, so the skill waits for all of them itself. `bucket` is the field to read:
+`state` says `IN_PROGRESS` or `QUEUED` while a check runs, and only `bucket` folds every
+unfinished state into `pending`:
 
 ```bash
-until [ "$(gh pr checks <n> --json state -q 'all(.[]; .state != "PENDING")')" = true ]; do sleep 60; done
+until [ "$(gh pr checks <n> --json bucket -q 'all(.[]; .bucket != "pending")')" = true ]; do sleep 60; done
 gh pr checks <n>                  # exits 0 only when every check passed; read it before merging
 ```
 
