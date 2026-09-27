@@ -2750,11 +2750,6 @@ function superScopePort(): number | null {
     return [1, 2].find((port) => snesInst.has_superscope_on_port(port)) ?? null;
 }
 
-/**
- * With a Super Scope connected the Select key (4) flips its Turbo switch and the Start key
- * (5) is its Pause button; neither then reaches port 1, so one press never pauses twice.
- * Returns true when the key was the scope's.
- */
 /** Let go of the scope's Fire and Cursor, so a release mid-press never leaves them held. */
 function releaseSuperScopeButtons() {
     const port = superScopePort();
@@ -2764,6 +2759,11 @@ function releaseSuperScopeButtons() {
     }
 }
 
+/**
+ * With a Super Scope connected the Select key (4) flips its Turbo switch and the Start key
+ * (5) is its Pause button; neither then reaches port 1, so one press never pauses twice.
+ * Returns true when the key was the scope's.
+ */
 function handleSuperScopeKey(event: KeyboardEvent, pressed: boolean): boolean {
     const port = superScopePort();
     const action = superScopeKeyAction(event.key.toLowerCase());
