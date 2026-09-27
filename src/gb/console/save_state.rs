@@ -101,13 +101,15 @@ pub struct BusState {
     // CGB $FEA0-$FEFF extra OAM RAM (None for DMG and older save states)
     #[serde(default)]
     pub cgb_extra_oam: Option<Vec<u8>>,
-    // DMG-only fields (None for CGB)
+    // Whether the boot ROM is still mapped
     pub boot_rom_active: Option<bool>,
+    // Serial port, both models (None in CGB save states made before nr-upb)
     pub sb: Option<u8>,
     pub sc: Option<u8>,
     pub serial_buf: Option<Vec<u8>>,
     pub serial_bits_remaining: Option<u8>,
     pub serial_master_clock: Option<bool>,
+    // DMG-only field (None for CGB)
     pub model: Option<DmgModel>,
     // Optional minimal SGB command/input state (None for normal DMG/CGB and older save states)
     #[serde(default)]

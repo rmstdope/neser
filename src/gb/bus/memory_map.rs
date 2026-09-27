@@ -7,7 +7,7 @@
 //! - `$C000–$CFFF`: WRAM bank 0; `$D000–$DFFF`: the mapped WRAM bank
 //! - `$E000–$FDFF`: echo of `$C000–$DDFF`
 //! - `$FE00–$FE9F`: OAM (blocked while an OAM DMA holds it)
-//! - `$FF00` P1, `$FF01` SB, `$FF02` SC read, `$FF04–$FF07` timer, `$FF0F` IF,
+//! - `$FF00` P1, `$FF01` SB, `$FF02` SC, `$FF04–$FF07` timer, `$FF0F` IF,
 //!   `$FF10–$FF3F` APU, `$FF40–$FF4B` PPU registers and `$FF46` OAM DMA,
 //!   `$FF80–$FFFE` HRAM, `$FFFF` IE
 //! - anything left: reads `$FF`, writes are ignored
@@ -23,6 +23,8 @@ use crate::gb::input::joypad::Joypad;
 use crate::gb::ppu::Ppu;
 use crate::gb::timer::Timer;
 
+use super::serial::Serial;
+
 /// Read-only view of the hardware both Game Boy buses route addresses to.
 pub(super) struct MapView<'a> {
     pub cart: &'a dyn GbCartridge,
@@ -35,8 +37,9 @@ pub(super) struct MapView<'a> {
     pub joypad: &'a Joypad,
     pub if_reg: u8,
     pub ie_reg: u8,
-    pub sb: u8,
-    pub sc: u8,
+    pub serial: &'a Serial,
+    /// CGB mode (not DMG, not CGB DMG compatibility): SC bit 1 is live.
+    pub cgb_mode: bool,
     pub dma_source: u8,
     pub dma_oam_blocked: bool,
 }
@@ -53,7 +56,7 @@ pub(super) struct MapViewMut<'a> {
     pub joypad: &'a mut Joypad,
     pub if_reg: &'a mut u8,
     pub ie_reg: &'a mut u8,
-    pub sb: &'a mut u8,
+    pub serial: &'a mut Serial,
     pub dma_oam_blocked: bool,
 }
 
@@ -117,8 +120,8 @@ pub(super) trait MemoryMap {
             0xFE00..=0xFE9F if v.dma_oam_blocked => 0xFF,
             0xFE00..=0xFE9F => v.ppu.oam[(addr - 0xFE00) as usize],
             0xFF00 => v.joypad.read(),
-            0xFF01 => v.sb,
-            0xFF02 => v.sc | 0x7E, // SC bits 6-1 read as 1
+            0xFF01 => v.serial.sb,
+            0xFF02 => v.serial.read_sc(v.cgb_mode),
             0xFF04..=0xFF07 => v.timer.read(addr),
             0xFF0F => v.if_reg | 0xE0,
             0xFF10..=0xFF3F => v.apu.read_register(addr),
@@ -149,7 +152,8 @@ pub(super) trait MemoryMap {
             0xF000..=0xFDFF => v.wram[1][(addr - 0xF000) as usize] = val,
             0xFE00..=0xFE9F if !v.dma_oam_blocked => v.ppu.write_oam(addr, val),
             0xFF00 => v.joypad.write(val),
-            0xFF01 => *v.sb = val,
+            0xFF01 => v.serial.sb = val,
+            0xFF02 => v.serial.write_sc(val),
             0xFF04..=0xFF07 => {
                 // A DIV write with the DIV-APU bit high clocks the frame sequencer.
                 if v.timer.write(addr, val) {
@@ -219,8 +223,8 @@ mod tests {
         joypad: Joypad,
         if_reg: u8,
         ie_reg: u8,
-        sb: u8,
-        sc: u8,
+        serial: Serial,
+        cgb_mode: bool,
         dma_source: u8,
         dma_oam_blocked: bool,
         /// The model's own register at `CLAIMED`.
@@ -249,8 +253,8 @@ mod tests {
                 joypad: Joypad::new(),
                 if_reg: 0,
                 ie_reg: 0,
-                sb: 0,
-                sc: 0,
+                serial: Serial::new(),
+                cgb_mode: false,
                 dma_source: 0xFF,
                 dma_oam_blocked: false,
                 claimed: 0x42,
@@ -271,8 +275,8 @@ mod tests {
                 joypad: &self.joypad,
                 if_reg: self.if_reg,
                 ie_reg: self.ie_reg,
-                sb: self.sb,
-                sc: self.sc,
+                serial: &self.serial,
+                cgb_mode: self.cgb_mode,
                 dma_source: self.dma_source,
                 dma_oam_blocked: self.dma_oam_blocked,
             }
@@ -290,7 +294,7 @@ mod tests {
                 joypad: &mut self.joypad,
                 if_reg: &mut self.if_reg,
                 ie_reg: &mut self.ie_reg,
-                sb: &mut self.sb,
+                serial: &mut self.serial,
                 dma_oam_blocked: self.dma_oam_blocked,
             }
         }
@@ -397,10 +401,30 @@ mod tests {
         let mut map = TestMap::new();
         map.map_write(0xFF01, 0xA5);
         assert_eq!(map.map_read(0xFF01), 0xA5);
-        map.sc = 0x81;
+        map.serial.sc = 0x81;
         assert_eq!(map.map_read(0xFF02), 0xFF);
-        map.sc = 0x00;
+        map.serial.sc = 0x00;
         assert_eq!(map.map_read(0xFF02), 0x7E);
+        map.cgb_mode = true;
+        assert_eq!(map.map_read(0xFF02), 0x7C, "CGB mode: bit 1 readable");
+    }
+
+    #[test]
+    fn sc_write_goes_through_the_shared_map() {
+        // No model claims $FF02: the shared map starts the transfer itself.
+        let mut map = TestMap::new();
+        map.map_write(0xFF01, 0x3C);
+        map.map_write(0xFF02, 0x81);
+        assert_eq!(map.map_read(0xFF02), 0xFF);
+        let mut counter = 0u16;
+        let mut completed = false;
+        for _ in 0..1024 {
+            let next = counter.wrapping_add(4);
+            completed |= map.serial.clock(counter, next, false);
+            counter = next;
+        }
+        assert!(completed);
+        assert_eq!(map.serial.output(), &[0x3C]);
     }
 
     #[test]
