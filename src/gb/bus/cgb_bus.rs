@@ -5,9 +5,11 @@ use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
 use crate::gb::bus::oam_dma::OamDma;
 use crate::gb::bus::serial::Serial;
+use crate::gb::bus::snapshot::{BusSnapshot, NoCartridge, SharedState, SharedStateMut};
 use crate::gb::bus::tick_sequence::{TickParts, TickSequence};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes::{self, GbcPalette};
+use crate::gb::console::save_state::{BusState, GbBusType};
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::CgbModel;
 use crate::gb::ppu::timing::PpuMode;
@@ -137,18 +139,6 @@ pub struct CgbBus {
     /// The player's choice of colourisation for a DMG-only game (not part of
     /// save states: a display choice owned by the console wrapper).
     gbc_palette: GbcPalette,
-}
-
-/// Holds the cartridge slot for the instant [`CgbBus::reset`] has taken the
-/// real cartridge out to rebuild the bus around it; never read.
-struct NoCartridge;
-
-impl GbCartridge for NoCartridge {
-    fn read(&self, _addr: u16) -> u8 {
-        0xFF
-    }
-
-    fn write(&mut self, _addr: u16, _val: u8) {}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -757,140 +747,25 @@ impl CgbBus {
         self.apu.sample_rate()
     }
 
-    /// Hard reset: rebuild the bus exactly as [`CgbBus::new`] would.
-    ///
-    /// The constructor is the one place that knows initial state, so a reset
-    /// machine is by construction a freshly loaded one. Only what is not
-    /// machine state survives: the cartridge (ROM, RAM and mapper state), the
-    /// model, the `skip_boot_rom` choice, the APU output sample rate and the
-    /// player's GBC palette choice.
+    /// Hard reset: rebuild the bus as [`CgbBus::new`] would, keeping the
+    /// cartridge, the model, the `skip_boot_rom` choice, the audio sample rate
+    /// and the player's GBC palette choice; see `snapshot.rs`.
     pub fn reset(&mut self) {
-        let cart = std::mem::replace(&mut self.cart, Box::new(NoCartridge));
-        let sample_rate = self.apu.sample_rate();
-        let gbc_palette = self.gbc_palette;
-        *self = Self::new(cart, self.model, self.skip_boot_rom);
-        self.apu.set_sample_rate(sample_rate);
-        self.set_gbc_palette(gbc_palette);
+        BusSnapshot::reset(self);
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
 
-    /// Capture the full bus state for serialization.
-    pub fn capture_bus_state(&self) -> crate::gb::console::save_state::BusState {
-        use crate::gb::console::save_state::{BusState, GbBusType};
-        let mut wram_flat = [0u8; 0x8000];
-        for (bank, bank_data) in self.wram.iter().enumerate() {
-            let offset = bank * 0x1000;
-            wram_flat[offset..offset + 0x1000].copy_from_slice(bank_data);
-        }
-        let (dma_active, dma_source, dma_position, dma_oam_blocked) = self.oam_dma.parts();
-        let mut state = BusState {
-            bus_type: GbBusType::Cgb,
-            ppu: self.ppu.clone(),
-            wram: Box::new(wram_flat),
-            hram: self.hram,
-            timer: self.timer.clone(),
-            joypad: self.joypad.clone(),
-            apu: self.apu.clone(),
-            if_reg: self.if_reg,
-            ie_reg: self.ie_reg,
-            dma_active,
-            dma_source,
-            dma_position,
-            dma_oam_blocked,
-            hdma: Some(self.hdma.clone()),
-            svbk: Some(self.svbk),
-            key1: Some(self.key1),
-            apu_tick_accumulator: Some(self.apu_tick_accumulator),
-            rtc_tick_accumulator: Some(self.rtc_tick_accumulator),
-            ff72: Some(self.ff72),
-            ff73: Some(self.ff73),
-            ff74: Some(self.ff74),
-            ff75: Some(self.ff75),
-            key0: Some(self.key0),
-            key0_locked: Some(self.key0_locked),
-            cgb_extra_oam: Some(self.cgb_extra_oam.to_vec()),
-            boot_rom_active: Some(self.boot_rom_active),
-            sb: None,
-            sc: None,
-            serial_buf: None,
-            serial_bits_remaining: None,
-            serial_master_clock: None,
-            model: None,
-            sgb: None,
-        };
-        self.serial.capture_into(&mut state);
-        state
+    /// Capture the full bus state for serialization: see `snapshot.rs`.
+    pub fn capture_bus_state(&self) -> BusState {
+        BusSnapshot::capture_bus_state(self)
     }
 
-    /// Restore bus state from a deserialized snapshot.
+    /// Restore bus state from a deserialized snapshot: see `snapshot.rs`.
     ///
     /// Returns an error if the save state was captured from a DMG bus.
-    pub fn restore_bus_state(
-        &mut self,
-        state: &crate::gb::console::save_state::BusState,
-    ) -> Result<(), String> {
-        use crate::gb::console::save_state::GbBusType;
-        if state.bus_type != GbBusType::Cgb {
-            return Err(format!(
-                "bus type mismatch: expected CGB, found {:?}",
-                state.bus_type
-            ));
-        }
-        self.ppu = state.ppu.clone();
-        self.ppu.set_cgb_model(self.model);
-        self.ppu.fixup_after_state_load();
-        for (bank, bank_data) in self.wram.iter_mut().enumerate() {
-            let offset = bank * 0x1000;
-            bank_data.copy_from_slice(&state.wram[offset..offset + 0x1000]);
-        }
-        self.serial = Serial::new();
-        self.serial.restore_from(state);
-        self.hram = state.hram;
-        self.timer = state.timer.clone();
-        self.joypad = state.joypad.clone();
-        self.apu = state.apu.clone();
-        // Re-apply the configured CGB model after restoring the APU snapshot:
-        // older save-states won't have `is_cgb`/`cgb_model` serialized on CH1
-        // and would otherwise come back on the DMG/default model path.
-        self.apu.set_cgb_model(self.model);
-        self.if_reg = state.if_reg;
-        self.ie_reg = state.ie_reg;
-        self.oam_dma = OamDma::from_parts(
-            state.dma_active,
-            state.dma_source,
-            state.dma_position,
-            state.dma_oam_blocked,
-        );
-        self.hdma = state.hdma.clone().unwrap_or_default();
-        self.svbk = state.svbk.unwrap_or(0);
-        self.key1 = state.key1.unwrap_or(0);
-        self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
-        self.rtc_tick_accumulator = state.rtc_tick_accumulator.unwrap_or(0);
-        self.apu_power_on_accumulator = 0;
-        // Restore undocumented CGB registers with defaults for older save states
-        self.ff72 = state.ff72.unwrap_or(0x00);
-        self.ff73 = state.ff73.unwrap_or(0x00);
-        self.ff74 = state.ff74.unwrap_or(0x00);
-        self.ff75 = state.ff75.unwrap_or(0x00);
-        // Restore KEY0 state; default to locked with post-boot value for older save states
-        self.key0 = state.key0.unwrap_or(0x00);
-        self.key0_locked = state.key0_locked.unwrap_or(true);
-        if let Some(extra_oam) = &state.cgb_extra_oam {
-            if extra_oam.len() != self.cgb_extra_oam.len() {
-                return Err(format!(
-                    "invalid CGB extra OAM length: expected {}, found {}",
-                    self.cgb_extra_oam.len(),
-                    extra_oam.len()
-                ));
-            }
-            self.cgb_extra_oam.copy_from_slice(extra_oam);
-        } else {
-            self.cgb_extra_oam = [0; 0x60];
-        }
-        // Restore boot ROM state; default to inactive for older save states
-        self.boot_rom_active = state.boot_rom_active.unwrap_or(false);
-        Ok(())
+    pub fn restore_bus_state(&mut self, state: &BusState) -> Result<(), String> {
+        BusSnapshot::restore_bus_state(self, state)
     }
 
     /// Returns `true` when the cartridge has battery-backed RAM.
@@ -1072,6 +947,122 @@ impl MemoryMap for CgbBus {
 
     fn start_oam_dma(&mut self, val: u8) {
         self.oam_dma.start(val);
+    }
+}
+
+impl BusSnapshot for CgbBus {
+    const BUS_TYPE: GbBusType = GbBusType::Cgb;
+
+    fn shared(&self) -> SharedState<'_> {
+        SharedState {
+            ppu: &self.ppu,
+            hram: &self.hram,
+            timer: &self.timer,
+            joypad: &self.joypad,
+            apu: &self.apu,
+            if_reg: self.if_reg,
+            ie_reg: self.ie_reg,
+            oam_dma: self.oam_dma,
+            serial: &self.serial,
+            boot_rom_active: self.boot_rom_active,
+        }
+    }
+
+    fn shared_mut(&mut self) -> SharedStateMut<'_> {
+        SharedStateMut {
+            ppu: &mut self.ppu,
+            hram: &mut self.hram,
+            timer: &mut self.timer,
+            joypad: &mut self.joypad,
+            apu: &mut self.apu,
+            if_reg: &mut self.if_reg,
+            ie_reg: &mut self.ie_reg,
+            oam_dma: &mut self.oam_dma,
+            serial: &mut self.serial,
+            boot_rom_active: &mut self.boot_rom_active,
+        }
+    }
+
+    /// The eight 4 KiB WRAM banks, in order, fill the array.
+    fn wram_flat(&self) -> Box<[u8; 0x8000]> {
+        let mut flat = Box::new([0u8; 0x8000]);
+        for (bank, bank_data) in self.wram.iter().enumerate() {
+            let offset = bank * 0x1000;
+            flat[offset..offset + 0x1000].copy_from_slice(bank_data);
+        }
+        flat
+    }
+
+    fn restore_wram(&mut self, flat: &[u8; 0x8000]) {
+        for (bank, bank_data) in self.wram.iter_mut().enumerate() {
+            let offset = bank * 0x1000;
+            bank_data.copy_from_slice(&flat[offset..offset + 0x1000]);
+        }
+    }
+
+    fn capture_model(&self, state: &mut BusState) {
+        state.hdma = Some(self.hdma.clone());
+        state.svbk = Some(self.svbk);
+        state.key1 = Some(self.key1);
+        state.apu_tick_accumulator = Some(self.apu_tick_accumulator);
+        state.rtc_tick_accumulator = Some(self.rtc_tick_accumulator);
+        state.ff72 = Some(self.ff72);
+        state.ff73 = Some(self.ff73);
+        state.ff74 = Some(self.ff74);
+        state.ff75 = Some(self.ff75);
+        state.key0 = Some(self.key0);
+        state.key0_locked = Some(self.key0_locked);
+        state.cgb_extra_oam = Some(self.cgb_extra_oam.to_vec());
+    }
+
+    fn restore_model(&mut self, state: &BusState) -> Result<(), String> {
+        // Re-apply the configured CGB model after restoring the APU snapshot:
+        // older save-states won't have `is_cgb`/`cgb_model` serialized on CH1
+        // and would otherwise come back on the DMG/default model path.
+        self.apu.set_cgb_model(self.model);
+        self.hdma = state.hdma.clone().unwrap_or_default();
+        self.svbk = state.svbk.unwrap_or(0);
+        self.key1 = state.key1.unwrap_or(0);
+        self.apu_tick_accumulator = state.apu_tick_accumulator.unwrap_or(0);
+        self.rtc_tick_accumulator = state.rtc_tick_accumulator.unwrap_or(0);
+        self.apu_power_on_accumulator = 0;
+        // Restore undocumented CGB registers with defaults for older save states
+        self.ff72 = state.ff72.unwrap_or(0x00);
+        self.ff73 = state.ff73.unwrap_or(0x00);
+        self.ff74 = state.ff74.unwrap_or(0x00);
+        self.ff75 = state.ff75.unwrap_or(0x00);
+        // Restore KEY0 state; default to locked with post-boot value for older save states
+        self.key0 = state.key0.unwrap_or(0x00);
+        self.key0_locked = state.key0_locked.unwrap_or(true);
+        if let Some(extra_oam) = &state.cgb_extra_oam {
+            if extra_oam.len() != self.cgb_extra_oam.len() {
+                return Err(format!(
+                    "invalid CGB extra OAM length: expected {}, found {}",
+                    self.cgb_extra_oam.len(),
+                    extra_oam.len()
+                ));
+            }
+            self.cgb_extra_oam.copy_from_slice(extra_oam);
+        } else {
+            self.cgb_extra_oam = [0; 0x60];
+        }
+        Ok(())
+    }
+
+    /// The PPU runs the bus's configured model, whatever the state says.
+    fn prepare_restored_ppu(&self, ppu: &mut Ppu) {
+        ppu.set_cgb_model(self.model);
+    }
+
+    fn take_cartridge(&mut self) -> Box<dyn GbCartridge> {
+        std::mem::replace(&mut self.cart, Box::new(NoCartridge))
+    }
+
+    /// Keeps the model, the `skip_boot_rom` choice and the GBC palette.
+    fn rebuilt(&self, cart: Box<dyn GbCartridge>) -> Self {
+        let mut bus = Self::new(cart, self.model, self.skip_boot_rom);
+        bus.set_gbc_palette(self.gbc_palette);
+        bus
     }
 }
 
