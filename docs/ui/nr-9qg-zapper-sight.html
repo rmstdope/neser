@@ -1,0 +1,19 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Zapper Sight A</title><style>
+:root{--bg:#f6f6f4;--fg:#1d1d1f;--mut:#666;--card:#fff;--line:#ddd}
+@media (prefers-color-scheme:dark){:root{--bg:#18181a;--fg:#eee;--mut:#aaa;--card:#232326;--line:#3a3a3e}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px 16px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--mut);margin:0 0 20px;max-width:760px}
+.grid{display:flex;flex-wrap:wrap;gap:16px}.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;max-width:100%}
+canvas{width:512px;max-width:100%;image-rendering:pixelated;border-radius:4px;display:block}
+.cap{font-size:13px;color:var(--mut);margin:8px 0 0;max-width:512px}
+</style><body><h1>NES light gun sight — agreed: the Super Scope’s ring, open centre</h1><p class=sub>The NES light gun gets exactly the Super Scope’s sight: same size on the picture, nothing in the middle. The two light guns look identical.</p><div class=grid><div class=box><canvas data-x='{"bg":"sky","ch":"plus","cx":150,"cy":112}'></canvas><p class=cap>Today, for comparison: the small red plus (Duck Hunt).</p></div><div class=box><canvas data-x='{"bg":"sky","cx":150,"cy":112}'></canvas><p class=cap>Duck Hunt: the ring over a duck. The duck shows through the open centre.</p></div><div class=box><canvas data-x='{"bg":"red","ch":"plus","cx":128,"cy":126}'></canvas><p class=cap>Today on red (Hogan’s Alley): the plus almost disappears.</p></div><div class=box><canvas data-x='{"bg":"red","cx":128,"cy":126}'></canvas><p class=cap>Hogan’s Alley on red: the white ring with its black outline reads clearly.</p></div><div class=box><canvas style=width:300px data-x='{"bg":"sky","cx":150,"cy":112}'></canvas><p class=cap>Narrow window: the sight shrinks with the picture.</p></div></div><script>
+function duck(x){x.fillStyle='#63adff';x.fillRect(0,0,256,240);x.fillStyle='#2a8a2a';x.fillRect(0,150,256,40);x.fillStyle='#8a5a1a';x.fillRect(0,190,256,50);
+x.fillStyle='#5a3a10';x.fillRect(120,110,30,14);x.fillStyle='#1a6a1a';x.fillRect(146,104,10,10);x.fillStyle='#ffd';x.fillRect(150,112,6,3);x.fillStyle='#000';x.font='8px monospace';x.fillText('SCORE 001500',150,226);x.fillText('SHOT |||',16,226);}
+function red(x){x.fillStyle='#d82800';x.fillRect(0,0,256,240);x.fillStyle='#f8b800';x.fillRect(40,40,176,20);x.fillStyle='#fff';x.font='8px monospace';x.fillText("HOGAN'S ALLEY",90,54);x.fillStyle='#881400';x.fillRect(96,100,64,100);x.fillStyle='#fcfcfc';x.fillRect(112,110,32,32);}
+function sight(x,cx,cy,dot,s){s=s||1;for(const [col,w] of [['#000',3.5*s],['#fff',1.5*s]]){x.strokeStyle=col;x.lineWidth=w;x.beginPath();x.arc(cx,cy,9*s,0,7);x.stroke();x.beginPath();
+const o=14*s,i=4*s;x.moveTo(cx-o,cy);x.lineTo(cx-i,cy);x.moveTo(cx+i,cy);x.lineTo(cx+o,cy);x.moveTo(cx,cy-o);x.lineTo(cx,cy-i);x.moveTo(cx,cy+i);x.lineTo(cx,cy+o);x.stroke();}
+if(dot){x.fillStyle='#000';x.fillRect(cx-2,cy-2,4,4);x.fillStyle='#fff';x.fillRect(cx-1,cy-1,2,2);}}
+function plus(x,cx,cy){x.fillStyle='#ff3333';for(const [a,b] of [[0,-2],[0,-1],[-2,0],[-1,0],[1,0],[2,0],[0,1],[0,2]])x.fillRect(cx+a*2,cy+b*2,2,2);}
+document.querySelectorAll('canvas').forEach(c=>{const x=c.getContext('2d');c.width=256;c.height=240;const d=JSON.parse(c.dataset.x);(d.bg==='red'?red:duck)(x);
+if(d.ch==='plus')plus(x,d.cx,d.cy);else sight(x,d.cx,d.cy,d.dot,d.s);});
+</script>
