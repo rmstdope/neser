@@ -81,7 +81,7 @@ The emulator is designed around a **multi-layer architecture**:
 
 | Binary | Source | Feature | Description |
 | --------- | -------- | --------- | ------------- |
-| `neser` | `src/main.rs` | `native` (default) | Main emulator with native desktop window (winit + OpenGL), audio, gamepad input, shader filters, debugger, and autorun support. A thin client of the library crate: it imports everything through `neser::…` and declares no modules of its own, so the emulator is compiled once (guarded by `scripts/test_binary_uses_library.py`). |
+| `neser` | `src/main.rs` | `native` (default) | Main emulator with native desktop window (winit + OpenGL), audio, gamepad input, shader filters, debugger, and autorun support. A thin client of the library crate: it imports everything through `neser::…` and declares none of the library's modules, so the emulator is compiled once (guarded by `scripts/test_binary_uses_library.py`). |
 | `joysticks` | `src/bin/joysticks.rs` | `native` | Diagnostic utility that lists connected joysticks/gamepads, displays their GUID, and shows real-time axis/button state. |
 
 The `src/bin/roms.rs` file is a library binary (accessed via `cargo run --bin roms`) that provides ROM management commands: `list` (scan a directory for NES ROMs), `info` (parse and display iNES/NES2.0 header details), and `infoall` (batch info for all ROMs).

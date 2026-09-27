@@ -31,7 +31,11 @@ class BinaryUsesLibraryTests(unittest.TestCase):
 
     def test_main_has_no_crate_wide_dead_code_allow(self) -> None:
         """Dead code in the binary is reported, not silenced for the whole crate."""
-        self.assertNotRegex(self.source, r"#!\[\s*allow\([^)]*\bdead_code\b")
+        # Any inner attribute naming dead_code, so a `cfg_attr(..., allow(dead_code))` counts too,
+        # and `allow(unused)`, whose lint group includes dead_code.
+        inner_attributes = re.findall(r"#!\[(.*?)\]\s*$", self.source, re.MULTILINE | re.DOTALL)
+        for attribute in inner_attributes:
+            self.assertNotRegex(attribute, r"\bdead_code\b|\ballow\s*\([^)]*\bunused\b")
 
 
 if __name__ == "__main__":
