@@ -133,6 +133,54 @@ class RunWebPortTest(unittest.TestCase):
                 time.sleep(0.1)
 
 
+BUILD_WEB = SCRIPTS_ROOT / "build_web.sh"
+
+
+class BuildWebTest(unittest.TestCase):
+    """Given build_web.sh, when it builds, then web/pkg carries the bindings' own types (nr-n48).
+
+    ``cargo``, ``wasm-bindgen`` and ``npx`` are fakes on ``PATH`` that only log their arguments,
+    so the test sees every command the script runs without compiling anything.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.log = self.tmp / "commands.log"
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        for tool in ("cargo", "wasm-bindgen", "npx"):
+            path = bin_dir / tool
+            path.write_text(f'#!/bin/sh\necho "{tool} $*" >> "$COMMAND_LOG"\n')
+            path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        self.path = f"{bin_dir}:/usr/bin:/bin"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _run(self, *args: str) -> list[str]:
+        env = {"PATH": self.path, "HOME": str(self.tmp), "COMMAND_LOG": str(self.log)}
+        result = subprocess.run(["sh", str(BUILD_WEB), *args], env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        return self.log.read_text().splitlines()
+
+    def test_bindings_are_generated_with_typescript(self) -> None:
+        bindgen = [line for line in self._run() if line.startswith("wasm-bindgen ")]
+        self.assertEqual(1, len(bindgen), bindgen)
+        self.assertIn("--out-dir web/pkg", bindgen[0])
+        self.assertNotIn("--no-typescript", bindgen[0])
+
+    def test_default_run_bundles_with_vite(self) -> None:
+        self.assertEqual("npx vite build", self._run()[-1])
+
+    def test_no_bundle_builds_pkg_without_vite(self) -> None:
+        commands = self._run("--no-bundle")
+        self.assertTrue(commands[0].startswith("cargo build --profile wasm-release"), commands)
+        self.assertTrue(commands[1].startswith("wasm-bindgen "), commands)
+        self.assertTrue(commands[2].startswith("npx wasm-opt "), commands)
+        self.assertEqual(3, len(commands), commands)
+
+
 def _web_integration_steps() -> list[str]:
     """Return the text of each step of the ``web-integration`` CI job, in order."""
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
