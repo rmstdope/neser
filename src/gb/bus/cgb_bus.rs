@@ -3017,17 +3017,38 @@ mod tests {
         load_cartridge(&rom).expect("valid ROM")
     }
 
-    /// Everything a reset is responsible for: the serialisable snapshot plus
-    /// the bus fields the snapshot leaves out.
-    fn power_on_state(bus: &CgbBus) -> (serde_json::Value, u8, u16, u8, bool, bool) {
-        (
-            serde_json::to_value(bus.capture_bus_state()).expect("serialisable"),
-            bus.sc,
-            bus.hdma_halt_cycles,
-            bus.apu_power_on_accumulator,
-            bus.ppu.dmg_compat,
-            bus.skip_boot_rom,
-        )
+    /// Assert that everything a reset is responsible for matches: the
+    /// serialisable snapshot, key by key, plus the bus fields the snapshot
+    /// leaves out.
+    fn assert_same_power_on_state(reset: &CgbBus, fresh: &CgbBus, case: &str) {
+        let snapshot =
+            |bus: &CgbBus| serde_json::to_value(bus.capture_bus_state()).expect("serialisable");
+        let (reset_state, fresh_state) = (snapshot(reset), snapshot(fresh));
+        let fresh_fields = fresh_state.as_object().expect("BusState is an object");
+        for (key, value) in reset_state.as_object().expect("BusState is an object") {
+            assert!(
+                fresh_fields.get(key) == Some(value),
+                "{case}: snapshot field `{key}` differs from a fresh bus"
+            );
+        }
+        assert_eq!(reset.sb, fresh.sb, "{case}: sb");
+        assert_eq!(reset.sc, fresh.sc, "{case}: sc");
+        assert_eq!(
+            reset.hdma_halt_cycles, fresh.hdma_halt_cycles,
+            "{case}: hdma_halt_cycles"
+        );
+        assert_eq!(
+            reset.apu_power_on_accumulator, fresh.apu_power_on_accumulator,
+            "{case}: apu_power_on_accumulator"
+        );
+        assert_eq!(
+            reset.ppu.dmg_compat, fresh.ppu.dmg_compat,
+            "{case}: dmg_compat"
+        );
+        assert_eq!(
+            reset.skip_boot_rom, fresh.skip_boot_rom,
+            "{case}: skip_boot_rom"
+        );
     }
 
     /// Scribble over as much bus state as the CPU can reach.
@@ -3073,9 +3094,10 @@ mod tests {
                 let mut fresh = CgbBus::new(cart(), CgbModel::CgbE, skip_boot_rom);
                 fresh.set_audio_sample_rate(22_050.0);
 
-                assert!(
-                    power_on_state(&reset) == power_on_state(&fresh),
-                    "{name}, skip_boot_rom={skip_boot_rom}: reset differs from a fresh bus"
+                assert_same_power_on_state(
+                    &reset,
+                    &fresh,
+                    &format!("{name}, skip_boot_rom={skip_boot_rom}"),
                 );
             }
         }
