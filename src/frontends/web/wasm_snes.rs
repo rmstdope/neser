@@ -1,9 +1,9 @@
 use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::emulator::Emulator;
-use crate::platform::frontend_toasts::cartridge_load_toast_message;
 use crate::snes::console::Snes;
 use crate::snes::dsp::{self, DspChip, ImageProblem};
 use crate::snes::input::InputPorts;
+use crate::web_console::{WebConsole, opaque_black_rgba, web_console_bindings};
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -38,13 +38,12 @@ pub(crate) fn is_genuine_in(chip: &str, image: &[u8], table: dsp::FirmwareTable)
 /// Provides a minimal WASM bridge for running the Super Nintendo emulator in the browser.
 #[wasm_bindgen]
 pub struct WasmSnes {
-    snes: Snes,
-    audio_muted: bool,
-    rom_loaded: bool,
-    pending_toasts: Vec<String>,
+    web: WebConsole<Snes>,
     /// Carries the fractions of SNES Mouse movement between pointer events; fresh per game.
     mouse_motion: crate::snes::input::mouse_motion::MouseMotionScale,
 }
+
+web_console_bindings!(WasmSnes);
 
 impl Default for WasmSnes {
     fn default() -> Self {
@@ -68,13 +67,13 @@ impl WasmSnes {
     /// 0-based physical port; `None` for an invalid port or when no game is loaded.
     fn ports_at(&mut self, port: u8) -> Option<(&mut InputPorts, u8)> {
         let port = Self::physical_port(port)?;
-        Some((self.snes.input_ports_mut()?, port))
+        Some((self.web.core_mut().input_ports_mut()?, port))
     }
 
     /// Asks `query` about the 1-based JavaScript `port`; `false` for an invalid port or when
     /// no game is loaded.
     fn port_hosts(&self, port: u8, query: impl FnOnce(&InputPorts, u8) -> bool) -> bool {
-        match (Self::physical_port(port), self.snes.input_ports()) {
+        match (Self::physical_port(port), self.web.core().input_ports()) {
             (Some(port), Some(ports)) => query(&ports, port),
             _ => false,
         }
@@ -113,29 +112,9 @@ impl WasmSnes {
         rgba
     }
 
-    fn opaque_black_rgba_frame() -> Vec<u8> {
-        let pixel_count = (Snes::SCREEN_WIDTH * Snes::SCREEN_HEIGHT) as usize;
-        let mut rgba = vec![0u8; pixel_count * 4];
-        for alpha in rgba.iter_mut().skip(3).step_by(4) {
-            *alpha = 0xFF;
-        }
-        rgba
-    }
-
-    fn run_until_frame_ready(&mut self) {
-        while !self.snes.is_ready_to_render() {
-            self.snes.run_tick();
-        }
-        self.snes.clear_ready_to_render();
-    }
-
-    fn drain_audio_buffer(&mut self) {
-        while self.snes.get_sample().is_some() {}
-    }
-
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn joypad_button_states_for_test(&self) -> u8 {
-        self.snes.get_joypad_button_states(0)
+        self.web.core().get_joypad_button_states(0)
     }
 
     #[wasm_bindgen(constructor)]
@@ -145,10 +124,7 @@ impl WasmSnes {
             Default::default(),
         )));
         WasmSnes {
-            snes: Snes::new(app_context),
-            audio_muted: false,
-            rom_loaded: false,
-            pending_toasts: Vec::new(),
+            web: WebConsole::new(Snes::new(app_context)),
             mouse_motion: crate::snes::input::mouse_motion::MouseMotionScale::default(),
         }
     }
@@ -159,7 +135,8 @@ impl WasmSnes {
     pub fn set_dsp_firmware(&mut self, chip: &str, image: &[u8]) -> Result<(), JsValue> {
         let dsp_chip = DspChip::from_key(chip)
             .ok_or_else(|| JsValue::from_str(&format!("Unknown SNES firmware chip {chip:?}")))?;
-        self.snes
+        self.web
+            .core_mut()
             .set_dsp_firmware(dsp_chip, image)
             .map_err(|problem| match problem {
                 ImageProblem::WrongSize(size) => JsValue::from_str(&format!(
@@ -175,7 +152,8 @@ impl WasmSnes {
     /// The SNES Mouse's accumulated, not yet reported motion on port 1.
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn mouse_motion_for_test(&self) -> (i16, i16) {
-        self.snes
+        self.web
+            .core()
             .input_ports()
             .and_then(|ports| ports.mouse_state(0))
             .map_or((0, 0), |state| (state.mouse_accum_dx, state.mouse_accum_dy))
@@ -184,49 +162,18 @@ impl WasmSnes {
     /// Replaces the table of genuine dumps, so tests can run synthetic firmware.
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn set_firmware_table_for_test(&mut self, table: dsp::FirmwareTable) {
-        self.snes.set_firmware_table_for_test(table);
+        self.web.core_mut().set_firmware_table_for_test(table);
     }
 
     /// Load a SNES ROM from raw bytes.
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
-        self.rom_loaded = false;
         self.mouse_motion = crate::snes::input::mouse_motion::MouseMotionScale::default();
-        let result = self.snes.load_rom(rom, rom_name);
-        // What the core said while loading comes first, in the order it was raised.
-        let core_toasts = self.snes.app_context().borrow_mut().take_toasts();
-        self.pending_toasts.extend(core_toasts);
-        match result {
-            Ok(()) => {
-                self.rom_loaded = true;
-                self.snes.set_audio_sample_rate(44_100.0);
-                self.pending_toasts
-                    .push(cartridge_load_toast_message(rom_name, true));
-                web_sys::console::log_1(&JsValue::from_str("SNES ROM loaded successfully"));
-                Ok(())
-            }
-            Err(err) => {
-                self.pending_toasts
-                    .push(cartridge_load_toast_message(rom_name, false));
-                Err(JsValue::from_str(&err))
-            }
-        }
-    }
-
-    /// F8: whatever F8 does in the running game, returning the corner
-    /// message for the page to show; `""` while F8 changes nothing here.
-    #[wasm_bindgen]
-    pub fn cycle_palette(&mut self) -> String {
-        self.snes.f8_action().unwrap_or_default()
-    }
-
-    /// Drain any pending toast messages.
-    #[wasm_bindgen]
-    pub fn drain_toasts(&mut self) -> Vec<JsValue> {
-        // The page shows only what this returns, so the core's toasts are forwarded here too.
-        let core_toasts = self.snes.app_context().borrow_mut().take_toasts();
-        self.pending_toasts.extend(core_toasts);
-        self.pending_toasts.drain(..).map(JsValue::from).collect()
+        self.web
+            .load_rom(rom, rom_name)
+            .map_err(|err| JsValue::from_str(&err))?;
+        web_sys::console::log_1(&JsValue::from_str("SNES ROM loaded successfully"));
+        Ok(())
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGBA8888).
@@ -235,13 +182,13 @@ impl WasmSnes {
     /// When no ROM is loaded, returns an opaque black frame.
     #[wasm_bindgen]
     pub fn render_frame_rgba(&mut self) -> Vec<u8> {
-        if !self.rom_loaded {
-            return Self::opaque_black_rgba_frame();
+        if !self.web.rom_loaded() {
+            return opaque_black_rgba(Snes::SCREEN_WIDTH, Snes::SCREEN_HEIGHT);
         }
-        self.run_until_frame_ready();
-        let screen_width = self.snes.screen_width();
-        let screen_height = self.snes.screen_height();
-        let rgb = self.snes.screen_snapshot();
+        self.web.run_until_frame_ready();
+        let screen_width = self.web.core().screen_width();
+        let screen_height = self.web.core().screen_height();
+        let rgb = self.web.core().screen_snapshot();
         Self::rgba_frame_from_snapshot(
             &rgb,
             screen_width,
@@ -271,58 +218,12 @@ impl WasmSnes {
         21_477_272.0 / 357_366.0
     }
 
-    /// Collect all pending mono audio samples from the APU.
-    ///
-    /// Returns a `Float32Array`. Call after each `render_frame_rgba`.
-    #[wasm_bindgen]
-    pub fn get_audio_samples(&mut self) -> Vec<f32> {
-        if self.audio_muted {
-            self.drain_audio_buffer();
-            return Vec::new();
-        }
-        let mut samples = Vec::new();
-        while let Some(s) = self.snes.get_sample() {
-            samples.push(s);
-        }
-        samples
-    }
-
     /// Collect all pending stereo audio samples from the APU.
     ///
     /// Returns interleaved left/right `Float32Array`. Call after each `render_frame_rgba`.
     #[wasm_bindgen]
     pub fn get_audio_samples_stereo(&mut self) -> Vec<f32> {
-        if self.audio_muted {
-            self.drain_audio_buffer();
-            return Vec::new();
-        }
-        let mut samples = Vec::new();
-        while let Some((left, right)) = self.snes.get_stereo_sample() {
-            samples.push(left);
-            samples.push(right);
-        }
-        samples
-    }
-
-    /// Set the emulator audio output sample rate in Hz.
-    #[wasm_bindgen]
-    pub fn set_audio_sample_rate(&mut self, sample_rate: f32) {
-        self.snes.set_audio_sample_rate(sample_rate);
-    }
-
-    /// Set audio mute state.
-    #[wasm_bindgen]
-    pub fn set_audio_muted(&mut self, muted: bool) {
-        self.audio_muted = muted;
-        if muted {
-            self.drain_audio_buffer();
-        }
-    }
-
-    /// Returns `true` if audio is currently muted.
-    #[wasm_bindgen]
-    pub fn is_audio_muted(&self) -> bool {
-        self.audio_muted
+        self.web.audio_samples_stereo()
     }
 
     /// Set button state for a SNES controller.
@@ -332,26 +233,27 @@ impl WasmSnes {
     #[wasm_bindgen]
     pub fn set_button(&mut self, controller: u8, button: u8, pressed: bool) {
         if let Some(port) = Self::physical_port(controller) {
-            self.snes.set_button(port, button, pressed);
+            self.web.core_mut().set_button(port, button, pressed);
         }
     }
 
     /// Reset the emulator.
     #[wasm_bindgen]
     pub fn reset(&mut self, soft_reset: bool) {
-        self.snes.reset(soft_reset);
+        self.web.reset(soft_reset);
     }
 
     /// Serialize the current emulator state to bytes.
     #[wasm_bindgen]
     pub fn save_state_bytes(&self) -> Vec<u8> {
-        self.snes.save_state_bytes().unwrap_or_default()
+        self.web.core().save_state_bytes().unwrap_or_default()
     }
 
     /// Restore emulator state from previously serialized bytes.
     #[wasm_bindgen]
     pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
-        self.snes
+        self.web
+            .core_mut()
             .load_state_bytes(bytes)
             .map_err(|e| JsValue::from_str(&e))
     }
@@ -359,7 +261,8 @@ impl WasmSnes {
     /// Returns `true` if a SNES mouse peripheral is attached on any port.
     #[wasm_bindgen]
     pub fn has_mouse(&self) -> bool {
-        self.snes
+        self.web
+            .core()
             .input_ports()
             .is_some_and(|ports| ports.has_mouse())
     }
@@ -389,7 +292,7 @@ impl WasmSnes {
         if counts_x == 0 && counts_y == 0 {
             return;
         }
-        let Some(ports) = self.snes.input_ports_mut() else {
+        let Some(ports) = self.web.core_mut().input_ports_mut() else {
             return;
         };
         for port in 0..=1u8 {
@@ -418,7 +321,8 @@ impl WasmSnes {
     /// Returns `true` if a Super Scope peripheral is attached on any port.
     #[wasm_bindgen]
     pub fn has_superscope(&self) -> bool {
-        self.snes
+        self.web
+            .core()
             .input_ports()
             .is_some_and(|ports| ports.has_superscope())
     }

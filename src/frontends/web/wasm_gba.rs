@@ -1,7 +1,7 @@
 use crate::gba::Gba;
 use crate::platform::app_context::{AppContext, SharedAppContext};
 use crate::platform::emulator::Emulator;
-use crate::platform::frontend_toasts::cartridge_load_toast_message;
+use crate::web_console::{WebConsole, web_console_bindings};
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -9,13 +9,12 @@ use wasm_bindgen::prelude::*;
 /// Provides a minimal WASM bridge for running the Game Boy Advance emulator in the browser.
 #[wasm_bindgen]
 pub struct WasmGba {
-    gba: Gba,
-    audio_muted: bool,
-    rom_loaded: bool,
-    pending_toasts: Vec<String>,
+    web: WebConsole<Gba>,
     frame_rgba_buffer: Vec<u8>,
     frame_rgb_buffer: Vec<u8>,
 }
+
+web_console_bindings!(WasmGba);
 
 impl Default for WasmGba {
     fn default() -> Self {
@@ -32,10 +31,7 @@ impl WasmGba {
         let app_context: SharedAppContext =
             Rc::new(RefCell::new(AppContext::new_with_config(config)));
         WasmGba {
-            gba: Gba::new(app_context),
-            audio_muted: false,
-            rom_loaded: false,
-            pending_toasts: Vec::new(),
+            web: WebConsole::new(Gba::new(app_context)),
             frame_rgba_buffer: Vec::new(),
             frame_rgb_buffer: Vec::new(),
         }
@@ -76,26 +72,9 @@ impl WasmGba {
         }
     }
 
-    fn run_until_frame_ready(&mut self) {
-        while !self.gba.is_ready_to_render() {
-            self.gba.run_tick();
-        }
-        self.gba.clear_ready_to_render();
-    }
-
-    fn drain_audio_buffer(&mut self) {
-        while self.gba.get_sample().is_some() {}
-    }
-
-    /// The console's own app context, where its core raises toasts.
-    #[cfg(all(test, target_arch = "wasm32"))]
-    pub(crate) fn core_app_context_for_test(&self) -> SharedAppContext {
-        self.gba.app_context().clone()
-    }
-
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn joypad_button_states_for_test(&self) -> u8 {
-        self.gba.get_joypad_button_states(1)
+        self.web.core().get_joypad_button_states(1)
     }
 
     #[wasm_bindgen(constructor)]
@@ -110,57 +89,31 @@ impl WasmGba {
 
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
-        self.rom_loaded = false;
-        match self.gba.load_rom(rom, rom_name) {
-            Ok(()) => {
-                self.rom_loaded = true;
-                self.gba.set_audio_sample_rate(44_100.0);
-                self.pending_toasts
-                    .push(cartridge_load_toast_message(rom_name, true));
-                web_sys::console::log_1(&JsValue::from_str("GBA ROM loaded successfully"));
-                Ok(())
-            }
-            Err(err) => {
-                self.pending_toasts
-                    .push(cartridge_load_toast_message(rom_name, false));
-                Err(JsValue::from_str(&err))
-            }
-        }
-    }
-
-    /// F8 and the top-bar Colors button: switch the GBA LCD colour
-    /// correction and return the corner message for the page to show.
-    #[wasm_bindgen]
-    pub fn cycle_palette(&mut self) -> String {
-        self.gba.f8_action().unwrap_or_default()
+        self.web
+            .load_rom(rom, rom_name)
+            .map_err(|err| JsValue::from_str(&err))?;
+        web_sys::console::log_1(&JsValue::from_str("GBA ROM loaded successfully"));
+        Ok(())
     }
 
     /// The Colors button's label: the colour correction's state in the words
     /// of its corner message.
     #[wasm_bindgen]
     pub fn color_label(&self) -> String {
-        self.gba.color_correction_label()
+        self.web.core().color_correction_label()
     }
 
     /// Whether the GBA LCD colour correction is on.
     #[wasm_bindgen]
     pub fn color_correction(&self) -> bool {
-        self.gba.color_correction()
+        self.web.core().color_correction()
     }
 
     /// Turn the GBA LCD colour correction on or off, e.g. to carry the page's
     /// choice into a new instance. Kept for any game later loaded into it.
     #[wasm_bindgen]
     pub fn set_color_correction(&mut self, enabled: bool) {
-        self.gba.set_color_correction(enabled);
-    }
-
-    #[wasm_bindgen]
-    pub fn drain_toasts(&mut self) -> Vec<JsValue> {
-        // The page shows only what this returns, so the core's toasts are forwarded here too.
-        let core_toasts = self.gba.app_context().borrow_mut().take_toasts();
-        self.pending_toasts.extend(core_toasts);
-        self.pending_toasts.drain(..).map(JsValue::from).collect()
+        self.web.core_mut().set_color_correction(enabled);
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGBA8888).
@@ -175,14 +128,14 @@ impl WasmGba {
     /// grow linear memory.
     #[wasm_bindgen]
     pub fn render_frame_rgba(&mut self) -> js_sys::Uint8Array {
-        if !self.rom_loaded {
+        if !self.web.rom_loaded() {
             self.fill_opaque_black_frame();
             return unsafe { js_sys::Uint8Array::view(&self.frame_rgba_buffer) };
         }
 
-        self.run_until_frame_ready();
+        self.web.run_until_frame_ready();
         self.ensure_rgba_buffer();
-        let rgb = self.gba.framebuffer_rgb();
+        let rgb = self.web.core().framebuffer_rgb();
         for (rgba, rgb) in self
             .frame_rgba_buffer
             .as_chunks_mut::<4>()
@@ -209,13 +162,13 @@ impl WasmGba {
     /// consume it before invoking another WASM function that could grow linear memory.
     #[wasm_bindgen]
     pub fn render_frame_rgb(&mut self) -> js_sys::Uint8Array {
-        if !self.rom_loaded {
+        if !self.web.rom_loaded() {
             self.fill_black_rgb_frame();
             return unsafe { js_sys::Uint8Array::view(&self.frame_rgb_buffer) };
         }
 
-        self.run_until_frame_ready();
-        unsafe { js_sys::Uint8Array::view(self.gba.framebuffer_rgb()) }
+        self.web.run_until_frame_ready();
+        unsafe { js_sys::Uint8Array::view(self.web.core().framebuffer_rgb()) }
     }
 
     #[wasm_bindgen]
@@ -233,61 +186,21 @@ impl WasmGba {
         16_777_216.0 / 280_896.0
     }
 
-    #[wasm_bindgen]
-    pub fn get_audio_samples(&mut self) -> Vec<f32> {
-        if self.audio_muted {
-            self.drain_audio_buffer();
-            return Vec::new();
-        }
-        let mut samples = Vec::new();
-        while let Some(sample) = self.gba.get_sample() {
-            samples.push(sample);
-        }
-        samples
-    }
-
+    /// Collect all pending stereo audio samples, interleaved left/right; empty while muted.
     #[wasm_bindgen]
     pub fn get_audio_samples_stereo(&mut self) -> Vec<f32> {
-        if self.audio_muted {
-            self.drain_audio_buffer();
-            return Vec::new();
-        }
-        let mut samples = Vec::new();
-        while let Some((left, right)) = self.gba.get_stereo_sample() {
-            samples.push(left);
-            samples.push(right);
-        }
-        samples
-    }
-
-    /// Set the emulator audio output sample rate in Hz.
-    #[wasm_bindgen]
-    pub fn set_audio_sample_rate(&mut self, sample_rate: f32) {
-        self.gba.set_audio_sample_rate(sample_rate);
-    }
-
-    #[wasm_bindgen]
-    pub fn set_audio_muted(&mut self, muted: bool) {
-        self.audio_muted = muted;
-        if muted {
-            self.drain_audio_buffer();
-        }
-    }
-
-    #[wasm_bindgen]
-    pub fn is_audio_muted(&self) -> bool {
-        self.audio_muted
+        self.web.audio_samples_stereo()
     }
 
     #[wasm_bindgen]
     pub fn set_button(&mut self, controller: u8, button: u8, pressed: bool) {
         if controller == 1 {
-            self.gba.set_button(controller, button, pressed);
+            self.web.core_mut().set_button(controller, button, pressed);
         }
     }
 
     #[wasm_bindgen]
     pub fn reset(&mut self, soft_reset: bool) {
-        self.gba.reset(soft_reset);
+        self.web.reset(soft_reset);
     }
 }

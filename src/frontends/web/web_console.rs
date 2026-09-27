@@ -288,7 +288,10 @@ mod tests {
         web.load_rom(&minimal_gb_rom(), "game.gb").expect("loads");
         web.run_until_frame_ready();
         let stereo = web.audio_samples_stereo();
-        assert!(!stereo.is_empty() && stereo.len() % 2 == 0, "interleaved");
+        assert!(
+            !stereo.is_empty() && stereo.len().is_multiple_of(2),
+            "interleaved"
+        );
         web.run_until_frame_ready();
         web.set_audio_muted(true);
         assert!(web.audio_samples_stereo().is_empty());
