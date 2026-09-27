@@ -43,6 +43,8 @@ export interface GbaPipelineDeps {
 export interface GbaPipeline {
     /** Compiles the look's programs and fetches its images the first time; false if either fails. */
     prepare(look: GbaLook): Promise<boolean>;
+    /** Forgets the frames LCD Grid's response time blends in, so a new game or a Reset does not ghost the old picture. */
+    restartHistory(): void;
     /** Draws one frame with a prepared look to the canvas. */
     render(look: GbaLook, frame: Uint8Array, format: number, srcW: number, srcH: number, outW: number, outH: number): boolean;
 }
@@ -263,5 +265,9 @@ export function createGbaPipeline(gl: WebGLRenderingContext, deps: GbaPipelineDe
         }
     }
 
-    return { prepare, render };
+    function restartHistory() {
+        historyFilled = false;
+    }
+
+    return { prepare, render, restartHistory };
 }

@@ -97,7 +97,7 @@ describe("Extracted GLSL shader files", () => {
     it("AGB-001 keeps mGBA's 4x4 sub-pixel pattern and the page opaque", () => {
         expect(gbaAgb001Frag).toContain("vec3(1.0, 0.2, 0.2)");
         expect(gbaAgb001Frag).toContain("vec3(0.8)");
-        expect(gbaAgb001Frag).toContain("1.0);");
+        expect(gbaAgb001Frag).toContain("gl_FragColor = vec4(color * arrayX * arrayY, 1.0);");
     });
 
     it("Switch Online uses the sRGB profile with darken_screen 0.8", () => {

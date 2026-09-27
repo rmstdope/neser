@@ -15,7 +15,7 @@ describe("LCD Grid scale on the web", () => {
         ["windowed 3:2", 720, 480],
         ["hi-dpi windowed", 1440, 960],
         ["wide fullscreen", 2560, 1440],
-        ["tall portrait", 390, 700],
+        ["phone, 3:2 at DPR 1", 390, 260],
     ] as const) {
         it(`fits the whole console around a smaller picture (${label})`, () => {
             const s = lcdGridVideoScale(w, h);

@@ -1629,6 +1629,7 @@ async function start(): Promise<boolean> {
 
         const wasCaptured = superScopeSession.captured() || snesMouseSession.captured();
         emulator!.inst.load_rom(romBytes, romName);
+        gbaPipeline.restartHistory();
         filterUntouched = false;
         superScopeSession = createSuperScopeSession();
         snesMouseSession = createSnesMouseSession();
@@ -3627,6 +3628,7 @@ async function restartGbaSession(status: string) {
     try {
         createEmulatorInstance("gba");
         emulator!.inst.load_rom(romBytes, romMetadata.name);
+        gbaPipeline.restartHistory();
         drainNesToasts(emulator?.inst ?? null, toastOverlay);
         frameLimiter.setTargetFps(emulator!.inst.frame_rate_hz());
         await initAudioContext();

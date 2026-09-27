@@ -1,4 +1,6 @@
 import { test, expect, Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { collectBrowserErrors } from "../helpers/browser-errors.helpers";
 import {
     loadGbaRomFromFileInput,
@@ -15,6 +17,50 @@ const BORDER_REQUEST = "**/gba-border-square-4x*.png";
 async function loadGbaRom(page: Page) {
     await loadGbaRomFromFileInput(page);
     await waitForRunningState(page);
+}
+
+type Rgb = [number, number, number];
+
+/** The screen's colour at each point, given as fractions of its width and height. */
+async function pictureAt(page: Page, points: [number, number][]): Promise<Rgb[]> {
+    const png = (await page.locator("#screen").screenshot()).toString("base64");
+    return page.evaluate(async ({ png, points }) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${png}`;
+        await img.decode();
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        return points.map(([x, y]) => {
+            const d = ctx.getImageData(Math.floor(x * (img.width - 1)), Math.floor(y * (img.height - 1)), 1, 1).data;
+            return [d[0], d[1], d[2]] as [number, number, number];
+        });
+    }, { png, points });
+}
+
+// ppu/shades.gba draws vertical bands from black (left) to full blue (right).
+const TOP_MIDDLE: [number, number] = [0.5, 0.03];
+const RIGHT_MIDDLE: [number, number] = [0.9, 0.5];
+const isBlue = ([r, g, b]: Rgb) => b > 60 && b > r + 30;
+const isBlack = ([r, g, b]: Rgb) => r < 16 && g < 16 && b < 16;
+
+async function loadShades(page: Page) {
+    await page.locator("#rom").setInputFiles({
+        name: "shades.gba",
+        mimeType: "application/octet-stream",
+        buffer: readFileSync(path.join(process.cwd(), "roms", "gba", "automated_tests", "gba-tests", "ppu", "shades.gba"))
+    });
+    await waitForRunningState(page);
+    // Past the boot logo: the top of the screen shows the game's blue bands.
+    await expect.poll(async () => isBlue((await pictureAt(page, [TOP_MIDDLE]))[0]), { timeout: 20_000 }).toBe(true);
+}
+
+async function pressFilterUntil(page: Page, name: string) {
+    const filter = page.locator(FILTER_SELECTOR);
+    for (let i = 0; i < 5 && (await filter.textContent()) !== `Filter: ${name}`; i++) await filter.click();
+    await expect(filter).toHaveText(`Filter: ${name}`);
 }
 
 test.describe("GBA screen filters on the web (nr-0pe)", () => {
@@ -98,6 +144,54 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await expect(filter).toHaveText("Filter: LCD Grid");
         await page.waitForTimeout(500);
         await expect(filter).toHaveText("Filter: LCD Grid");
+    });
+
+    test("Given a GBA game, then every look changes the picture and LCD Grid draws the console around it", async ({ page }) => {
+        await openApp(page);
+        await loadShades(page);
+        const [noneRight] = await pictureAt(page, [RIGHT_MIDDLE]);
+
+        for (const name of ["AGB-001", "Switch Online", "GBA SP"]) {
+            await pressFilterUntil(page, name);
+            await expect.poll(async () => {
+                const [rgb] = await pictureAt(page, [RIGHT_MIDDLE]);
+                return rgb.some((v, i) => Math.abs(v - noneRight[i]) > 12);
+            }, { message: `${name} changes the picture` }).toBe(true);
+        }
+
+        await pressFilterUntil(page, "LCD Grid");
+        // The top of the screen is now above the console: black, where None shows the game.
+        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_MIDDLE]))[0])).toBe(true);
+    });
+
+    test("Given LCD Grid's console art still being fetched, then the picture stays on the previous look until it arrives", async ({ page }) => {
+        await openApp(page);
+        let release: () => void = () => {};
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        await page.route(BORDER_REQUEST, async (route) => {
+            await held;
+            await route.continue();
+        });
+        await loadShades(page);
+        await pressFilterUntil(page, "LCD Grid");
+        await page.waitForTimeout(500);
+        expect(isBlue((await pictureAt(page, [TOP_MIDDLE]))[0])).toBe(true);
+        release();
+        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_MIDDLE]))[0])).toBe(true);
+    });
+
+    test("Given a paused GBA game, then a new look is drawn at once", async ({ page }) => {
+        await openApp(page);
+        await loadShades(page);
+        await page.locator("#pause").click();
+        await waitForPausedState(page);
+        const [before] = await pictureAt(page, [RIGHT_MIDDLE]);
+
+        await pressFilterUntil(page, "Switch Online");
+        await expect.poll(async () => {
+            const [rgb] = await pictureAt(page, [RIGHT_MIDDLE]);
+            return rgb.some((v, i) => Math.abs(v - before[i]) > 12);
+        }).toBe(true);
     });
 
     test("Given a GBA game after an NES game, then it starts on None", async ({ page }) => {
