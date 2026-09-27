@@ -1,0 +1,42 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SNES screen filters (agreed)</title><style>
+:root{--bg:#f4f4f2;--fg:#1c1c1c;--dim:#666;--card:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#101114;--fg:#e8e8e8;--dim:#9a9a9a;--card:#1a1b1f}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px}main{max-width:960px;margin:auto}
+h1{font-size:22px;margin:0 0 6px}.lead{color:var(--dim);max-width:72ch}h2{font-size:17px;margin:28px 0 4px}h3{font-size:15px;margin:18px 0 2px}p.n{margin:0 0 8px;color:var(--dim);font-size:14px}
+.frame{background:#1d232a;border-radius:8px;overflow:hidden;position:relative;margin-bottom:10px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;padding:8px 16px;background:#191e24;border-bottom:1px solid #15191e}
+.b{font:600 13px system-ui;color:#a6adbb;background:transparent;border:1px solid #a6adbb88;border-radius:6px;padding:5px 12px;white-space:nowrap}
+.new{outline:2px solid #f5b83d;outline-offset:2px}
+.win{background:#000;border-radius:8px;overflow:hidden;margin-bottom:10px;position:relative}
+.title{background:#2b2b2b;color:#bbb;font:12px system-ui;padding:4px 10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.cell{background:var(--card);border-radius:8px;padding:8px}
+.cell b{font-size:13px}.cell span{display:block;font-size:12px;color:var(--dim)}
+.scr{position:relative;aspect-ratio:8/7;width:100%;overflow:hidden;border-radius:3px;background:#000}
+.scr .img{position:absolute;inset:0;background:
+ linear-gradient(#f8f8f8 0 0) 18% 22%/14% 6% no-repeat,
+ linear-gradient(#f8f8f8 0 0) 70% 16%/18% 7% no-repeat,
+ linear-gradient(#e03020 0 0) 42% 64%/8% 12% no-repeat,
+ linear-gradient(#f8c890 0 0) 42% 55%/8% 8% no-repeat,
+ linear-gradient(#f0d000 0 0) 64% 60%/5% 5% no-repeat,
+ linear-gradient(#20a030 0 0) 0 100%/100% 22% no-repeat,
+ linear-gradient(#8a5020 0 0) 0 100%/100% 10% no-repeat,
+ linear-gradient(#58b0f8,#a8d8ff);image-rendering:pixelated}
+.crt .img{border-radius:10%/12%;filter:saturate(1.2) brightness(1.05)}
+.crt:after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(#0000 0 2px,#0008 2px 4px),radial-gradient(#0000 60%,#000a);border-radius:10%/12%}
+.ntsc .img{filter:blur(.8px) saturate(1.3)}.ntsc:after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,#f0f1 0 2px,#0ff1 2px 4px)}
+.pal .img{filter:blur(1.2px) saturate(.9) sepia(.1)}.pal:after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(#0000 0 3px,#0003 3px 4px)}
+.smooth .img{filter:blur(.5px) contrast(1.2)}
+.rgb .img{filter:blur(.3px)}.rgb:after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(#0000 0 2px,#0004 2px 3px)}
+.toast{position:absolute;top:6px;left:6px;background:#000c;color:#fff;font:12px monospace;padding:2px 7px;border-radius:3px;z-index:2}
+.big{max-width:420px;margin:10px 16px}
+.cost{font-size:13px;color:var(--dim);border-left:3px solid #f5b83d;padding-left:10px;margin:10px 0}
+</style></head><body><main><h1>SNES screen filters (agreed)</h1><p class="lead">SNES games get the NES looks, chosen with F4, the web Filter button and a setting of their own, exactly like the other consoles.</p><h2>The looks</h2><p class="n">The same looks NES games have, in the same order. The pictures are stand-ins, not the real filters.</p><div class="grid"><div class="cell"><div class="scr "><div class="img"></div></div><b>None</b><span>Raw pixels</span></div><div class="cell"><div class="scr crt"><div class="img"></div></div><b>CRT</b><span>Curved tube, scanlines, soft glow</span></div><div class="cell"><div class="scr smooth"><div class="img"></div></div><b>Smooth</b><span>Rounded pixel edges</span></div><div class="cell"><div class="scr ntsc"><div class="img"></div></div><b>NTSC</b><span>Composite TV colour bleed</span></div><div class="cell"><div class="scr pal"><div class="img"></div></div><b>PAL</b><span>European TV, softer</span></div></div><h2>Desktop: F4</h2><p class="n">None → CRT → Smooth → NTSC → PAL → None. The corner message appears for a moment. Works while paused too, as on the other consoles.</p><div class="grid"><div class="cell"><div class="scr "><div class="img"></div><span class="toast">Visual Filter: off</span></div><b>None</b><span></span></div><div class="cell"><div class="scr crt"><div class="img"></div><span class="toast">Visual Filter: CRT</span></div><b>CRT</b><span></span></div><div class="cell"><div class="scr smooth"><div class="img"></div><span class="toast">Visual Filter: SMOOTH</span></div><b>Smooth</b><span></span></div><div class="cell"><div class="scr ntsc"><div class="img"></div><span class="toast">Visual Filter: NTSC</span></div><b>NTSC</b><span></span></div><div class="cell"><div class="scr pal"><div class="img"></div><span class="toast">Visual Filter: PAL</span></div><b>PAL</b><span></span></div></div><h2>Web: the Filter button and F4</h2><p class="n">None → NTSC → CRT → None. The button always names the look in use; there is no corner message on the web.</p><h3>First SNES game after opening the page</h3><div class="frame"><div class="bar"><button class="b">Zoom -</button><button class="b">Zoom +</button><button class="b">Fullscreen</button><button class="b new">Filter: None</button><button class="b">Mute</button></div><div class="scr  big"><div class="img"></div></div></div><h3>After one press</h3><div class="frame"><div class="bar"><button class="b">Zoom -</button><button class="b">Zoom +</button><button class="b">Fullscreen</button><button class="b new">Filter: NTSC</button><button class="b">Mute</button></div><div class="scr ntsc big"><div class="img"></div></div></div><h3>After two presses</h3><div class="frame"><div class="bar"><button class="b">Zoom -</button><button class="b">Zoom +</button><button class="b">Fullscreen</button><button class="b new">Filter: CRT</button><button class="b">Mute</button></div><div class="scr crt big"><div class="img"></div></div></div><h3>An SNES game loaded after an NES game on CRT (or NTSC)</h3><p class="n">The look carries over, because SNES games have it.</p><div class="frame"><div class="bar"><button class="b">Zoom -</button><button class="b">Zoom +</button><button class="b">Fullscreen</button><button class="b new">Filter: CRT</button><button class="b">Mute</button></div><div class="scr crt big"><div class="img"></div></div></div><h3>An SNES game loaded after a Game Boy or GBA game on its own look</h3><p class="n">SNES games do not have that look, so the game starts on None.</p><div class="frame"><div class="bar"><button class="b">Zoom -</button><button class="b">Zoom +</button><button class="b">Fullscreen</button><button class="b new">Filter: None</button><button class="b">Mute</button></div><div class="scr  big"><div class="img"></div></div></div><h3>After reloading the page</h3><p class="n">Forgotten, as for every console; the next SNES game starts on None.</p><div class="frame"><div class="bar"><button class="b">Zoom -</button><button class="b">Zoom +</button><button class="b">Fullscreen</button><button class="b new">Filter: None</button><button class="b">Mute</button></div><div class="scr  big"><div class="img"></div></div></div><h2>Desktop setting</h2><div class="win"><div class="title">neser.conf</div><pre style="color:#ddd;margin:0;padding:10px 14px;font:13px monospace;white-space:pre-wrap"># Shader/filter preset (SNES).
+# Valid values:
+#   - crt    : CRT simulation with scanlines, shadow mask, bloom
+#   - ntsc   : NTSC composite video simulation
+#   - smooth : Smooth pixel upscaling (xBRZ)
+#   - pal    : PAL composite video simulation
+#   - none   : No filter, raw pixels
+# Leave empty or comment out for no shader.
+#snes-filter=crt</pre></div><p class="n">Also <code>--snes-filter crt</code> on the command line. Left out, SNES games start on None. A wrong value is refused the way the other consoles’ filter settings refuse one.</p><h2>Wide scenes</h2><p class="n">When a game switches to its high-resolution mode mid-game, the chosen look stays on.</p></main></body></html>
