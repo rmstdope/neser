@@ -217,6 +217,16 @@ impl InesHeader {
             return None;
         }
 
+        // Archaic iNES (nesdev, iNES "Recommended detection procedure"): byte 7
+        // AND $0C = $04 (or the undefined $0C) means bytes 7-15 hold a dump
+        // tool's signature such as "DiskDude!", not flags. Read them as zero,
+        // as Mesen2 does, so the junk adds nothing to the mapper or region.
+        let mut normalized = *header;
+        if matches!(normalized[7] & 0x0C, 0x04 | 0x0C) {
+            normalized[7..].fill(0);
+        }
+        let header = &normalized;
+
         let flags6 = header[6];
         let flags7 = header[7];
         let nes2 = (flags7 & 0x0C) == 0x08;
@@ -641,6 +651,53 @@ mod tests {
         let info = InesHeader::parse(&header).expect("v1 defaults");
         assert_eq!(info.prg_ram_size_bytes, Some(8 * 1024));
         assert_eq!(info.chr_ram_size_bytes, Some(8 * 1024));
+    }
+
+    /// nesdev iNES, "Recommended detection procedure": byte 7 AND $0C = $04
+    /// marks an archaic iNES header, whose bytes 7-15 hold a tool's
+    /// signature ("DiskDude!") rather than flags, and must be ignored.
+    fn diskdude_header(flags6: u8) -> [u8; 16] {
+        let mut header = [0u8; 16];
+        header[0..4].copy_from_slice(b"NES\x1A");
+        header[4] = 2;
+        header[5] = 1;
+        header[6] = flags6;
+        header[7..16].copy_from_slice(b"DiskDude!");
+        header
+    }
+
+    #[test]
+    fn archaic_diskdude_header_ignores_bytes_7_to_15() {
+        let info = InesHeader::parse(&diskdude_header(0x01)).expect("header parse");
+        assert_eq!(
+            info.mapper, 0,
+            "'D' in byte 7 must not add 64 to the mapper"
+        );
+        assert_eq!(info.header_version, "1.0");
+        assert!(
+            matches!(info.timing_mode, TimingMode::Ntsc),
+            "'k' in byte 9 must not mean PAL"
+        );
+        assert!(matches!(info.console_type, ConsoleType::NesFamicom));
+        assert_eq!(info.prg_ram_size_bytes, Some(8 * 1024));
+        assert!(matches!(info.mirroring, NametableLayout::Vertical));
+    }
+
+    #[test]
+    fn archaic_diskdude_header_keeps_the_mapper_low_nibble_from_byte_6() {
+        // jackal-t-port.nes: byte 6 = $21, i.e. mapper 2 with horizontal mirroring.
+        let info = InesHeader::parse(&diskdude_header(0x21)).expect("header parse");
+        assert_eq!(info.mapper, 2);
+    }
+
+    #[test]
+    fn byte_7_with_both_identifier_bits_set_is_also_archaic() {
+        // Byte 7 AND $0C = $0C is neither iNES nor NES 2.0; like Mesen2, ignore bytes 7-15.
+        let mut header = diskdude_header(0x30);
+        header[7] = 0x4C;
+        let info = InesHeader::parse(&header).expect("header parse");
+        assert_eq!(info.mapper, 3);
+        assert!(matches!(info.timing_mode, TimingMode::Ntsc));
     }
 
     #[test]
