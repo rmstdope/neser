@@ -107,6 +107,15 @@ pub struct Gba {
     bios_load_error: Option<String>,
 }
 
+/// The corner message shown when the GBA colour correction is switched.
+pub fn color_correction_toast_message(enabled: bool) -> String {
+    if enabled {
+        "Colors: GBA screen".to_string()
+    } else {
+        "Colors: Raw".to_string()
+    }
+}
+
 impl Gba {
     /// GBA display width in pixels.
     pub const SCREEN_WIDTH: u32 = SCREEN_WIDTH;
@@ -180,6 +189,33 @@ impl Gba {
             rom_path: None,
             bios_load_error,
         }
+    }
+
+    /// Whether the GBA LCD colour correction is on (the
+    /// `gba-color-correction` setting, or the latest F8/button choice).
+    pub fn color_correction(&self) -> bool {
+        self.app_context.borrow().config().gba.color_correction
+    }
+
+    /// Turn the GBA LCD colour correction on or off.
+    ///
+    /// The choice is kept in the shared config, so a console built later from
+    /// the same app context starts from it. It is never written to the
+    /// settings file. Takes effect from the next rendered scanline.
+    pub fn set_color_correction(&mut self, enabled: bool) {
+        self.app_context
+            .borrow_mut()
+            .config_mut()
+            .gba
+            .color_correction = enabled;
+        self.bus.ppu.set_color_correction(enabled);
+    }
+
+    /// Switch the GBA LCD colour correction and return the new state.
+    pub fn toggle_color_correction(&mut self) -> bool {
+        let enabled = !self.color_correction();
+        self.set_color_correction(enabled);
+        enabled
     }
 
     /// Borrow the underlying system bus.
@@ -525,6 +561,90 @@ mod tests {
     fn set_mode3_bg2_enabled(gba: &mut Gba) {
         gba.bus
             .write16(ppu::REG_DISPCNT, 3 | ppu::dispcnt::BG2_ENABLE);
+    }
+
+    fn run_one_frame(gba: &mut Gba) {
+        gba.clear_ready_to_render();
+        for _ in 0..2_000_000 {
+            if gba.is_ready_to_render() {
+                gba.clear_ready_to_render();
+                return;
+            }
+            gba.run_tick();
+        }
+        panic!("no frame was rendered");
+    }
+
+    #[test]
+    fn test_color_correction_starts_from_the_setting() {
+        let mut config = Config::default();
+        config.gba.color_correction = true;
+        let gba = make_gba_with_config(config);
+        assert!(gba.color_correction());
+        assert!(gba.bus.ppu.color_correction());
+        assert!(!make_gba().color_correction());
+    }
+
+    #[test]
+    fn test_set_color_correction_updates_config_and_ppu() {
+        let mut gba = make_gba();
+        gba.set_color_correction(true);
+        assert!(gba.app_context.borrow().config().gba.color_correction);
+        assert!(gba.bus.ppu.color_correction());
+        gba.set_color_correction(false);
+        assert!(!gba.app_context.borrow().config().gba.color_correction);
+        assert!(!gba.bus.ppu.color_correction());
+    }
+
+    #[test]
+    fn test_toggle_color_correction_flips_and_returns_state() {
+        let mut gba = make_gba();
+        assert!(gba.toggle_color_correction());
+        assert!(gba.color_correction());
+        assert!(!gba.toggle_color_correction());
+        assert!(!gba.color_correction());
+    }
+
+    #[test]
+    fn test_toggle_color_correction_leaves_game_boy_color_choice_alone() {
+        let mut gba = make_gba();
+        gba.toggle_color_correction();
+        assert!(!gba.app_context.borrow().config().gb.cgb_color_correction);
+    }
+
+    #[test]
+    fn test_new_gba_starts_from_shared_config_choice() {
+        let mut gba = make_gba();
+        gba.toggle_color_correction();
+        let next = Gba::new(gba.app_context.clone());
+        assert!(next.color_correction());
+        assert!(next.bus.ppu.color_correction());
+    }
+
+    #[test]
+    fn test_color_correction_toast_message_words() {
+        assert_eq!(color_correction_toast_message(true), "Colors: GBA screen");
+        assert_eq!(color_correction_toast_message(false), "Colors: Raw");
+    }
+
+    #[test]
+    fn test_color_correction_changes_rendered_frame() {
+        let mut gba = make_gba();
+        let rom = make_minimal_valid_gba_rom();
+        gba.load_rom(&rom, "test.gba").expect("valid GBA ROM");
+        set_mode3_bg2_enabled(&mut gba);
+        // A mid-range grey (r = g = b = 16 of 31) at pixel (0, 0).
+        gba.bus.write16(0x0600_0000, 0x4210);
+
+        run_one_frame(&mut gba);
+        let raw = gba.framebuffer_rgb()[..3].to_vec();
+        gba.toggle_color_correction();
+        run_one_frame(&mut gba);
+        let corrected = gba.framebuffer_rgb()[..3].to_vec();
+        assert_ne!(raw, corrected, "correction should change the next frame");
+        gba.toggle_color_correction();
+        run_one_frame(&mut gba);
+        assert_eq!(gba.framebuffer_rgb()[..3].to_vec(), raw);
     }
 
     #[test]

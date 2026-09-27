@@ -646,6 +646,11 @@ impl Ppu {
         self.color_correction = enabled;
     }
 
+    /// Whether LCD colour correction is applied to rendered pixels.
+    pub fn color_correction(&self) -> bool {
+        self.color_correction
+    }
+
     /// Read `DISPSTAT` — returns the live status bits OR'd with the
     /// software-writeable IRQ enables and V-Count setting.
     pub fn read_dispstat(&self) -> u16 {
