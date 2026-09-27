@@ -203,6 +203,16 @@ display=0
 # Leave empty or comment out for no shader.
 #gba-filter=gba-lcd
 
+# Shader/filter preset (SNES).
+# Valid values:
+#   - crt    : CRT simulation with scanlines, shadow mask, bloom
+#   - ntsc   : NTSC composite video simulation
+#   - smooth : Smooth pixel upscaling (xBRZ)
+#   - pal    : PAL composite video simulation
+#   - none   : No filter, raw pixels
+# Leave empty or comment out for no shader.
+#snes-filter=crt
+
 # -----------------------------------------------------------------------------
 # Input Settings
 # -----------------------------------------------------------------------------

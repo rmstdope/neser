@@ -25,8 +25,9 @@ git clone --recurse-submodules https://github.com/rmstdope/neser
 
 ## Usage
 
-Use the `--nes-filter` flag for NES, `--gb-filter` for Game Boy, or
-`--gba-filter` for Game Boy Advance:
+Use the `--nes-filter` flag for NES, `--gb-filter` for Game Boy,
+`--gba-filter` for Game Boy Advance, or `--snes-filter` for SNES (the same
+looks as the NES):
 
 ```bash
 neser rom.nes --nes-filter crt     # CRT simulation
@@ -39,6 +40,7 @@ neser rom.gba --gba-filter agb001         # AGB-001 style handheld look
 neser rom.gba --gba-filter nso-gba-color  # NSO color mod preset
 neser rom.gba --gba-filter sp101-color    # SP-101 color mod preset
 neser rom.gba --gba-filter gba-lcd-grid   # GBA LCD grid with border
+neser rom.sfc --snes-filter crt           # SNES CRT simulation
 ```
 
 Or set in config file:
@@ -49,7 +51,8 @@ nes-filter=crt
 
 You can also cycle through shaders at runtime with F4.
 For GBA, cycling follows this order: none, gba-lcd, agb001,
-nso-gba-color, sp101-color, gba-lcd-grid.
+nso-gba-color, sp101-color, gba-lcd-grid. For NES and SNES it is none, crt,
+smooth, ntsc, pal.
 
 ## Why a submodule?
 

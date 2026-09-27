@@ -3,7 +3,16 @@
 use crate::platform::config::{CliFlag, parse_cli_string_arg};
 use crate::snes::input::{GamePeripheral, SnesControllerType};
 
+/// Names accepted by `--snes-filter` / `snes-filter` (see `platform::shaders::SHADER_PRESETS`),
+/// in the order F4 cycles them: the NES looks.
+pub(crate) const SNES_FILTER_NAMES: &[&str] = &["none", "crt", "smooth", "ntsc", "pal"];
+
 pub(crate) const SNES_CLI_FLAGS: &[CliFlag] = &[
+    CliFlag {
+        flag: "--snes-filter",
+        help: Some("SNES shader filter: crt, ntsc, smooth, pal, or none"),
+        has_value: true,
+    },
     CliFlag {
         flag: "--snes-spc-ipl-path",
         help: Some(

@@ -31,7 +31,7 @@ export function filterKeysForConsole(
         if (family === "stock") return isStock;
         // Game Boy family: stock + gb-type filters only
         if (family === "gb") return isStock || f.type === "gb";
-        // NES family: everything except gb-type filters
+        // NES family (NES and SNES): everything except gb-type filters
         return f.type !== "gb";
     });
 }
@@ -57,13 +57,19 @@ export function cycleFilterKey(
  * If the current filter is not available for the target console,
  * falls back to the console-appropriate default ("gameboy" for GB,
  * "ntsc" for NES) via {@link defaultFilterForConsole}.
+ *
+ * `untouched` is true while nobody has chosen a look and no game has loaded on
+ * this page: the page's initial filter is then not a choice to carry over, so
+ * the target console starts on its own default (None for SNES).
  */
 export function filterOnConsoleSwitch(
     currentFilter: string,
     allFilterKeys: string[],
     filters: Record<string, FilterDef>,
     targetConsole: ConsoleKind,
+    untouched = false,
 ): string {
+    if (untouched) return defaultFilterForConsole(targetConsole);
     const keys = filterKeysForConsole(allFilterKeys, filters, targetConsole);
     if (keys.includes(currentFilter)) return currentFilter;
     return defaultFilterForConsole(targetConsole);
@@ -72,4 +78,25 @@ export function filterOnConsoleSwitch(
 /** Return the preferred default filter key for a given console. */
 export function defaultFilterForConsole(console: ConsoleKind): string {
     return CONSOLES[console].defaultFilter;
+}
+
+/**
+ * Whether the WebGL filter pipeline must be rebuilt after a console switch.
+ *
+ * A changed filter always needs it. NTSC also needs it when the frame size
+ * differs from the one its pass-1 target was built for (`width * 4` by
+ * `height`): NTSC carries over between NES (240 wide) and SNES (256 wide)
+ * games, and a stale target computes the composite pattern at the wrong
+ * sample rate. Single-pass filters read the live frame size every frame.
+ */
+export function filterPipelineNeedsRebuild(
+    previousFilter: string,
+    nextFilter: string,
+    filters: Record<string, FilterDef>,
+    ntscTarget: { width: number; height: number },
+    frame: { width: number; height: number },
+): boolean {
+    if (previousFilter !== nextFilter) return true;
+    if (filters[nextFilter]?.type !== "ntsc") return false;
+    return ntscTarget.width !== frame.width * 4 || ntscTarget.height !== frame.height;
 }

@@ -83,7 +83,7 @@ export const CONSOLES: Readonly<Record<ConsoleKind, ConsoleProfile>> = {
         extensions: ["sfc", "smc"],
         frameFormat: "rgba",
         audio: { stereo: true, sampleScale: "gba" },
-        filterFamily: "stock",
+        filterFamily: "nes",
         defaultFilter: "stock",
         playerKeyBindings: [SNES_KEYS],
         saveState: true,

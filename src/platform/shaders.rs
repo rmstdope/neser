@@ -1,7 +1,7 @@
 /// Single source of truth for all available shader presets.
 ///
 /// Each entry is `(short_name, relative_path_to_slangp)`.
-/// - `short_name` is used in the CLI (`--nes-filter crt`, `--gb-filter dmg`, `--gba-filter gba-lcd`) and config file (`nes-filter=crt`, `gb-filter=dmg`, `gba-filter=gba-lcd`).
+/// - `short_name` is used in the CLI (`--nes-filter crt`, `--gb-filter dmg`, `--gba-filter gba-lcd`, `--snes-filter crt`) and config file (`nes-filter=crt`, `gb-filter=dmg`, `gba-filter=gba-lcd`, `snes-filter=crt`).
 /// - `path` is relative to the working directory when neser runs.
 ///
 /// To add or remove a shader preset, edit this list only.
