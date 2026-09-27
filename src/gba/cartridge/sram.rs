@@ -62,14 +62,14 @@ impl Sram {
     /// Capture SRAM state for save-state serialization.
     pub fn capture_state(&self) -> SramState {
         // Every field is named, so a new one fails to build until it is saved or marked transient.
-        let &Self { ref data } = self;
+        let Self { data } = self;
         SramState { data: data.clone() }
     }
 
     /// Restore SRAM state from a save-state snapshot.
     pub fn restore_state(&mut self, state: &SramState) -> Result<(), String> {
         // Every saved field is named; one never restored is an unused binding the gate rejects.
-        let &SramState { ref data } = state;
+        let SramState { data } = state;
         if data.len() != SRAM_SIZE {
             return Err(format!(
                 "SRAM save-state length mismatch: expected {SRAM_SIZE}, got {}",
