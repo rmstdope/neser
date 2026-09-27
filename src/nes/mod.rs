@@ -10,3 +10,4 @@ pub mod input;
 #[cfg(test)]
 pub mod integration_tests;
 pub mod ppu;
+pub mod region;
