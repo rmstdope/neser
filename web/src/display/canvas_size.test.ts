@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./canvas_size";
+import { assignBackingStoreSize, computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./canvas_size";
 
 // NES native resolution (256x240) aspect ratio
 const NES_AR = 256 / 240;
@@ -132,3 +132,37 @@ it("computeHandheldCanvasSize - landscape: pixel dimensions are DPR-scaled", () 
     expect(result.pixelHeight).toBe(390 * dpr);
 });
 
+
+/** A canvas stand-in that records every backing-store assignment, since each one reallocates the GL buffer. */
+function recordingCanvas(width: number, height: number) {
+    const writes: string[] = [];
+    let w = width;
+    let h = height;
+    return {
+        writes,
+        get width() { return w; },
+        set width(value: number) { writes.push(`width=${value}`); w = value; },
+        get height() { return h; },
+        set height(value: number) { writes.push(`height=${value}`); h = value; },
+    };
+}
+
+it("assignBackingStoreSize assigns nothing when the size is unchanged", () => {
+    const canvas = recordingCanvas(768, 720);
+    expect(assignBackingStoreSize(canvas, 768, 720)).toBe(false);
+    expect(canvas.writes).toEqual([]);
+});
+
+it("assignBackingStoreSize assigns only the dimension that changed", () => {
+    const canvas = recordingCanvas(768, 720);
+    expect(assignBackingStoreSize(canvas, 896, 720)).toBe(true);
+    expect(canvas.writes).toEqual(["width=896"]);
+    expect(canvas.width).toBe(896);
+    expect(canvas.height).toBe(720);
+});
+
+it("assignBackingStoreSize assigns both dimensions once when both change", () => {
+    const canvas = recordingCanvas(768, 720);
+    expect(assignBackingStoreSize(canvas, 896, 840)).toBe(true);
+    expect(canvas.writes).toEqual(["width=896", "height=840"]);
+});

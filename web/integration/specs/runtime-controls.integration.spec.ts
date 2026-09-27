@@ -10,8 +10,6 @@ const FILTER_TOGGLE_SELECTOR = "#filter-toggle";
 const SCREEN_PLUS_SELECTOR = "#screen-plus";
 const SCREEN_MINUS_SELECTOR = "#screen-minus";
 const SCREEN_SELECTOR = "#screen";
-// See the zoom spec below: a zoom click can take ~5 s on CI's software GL (nr-dv5, nr-b5h).
-const ZOOM_CLICK_TIMEOUT_MS = 20_000;
 const STOP_BUTTON_SELECTOR = "#stop";
 
 test.describe("Phase 2 runtime controls", () => {
@@ -118,10 +116,41 @@ test.describe("Phase 2 runtime controls", () => {
         await waitForRunningState(page);
     });
 
-    // A zoom click reallocates the WebGL drawing buffer once per probed size, which takes seconds
-    // on CI's software GL (a Zoom - measured at 4.97 s, nr-dv5), so the clicks get a generous cap
-    // instead of 5 s; tighten it when nr-b5h removes the reallocations.
+    // Every assignment to the screen's width or height reallocates the WebGL drawing buffer, which
+    // takes seconds on CI's software GL (a Zoom - once measured 4.97 s, nr-dv5), so a zoom click
+    // may assign each at most once (nr-b5h). The count is kept on the page by an init script.
     test("Given zoom controls exist, when clicked, then canvas presentation bounds change safely", async ({ page }) => {
+        await page.addInitScript(() => {
+            const counts = { width: 0, height: 0 };
+            (window as unknown as { __screenBackingStoreWrites: typeof counts }).__screenBackingStoreWrites = counts;
+            for (const dimension of ["width", "height"] as const) {
+                const descriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, dimension)!;
+                Object.defineProperty(HTMLCanvasElement.prototype, dimension, {
+                    ...descriptor,
+                    set(this: HTMLCanvasElement, value: number) {
+                        if (this.id === "screen") {
+                            counts[dimension] += 1;
+                        }
+                        descriptor.set!.call(this, value);
+                    },
+                });
+            }
+        });
+        const backingStoreWrites = () => page.evaluate(() => ({
+            ...(window as unknown as { __screenBackingStoreWrites: { width: number; height: number } }).__screenBackingStoreWrites,
+        }));
+        const clickCountingWrites = async (button: ReturnType<typeof page.locator>, label: string) => {
+            const before = await backingStoreWrites();
+            const startedAt = Date.now();
+            await button.click();
+            const elapsedMs = Date.now() - startedAt;
+            const after = await backingStoreWrites();
+            console.log(`[nr-b5h] ${label} click took ${elapsedMs} ms`);
+            test.info().annotations.push({ type: "zoom-click-ms", description: `${label}: ${elapsedMs}` });
+            expect(after.width - before.width, `${label}: canvas.width assignments`).toBeLessThanOrEqual(1);
+            expect(after.height - before.height, `${label}: canvas.height assignments`).toBeLessThanOrEqual(1);
+        };
+
         await openApp(page);
 
         const screenPlus = page.locator(SCREEN_PLUS_SELECTOR);
@@ -141,26 +170,25 @@ test.describe("Phase 2 runtime controls", () => {
         const initialHeight = initialBox!.height;
 
         // Click zoom in
-        await screenPlus.click({ timeout: ZOOM_CLICK_TIMEOUT_MS });
+        await clickCountingWrites(screenPlus, "Zoom +");
         await page.waitForTimeout(100);
 
         const zoomedInBox = await screen.boundingBox();
         expect(zoomedInBox).not.toBeNull();
         const zoomedInHeight = zoomedInBox!.height;
 
-        // Height should increase or stay the same (if at max)
-        expect(zoomedInHeight).toBeGreaterThanOrEqual(initialHeight);
+        // Both buttons were enabled, which promises a visible change: the probe found one.
+        expect(zoomedInHeight).toBeGreaterThan(initialHeight);
 
         // Click zoom out
-        await screenMinus.click({ timeout: ZOOM_CLICK_TIMEOUT_MS });
+        await clickCountingWrites(screenMinus, "Zoom -");
         await page.waitForTimeout(100);
 
         const zoomedOutBox = await screen.boundingBox();
         expect(zoomedOutBox).not.toBeNull();
         const zoomedOutHeight = zoomedOutBox!.height;
 
-        // Height should decrease or stay the same (depending on state)
-        expect(zoomedOutHeight).toBeLessThanOrEqual(zoomedInHeight);
+        expect(zoomedOutHeight).toBeLessThan(zoomedInHeight);
 
         // Verify controls are still functional (not disabled unexpectedly)
         // Note: buttons may be disabled if at min/max zoom, but not both at once

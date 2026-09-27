@@ -83,3 +83,24 @@ export function computeHandheldCanvasSize(isPortrait: boolean, vpWidth: number, 
     }
 }
 
+
+/**
+ * Sets a canvas's backing-store size, assigning only the dimensions that differ.
+ *
+ * Every assignment to `width` or `height`, even of the value it already has, reallocates the
+ * drawing buffer, which costs seconds on software GL (nr-b5h).
+ *
+ * @returns whether anything was assigned
+ */
+export function assignBackingStoreSize(canvas: { width: number; height: number }, pixelWidth: number, pixelHeight: number): boolean {
+    let assigned = false;
+    if (canvas.width !== pixelWidth) {
+        canvas.width = pixelWidth;
+        assigned = true;
+    }
+    if (canvas.height !== pixelHeight) {
+        canvas.height = pixelHeight;
+        assigned = true;
+    }
+    return assigned;
+}
