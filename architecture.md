@@ -504,8 +504,10 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 | File | Description |
 | ------ | ------------- |
 | `src/platform/frontend_toasts.rs` | System-agnostic toast message formatters (gamepad connection/disconnection, cartridge load, gamepad initialization). |
-| `src/snes/frontend_toasts.rs` | The SNES peripheral messages both frontends show: the Super Scope's "connected", "mouse released" and "Turbo on/off" words (`web/src/input/super_scope.ts` repeats them for the web's own capture handling). |
+| `src/snes/frontend_toasts.rs` | The SNES peripheral messages both frontends show: the Super Scope's "connected", "mouse released" and "Turbo on/off" words and the SNES Mouse's "connected" and "released" words (`web/src/input/super_scope.ts` and `web/src/input/snes_mouse.ts` repeat them for the web's own capture handling, which both share as one click-capture session). |
 | `src/snes/input/super_scope_games.rs` | The header titles of the Super Scope games (`is_super_scope_game`); `SnesConfig::effective_controller_ports` plugs the scope into port 2 for them per load unless the player set port 2 (`controller_port2_explicit`). |
+| `src/snes/input/mouse_games.rs` | The header titles of the games that need the SNES Mouse (`is_snes_mouse_game`: Mario Paint, Mario & Wario); `GamePeripheral::of_title` picks the scope or the mouse for a game and `effective_controller_ports` plugs the mouse into port 1 per load unless the player set port 1 (`controller_port1_explicit`). |
+| `src/snes/input/mouse_motion.rs` | `MouseMotionScale`: scales host pointer movement to SNES Mouse counts by the picture's on-screen size, carrying fractions, so crossing the picture crosses the game screen; owned by the desktop `AppState` and by `WasmSnes`. |
 | `web/src/input/super_scope.ts` | Pure capture state for playing a Super Scope game on the web: only a click on the game captures the pointer (a lock the page asked for on choosing a game is given back), the capturing click fires unless the mouse had been released, aim follows the locked pointer's movement, and the Select/Start keys are Turbo/Pause. |
 | `src/nes/frontend_toasts.rs` | NES-specific toast message formatters (emulator timing mode, hardware mode/model selection). |
 
