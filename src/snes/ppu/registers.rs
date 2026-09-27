@@ -36,7 +36,21 @@ impl Ppu {
         }
         match addr {
             // INIDISP: forced blank (bit 7) + master brightness (bits 0-3).
-            0x2100 => self.inidisp = value,
+            0x2100 => {
+                // fullsnes (OAMADDL/OAMADDH): the vblank OAM address reload "occurs also when
+                // deactivating forced blank anytime during the first scanline of vblank".
+                // anomie's regs.txt ("writing this register on the first line of V-Blank ...
+                // when force blank is currently active causes the OAM Address Reset") and
+                // Mesen2 reload on any such write, even one that keeps forced blank on; we
+                // follow fullsnes, the specification authority, and a test pins the choice.
+                if self.forced_blank_enabled()
+                    && value & 0x80 == 0
+                    && self.position.scanline == self.vblank_start_line()
+                {
+                    self.reload_oam_address();
+                }
+                self.inidisp = value;
+            }
             // OBSEL: OBJ size pair (bits 7-5), name gap (bits 4-3), OBJ tile name base (bits 2-0).
             0x2101 => self.obsel = value,
             // BGMODE: BG screen mode (bits 0-2), BG3 high-priority (bit 3), per-BG tile size.
@@ -286,13 +300,13 @@ impl Ppu {
             // rotation) and copies the whole reload to the address register with bit 0 cleared.
             0x2102 => {
                 self.oam_addr_reload = (self.oam_addr_reload & 0x0100) | value as u16;
-                self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
+                self.reload_oam_address();
             }
             0x2103 => {
                 self.oam_addr_reload =
                     (self.oam_addr_reload & 0x00FF) | (((value & 0x01) as u16) << 8);
                 self.oam_priority_rotation = value & 0x80 != 0;
-                self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
+                self.reload_oam_address();
             }
             // OAMDATA: OAM data write. In the low table ($000-$1FF) an even byte latches and the
             // odd byte commits the word; the high table ($200-$21F) writes each byte directly.
@@ -548,7 +562,7 @@ impl Ppu {
     }
 
     /// True when INIDISP ($2100) bit 7 force-blanks the display.
-    fn forced_blank_enabled(&self) -> bool {
+    pub(super) fn forced_blank_enabled(&self) -> bool {
         self.inidisp & 0x80 != 0
     }
 
@@ -690,6 +704,13 @@ impl Ppu {
 
     fn increment_cgram_address(&mut self) {
         self.cgram_address = (self.cgram_address + 1) & (CGRAM_SIZE as u16 - 1);
+    }
+
+    /// Copies the 9-bit OAMADD reload value to the 10-bit OAM address with bit 0 clear:
+    /// on every $2102/$2103 write, and again at the start of vblank (see
+    /// `Ppu::on_scanline_start`) and when forced blank ends on the first vblank line.
+    pub(super) fn reload_oam_address(&mut self) {
+        self.oam_address = (self.oam_addr_reload << 1) & 0x03FE;
     }
 
     fn increment_oam_address(&mut self) {

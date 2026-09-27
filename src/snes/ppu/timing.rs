@@ -209,6 +209,16 @@ impl Ppu {
                 // Begin VBlank: a full visible frame has been produced. The RDNMI flag and CPU
                 // NMI line rise a few clocks into the line (see `Ppu::process_irq_counters`).
                 self.vblank_active = true;
+                // fullsnes (OAMADDL/OAMADDH): rendering destroys the OAM address, so "at
+                // begin of Vblank ... but only if not in Forced Blank mode" the PPU reloads it
+                // from OAMADD. Games DMA their OAM buffer every vblank relying on it (Donkey
+                // Kong Country 3, nr-3bo). fullsnes' timing table puts it at H=10; like Mesen2
+                // (`SnesPpu::ProcessEndOfScanline`) we do it as the line starts. The NMI flag
+                // rises earlier, at H=0.5, but no NMI handler can reach $2104 before H=10;
+                // only a $4210 poll or a DMA straddling the line start could see the gap.
+                if !self.forced_blank_enabled() {
+                    self.reload_oam_address();
+                }
                 self.pending_completed_frames = self.pending_completed_frames.saturating_add(1);
                 trace_ppu!(1; "vblank enter y={} x={} inidisp={:02X} mode={} tm={:02X} ts={:02X}",
                     self.position.scanline,
@@ -706,6 +716,96 @@ mod tests {
     fn tick_to_vblank(ppu: &mut Ppu) {
         // Advance to the start of scanline 225 (VBlank entry).
         tick_dots(ppu, DOTS_PER_SCANLINE as u32 * 225);
+    }
+
+    /// Points OAMADD at word 0 and moves the OAM address two bytes past it with a
+    /// word write, the way a game leaves it after touching OAM through $2104.
+    fn leave_oam_address_two_bytes_past_the_reload(ppu: &mut Ppu) {
+        ppu.write_register(0x2102, 0x00);
+        ppu.write_register(0x2103, 0x00);
+        ppu.write_register(0x2104, 0x11);
+        ppu.write_register(0x2104, 0x22);
+    }
+
+    // fullsnes, "2102h/2103h - OAMADDL/OAMADDH": "after rendering (at begin of Vblank, ie.
+    // at begin of line 225/240, but only if not in Forced Blank mode) it reinitializes the
+    // Address from the Reload value". Donkey Kong Country 3 relies on it: without the reload
+    // its every-frame OAM DMA landed two bytes late and the intro lost its sprites (nr-3bo).
+    #[test]
+    fn vblank_start_reloads_the_oam_address_from_oamadd_when_not_force_blanked() {
+        let mut ppu = Ppu::new();
+        leave_oam_address_two_bytes_past_the_reload(&mut ppu);
+        ppu.write_register(0x2100, 0x0F); // display on, full brightness
+
+        tick_to_vblank(&mut ppu);
+        ppu.write_register(0x2104, 0x56);
+        ppu.write_register(0x2104, 0x78);
+
+        assert_eq!(
+            (ppu.oam_byte(0), ppu.oam_byte(1)),
+            (0x56, 0x78),
+            "the first OAM write of vblank lands at the OAMADD reload value"
+        );
+    }
+
+    #[test]
+    fn vblank_start_keeps_the_oam_address_while_force_blanked() {
+        let mut ppu = Ppu::new();
+        leave_oam_address_two_bytes_past_the_reload(&mut ppu);
+        // Forced blank is the power-on state (INIDISP = $80); leave it on.
+
+        tick_to_vblank(&mut ppu);
+        ppu.write_register(0x2104, 0x56);
+        ppu.write_register(0x2104, 0x78);
+
+        assert_eq!((ppu.oam_byte(0), ppu.oam_byte(1)), (0x11, 0x22));
+        assert_eq!((ppu.oam_byte(2), ppu.oam_byte(3)), (0x56, 0x78));
+    }
+
+    // fullsnes, same paragraph: "the same reload occurs also when deactivating forced blank
+    // anytime during the first scanline of vblank (ie. during line 225/240)".
+    #[test]
+    fn leaving_forced_blank_on_the_first_vblank_line_reloads_the_oam_address() {
+        let mut ppu = Ppu::new();
+        leave_oam_address_two_bytes_past_the_reload(&mut ppu);
+
+        tick_to_vblank(&mut ppu);
+        tick_dots(&mut ppu, 100);
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x2104, 0x56);
+        ppu.write_register(0x2104, 0x78);
+
+        assert_eq!((ppu.oam_byte(0), ppu.oam_byte(1)), (0x56, 0x78));
+    }
+
+    // fullsnes names only *deactivating* forced blank; anomie and Mesen2 also reload on a
+    // write that keeps it on. We follow fullsnes (see the $2100 arm in registers.rs).
+    #[test]
+    fn a_write_that_keeps_forced_blank_on_the_first_vblank_line_keeps_the_oam_address() {
+        let mut ppu = Ppu::new();
+        leave_oam_address_two_bytes_past_the_reload(&mut ppu);
+
+        tick_to_vblank(&mut ppu);
+        tick_dots(&mut ppu, 100);
+        ppu.write_register(0x2100, 0x80);
+        ppu.write_register(0x2104, 0x56);
+        ppu.write_register(0x2104, 0x78);
+
+        assert_eq!((ppu.oam_byte(2), ppu.oam_byte(3)), (0x56, 0x78));
+    }
+
+    #[test]
+    fn leaving_forced_blank_after_the_first_vblank_line_keeps_the_oam_address() {
+        let mut ppu = Ppu::new();
+        leave_oam_address_two_bytes_past_the_reload(&mut ppu);
+
+        tick_to_vblank(&mut ppu);
+        tick_dots(&mut ppu, DOTS_PER_SCANLINE as u32);
+        ppu.write_register(0x2100, 0x0F);
+        ppu.write_register(0x2104, 0x56);
+        ppu.write_register(0x2104, 0x78);
+
+        assert_eq!((ppu.oam_byte(2), ppu.oam_byte(3)), (0x56, 0x78));
     }
 
     #[test]
