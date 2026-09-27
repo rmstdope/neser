@@ -333,6 +333,11 @@ impl Cartridge {
     }
 
     #[cfg(test)]
+    pub fn set_vs_hardware_type_for_test(&mut self, vs_hardware_type: Option<VsHardwareType>) {
+        self.vs_hardware_type = vs_hardware_type;
+    }
+
+    #[cfg(test)]
     pub fn set_rom_path_for_test(&mut self, path: std::path::PathBuf) {
         self.rom_path = Some(path);
     }
