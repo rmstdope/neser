@@ -11,7 +11,6 @@ export interface SnesInputBridge {
     has_superscope(): boolean;
     has_superscope_on_port(port: number): boolean;
     is_multitap_on_port(port: number): boolean;
-    add_mouse_delta(port: number, dx: number, dy: number): void;
     set_mouse_left_button(port: number, pressed: boolean): void;
     set_mouse_right_button(port: number, pressed: boolean): void;
     set_superscope_position(port: number, x: number, y: number): void;
@@ -29,24 +28,6 @@ export function isSnesMouseActive(snes: SnesInputBridge): boolean {
 /** Returns true if a Super Scope peripheral is active on any port. */
 export function isSnesSuperScopeActive(snes: SnesInputBridge): boolean {
     return snes.has_superscope();
-}
-
-/**
- * Forward relative mouse movement to the SNES mouse peripheral.
- *
- * If the mouse is not active on `port`, the call is a no-op.
- * Call with no `port` argument or `port = 0` to skip without error.
- */
-export function applySnesMouseDelta(
-    snes: SnesInputBridge,
-    port = 0,
-    dx = 0,
-    dy = 0,
-): void {
-    if (port === 0 || !snes.has_mouse_on_port(port)) {
-        return;
-    }
-    snes.add_mouse_delta(port, dx, dy);
 }
 
 /**

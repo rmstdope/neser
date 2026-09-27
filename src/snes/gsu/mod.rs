@@ -238,7 +238,15 @@ impl Gsu {
     }
 
     pub fn capture_state(&self) -> GsuState {
-        self.state.clone()
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let Self {
+            state,
+            rom: _,         // transient: the cartridge ROM
+            ram: _,         // saved by the bus as the cartridge SRAM
+            version: _,     // fixed by the cartridge
+            r15_changed: _, // intra-instruction: only meaningful within one exec
+        } = self;
+        state.clone()
     }
 
     /// Restores a captured state. A code cache of the wrong size (a hand-edited or corrupt

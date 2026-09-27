@@ -30,22 +30,14 @@ impl MasterClock {
     // master tick later than reads within the CPU cycle.
     const READ_WRITE_SHIFT: u64 = 1;
     pub fn new(tv_system: TimingMode) -> Self {
-        // Dividers from Mesen2 NesCpu.cpp SetMasterClockDivider():
-        //   NTSC  – cpu=12, ppu=4, start=6  (PPU:CPU = 3.0, symmetric)
-        //   PAL   – cpu=16, ppu=5, start=8  (PPU:CPU = 3.2, symmetric)
-        //   Dendy – cpu=15, ppu=5, start=7  (PPU:CPU = 3.0, asymmetric: end=8)
-        let (cpu_divider, ppu_divider, start_clock) = match tv_system {
-            TimingMode::Ntsc | TimingMode::MultiRegion | TimingMode::Unknown(_) => (12, 4, 6),
-            TimingMode::Pal => (16, 5, 8),
-            // Dendy: master 26.601712 MHz / 15 = 1,773,448 Hz CPU; PPU:CPU = 3.0 (asymmetric split 7/8)
-            TimingMode::Dendy => (15, 5, 7),
-        };
+        // Dividers from Mesen2 NesCpu.cpp SetMasterClockDivider(), in `nes::region`.
+        let region = tv_system.region();
         Self {
             master_clock: 0,
             ppu_clock: 0,
-            cpu_divider,
-            ppu_divider,
-            start_clock,
+            cpu_divider: region.cpu_divider,
+            ppu_divider: region.ppu_divider,
+            start_clock: region.bus_start_clock,
         }
     }
 

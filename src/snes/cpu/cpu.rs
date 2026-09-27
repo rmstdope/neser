@@ -394,30 +394,59 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     pub(crate) fn capture_state_inner(&self) -> SnesCpuState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            a,
+            x,
+            y,
+            d,
+            dbr,
+            pbr,
+            s,
+            pc,
+            p,
+            e,
+            extra_cycles,
+            last_page_crossed,
+            nmi_pending,
+            irq_pending,
+            abort_pending,
+            nmi_arm_counter,
+            irq_line_shadow,
+            irq_wai_shadow,
+            waiting,
+            stopped,
+            fast_rom,
+            memory_bus_cycles,
+            read_write_mask: _, // intra-instruction: reset at the start of every step()
+            dma_locked_this_cycle: _, // intra-cycle: written before it is read every cycle
+            irq_i_shadow,
+            bus: _, // captured separately by capture_save_state
+        } = self;
         SnesCpuState {
-            a: self.a,
-            x: self.x,
-            y: self.y,
-            d: self.d,
-            dbr: self.dbr,
-            pbr: self.pbr,
-            s: self.s,
-            pc: self.pc,
-            p: self.p,
-            e: self.e,
-            extra_cycles: self.extra_cycles,
-            last_page_crossed: self.last_page_crossed,
-            nmi_pending: self.nmi_pending,
-            irq_pending: self.irq_pending,
-            abort_pending: self.abort_pending,
-            nmi_arm_counter: self.nmi_arm_counter,
-            irq_line_shadow: self.irq_line_shadow,
-            irq_wai_shadow: self.irq_wai_shadow,
-            waiting: self.waiting,
-            stopped: self.stopped,
-            fast_rom: self.fast_rom,
-            memory_bus_cycles: self.memory_bus_cycles,
-            irq_i_shadow: self.irq_i_shadow,
+            a,
+            x,
+            y,
+            d,
+            dbr,
+            pbr,
+            s,
+            pc,
+            p,
+            e,
+            extra_cycles,
+            last_page_crossed,
+            nmi_pending,
+            irq_pending,
+            abort_pending,
+            nmi_arm_counter,
+            irq_line_shadow,
+            irq_wai_shadow,
+            waiting,
+            stopped,
+            fast_rom,
+            memory_bus_cycles,
+            irq_i_shadow,
             // A block move in progress is fully described by PC (on the opcode), A, X
             // and Y, as on the 65816; only saves from before nr-ve3 carry this.
             block_move_state: None,
@@ -425,33 +454,60 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     pub(crate) fn restore_state_inner(&mut self, state: &SnesCpuState) {
-        self.a = state.a;
-        self.x = state.x;
-        self.y = state.y;
-        self.d = state.d;
-        self.dbr = state.dbr;
-        self.pbr = state.pbr;
-        self.s = state.s;
-        self.pc = state.pc;
-        self.p = state.p;
-        self.e = state.e;
-        self.extra_cycles = state.extra_cycles;
-        self.last_page_crossed = state.last_page_crossed;
-        self.nmi_pending = state.nmi_pending;
-        self.irq_pending = state.irq_pending;
-        self.abort_pending = state.abort_pending;
-        self.nmi_arm_counter = state.nmi_arm_counter;
-        self.irq_line_shadow = state.irq_line_shadow;
-        self.irq_wai_shadow = state.irq_wai_shadow;
-        self.waiting = state.waiting;
-        self.stopped = state.stopped;
-        self.fast_rom = state.fast_rom;
-        self.memory_bus_cycles = state.memory_bus_cycles;
-        self.irq_i_shadow = state.irq_i_shadow;
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &SnesCpuState {
+            a,
+            x,
+            y,
+            d,
+            dbr,
+            pbr,
+            s,
+            pc,
+            p,
+            e,
+            extra_cycles,
+            last_page_crossed,
+            nmi_pending,
+            irq_pending,
+            abort_pending,
+            nmi_arm_counter,
+            irq_line_shadow,
+            irq_wai_shadow,
+            waiting,
+            stopped,
+            fast_rom,
+            memory_bus_cycles,
+            irq_i_shadow,
+            ref block_move_state,
+        } = state;
+        self.a = a;
+        self.x = x;
+        self.y = y;
+        self.d = d;
+        self.dbr = dbr;
+        self.pbr = pbr;
+        self.s = s;
+        self.pc = pc;
+        self.p = p;
+        self.e = e;
+        self.extra_cycles = extra_cycles;
+        self.last_page_crossed = last_page_crossed;
+        self.nmi_pending = nmi_pending;
+        self.irq_pending = irq_pending;
+        self.abort_pending = abort_pending;
+        self.nmi_arm_counter = nmi_arm_counter;
+        self.irq_line_shadow = irq_line_shadow;
+        self.irq_wai_shadow = irq_wai_shadow;
+        self.waiting = waiting;
+        self.stopped = stopped;
+        self.fast_rom = fast_rom;
+        self.memory_bus_cycles = memory_bus_cycles;
+        self.irq_i_shadow = irq_i_shadow;
         // Saves from before nr-ve3 held a move in flight with PC on its source-bank
         // operand, two bytes past the opcode; rewind so the move re-executes from the
         // opcode like every other byte of it.
-        if state.block_move_state.is_some() {
+        if block_move_state.is_some() {
             self.pc = self.pc.wrapping_sub(2);
         }
 
@@ -10063,6 +10119,10 @@ impl Cpu<SnesSystemBus> {
 
     pub fn toggle_superscope_turbo(&mut self, port: u8) -> Option<bool> {
         self.bus.toggle_superscope_turbo(port)
+    }
+
+    pub fn mouse_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {
+        self.bus.mouse_state(port)
     }
 
     pub fn superscope_state(&self, port: u8) -> Option<crate::snes::input::SnesControllerState> {

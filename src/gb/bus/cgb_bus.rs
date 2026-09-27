@@ -141,6 +141,18 @@ pub struct CgbBus {
     gbc_palette: GbcPalette,
 }
 
+/// Holds the cartridge slot for the instant [`CgbBus::reset`] has taken the
+/// real cartridge out to rebuild the bus around it; never read.
+struct NoCartridge;
+
+impl GbCartridge for NoCartridge {
+    fn read(&self, _addr: u16) -> u8 {
+        0xFF
+    }
+
+    fn write(&mut self, _addr: u16, _val: u8) {}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CgbDmaBusKind {
     Cartridge,
@@ -833,65 +845,25 @@ impl CgbBus {
         self.apu.set_sample_rate(rate);
     }
 
-    /// Reset bus state (PPU, timer, joypad, APU, RAM, DMA).
+    /// The APU output sample rate in Hz.
+    pub fn audio_sample_rate(&self) -> f32 {
+        self.apu.sample_rate()
+    }
+
+    /// Hard reset: rebuild the bus exactly as [`CgbBus::new`] would.
     ///
-    /// Respects the `skip_boot_rom` setting from construction: if `skip_boot_rom`
-    /// was true, the boot ROM remains disabled after reset.
+    /// The constructor is the one place that knows initial state, so a reset
+    /// machine is by construction a freshly loaded one. Only what is not
+    /// machine state survives: the cartridge (ROM, RAM and mapper state), the
+    /// model, the `skip_boot_rom` choice, the APU output sample rate and the
+    /// player's GBC palette choice.
     pub fn reset(&mut self) {
-        let apu_rate = self.apu.sample_rate();
-        self.ppu = Ppu::new_cgb();
-        self.ppu.set_cgb_model(self.model);
-        self.ppu.write_register(0xFF40, 0x00);
-        self.timer = Timer::new();
-        self.joypad = Joypad::new();
-        self.apu = Apu::new(true);
-        self.apu.set_sample_rate(apu_rate);
-        self.apu.set_cgb_model(self.model);
-        self.wram = [[0u8; 0x1000]; 8];
-        self.hram = [0u8; 0x7F];
-        self.if_reg = 0;
-        self.ie_reg = 0;
-        self.dma_active = false;
-        self.dma_source = 0;
-        self.dma_position = 0;
-        self.dma_oam_blocked = false;
-        self.hdma = HdmaState::new();
-        self.sb = 0;
-        self.svbk = 0;
-        self.key1 = 0;
-        self.apu_tick_accumulator = 0;
-        self.rtc_tick_accumulator = 0;
-        self.apu_power_on_accumulator = 0;
-        // Respect skip_boot_rom setting from construction
-        self.boot_rom_active = !self.skip_boot_rom;
-        // Reset undocumented CGB registers
-        self.ff72 = 0x00;
-        self.ff73 = 0x00;
-        self.ff74 = 0x00;
-        self.ff75 = 0x00;
-        // Reset KEY0 state: if boot ROM is active, unlock so boot ROM can write;
-        // if skipping boot ROM, set appropriate value based on cartridge type.
-        if self.skip_boot_rom {
-            self.seed_skip_boot_post_boot_state();
-            // Same logic as constructor: set KEY0/OPRI based on cartridge header
-            let is_cgb = self.cart.is_cgb();
-            self.timer
-                .set_div_counter(Self::skip_boot_div_counter(self.model, is_cgb));
-            if is_cgb {
-                self.key0 = self.cart.read(0x0143);
-                self.ppu.seed_cgb_boot_fade_bg_palettes();
-            } else {
-                self.key0 = 0x04;
-                self.ppu.write_cgb_register(0xFF6C, 0x01); // OPRI for DMG mode
-                // Apply DMG compatibility palettes for DMG-only games
-                self.apply_dmg_compat_palette(None);
-                self.ppu.set_dmg_compat(true);
-            }
-            self.key0_locked = true;
-        } else {
-            self.key0 = 0x00;
-            self.key0_locked = false;
-        }
+        let cart = std::mem::replace(&mut self.cart, Box::new(NoCartridge));
+        let sample_rate = self.apu.sample_rate();
+        let gbc_palette = self.gbc_palette;
+        *self = Self::new(cart, self.model, self.skip_boot_rom);
+        self.apu.set_sample_rate(sample_rate);
+        self.set_gbc_palette(gbc_palette);
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
@@ -907,7 +879,7 @@ impl CgbBus {
         BusState {
             bus_type: GbBusType::Cgb,
             ppu: self.ppu.clone(),
-            wram: wram_flat,
+            wram: Box::new(wram_flat),
             hram: self.hram,
             timer: self.timer.clone(),
             joypad: self.joypad.clone(),
@@ -3032,5 +3004,124 @@ mod tests {
         assert_eq!(bus.ppu.bg_palette_ram, before);
         assert!(!bus.runs_dmg_game());
         assert!(make_dmg_compat_bus_post_boot().runs_dmg_game());
+    }
+
+    // ── Hard reset rebuilds through the constructor ─────────────────────────
+
+    /// A CGB-compatible MBC1+RAM+battery cartridge with 8 KiB of RAM.
+    fn cgb_mbc1_ram_cart() -> Box<dyn GbCartridge> {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0143] = 0x80; // CGB compatible
+        rom[0x0147] = 0x03; // MBC1+RAM+BATTERY
+        rom[0x0148] = 0x00; // 32 KB
+        rom[0x0149] = 0x02; // 8 KB RAM
+        let chk = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |acc, &b| acc.wrapping_sub(b).wrapping_sub(1));
+        rom[0x014D] = chk;
+        load_cartridge(&rom).expect("valid ROM")
+    }
+
+    /// Assert that everything a reset is responsible for matches: the
+    /// serialisable snapshot, key by key, plus the bus fields the snapshot
+    /// leaves out.
+    fn assert_same_power_on_state(reset: &CgbBus, fresh: &CgbBus, case: &str) {
+        let snapshot =
+            |bus: &CgbBus| serde_json::to_value(bus.capture_bus_state()).expect("serialisable");
+        let (reset_state, fresh_state) = (snapshot(reset), snapshot(fresh));
+        let fresh_fields = fresh_state.as_object().expect("BusState is an object");
+        for (key, value) in reset_state.as_object().expect("BusState is an object") {
+            assert!(
+                fresh_fields.get(key) == Some(value),
+                "{case}: snapshot field `{key}` differs from a fresh bus"
+            );
+        }
+        assert_eq!(reset.sb, fresh.sb, "{case}: sb");
+        assert_eq!(reset.sc, fresh.sc, "{case}: sc");
+        assert_eq!(
+            reset.hdma_halt_cycles, fresh.hdma_halt_cycles,
+            "{case}: hdma_halt_cycles"
+        );
+        assert_eq!(
+            reset.apu_power_on_accumulator, fresh.apu_power_on_accumulator,
+            "{case}: apu_power_on_accumulator"
+        );
+        assert_eq!(
+            reset.ppu.dmg_compat, fresh.ppu.dmg_compat,
+            "{case}: dmg_compat"
+        );
+        assert_eq!(
+            reset.skip_boot_rom, fresh.skip_boot_rom,
+            "{case}: skip_boot_rom"
+        );
+    }
+
+    /// Scribble over as much bus state as the CPU can reach.
+    fn dirty(bus: &mut CgbBus) {
+        bus.set_audio_sample_rate(22_050.0);
+        bus.write(0xFF50, 0x01); // unmap the boot ROM (locks KEY0)
+        for addr in [0xC000, 0xD000, 0xFF80, 0xFFFE] {
+            bus.write(addr, 0x5A);
+        }
+        bus.write(0xFF70, 0x05); // SVBK
+        bus.write(0xD000, 0xA5);
+        bus.write(0xFF0F, 0x1F); // IF
+        bus.write(0xFFFF, 0x1F); // IE
+        bus.write(0xFF01, 0x42); // SB
+        bus.write(0xFF02, 0x81); // SC
+        bus.write(0xFF4D, 0x01); // KEY1 armed
+        for addr in 0xFF72..=0xFF75 {
+            bus.write(addr, 0xFF);
+        }
+        bus.write(0xFF40, 0x00); // LCD off, so OAM and $FEA0+ are reachable
+        bus.write(0xFEA0, 0x77);
+        bus.write(0xFF42, 0x33); // SCY
+        bus.write(0xFF26, 0x00); // APU off
+        bus.cgb_extra_oam[0x10] = 0x99;
+        bus.hdma_halt_cycles = 3;
+        bus.apu_power_on_accumulator = 1;
+        bus.tick(200);
+    }
+
+    #[test]
+    fn test_reset_matches_a_freshly_built_bus() {
+        type CartFn = fn() -> Box<dyn GbCartridge>;
+        let carts: [(&str, CartFn); 2] = [
+            ("CGB cartridge", cgb_rom_only_cart),
+            ("DMG-only cartridge", dmg_only_rom_cart),
+        ];
+        for (name, cart) in carts {
+            for skip_boot_rom in [false, true] {
+                let mut reset = CgbBus::new(cart(), CgbModel::CgbE, skip_boot_rom);
+                dirty(&mut reset);
+                reset.reset();
+
+                let mut fresh = CgbBus::new(cart(), CgbModel::CgbE, skip_boot_rom);
+                fresh.set_audio_sample_rate(22_050.0);
+
+                assert_same_power_on_state(
+                    &reset,
+                    &fresh,
+                    &format!("{name}, skip_boot_rom={skip_boot_rom}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_reset_keeps_the_audio_sample_rate() {
+        let mut bus = make_bus();
+        bus.set_audio_sample_rate(22_050.0);
+        bus.reset();
+        assert_eq!(bus.apu.sample_rate(), 22_050.0);
+    }
+
+    #[test]
+    fn test_reset_keeps_cartridge_ram() {
+        let mut bus = CgbBus::new(cgb_mbc1_ram_cart(), CgbModel::CgbE, true);
+        bus.write(0x0000, 0x0A); // enable cartridge RAM
+        bus.write(0xA000, 0x5A);
+        bus.reset();
+        assert_eq!(bus.read(0xA000), 0x5A);
     }
 }

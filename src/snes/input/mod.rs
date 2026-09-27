@@ -15,6 +15,8 @@
 //! falls out naturally.
 
 mod mouse_controller;
+mod mouse_games;
+pub mod mouse_motion;
 mod multitap;
 mod standard_controller;
 mod super_scope;
@@ -23,10 +25,35 @@ mod super_scope_games;
 use serde::{Deserialize, Serialize};
 
 pub use mouse_controller::MouseController;
+pub use mouse_games::is_snes_mouse_game;
 pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
 pub use super_scope::SuperScopeController;
 pub use super_scope_games::is_super_scope_game;
+
+/// The peripheral a recognised game is played with, plugged in for it when it loads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GamePeripheral {
+    /// Nothing special: the configured devices.
+    None,
+    /// A Super Scope game: the scope goes into port 2.
+    SuperScope,
+    /// A game that needs the SNES Mouse: the mouse goes into port 1.
+    Mouse,
+}
+
+impl GamePeripheral {
+    /// The peripheral the game with this raw header title is played with.
+    pub fn of_title(title_bytes: &[u8]) -> Self {
+        if is_super_scope_game(title_bytes) {
+            Self::SuperScope
+        } else if is_snes_mouse_game(title_bytes) {
+            Self::Mouse
+        } else {
+            Self::None
+        }
+    }
+}
 
 /// The 12 logical buttons of a standard SNES controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -730,6 +757,17 @@ impl InputPorts {
         }
     }
 
+    /// The state of the SNES Mouse on the given physical port, or `None` when that port has
+    /// no mouse.
+    pub fn mouse_state(&self, port: u8) -> Option<SnesControllerState> {
+        let device = match port {
+            0 => &self.port1,
+            1 => &self.port2,
+            _ => return None,
+        };
+        device.is_mouse().then(|| device.capture_state())
+    }
+
     /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
     /// `None` when that port has no Super Scope.
     pub fn superscope_state(&self, port: u8) -> Option<SnesControllerState> {
@@ -761,39 +799,67 @@ impl InputPorts {
 
     /// Capture the input subsystem state for a save-state.
     pub fn capture_state(&self) -> InputPortsState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            port1_type,
+            port2_type,
+            ref port1,
+            ref port2,
+            auto_enable,
+            auto_clock,
+            auto_sample,
+            joy,
+            wrio,
+            strobe,
+        } = self;
         InputPortsState {
-            port1_type: self.port1_type,
-            port2_type: self.port2_type,
-            port1: self.port1.capture_state(),
-            port2: self.port2.capture_state(),
-            port1_multitap: self.port1.capture_multitap_state(),
-            port2_multitap: self.port2.capture_multitap_state(),
-            auto_enable: self.auto_enable,
-            auto_clock: self.auto_clock,
-            auto_sample: self.auto_sample,
-            joy: self.joy,
-            wrio: self.wrio,
-            strobe: self.strobe,
+            port1_type,
+            port2_type,
+            port1: port1.capture_state(),
+            port2: port2.capture_state(),
+            port1_multitap: port1.capture_multitap_state(),
+            port2_multitap: port2.capture_multitap_state(),
+            auto_enable,
+            auto_clock,
+            auto_sample,
+            joy,
+            wrio,
+            strobe,
         }
     }
 
     /// Restore the input subsystem state from a save-state.
     pub fn restore_state(&mut self, state: &InputPortsState) {
-        self.configure(state.port1_type, state.port2_type);
-        self.port1.restore_state(&state.port1);
-        self.port2.restore_state(&state.port2);
-        if let Some(multitap_state) = &state.port1_multitap {
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &InputPortsState {
+            port1_type,
+            port2_type,
+            ref port1,
+            ref port2,
+            ref port1_multitap,
+            ref port2_multitap,
+            auto_enable,
+            auto_clock,
+            auto_sample,
+            joy,
+            wrio,
+            strobe,
+        } = state;
+        self.configure(port1_type, port2_type);
+        self.port1.restore_state(port1);
+        self.port2.restore_state(port2);
+        if let Some(multitap_state) = port1_multitap {
             self.port1.restore_multitap_state(multitap_state);
         }
-        if let Some(multitap_state) = &state.port2_multitap {
+        if let Some(multitap_state) = port2_multitap {
             self.port2.restore_multitap_state(multitap_state);
         }
-        self.auto_enable = state.auto_enable;
-        self.auto_clock = state.auto_clock;
-        self.auto_sample = state.auto_sample;
-        self.joy = state.joy;
-        self.write_wrio(state.wrio);
-        self.strobe = state.strobe;
+        self.auto_enable = auto_enable;
+        self.auto_clock = auto_clock;
+        self.auto_sample = auto_sample;
+        self.joy = joy;
+        self.write_wrio(wrio);
+        self.strobe = strobe;
     }
 }
 

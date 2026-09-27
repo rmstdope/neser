@@ -21,6 +21,14 @@
 //! state-owning components. Because the aggregate snapshot is produced *through*
 //! the trait, adding a new state-owning component that does not implement
 //! [`Stateful`] fails to compile until the trait is implemented for it.
+//!
+//! Within a component, the GBA and SNES captures destructure the live struct
+//! and their restores destructure the saved mirror, both without a `..` rest
+//! pattern (a restore that builds the whole live struct as one literal does the
+//! same). A field added to the live struct therefore fails to compile until it
+//! is either saved or written `field: _` with the reason it is transient, and a
+//! saved field that is never restored is an unused binding the gate's
+//! `-D warnings` rejects.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;

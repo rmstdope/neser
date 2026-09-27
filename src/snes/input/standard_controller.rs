@@ -117,10 +117,16 @@ impl SnesController for StandardController {
     }
 
     fn capture_state(&self) -> SnesControllerState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            pressed,
+            shift,
+            strobe,
+        } = self;
         SnesControllerState {
-            pressed: self.pressed,
-            shift: self.shift,
-            strobe: self.strobe,
+            pressed,
+            shift,
+            strobe,
             ..Default::default()
         }
     }

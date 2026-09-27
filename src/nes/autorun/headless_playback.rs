@@ -157,7 +157,7 @@ where
 ///
 /// Used by headless playback and the native frontend's headless autorun loop.
 pub fn run_one_frame(nes: &mut Nes) {
-    while !nes.is_ready_to_render() && !nes.cpu_ref().is_halted() {
+    while !nes.is_ready_to_render() {
         nes.run_cpu_tick();
         // Drain audio samples to avoid unbounded accumulation
         while nes.sample_ready() {
@@ -220,6 +220,23 @@ mod tests {
         for _ in 0..n {
             run_one_frame(nes);
         }
+    }
+
+    /// nr-3xu: a jammed CPU halts only the CPU; autorun frames keep coming from
+    /// the PPU instead of repeating the frame the jam froze.
+    #[test]
+    fn test_run_one_frame_finishes_frames_with_a_jammed_cpu() {
+        let mut rom = minimal_nrom_rom();
+        rom[16] = 0x02; // KIL at the reset target $C000
+        let mut nes = make_nes_with_cart(&rom);
+        nes.run_cpu_tick();
+        assert!(nes.cpu_ref().is_halted());
+        run_one_frame(&mut nes); // align with a frame boundary
+
+        let frame = nes.ppu().borrow().timing().frame_count();
+        run_nes_frames(&mut nes, 2);
+
+        assert_eq!(nes.ppu().borrow().timing().frame_count(), frame + 2);
     }
 
     #[test]

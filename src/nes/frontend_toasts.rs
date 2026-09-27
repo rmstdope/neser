@@ -44,12 +44,7 @@ pub fn hardware_mode_toast_message(
 }
 
 fn tv_system_toast_label(tv_system: TimingMode) -> &'static str {
-    match tv_system {
-        TimingMode::Ntsc => "NTSC",
-        TimingMode::Pal => "PAL",
-        TimingMode::Dendy => "Dendy",
-        TimingMode::MultiRegion | TimingMode::Unknown(_) => "NTSC",
-    }
+    tv_system.region().name
 }
 
 #[cfg(test)]

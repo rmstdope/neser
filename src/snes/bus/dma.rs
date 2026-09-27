@@ -141,28 +141,40 @@ impl DmaController {
     }
 
     pub(crate) fn capture_state(&self) -> SnesDmaState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            ref regs,
+            hdma_active_mask,
+            ref hdma_do_transfer,
+            dma_active_mask: _, // intra-transfer: no save state is taken mid-transfer
+        } = self;
         SnesDmaState {
-            regs: self.regs.to_vec(),
-            hdma_active_mask: self.hdma_active_mask,
-            hdma_do_transfer: self.hdma_do_transfer.to_vec(),
+            regs: regs.to_vec(),
+            hdma_active_mask,
+            hdma_do_transfer: hdma_do_transfer.to_vec(),
         }
     }
 
     pub(crate) fn restore_state(&mut self, state: &SnesDmaState) -> Result<(), String> {
-        if state.regs.len() != DMA_REG_BYTES {
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &SnesDmaState {
+            ref regs,
+            hdma_active_mask,
+            ref hdma_do_transfer,
+        } = state;
+        if regs.len() != DMA_REG_BYTES {
             return Err(format!(
                 "DMA register state size mismatch (expected {DMA_REG_BYTES}, found {})",
-                state.regs.len()
+                regs.len()
             ));
         }
-        if state.hdma_do_transfer.len() != 8 {
+        if hdma_do_transfer.len() != 8 {
             return Err("DMA HDMA state size mismatch".to_string());
         }
 
-        self.regs.copy_from_slice(&state.regs);
-        self.hdma_active_mask = state.hdma_active_mask;
-        self.hdma_do_transfer
-            .copy_from_slice(&state.hdma_do_transfer);
+        self.regs.copy_from_slice(regs);
+        self.hdma_active_mask = hdma_active_mask;
+        self.hdma_do_transfer.copy_from_slice(hdma_do_transfer);
         Ok(())
     }
 

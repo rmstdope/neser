@@ -1,7 +1,7 @@
 //! SNES-specific configuration.
 
 use crate::platform::config::{CliFlag, parse_cli_string_arg};
-use crate::snes::input::SnesControllerType;
+use crate::snes::input::{GamePeripheral, SnesControllerType};
 
 pub(crate) const SNES_CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
@@ -49,6 +49,9 @@ pub struct SnesConfig {
     pub controller_port1: SnesControllerType,
     /// Device plugged into controller port 2.
     pub controller_port2: SnesControllerType,
+    /// Whether the player chose port 1's device (CLI flag or config file). A choice wins
+    /// over plugging the SNES Mouse in for a game that needs it.
+    pub controller_port1_explicit: bool,
     /// Whether the player chose port 2's device (CLI flag or config file). A choice wins
     /// over plugging the Super Scope in for a Super Scope game.
     pub controller_port2_explicit: bool,
@@ -86,18 +89,24 @@ impl SnesConfig {
     }
 
     /// The devices to plug into ports 1 and 2 for a game: the configured ones, except that a
-    /// Super Scope game gets the Super Scope on port 2 unless the player chose port 2's
-    /// device. Decided per load; the configuration itself never changes.
+    /// Super Scope game gets the Super Scope on port 2 and a game that needs the SNES Mouse
+    /// gets the mouse on port 1, unless the player chose that port's device. Decided per
+    /// load; the configuration itself never changes.
     pub fn effective_controller_ports(
         &self,
-        super_scope_game: bool,
+        game: GamePeripheral,
     ) -> (SnesControllerType, SnesControllerType) {
-        let port2 = if super_scope_game && !self.controller_port2_explicit {
+        let port1 = if game == GamePeripheral::Mouse && !self.controller_port1_explicit {
+            SnesControllerType::Mouse
+        } else {
+            self.controller_port1
+        };
+        let port2 = if game == GamePeripheral::SuperScope && !self.controller_port2_explicit {
             SnesControllerType::SuperScope
         } else {
             self.controller_port2
         };
-        (self.controller_port1, port2)
+        (port1, port2)
     }
 
     pub(crate) fn apply_args(&mut self, args: &[String]) -> Result<(), String> {
@@ -116,6 +125,7 @@ impl SnesConfig {
         }
         if let Some(value) = parse_cli_string_arg(args, "--snes-controller-port1") {
             self.controller_port1 = parse_controller_type("--snes-controller-port1", &value)?;
+            self.controller_port1_explicit = true;
         }
         if let Some(value) = parse_cli_string_arg(args, "--snes-controller-port2") {
             self.controller_port2 = parse_controller_type("--snes-controller-port2", &value)?;
@@ -146,6 +156,7 @@ impl SnesConfig {
             }
             "snes_controller_port1" | "controller_port1" => {
                 self.controller_port1 = parse_controller_type("snes_controller_port1", value)?;
+                self.controller_port1_explicit = true;
             }
             "snes_controller_port2" | "controller_port2" => {
                 self.controller_port2 = parse_controller_type("snes_controller_port2", value)?;
@@ -169,7 +180,7 @@ fn parse_controller_type(key: &str, value: &str) -> Result<SnesControllerType, S
 #[cfg(test)]
 mod tests {
     use super::{SnesConfig, SnesHardware};
-    use crate::snes::input::SnesControllerType;
+    use crate::snes::input::{GamePeripheral, SnesControllerType};
 
     #[test]
     fn controller_ports_default_to_standard() {
@@ -226,7 +237,7 @@ mod tests {
             ..SnesConfig::default()
         };
         assert_eq!(
-            cfg.effective_controller_ports(true),
+            cfg.effective_controller_ports(GamePeripheral::SuperScope),
             (SnesControllerType::Mouse, SnesControllerType::SuperScope)
         );
         // The player's settings are untouched, so the next game starts from them again.
@@ -239,7 +250,53 @@ mod tests {
         cfg.apply_config_value("snes_controller_port2", "standard")
             .expect("config parse");
         assert_eq!(
-            cfg.effective_controller_ports(true),
+            cfg.effective_controller_ports(GamePeripheral::SuperScope),
+            (SnesControllerType::Standard, SnesControllerType::Standard)
+        );
+    }
+
+    #[test]
+    fn port1_is_explicit_only_once_the_player_sets_it() {
+        assert!(!SnesConfig::default().controller_port1_explicit);
+
+        let mut from_cli = SnesConfig::default();
+        from_cli
+            .apply_args(&[
+                "neser".to_string(),
+                "--snes-controller-port1".to_string(),
+                "standard".to_string(),
+            ])
+            .expect("args parse");
+        assert!(from_cli.controller_port1_explicit);
+
+        let mut from_file = SnesConfig::default();
+        from_file
+            .apply_config_value("controller_port1", "standard")
+            .expect("config parse");
+        assert!(from_file.controller_port1_explicit);
+    }
+
+    #[test]
+    fn a_mouse_game_gets_the_mouse_on_port1_and_keeps_port2() {
+        let cfg = SnesConfig {
+            controller_port2: SnesControllerType::Multitap,
+            ..SnesConfig::default()
+        };
+        assert_eq!(
+            cfg.effective_controller_ports(GamePeripheral::Mouse),
+            (SnesControllerType::Mouse, SnesControllerType::Multitap)
+        );
+        // The player's settings are untouched, so the next game starts from them again.
+        assert_eq!(cfg.controller_port1, SnesControllerType::Standard);
+    }
+
+    #[test]
+    fn the_players_port1_choice_wins_over_a_mouse_game() {
+        let mut cfg = SnesConfig::default();
+        cfg.apply_config_value("snes_controller_port1", "standard")
+            .expect("config parse");
+        assert_eq!(
+            cfg.effective_controller_ports(GamePeripheral::Mouse),
             (SnesControllerType::Standard, SnesControllerType::Standard)
         );
     }
@@ -248,7 +305,7 @@ mod tests {
     fn other_games_use_the_configured_ports() {
         let cfg = SnesConfig::default();
         assert_eq!(
-            cfg.effective_controller_ports(false),
+            cfg.effective_controller_ports(GamePeripheral::None),
             (SnesControllerType::Standard, SnesControllerType::Standard)
         );
     }

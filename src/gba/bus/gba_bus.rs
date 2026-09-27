@@ -795,39 +795,87 @@ impl GbaBus {
     /// embedded in save-state files.  Only BIOS protection/latch state is
     /// captured.
     pub fn capture_memory_state(&self) -> BusMemoryState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            bios: _, // transient: user-supplied firmware, never saved
+            ref ewram,
+            ref iwram,
+            ref pram,
+            ref vram,
+            ref oam,
+            rom: _, // transient: the loaded cartridge, not machine state
+            ref cart_save,
+            ref sram,
+            ref io,
+            ref ic,
+            ref timers,
+            ref dma,
+            ref sio,
+            ref ppu,
+            ref apu,
+            ref keypad,
+            last_bus_value,
+            bios_open_bus_value,
+            executing_bios,
+            dma_latch,
+            dma_latch_valid,
+            dma_open_bus_instructions,
+            gamepak_prefetch_open_bus_value,
+            gamepak_prefetch_open_bus_valid,
+            trace_config: _,       // transient: debug tracing configuration
+            mgba_debug_string: _,  // transient: mGBA debug console (host tooling)
+            mgba_log: _,           // transient: mGBA debug console (host tooling)
+            mgba_debug_enabled: _, // transient: mGBA debug console (host tooling)
+            bios_locked,
+            bios_image_loaded: _, // transient: follows the BIOS image kept across a load
+            embedded_bios_loaded: _, // transient: follows the BIOS image kept across a load
+            ref waitstates,
+            undoc_0x410,
+            halt_requested,
+            timer_start_delay_pending: _, // intra-instruction: reset in restore_memory_state
+            sio_start_delay_cycles,
+            dma_start_delay_cycles: _, // intra-instruction: reset in restore_memory_state
+            timer_global_cycles,
+            irq_line_delay_cycles,
+            irq_sources_were_asserted,
+            cpu_instruction_active: _, // intra-instruction: reset in restore_memory_state
+            timer_cycles_prestepped_this_instruction: _, // intra-instruction: reset in restore_memory_state
+            immediate_overflow_irq_compensation_pending: _, // intra-instruction: reset in restore_memory_state
+            hblank_edge_timer_sample_index,
+        } = self;
         BusMemoryState {
-            ewram: self.ewram.clone(),
-            iwram: self.iwram.clone(),
-            pram: self.pram.clone(),
-            vram: self.vram.clone(),
-            oam: self.oam.clone(),
-            sram: self.sram.clone(),
-            cart_save: self.cart_save.capture_state(),
-            io: self.io.clone(),
-            ic: self.ic.clone(),
-            timers: self.timers.clone(),
-            dma: self.dma.clone(),
-            sio: self.sio.clone(),
-            keypad: self.keypad.clone(),
-            ppu: self.ppu.capture_state(),
-            apu: self.apu.capture_state(),
-            bios_locked: self.bios_locked,
-            last_bus_value: self.last_bus_value,
-            bios_open_bus_value: self.bios_open_bus_value,
-            executing_bios: self.executing_bios,
-            dma_latch: self.dma_latch,
-            dma_latch_valid: self.dma_latch_valid,
-            dma_open_bus_instructions: self.dma_open_bus_instructions,
-            gamepak_prefetch_open_bus_value: self.gamepak_prefetch_open_bus_value,
-            gamepak_prefetch_open_bus_valid: self.gamepak_prefetch_open_bus_valid,
-            hblank_edge_timer_sample_index: self.hblank_edge_timer_sample_index,
-            waitstates: self.waitstates.clone(),
-            undoc_0x410: self.undoc_0x410,
-            halt_requested: self.halt_requested,
-            timer_global_cycles: self.timer_global_cycles,
-            sio_start_delay_cycles: self.sio_start_delay_cycles,
-            irq_line_delay_cycles: self.irq_line_delay_cycles,
-            irq_sources_were_asserted: self.irq_sources_were_asserted,
+            ewram: ewram.clone(),
+            iwram: iwram.clone(),
+            pram: pram.clone(),
+            vram: vram.clone(),
+            oam: oam.clone(),
+            sram: sram.clone(),
+            cart_save: cart_save.capture_state(),
+            io: io.clone(),
+            ic: ic.clone(),
+            timers: timers.clone(),
+            dma: dma.clone(),
+            sio: sio.clone(),
+            keypad: keypad.clone(),
+            ppu: ppu.capture_state(),
+            apu: apu.capture_state(),
+            bios_locked,
+            last_bus_value,
+            bios_open_bus_value,
+            executing_bios,
+            dma_latch,
+            dma_latch_valid,
+            dma_open_bus_instructions,
+            gamepak_prefetch_open_bus_value,
+            gamepak_prefetch_open_bus_valid,
+            hblank_edge_timer_sample_index,
+            waitstates: waitstates.clone(),
+            undoc_0x410,
+            halt_requested,
+            timer_global_cycles,
+            sio_start_delay_cycles,
+            irq_line_delay_cycles,
+            irq_sources_were_asserted,
         }
     }
 
@@ -840,19 +888,54 @@ impl GbaBus {
     /// Returns an error if any region's length does not match the
     /// expected GBA region size.
     pub fn restore_memory_state(&mut self, state: &BusMemoryState) -> Result<(), String> {
-        check_region_size(&state.ewram, EWRAM_SIZE, "EWRAM")?;
-        check_region_size(&state.iwram, IWRAM_SIZE, "IWRAM")?;
-        check_region_size(&state.pram, PRAM_SIZE, "PRAM")?;
-        check_region_size(&state.vram, VRAM_SIZE, "VRAM")?;
-        check_region_size(&state.oam, OAM_SIZE, "OAM")?;
-        check_region_size(&state.sram, SRAM_SIZE, "SRAM")?;
-        self.ewram.clone_from(&state.ewram);
-        self.iwram.clone_from(&state.iwram);
-        self.pram.clone_from(&state.pram);
-        self.vram.clone_from(&state.vram);
-        self.oam.clone_from(&state.oam);
-        self.sram.clone_from(&state.sram);
-        self.cart_save.restore_state(&state.cart_save)?;
+        // Every saved field is named; one never restored is an unused binding the gate rejects.
+        let &BusMemoryState {
+            ref ewram,
+            ref iwram,
+            ref pram,
+            ref vram,
+            ref oam,
+            ref sram,
+            ref cart_save,
+            ref io,
+            ref ic,
+            ref timers,
+            ref dma,
+            ref sio,
+            ref keypad,
+            ref ppu,
+            ref apu,
+            bios_locked,
+            last_bus_value,
+            bios_open_bus_value,
+            executing_bios,
+            dma_latch,
+            dma_latch_valid,
+            dma_open_bus_instructions,
+            gamepak_prefetch_open_bus_value,
+            gamepak_prefetch_open_bus_valid,
+            hblank_edge_timer_sample_index,
+            ref waitstates,
+            undoc_0x410,
+            halt_requested,
+            timer_global_cycles,
+            sio_start_delay_cycles,
+            irq_line_delay_cycles,
+            irq_sources_were_asserted,
+        } = state;
+        check_region_size(ewram, EWRAM_SIZE, "EWRAM")?;
+        check_region_size(iwram, IWRAM_SIZE, "IWRAM")?;
+        check_region_size(pram, PRAM_SIZE, "PRAM")?;
+        check_region_size(vram, VRAM_SIZE, "VRAM")?;
+        check_region_size(oam, OAM_SIZE, "OAM")?;
+        check_region_size(sram, SRAM_SIZE, "SRAM")?;
+        self.ewram.clone_from(ewram);
+        self.iwram.clone_from(iwram);
+        self.pram.clone_from(pram);
+        self.vram.clone_from(vram);
+        self.oam.clone_from(oam);
+        self.sram.clone_from(sram);
+        self.cart_save.restore_state(cart_save)?;
         match &mut self.cart_save {
             SaveBackend::Sram(sram) => {
                 self.sram.fill(0xFF);
@@ -861,31 +944,31 @@ impl GbaBus {
             }
             SaveBackend::None | SaveBackend::Eeprom(_) | SaveBackend::Flash(_) => {}
         }
-        self.bios_locked = state.bios_locked;
-        self.last_bus_value = state.last_bus_value;
-        self.bios_open_bus_value = state.bios_open_bus_value;
-        self.executing_bios = state.executing_bios;
-        self.dma_latch = state.dma_latch;
-        self.dma_latch_valid = state.dma_latch_valid;
-        self.dma_open_bus_instructions = state.dma_open_bus_instructions;
-        self.gamepak_prefetch_open_bus_value = state.gamepak_prefetch_open_bus_value;
-        self.gamepak_prefetch_open_bus_valid = state.gamepak_prefetch_open_bus_valid;
-        self.hblank_edge_timer_sample_index = state.hblank_edge_timer_sample_index;
-        self.io = state.io.clone();
-        self.ic = state.ic.clone();
-        self.timers = state.timers.clone();
-        self.dma = state.dma.clone();
-        self.sio = state.sio.clone();
-        self.keypad = state.keypad.clone();
-        self.ppu.restore_state(&state.ppu);
-        self.apu.restore_state(&state.apu);
-        self.waitstates = state.waitstates.clone();
-        self.undoc_0x410 = state.undoc_0x410;
-        self.halt_requested = state.halt_requested;
-        self.timer_global_cycles = state.timer_global_cycles;
-        self.sio_start_delay_cycles = state.sio_start_delay_cycles;
-        self.irq_line_delay_cycles = state.irq_line_delay_cycles;
-        self.irq_sources_were_asserted = state.irq_sources_were_asserted;
+        self.bios_locked = bios_locked;
+        self.last_bus_value = last_bus_value;
+        self.bios_open_bus_value = bios_open_bus_value;
+        self.executing_bios = executing_bios;
+        self.dma_latch = dma_latch;
+        self.dma_latch_valid = dma_latch_valid;
+        self.dma_open_bus_instructions = dma_open_bus_instructions;
+        self.gamepak_prefetch_open_bus_value = gamepak_prefetch_open_bus_value;
+        self.gamepak_prefetch_open_bus_valid = gamepak_prefetch_open_bus_valid;
+        self.hblank_edge_timer_sample_index = hblank_edge_timer_sample_index;
+        self.io = io.clone();
+        self.ic = ic.clone();
+        self.timers = timers.clone();
+        self.dma = dma.clone();
+        self.sio = sio.clone();
+        self.keypad = keypad.clone();
+        self.ppu.restore_state(ppu);
+        self.apu.restore_state(apu);
+        self.waitstates = waitstates.clone();
+        self.undoc_0x410 = undoc_0x410;
+        self.halt_requested = halt_requested;
+        self.timer_global_cycles = timer_global_cycles;
+        self.sio_start_delay_cycles = sio_start_delay_cycles;
+        self.irq_line_delay_cycles = irq_line_delay_cycles;
+        self.irq_sources_were_asserted = irq_sources_were_asserted;
         self.timer_start_delay_pending = false;
         self.dma_start_delay_cycles = 0;
         self.cpu_instruction_active = false;

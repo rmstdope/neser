@@ -156,23 +156,42 @@ impl SnesController for SuperScopeController {
     }
 
     fn capture_state(&self) -> SnesControllerState {
+        // Every field is named, so a new one fails to build until it is saved or marked transient.
+        let &Self {
+            x,
+            y,
+            trigger_pressed,
+            cursor_pressed,
+            turbo_pressed,
+            pause_pressed,
+            turbo_enabled,
+            turbo_lock,
+            trigger_output,
+            pause_output,
+            offscreen,
+            trigger_lock,
+            pause_lock,
+            latched,
+            latch_processed: _, // derived: restored from the saved strobe
+            counter,
+        } = self;
         SnesControllerState {
-            superscope_x: self.x,
-            superscope_y: self.y,
-            superscope_trigger: self.trigger_pressed,
-            superscope_cursor: self.cursor_pressed,
-            superscope_turbo: self.turbo_pressed,
-            superscope_pause: self.pause_pressed,
-            superscope_offscreen: self.offscreen,
-            superscope_turbo_enabled: self.turbo_enabled,
-            superscope_turbo_lock: self.turbo_lock,
-            superscope_trigger_output: self.trigger_output,
-            superscope_pause_output: self.pause_output,
-            superscope_trigger_lock: self.trigger_lock,
-            superscope_pause_lock: self.pause_lock,
-            superscope_latched: self.latched,
-            shift: self.counter,
-            strobe: self.latched,
+            superscope_x: x,
+            superscope_y: y,
+            superscope_trigger: trigger_pressed,
+            superscope_cursor: cursor_pressed,
+            superscope_turbo: turbo_pressed,
+            superscope_pause: pause_pressed,
+            superscope_offscreen: offscreen,
+            superscope_turbo_enabled: turbo_enabled,
+            superscope_turbo_lock: turbo_lock,
+            superscope_trigger_output: trigger_output,
+            superscope_pause_output: pause_output,
+            superscope_trigger_lock: trigger_lock,
+            superscope_pause_lock: pause_lock,
+            superscope_latched: latched,
+            shift: counter,
+            strobe: latched,
             ..Default::default()
         }
     }

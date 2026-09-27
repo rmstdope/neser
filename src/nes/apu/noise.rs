@@ -11,6 +11,7 @@ use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
 use crate::nes::apu::envelope::EnvelopeState;
 use crate::nes::console::TimingMode;
+use crate::nes::region::RegionParams;
 use crate::trace_apu;
 use serde::{Deserialize, Serialize};
 
@@ -30,18 +31,8 @@ pub struct NoiseState {
     pub shift_register: u16,
 }
 
-// Period lookup table for NTSC (in CPU cycles)
-const NOISE_PERIOD_TABLE_NTSC: [u16; 16] = [
-    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
-];
-
-// Period lookup table for PAL (in CPU cycles)
-const NOISE_PERIOD_TABLE_PAL: [u16; 16] = [
-    4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778,
-];
-
 pub struct Noise {
-    tv_system: TimingMode,
+    region: &'static RegionParams,
     // Linear Feedback Shift Register (15-bit)
     shift_register: u16,
 
@@ -71,18 +62,16 @@ impl Noise {
     }
 
     pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
-        let timer_period = match tv_system {
-            TimingMode::Ntsc | TimingMode::Dendy => NOISE_PERIOD_TABLE_NTSC[0],
-            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[0],
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => NOISE_PERIOD_TABLE_NTSC[0],
-        };
+        Self::with_region(tv_system.region())
+    }
 
+    fn with_region(region: &'static RegionParams) -> Self {
         Noise {
-            tv_system,
+            region,
+            timer_period: region.noise_periods[0],
             shift_register: 1, // Power-up state
             mode: false,
             timer: 0,
-            timer_period,
             envelope: Envelope::new(),
             length_counter: LengthCounter::new(),
         }
@@ -91,8 +80,7 @@ impl Noise {
     /// Reset noise channel to initial state
     pub fn reset(&mut self) {
         trace_apu!(2; "noise reset");
-        let tv_system = self.tv_system;
-        *self = Self::new_with_tv_system(tv_system);
+        *self = Self::with_region(self.region);
     }
 
     /// Clock the timer. When it reaches zero, clock the shift register and reload.
@@ -162,13 +150,7 @@ impl Noise {
     pub fn write_period(&mut self, value: u8) {
         self.mode = (value >> 7) & 1 == 1;
         let period_index = (value & 0x0F) as usize;
-        self.timer_period = match self.tv_system {
-            TimingMode::Ntsc | TimingMode::Dendy => NOISE_PERIOD_TABLE_NTSC[period_index],
-            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[period_index],
-            TimingMode::MultiRegion | TimingMode::Unknown(_) => {
-                NOISE_PERIOD_TABLE_NTSC[period_index]
-            }
-        };
+        self.timer_period = self.region.noise_periods[period_index];
         trace_apu!(3; "noise write_period value=0x{:02X} mode={} period_index={} period={}", value, self.mode, period_index, self.timer_period);
     }
 
@@ -264,6 +246,7 @@ impl Noise {
 mod tests {
     use super::*;
     use crate::nes::console::TimingMode;
+    use crate::nes::region::{NTSC, PAL};
 
     fn write_length(noise: &mut Noise, value: u8) {
         noise.write_length(value);
@@ -427,7 +410,7 @@ mod tests {
         noise.write_period(0b1000_1010); // mode=1, period=10
 
         assert!(noise.mode);
-        assert_eq!(noise.timer_period, NOISE_PERIOD_TABLE_NTSC[10]);
+        assert_eq!(noise.timer_period, NTSC.noise_periods[10]);
     }
 
     #[test]
@@ -438,9 +421,9 @@ mod tests {
         let mut noise = Noise::new_with_tv_system(TimingMode::Dendy);
         noise.write_period(0b0000_0010); // mode=0, period_index=2
         assert_eq!(
-            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2],
+            noise.timer_period, NTSC.noise_periods[2],
             "Dendy noise must use NTSC period table after write_period (got {}, expected NTSC[2]={})",
-            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2]
+            noise.timer_period, NTSC.noise_periods[2]
         );
     }
 
@@ -450,11 +433,11 @@ mod tests {
         let mut noise = Noise::new_with_tv_system(TimingMode::Dendy);
         noise.write_period(0b0000_0010); // mode=0, period_index=2
         assert_ne!(
-            noise.timer_period, NOISE_PERIOD_TABLE_PAL[2],
+            noise.timer_period, PAL.noise_periods[2],
             "Dendy noise must NOT use PAL period table"
         );
         assert_eq!(
-            noise.timer_period, NOISE_PERIOD_TABLE_NTSC[2],
+            noise.timer_period, NTSC.noise_periods[2],
             "Dendy noise must use NTSC period table at index 2"
         );
     }

@@ -10,6 +10,8 @@ const FILTER_TOGGLE_SELECTOR = "#filter-toggle";
 const SCREEN_PLUS_SELECTOR = "#screen-plus";
 const SCREEN_MINUS_SELECTOR = "#screen-minus";
 const SCREEN_SELECTOR = "#screen";
+// See the zoom spec below: a zoom click can take ~5 s on CI's software GL (nr-dv5, nr-b5h).
+const ZOOM_CLICK_TIMEOUT_MS = 20_000;
 const STOP_BUTTON_SELECTOR = "#stop";
 
 test.describe("Phase 2 runtime controls", () => {
@@ -116,6 +118,9 @@ test.describe("Phase 2 runtime controls", () => {
         await waitForRunningState(page);
     });
 
+    // A zoom click reallocates the WebGL drawing buffer once per probed size, which takes seconds
+    // on CI's software GL (a Zoom - measured at 4.97 s, nr-dv5), so the clicks get a generous cap
+    // instead of 5 s; tighten it when nr-b5h removes the reallocations.
     test("Given zoom controls exist, when clicked, then canvas presentation bounds change safely", async ({ page }) => {
         await openApp(page);
 
@@ -136,7 +141,7 @@ test.describe("Phase 2 runtime controls", () => {
         const initialHeight = initialBox!.height;
 
         // Click zoom in
-        await screenPlus.click({ timeout: 5000 });
+        await screenPlus.click({ timeout: ZOOM_CLICK_TIMEOUT_MS });
         await page.waitForTimeout(100);
 
         const zoomedInBox = await screen.boundingBox();
@@ -147,7 +152,7 @@ test.describe("Phase 2 runtime controls", () => {
         expect(zoomedInHeight).toBeGreaterThanOrEqual(initialHeight);
 
         // Click zoom out
-        await screenMinus.click({ timeout: 5000 });
+        await screenMinus.click({ timeout: ZOOM_CLICK_TIMEOUT_MS });
         await page.waitForTimeout(100);
 
         const zoomedOutBox = await screen.boundingBox();

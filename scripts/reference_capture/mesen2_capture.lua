@@ -15,6 +15,17 @@
 --   emulation thread. At startFrame that buffer still holds frame N on both consoles: the
 --   SNES PPU switches buffers at the end of scanline 0, the NES PPU on the
 --   pre-render line right after raising StartFrame.
+
+-- With "AllowIoOsAccess": false Mesen2 leaves the globals io and os nil, so os.getenv below
+-- would raise before any frame callback exists and the run would sit until --timeout.
+-- Stop at once and name the setting instead (nr-hg7).
+if io == nil or os == nil then
+  print('ERROR: Lua file access is off; set "AllowIoOsAccess": true in Mesen2\'s settings.json'
+    .. " (see scripts/reference_capture/README.md)")
+  emu.stop(1)
+  return
+end
+
 local target = tonumber(os.getenv("CAPTURE_FRAME") or "120")
 local out = os.getenv("CAPTURE_OUT")
 
