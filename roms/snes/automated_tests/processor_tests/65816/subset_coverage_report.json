@@ -140,6 +140,16 @@
         "58"
       ]
     },
+    "jump_long": {
+      "files": [
+        "22.e.json",
+        "22.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "22"
+      ]
+    },
     "load_store": {
       "files": [
         "a9.e.json",
@@ -232,12 +242,12 @@
     }
   },
   "integrity": {
-    "file_count": 46,
+    "file_count": 48,
     "kind": "tree_sha256",
-    "sha256": "c979a5e1c2f00d71fe2e1c10bdca137cd23ea8524853b7c1e690ed9146bf9065",
-    "total_size_bytes": 1057186
+    "sha256": "6560815e6b5484a0d8070bce5b55520fd85d19e6a3e0c27c7628ff7f05494e55",
+    "total_size_bytes": 1093999
   },
-  "selected_file_count": 46,
+  "selected_file_count": 48,
   "selected_files": [
     "ea.e.json",
     "ea.n.json",
@@ -284,6 +294,8 @@
     "1e.e.json",
     "1e.n.json",
     "04.e.json",
-    "04.n.json"
+    "04.n.json",
+    "22.e.json",
+    "22.n.json"
   ]
 }

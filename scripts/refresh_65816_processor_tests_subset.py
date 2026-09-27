@@ -51,6 +51,10 @@ FAMILY_ORDER = (
     "rmw_absolute",
     "rmw_absolute_indexed",
     "rmw_test_bits",
+    # JSL on its own, so the corpus carries its vectors: they pin the 65816's order of the
+    # long call's cycles (push PBR, internal, bank byte, push PC), whose last cycle decides
+    # whether an NMI rising in it is taken after JSL or one instruction later (nr-4lq).
+    "jump_long",
 )
 
 OPCODE_FAMILY: dict[int, str] = {
@@ -66,7 +70,7 @@ OPCODE_FAMILY: dict[int, str] = {
     0x4C: "branch",
     0x6C: "branch",
     0x20: "stack",
-    0x22: "stack",
+    0x22: "jump_long",
     0x48: "stack",
     0x68: "stack",
     0xA9: "load_store",

@@ -37,6 +37,8 @@ const CYCLE_EXACT_OPCODES: &[u8] = &[
     0x0E, // ASL abs
     0x1E, // ASL abs,X
     0x04, // TSB dp
+    // Long call -- its last cycle must be the PCL push, not the internal cycle (nr-4lq).
+    0x22, // JSL long
 ];
 
 /// Whether this vector's bus cycles should be compared one by one.

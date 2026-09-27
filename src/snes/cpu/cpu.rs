@@ -4386,20 +4386,31 @@ impl<B: SnesBus> Cpu<B> {
         8
     }
 
+    /// JSL long, in the 65816's cycle order (WDC datasheet, Mesen2 `SnesCpu::JSL`): opcode,
+    /// AAL, AAH, push PBR, internal, AAB, push PCH, push PCL. The bank byte is fetched only
+    /// after PBR is pushed, and the call ends on the PCL write rather than on the internal
+    /// cycle. That last cycle is what an NMI edge rising at the end of the call is measured
+    /// against: ending on the internal cycle took the NMI one instruction early and pushed
+    /// Batman Returns' RNG out of step with Mesen2 (nr-4lq).
     fn op_jsl_abs_long(&mut self) -> u8 {
-        let addr = self.fetch_addr24();
-        let ret = self.pc.wrapping_sub(1);
+        let target = self.fetch_word();
         if self.e {
             self.push8_linear_e(self.pbr);
+        } else {
+            self.push8(self.pbr);
+        }
+        self.tick_pre_access_internal_cycle();
+        let bank = self.fetch_byte();
+        let ret = self.pc.wrapping_sub(1);
+        if self.e {
             self.push8_linear_e((ret >> 8) as u8);
             self.push8_linear_e(ret as u8);
             self.s = 0x0100 | (self.s & 0x00FF);
         } else {
-            self.push8(self.pbr);
             self.push16_bytes(ret);
         }
-        self.pbr = (addr >> 16) as u8;
-        self.pc = addr as u16;
+        self.pbr = bank;
+        self.pc = target;
         8
     }
 
