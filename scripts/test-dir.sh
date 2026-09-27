@@ -20,7 +20,7 @@
 #   --                   Pass remaining args directly to cargo test
 #
 # Environment:
-#   CARGO_TEST_ARGS      Extra arguments passed to cargo test (default: --no-default-features)
+#   CARGO_TEST_ARGS      Extra arguments passed to cargo test (default: --all-features, as CI)
 
 set -euo pipefail
 
@@ -99,7 +99,7 @@ for dir in "${DIRS[@]}"; do
     FILTERS+=("$mod")
 done
 
-CARGO_FLAGS="${CARGO_TEST_ARGS:---no-default-features}"
+CARGO_FLAGS="${CARGO_TEST_ARGS:---all-features}"
 
 # Build the cargo test command
 CMD=(cargo test $CARGO_FLAGS --lib --)
