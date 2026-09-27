@@ -162,7 +162,7 @@ bash scripts/build_web.sh
 bash scripts/run_web.sh
 ```
 
-`scripts/run_web.sh` serves the built `dist/` directory at <http://localhost:8000>.
+`scripts/run_web.sh` serves the built `dist/` directory at <http://localhost:8000> (or on the port in `NESER_WEB_PORT`).
 
 ## Configuration
 

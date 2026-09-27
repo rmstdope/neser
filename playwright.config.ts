@@ -1,6 +1,10 @@
 import { defineConfig } from "@playwright/test";
 
-const WEB_APP_URL = "http://127.0.0.1:8000";
+// NESER_WEB_PORT is set per session by .cerebro/cerebro/scripts/smoke-port (port_base/port_env in
+// .cerebro/project.conf), so parallel sessions never reuse each other's server; 8000 otherwise.
+// scripts/run_web.sh reads the same variable, which the web server command inherits.
+const WEB_APP_PORT = process.env.NESER_WEB_PORT || "8000";
+const WEB_APP_URL = `http://127.0.0.1:${WEB_APP_PORT}`;
 const WEB_APP_SERVER_COMMAND = "bash scripts/build_web.sh && bash scripts/run_web.sh";
 
 export default defineConfig({
