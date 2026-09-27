@@ -60,7 +60,7 @@ it("the default sight is the Super Scope ring, black under white, scaled with th
     globalThis.window = { devicePixelRatio: 1 } as any;
     const target = mockCanvas(512);
 
-    const sight = createCrosshair(target.canvas as unknown as HTMLCanvasElement, {});
+    const sight = createCrosshair(target.canvas as unknown as HTMLCanvasElement);
     sight.show();
     sight.updatePosition(100, 100);
 
