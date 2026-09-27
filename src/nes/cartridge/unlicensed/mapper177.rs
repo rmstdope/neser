@@ -37,8 +37,7 @@ impl Mapper177 {
         // Mapper 177 always uses CHR-RAM and needs 8 KB PRG-RAM regardless of header.
         let mut ctx = ctx;
         ctx.chr_rom = vec![];
-        ctx.prg_ram_banks_8k = 1;
-        ctx.prg_ram_size_specified = true;
+        ctx.set_board_prg_ram(1);
 
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: 8,

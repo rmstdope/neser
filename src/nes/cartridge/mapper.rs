@@ -350,9 +350,12 @@ pub struct MapperContext {
     pub prg_rom: Vec<u8>,
     /// CHR ROM bytes (empty when CHR-RAM).
     pub chr_rom: Vec<u8>,
-    /// PRG-RAM size in 8KB units (minimum 1).
+    /// Raw PRG-RAM size in 8KB units: 1 when the header leaves the size unspecified, and
+    /// possibly 0. Size PRG-RAM through [`header_prg_ram_banks_8k`](Self::header_prg_ram_banks_8k),
+    /// which applies the header-sizing rule; override it only through the board exceptions.
     pub prg_ram_banks_8k: u8,
-    /// Whether PRG-RAM size was explicitly specified by header metadata.
+    /// Whether PRG-RAM size was explicitly specified by header metadata. Read it through
+    /// [`header_prg_ram_banks_8k`](Self::header_prg_ram_banks_8k), not directly.
     pub prg_ram_size_specified: bool,
     /// Whether PRG-RAM is battery backed.
     pub battery_backed_prg_ram: bool,
@@ -414,6 +417,48 @@ impl MapperContext {
             .unwrap_or(0)
             .max(prg_nvram_size_bytes.unwrap_or(0));
         bytes.div_ceil(PRG_RAM_BANK_SIZE).min(u8::MAX as usize) as u8
+    }
+
+    /// PRG-RAM the header asks for, in 8 KiB banks: 0 when the header leaves the size
+    /// unspecified or specifies none.
+    ///
+    /// This is the one place the header-sizing rule lives: `BaseMapper::new` allocates
+    /// exactly this, and a mapper sizing its own PRG-RAM store reads it too. A board whose
+    /// hardware fixes the RAM regardless of the header declares that with
+    /// [`set_board_prg_ram`](Self::set_board_prg_ram) or
+    /// [`clamp_board_prg_ram`](Self::clamp_board_prg_ram) instead.
+    pub fn header_prg_ram_banks_8k(&self) -> u8 {
+        if self.prg_ram_size_specified {
+            self.prg_ram_banks_8k
+        } else {
+            0
+        }
+    }
+
+    /// [`header_prg_ram_banks_8k`](Self::header_prg_ram_banks_8k) in KiB, the unit of
+    /// `MapperCapabilities::max_prg_ram_kb`.
+    pub fn header_prg_ram_kb(&self) -> usize {
+        self.header_prg_ram_banks_8k() as usize * 8
+    }
+
+    /// Board exception: the cartridge carries exactly `banks_8k` × 8 KiB of PRG-RAM
+    /// whatever the header says (0 = none).
+    pub fn set_board_prg_ram(&mut self, banks_8k: u8) {
+        self.prg_ram_banks_8k = banks_8k;
+        self.prg_ram_size_specified = true;
+    }
+
+    /// Board exception: the header's PRG-RAM size clamped into `banks_8k`; a header that
+    /// leaves the size unspecified gets the minimum. The range must not be empty.
+    pub fn clamp_board_prg_ram(&mut self, banks_8k: std::ops::RangeInclusive<u8>) {
+        debug_assert!(
+            banks_8k.start() <= banks_8k.end(),
+            "clamp_board_prg_ram needs a non-empty range, got {banks_8k:?}"
+        );
+        let banks = self
+            .header_prg_ram_banks_8k()
+            .clamp(*banks_8k.start(), *banks_8k.end());
+        self.set_board_prg_ram(banks);
     }
 
     /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
@@ -2176,6 +2221,59 @@ mod tests {
             ctx.prg_ram_size_specified,
             "prg_ram_size_specified should be true when NVRAM is present"
         );
+    }
+
+    fn header_ctx() -> MapperContext {
+        MapperContext::new_for_test(
+            0,
+            vec![0; 0x8000],
+            vec![0; 0x2000],
+            NametableLayout::Horizontal,
+        )
+    }
+
+    #[test]
+    fn header_prg_ram_is_zero_when_header_leaves_size_unspecified() {
+        let ctx = header_ctx().with_unspecified_prg_ram_size();
+        assert_eq!(ctx.header_prg_ram_banks_8k(), 0);
+        assert_eq!(ctx.header_prg_ram_kb(), 0);
+    }
+
+    #[test]
+    fn header_prg_ram_is_the_header_size_when_specified() {
+        let ctx = header_ctx().with_prg_ram_banks(4);
+        assert_eq!(ctx.header_prg_ram_banks_8k(), 4);
+        assert_eq!(ctx.header_prg_ram_kb(), 32);
+        let none = header_ctx().with_prg_ram_banks(0);
+        assert_eq!(none.header_prg_ram_banks_8k(), 0);
+        assert_eq!(none.header_prg_ram_kb(), 0);
+    }
+
+    #[test]
+    fn board_prg_ram_ignores_the_header() {
+        let mut unspecified = header_ctx().with_unspecified_prg_ram_size();
+        unspecified.set_board_prg_ram(1);
+        assert_eq!(unspecified.header_prg_ram_banks_8k(), 1);
+
+        let mut larger = header_ctx().with_prg_ram_banks(4);
+        larger.set_board_prg_ram(1);
+        assert_eq!(larger.header_prg_ram_banks_8k(), 1);
+
+        let mut none = header_ctx().with_prg_ram_banks(2);
+        none.set_board_prg_ram(0);
+        assert_eq!(none.header_prg_ram_banks_8k(), 0);
+    }
+
+    #[test]
+    fn clamped_board_prg_ram_uses_the_minimum_when_unspecified_and_clamps_the_header_size() {
+        let clamp = |mut ctx: MapperContext| {
+            ctx.clamp_board_prg_ram(1..=4);
+            ctx.header_prg_ram_banks_8k()
+        };
+        assert_eq!(clamp(header_ctx().with_unspecified_prg_ram_size()), 1);
+        assert_eq!(clamp(header_ctx().with_prg_ram_banks(0)), 1);
+        assert_eq!(clamp(header_ctx().with_prg_ram_banks(8)), 4);
+        assert_eq!(clamp(header_ctx().with_prg_ram_banks(2)), 2);
     }
 
     #[test]

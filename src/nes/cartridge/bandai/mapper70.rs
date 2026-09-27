@@ -38,11 +38,7 @@ impl Mapper70 {
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
-            max_prg_ram_kb: if ctx.prg_ram_size_specified && ctx.prg_ram_banks_8k > 0 {
-                ctx.prg_ram_banks_8k as usize * 8
-            } else {
-                0
-            },
+            max_prg_ram_kb: ctx.header_prg_ram_kb(),
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 8,
             ..Default::default()

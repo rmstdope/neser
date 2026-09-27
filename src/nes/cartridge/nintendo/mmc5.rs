@@ -254,7 +254,7 @@ impl MMC5Mapper {
     const PRG_ROM_BANK_SIZE: usize = 8 * 1024;
 
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
-        let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
+        let prg_ram_banks_8k = ctx.header_prg_ram_banks_8k();
         let prg_rom = ctx.prg_rom;
         let chr_rom = ctx.chr_rom;
         let mirroring = ctx.mirroring;

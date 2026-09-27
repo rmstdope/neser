@@ -61,8 +61,7 @@ pub struct Mapper323 {
 impl Mapper323 {
     pub fn new(mut ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         // Farid SLROM has no PRG-RAM; force MMC1 to allocate none, regardless of header.
-        ctx.prg_ram_banks_8k = 0;
-        ctx.prg_ram_size_specified = true;
+        ctx.set_board_prg_ram(0);
 
         let inner = MMC1Mapper::new(ctx);
         let mut mapper = Self {

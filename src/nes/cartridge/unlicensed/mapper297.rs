@@ -62,8 +62,7 @@ impl Mapper297 {
     pub fn new(ctx: MapperContext) -> Self {
         // Force no PRG-RAM (mapper 297 has none).
         let mut ctx = ctx;
-        ctx.prg_ram_banks_8k = 0;
-        ctx.prg_ram_size_specified = true;
+        ctx.set_board_prg_ram(0);
 
         let mmc1 = MMC1Mapper::new(ctx);
         let mut mapper = Self {

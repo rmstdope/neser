@@ -46,7 +46,7 @@ pub struct Sunsoft4Mapper {
 
 impl Sunsoft4Mapper {
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
-        let prg_ram_banks_8k = ctx.prg_ram_banks_8k;
+        let prg_ram_banks_8k = ctx.header_prg_ram_banks_8k();
         let caps = MapperCapabilities {
             has_irq: false,
             has_chr_banking: true,

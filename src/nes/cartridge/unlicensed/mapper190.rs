@@ -71,8 +71,7 @@ impl Mapper190 {
     pub fn new(mut ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         // Mapper 190 always has 8 KiB PRG-RAM at $6000–$7FFF regardless of
         // what the ROM header specifies.
-        ctx.prg_ram_banks_8k = 1;
-        ctx.prg_ram_size_specified = true;
+        ctx.set_board_prg_ram(1);
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             has_dynamic_mirroring: false,

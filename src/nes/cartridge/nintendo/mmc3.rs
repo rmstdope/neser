@@ -88,11 +88,7 @@ impl MMC3Mapper {
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let crc32 = ctx.crc32;
         let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
-        let prg_ram_banks_8k = if ctx.prg_ram_size_specified {
-            ctx.prg_ram_banks_8k
-        } else {
-            0
-        };
+        let prg_ram_banks_8k = ctx.header_prg_ram_banks_8k();
         Self::new_internal(ctx, prg_ram_banks_8k, use_alternate_irq)
     }
 

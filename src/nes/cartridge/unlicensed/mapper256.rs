@@ -87,8 +87,7 @@ impl Mapper256 {
 
     pub fn new(mut ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         // Force WRAM allocation regardless of header — OneBus hardware always has 8KB WRAM.
-        ctx.prg_ram_banks_8k = 1;
-        ctx.prg_ram_size_specified = true;
+        ctx.set_board_prg_ram(1);
 
         let capabilities = MapperCapabilities {
             has_chr_banking: true, // CHR banking is implemented manually from PRG ROM-backed data
