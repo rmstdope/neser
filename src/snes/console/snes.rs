@@ -594,8 +594,10 @@ impl Emulator for Snes {
 
         let state = SnesSaveState::from_bytes(data)
             .map_err(|e| format!("save state deserialization failed: {e}"))?;
-        cpu.restore_save_state(&state).map_err(|e| e.to_string())?;
+        // Cleared before restoring: a restore that fails partway has already changed the
+        // console.
         self.at_power_on = false;
+        cpu.restore_save_state(&state).map_err(|e| e.to_string())?;
         // The state carries its console's region and has already retuned the
         // PPU and APU to it; frame pacing must follow the same region.
         self.active_hardware = match cpu.bus().ppu_video_region() {
@@ -1564,6 +1566,39 @@ mod tests {
         restored.reset(false);
 
         assert_eq!(restored.cpu_pc_for_tests(), reset_pc);
+    }
+
+    /// A restore that fails partway has already overwritten WRAM, so the console is no
+    /// longer as it powered on and a hard reset straight after must still wipe it.
+    #[test]
+    fn hard_reset_after_a_failed_state_restore_still_resets_ram() {
+        const WRAM_START: u32 = 0x7E_0000;
+        let rom = valid_lorom_nop_rom();
+        let mut source = make_snes();
+        source.load_rom(&rom, "test.sfc").unwrap();
+        let mut state = SnesSaveState::from_bytes(&source.save_state_bytes().unwrap()).unwrap();
+        state.bus.wram[0] ^= 0xFF;
+        state.bus.apu.aram = vec![0; 1]; // rejected after WRAM has been copied
+        let mut restored = make_snes();
+        restored.load_rom(&rom, "test.sfc").unwrap();
+        let power_on_byte = restored.read_bus_for_debugger_for_tests(WRAM_START);
+        assert!(
+            restored
+                .load_state_bytes(&state.to_bytes().unwrap())
+                .is_err()
+        );
+        assert_ne!(
+            restored.read_bus_for_debugger_for_tests(WRAM_START),
+            power_on_byte,
+            "the failed restore changed WRAM, or the test proves nothing"
+        );
+
+        restored.reset(false);
+
+        assert_eq!(
+            restored.read_bus_for_debugger_for_tests(WRAM_START),
+            power_on_byte
+        );
     }
 
     #[test]
