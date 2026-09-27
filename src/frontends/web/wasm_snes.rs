@@ -174,22 +174,16 @@ impl WasmSnes {
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
         self.rom_loaded = false;
         self.mouse_motion = crate::snes::input::mouse_motion::MouseMotionScale::default();
-        match self.snes.load_rom(rom, rom_name) {
+        let result = self.snes.load_rom(rom, rom_name);
+        // What the core said while loading comes first, in the order it was raised.
+        let core_toasts = self.snes.app_context().borrow_mut().take_toasts();
+        self.pending_toasts.extend(core_toasts);
+        match result {
             Ok(()) => {
                 self.rom_loaded = true;
                 self.snes.set_audio_sample_rate(44_100.0);
                 self.pending_toasts
                     .push(cartridge_load_toast_message(rom_name, true));
-                // The web shows only this queue, never the core's app-context toasts, so it
-                // says this itself, as `rom_loader::load_console` does on desktop.
-                if self.snes.has_superscope() {
-                    self.pending_toasts
-                        .push(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED.to_string());
-                }
-                if self.snes.has_mouse() {
-                    self.pending_toasts
-                        .push(crate::snes::frontend_toasts::SNES_MOUSE_CONNECTED.to_string());
-                }
                 web_sys::console::log_1(&JsValue::from_str("SNES ROM loaded successfully"));
                 Ok(())
             }
@@ -204,6 +198,9 @@ impl WasmSnes {
     /// Drain any pending toast messages.
     #[wasm_bindgen]
     pub fn drain_toasts(&mut self) -> Vec<JsValue> {
+        // The page shows only what this returns, so the core's toasts are forwarded here too.
+        let core_toasts = self.snes.app_context().borrow_mut().take_toasts();
+        self.pending_toasts.extend(core_toasts);
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 

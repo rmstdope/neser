@@ -491,8 +491,6 @@ impl Emulator for Snes {
             },
         );
         let mut cpu = Cpu::new(bus);
-        // The frontends say "Super Scope connected" after a load (`rom_loader::load_console`,
-        // `WasmSnes::load_rom`): the web never shows the context's toasts, only its own queue.
         cpu.configure_controllers(port1, port2);
         cpu.do_reset();
         self.cpu = Some(cpu);
@@ -501,6 +499,18 @@ impl Emulator for Snes {
 
         // Load battery-backed save RAM from disk if a .sav file exists.
         self.load_save_ram_from_disk();
+
+        // Both frontends show these: desktop draws the context's toasts, the web drains them.
+        if self.has_superscope() {
+            self.app_context
+                .borrow_mut()
+                .add_toast(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED);
+        }
+        if self.has_mouse() {
+            self.app_context
+                .borrow_mut()
+                .add_toast(crate::snes::frontend_toasts::SNES_MOUSE_CONNECTED);
+        }
 
         Ok(())
     }
@@ -1168,6 +1178,34 @@ mod tests {
         let mut snes = make_snes();
         let result = snes.load_rom(&[0x00, 0x01, 0x02], "bad.sfc");
         assert!(result.is_err());
+    }
+
+    fn toasts_after_loading(title: &[u8]) -> Vec<String> {
+        let mut snes = make_snes();
+        snes.load_rom(&crate::snes::test_support::minimal_lorom(title), "game.sfc")
+            .expect("load ROM");
+        snes.app_context.borrow_mut().take_toasts()
+    }
+
+    #[test]
+    fn load_rom_says_super_scope_connected() {
+        assert_eq!(
+            toasts_after_loading(b"METAL COMBAT"),
+            [crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED]
+        );
+    }
+
+    #[test]
+    fn load_rom_says_snes_mouse_connected() {
+        assert_eq!(
+            toasts_after_loading(b"MARIOPAINT"),
+            [crate::snes::frontend_toasts::SNES_MOUSE_CONNECTED]
+        );
+    }
+
+    #[test]
+    fn load_rom_says_nothing_of_a_scope_or_mouse_for_other_games() {
+        assert!(toasts_after_loading(b"SNES TEST ROM").is_empty());
     }
 
     #[test]

@@ -1,4 +1,5 @@
-//! The words a player reads about SNES peripherals, shared by the desktop and web frontends.
+//! The words a player reads about SNES peripherals. `Snes::load_rom` raises the connected pair;
+//! the desktop and web frontends raise the released pair and the Turbo words.
 
 /// Shown each time a game loads with a Super Scope connected.
 pub const SUPER_SCOPE_CONNECTED: &str = "Super Scope connected — click to aim with the mouse";

@@ -5,8 +5,10 @@
  */
 import { createClickCaptureSession, type ClickCaptureSession } from "./super_scope";
 
-/** The agreed words; the same strings live in `src/snes/frontend_toasts.rs`. */
-export const SNES_MOUSE_CONNECTED = "SNES Mouse connected — click the game to use the mouse";
+/**
+ * The agreed words the page raises itself; the same string lives in `src/snes/frontend_toasts.rs`.
+ * "SNES Mouse connected" is raised by the core on load and reaches the page through `drain_toasts`.
+ */
 export const SNES_MOUSE_RELEASED = "Mouse released — click the game to use it again";
 
 export function createSnesMouseSession() {

@@ -4,8 +4,10 @@
  * told. Pure, so `app.ts` only wires it to the DOM and the emulator.
  */
 
-/** The agreed words; the same strings live in `src/snes/frontend_toasts.rs`. */
-export const SUPER_SCOPE_CONNECTED = "Super Scope connected — click to aim with the mouse";
+/**
+ * The agreed words the page raises itself; the same strings live in `src/snes/frontend_toasts.rs`.
+ * "Super Scope connected" is raised by the core on load and reaches the page through `drain_toasts`.
+ */
 export const SUPER_SCOPE_MOUSE_RELEASED = "Mouse released — click the game to aim again";
 
 export function superScopeTurboMessage(on: boolean): string {
