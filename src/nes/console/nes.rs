@@ -1321,6 +1321,10 @@ impl Emulator for Nes {
             .frame_rate_hz();
         std::time::Duration::from_secs_f64(1.0 / hz)
     }
+
+    fn f8_action(&mut self) -> Option<String> {
+        Nes::f8_action(self)
+    }
 }
 
 fn format_compact_trace_instruction(

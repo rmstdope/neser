@@ -77,6 +77,10 @@ pub trait Emulator {
     fn save_ram(&self) -> Result<(), String>;
     fn app_context(&self) -> &SharedAppContext;
     fn target_frame_duration(&self) -> std::time::Duration;
+    /// F8 (and the web Palette and Colors buttons): whatever it means for this
+    /// console, returning the corner message to show, or `None` when nothing
+    /// changed. Each console decides its own F8 in its core.
+    fn f8_action(&mut self) -> Option<String>;
 }
 
 /// Mouse button identifier for capability-based mouse routing.
@@ -353,12 +357,7 @@ impl Console {
     /// when nothing changed. Frontends call this and nothing else, so a
     /// console's F8 is decided in its own core.
     pub fn f8_action(&mut self) -> Option<String> {
-        match self {
-            Console::Nes(nes) => nes.f8_action(),
-            Console::GameBoy(gb) => gb.f8_action(),
-            Console::GameBoyAdvance(gba) => gba.f8_action(),
-            Console::Snes(snes) => snes.f8_action(),
-        }
+        self.as_core_mut().f8_action()
     }
 
     /// Mutable access to the NES emulator, if present.
@@ -1175,6 +1174,14 @@ mod tests {
             stereo.is_none(),
             "no stereo sample should be ready without a ROM"
         );
+    }
+
+    #[test]
+    fn f8_action_is_reachable_through_the_emulator_trait() {
+        fn f8<E: Emulator>(core: &mut E) -> Option<String> {
+            core.f8_action()
+        }
+        assert_eq!(f8(&mut make_gameboy()), None, "no game: F8 changes nothing");
     }
 }
 

@@ -538,6 +538,10 @@ impl Emulator for Gba {
     fn target_frame_duration(&self) -> Duration {
         Duration::from_nanos(FRAME_DURATION_NANOS)
     }
+
+    fn f8_action(&mut self) -> Option<String> {
+        Gba::f8_action(self)
+    }
 }
 
 #[cfg(test)]

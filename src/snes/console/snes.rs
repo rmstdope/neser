@@ -599,6 +599,10 @@ impl Emulator for Snes {
             SnesHardware::Pal => Duration::from_nanos(FRAME_DURATION_PAL_NANOS),
         }
     }
+
+    fn f8_action(&mut self) -> Option<String> {
+        Snes::f8_action(self)
+    }
 }
 
 #[cfg(test)]
