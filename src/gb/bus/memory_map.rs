@@ -83,9 +83,28 @@ pub(super) trait MemoryMap {
 
     /// Read `addr` without side effects (debugger reads).
     fn map_peek(&self, addr: u16) -> u8 {
-        if let Some(value) = self.model_peek(addr) {
+        self.model_peek(addr)
+            .unwrap_or_else(|| self.shared_peek(addr))
+    }
+
+    /// Read `addr` as the CPU does.
+    fn map_read(&mut self, addr: u16) -> u8 {
+        if let Some(value) = self.model_read(addr) {
             return value;
         }
+        if let 0xFE00..=0xFE9F = addr {
+            let v = self.view_mut();
+            return if v.dma_oam_blocked {
+                0xFF
+            } else {
+                v.ppu.read_oam(addr)
+            };
+        }
+        self.shared_peek(addr)
+    }
+
+    /// The shared map's answer for `addr`, once the model has not claimed it.
+    fn shared_peek(&self, addr: u16) -> u8 {
         let v = self.view();
         match addr {
             0x0000..=0x7FFF | 0xA000..=0xBFFF => v.cart.read(addr),
@@ -109,22 +128,6 @@ pub(super) trait MemoryMap {
             0xFFFF => v.ie_reg,
             _ => 0xFF,
         }
-    }
-
-    /// Read `addr` as the CPU does.
-    fn map_read(&mut self, addr: u16) -> u8 {
-        if let Some(value) = self.model_read(addr) {
-            return value;
-        }
-        if let 0xFE00..=0xFE9F = addr {
-            let v = self.view_mut();
-            return if v.dma_oam_blocked {
-                0xFF
-            } else {
-                v.ppu.read_oam(addr)
-            };
-        }
-        self.map_peek(addr)
     }
 
     /// Write `val` to `addr` as the CPU does.
@@ -467,7 +470,19 @@ mod tests {
     }
 
     #[test]
-    fn peek_matches_read_across_the_map_without_side_effects() {
+    fn peek_reads_oam_raw_while_the_cpu_is_locked_out_in_mode_2() {
+        let mut map = TestMap::new();
+        map.ppu.oam = std::array::from_fn(|i| i as u8);
+        map.ppu.write_register(0xFF40, 0x91); // LCD on
+        map.ppu.tick_dots(456 + 4); // line 1, OAM scan
+        let oam_before = map.ppu.oam;
+        assert_eq!(map.map_peek(0xFE10), 0x10);
+        assert_eq!(map.ppu.oam, oam_before, "a peek must not corrupt OAM");
+        assert_eq!(map.map_read(0xFE10), 0xFF);
+    }
+
+    #[test]
+    fn peek_matches_read_across_the_map_with_the_lcd_off() {
         let mut map = TestMap::new();
         map.map_write(0xC000, 0x01);
         map.map_write(0xFF80, 0x02);
