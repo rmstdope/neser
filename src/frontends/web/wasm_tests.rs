@@ -2027,3 +2027,73 @@ fn wasm_gb_load_state_restores_on_the_saved_console() {
     );
     assert!(gb.palette_label().starts_with("Palette: Auto"));
 }
+
+// nr-7qp: a toast raised in a core reaches the page through `drain_toasts`, once.
+
+fn toast_strings(toasts: Vec<wasm_bindgen::JsValue>) -> Vec<String> {
+    toasts.iter().filter_map(|t| t.as_string()).collect()
+}
+
+#[wasm_bindgen_test]
+fn wasm_nes_drain_toasts_includes_core_toasts() {
+    let mut nes = WasmNes::new();
+    let _ = nes.drain_toasts();
+    nes.core_app_context_for_test()
+        .borrow_mut()
+        .add_toast("from the core");
+    assert_eq!(toast_strings(nes.drain_toasts()), ["from the core"]);
+    assert!(nes.drain_toasts().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_drain_toasts_includes_core_toasts() {
+    let mut gb = WasmGb::new();
+    let _ = gb.drain_toasts();
+    gb.game_boy_mut()
+        .app_context()
+        .borrow_mut()
+        .add_toast("from the core");
+    assert_eq!(toast_strings(gb.drain_toasts()), ["from the core"]);
+    assert!(gb.drain_toasts().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn wasm_gba_drain_toasts_includes_core_toasts() {
+    let mut gba = WasmGba::new();
+    let _ = gba.drain_toasts();
+    gba.core_app_context_for_test()
+        .borrow_mut()
+        .add_toast("from the core");
+    assert_eq!(toast_strings(gba.drain_toasts()), ["from the core"]);
+    assert!(gba.drain_toasts().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn snes_web_shows_the_unemulated_chip_warning_from_the_core() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(&chipset_snes_rom(0xF5, Some(0x7F)), "chip.sfc")
+        .expect("loads");
+    let toasts = toast_strings(snes.drain_toasts());
+    assert!(
+        toasts.iter().any(|t| t.contains("enhancement hardware")),
+        "core warning reaches the page: {toasts:?}"
+    );
+    assert!(snes.drain_toasts().is_empty());
+}
+
+#[wasm_bindgen_test]
+fn snes_web_says_super_scope_connected_once_before_the_load_message() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(
+        &titled(minimal_snes_rom(), b"METAL COMBAT         "),
+        "Metal Combat.sfc",
+    )
+    .expect("loads");
+    let toasts = toast_strings(snes.drain_toasts());
+    assert_eq!(toasts.len(), 2, "{toasts:?}");
+    assert_eq!(
+        toasts[0],
+        crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED
+    );
+    assert!(toasts[1].contains("Metal Combat.sfc"), "{toasts:?}");
+}

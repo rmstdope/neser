@@ -84,6 +84,9 @@ impl WasmGb {
     /// Drain any pending toast messages.
     #[wasm_bindgen]
     pub fn drain_toasts(&mut self) -> Vec<JsValue> {
+        // The page shows only what this returns, so the core's toasts are forwarded here too.
+        let core_toasts = self.gb.app_context().borrow_mut().take_toasts();
+        self.pending_toasts.extend(core_toasts);
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 

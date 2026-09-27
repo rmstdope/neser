@@ -88,6 +88,12 @@ impl WasmGba {
         while self.gba.get_sample().is_some() {}
     }
 
+    /// The console's own app context, where its core raises toasts.
+    #[cfg(all(test, target_arch = "wasm32"))]
+    pub(crate) fn core_app_context_for_test(&self) -> SharedAppContext {
+        self.gba.app_context().clone()
+    }
+
     #[cfg(all(test, target_arch = "wasm32"))]
     pub(crate) fn joypad_button_states_for_test(&self) -> u8 {
         self.gba.get_joypad_button_states(1)
@@ -148,6 +154,9 @@ impl WasmGba {
 
     #[wasm_bindgen]
     pub fn drain_toasts(&mut self) -> Vec<JsValue> {
+        // The page shows only what this returns, so the core's toasts are forwarded here too.
+        let core_toasts = self.gba.app_context().borrow_mut().take_toasts();
+        self.pending_toasts.extend(core_toasts);
         self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
