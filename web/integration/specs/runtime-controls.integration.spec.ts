@@ -177,8 +177,8 @@ test.describe("Phase 2 runtime controls", () => {
         expect(zoomedInBox).not.toBeNull();
         const zoomedInHeight = zoomedInBox!.height;
 
-        // Height should increase or stay the same (if at max)
-        expect(zoomedInHeight).toBeGreaterThanOrEqual(initialHeight);
+        // Both buttons were enabled, which promises a visible change: the probe found one.
+        expect(zoomedInHeight).toBeGreaterThan(initialHeight);
 
         // Click zoom out
         await clickCountingWrites(screenMinus, "Zoom -");
@@ -188,8 +188,7 @@ test.describe("Phase 2 runtime controls", () => {
         expect(zoomedOutBox).not.toBeNull();
         const zoomedOutHeight = zoomedOutBox!.height;
 
-        // Height should decrease or stay the same (depending on state)
-        expect(zoomedOutHeight).toBeLessThanOrEqual(zoomedInHeight);
+        expect(zoomedOutHeight).toBeLessThan(zoomedInHeight);
 
         // Verify controls are still functional (not disabled unexpectedly)
         // Note: buttons may be disabled if at min/max zoom, but not both at once

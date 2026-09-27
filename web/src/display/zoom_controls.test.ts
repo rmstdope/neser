@@ -120,7 +120,7 @@ const cssWidthFor = (height: number) => `${Math.round(height * ASPECT)}px`;
 
 /**
  * A windowed canvas as the page lays it out: `height: auto` and `max-width: 100%` of a container
- * `containerWidth` wide, so its displayed height follows its CSS width. Backing-store writes are
+ * `containerWidth` wide, so its displayed height is its CSS width at the backing store's ratio. Writes are
  * recorded, since each reallocates the GL drawing buffer.
  */
 function layoutCanvas(startHeight: number, containerWidth: number) {
@@ -130,8 +130,9 @@ function layoutCanvas(startHeight: number, containerWidth: number) {
         backingStoreWrites,
         style: { width: startWidth },
         get clientHeight() {
+            // `height: auto` takes the intrinsic ratio of the backing store.
             const displayedWidth = Math.min(parseFloat(this.style.width), containerWidth);
-            return Math.round(displayedWidth / ASPECT);
+            return Math.round(displayedWidth * this.height / this.width);
         },
         get width() { return Math.round(parseFloat(startWidth)); },
         set width(value: number) { backingStoreWrites.push(`width=${value}`); },
