@@ -187,11 +187,11 @@ pub(super) trait MemoryMap {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     /// Flat 32 KB ROM + 8 KB RAM cartridge, so the map can be read back.
-    struct FlatCart {
+    pub(in crate::gb::bus) struct FlatCart {
         rom: Vec<u8>,
         ram: [u8; 0x2000],
     }
@@ -213,29 +213,29 @@ mod tests {
     }
 
     /// The smallest bus on the shared map: two WRAM banks, one claimed register.
-    struct TestMap {
-        cart: FlatCart,
-        ppu: Ppu,
-        wram: [[u8; 0x1000]; 2],
-        hram: [u8; 0x7F],
-        timer: Timer,
-        apu: Apu,
-        joypad: Joypad,
-        if_reg: u8,
-        ie_reg: u8,
-        serial: Serial,
-        cgb_mode: bool,
-        dma_source: u8,
-        dma_oam_blocked: bool,
+    pub(in crate::gb::bus) struct TestMap {
+        pub(in crate::gb::bus) cart: FlatCart,
+        pub(in crate::gb::bus) ppu: Ppu,
+        pub(in crate::gb::bus) wram: [[u8; 0x1000]; 2],
+        pub(in crate::gb::bus) hram: [u8; 0x7F],
+        pub(in crate::gb::bus) timer: Timer,
+        pub(in crate::gb::bus) apu: Apu,
+        pub(in crate::gb::bus) joypad: Joypad,
+        pub(in crate::gb::bus) if_reg: u8,
+        pub(in crate::gb::bus) ie_reg: u8,
+        pub(in crate::gb::bus) serial: Serial,
+        pub(in crate::gb::bus) cgb_mode: bool,
+        pub(in crate::gb::bus) dma_source: u8,
+        pub(in crate::gb::bus) dma_oam_blocked: bool,
         /// The model's own register at `CLAIMED`.
-        claimed: u8,
-        dma_started_from: Option<u8>,
+        pub(in crate::gb::bus) claimed: u8,
+        pub(in crate::gb::bus) dma_started_from: Option<u8>,
     }
 
     const CLAIMED: u16 = 0xFF4D;
 
     impl TestMap {
-        fn new() -> Self {
+        pub(in crate::gb::bus) fn new() -> Self {
             let mut rom = vec![0u8; 0x8000];
             rom[0x0150] = 0x5A;
             let mut ppu = Ppu::new();

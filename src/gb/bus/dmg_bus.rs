@@ -2,11 +2,13 @@ use crate::gb::apu::Apu;
 use crate::gb::boot_rom::{DMG_BOOT_ROM, DMG0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
+use crate::gb::bus::oam_dma::OamDma;
 use crate::gb::bus::serial::Serial;
+use crate::gb::bus::tick_sequence::{TickParts, TickSequence};
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
-use crate::gb::ppu::{Ppu, StopDisplayMode, timing::PpuMode};
+use crate::gb::ppu::{Ppu, StopDisplayMode};
 use crate::gb::sgb::SgbState;
 use crate::gb::timer::Timer;
 
@@ -53,20 +55,8 @@ pub struct DmgBus {
     /// instead of the cartridge.  Writing any value to $FF50 sets this
     /// to `false` (mirrors real DMG hardware behaviour).
     boot_rom_active: bool,
-    /// Whether an OAM DMA transfer is currently in progress.
-    dma_active: bool,
-    /// High byte of the OAM DMA source address (written to $FF46).
-    dma_source: u8,
-    /// Current DMA position: 0 = warm-up, 1–160 = copying bytes 0–159,
-    /// 161 = teardown (sets `dma_active = false`).  Total: 162 M-cycles.
-    dma_position: u8,
-    /// Whether OAM access is currently blocked by an active DMA transfer.
-    ///
-    /// Separate from `dma_active` because OAM is still accessible during the
-    /// warm-up M-cycle (position 0).  Blocking begins at the first copy tick
-    /// (position 1 → 2) and is preserved when a DMA is restarted while one is
-    /// already running.
-    dma_oam_blocked: bool,
+    /// OAM DMA ($FF46).
+    oam_dma: OamDma,
     /// $FF01 SB, $FF02 SC and the internal-clock transfer (shared with CGB).
     serial: Serial,
     /// Hardware model variant (DMG-ABC or DMG-0).
@@ -78,15 +68,6 @@ pub struct DmgBus {
 }
 
 impl DmgBus {
-    fn needs_mode3_lcdc_write_phase(&self, addr: u16, val: u8) -> bool {
-        const LCDC_TILE_DATA: u8 = 0x10;
-
-        addr == 0xFF40
-            && self.ppu.is_lcd_enabled()
-            && self.ppu.mode() == PpuMode::PixelTransfer
-            && self.ppu.read_register(0xFF40) & LCDC_TILE_DATA != val & LCDC_TILE_DATA
-    }
-
     pub fn new(cart: Box<dyn GbCartridge>, model: DmgModel) -> Self {
         // The boot ROM and initial div_counter depend on the hardware variant.
         // Production (DMG-A/B/C) scroll-animation ROM: div_counter = 5036.
@@ -115,10 +96,7 @@ impl DmgBus {
             boot_rom,
             boot_rom_active: true,
             serial: Serial::new(),
-            dma_active: false,
-            dma_source: 0xFF,
-            dma_position: 0,
-            dma_oam_blocked: false,
+            oam_dma: OamDma::from_parts(false, 0xFF, 0, false),
             model,
             sgb: None,
         };
@@ -168,10 +146,7 @@ impl DmgBus {
         self.boot_rom = boot_rom;
         self.boot_rom_active = true;
         self.serial = Serial::new();
-        self.dma_active = false;
-        self.dma_source = 0xFF;
-        self.dma_position = 0;
-        self.dma_oam_blocked = false;
+        self.oam_dma = OamDma::from_parts(false, 0xFF, 0, false);
         if let Some(ref mut sgb) = self.sgb {
             *sgb = SgbState::default();
         }
@@ -198,100 +173,10 @@ impl DmgBus {
         }
     }
 
-    /// Advance system timers, PPU, and APU by `m_cycles` M-cycles.
-    ///
-    /// Propagates any timer interrupt to the IF register ($FF0F bit 2).
-    /// Propagates PPU VBlank (bit 0) and STAT (bit 1) interrupts.
-    /// Clocks the serial port off the DIV counter (see [`Serial::clock`]) and
-    /// raises IF bit 3 when a transfer completes.
-    ///
-    /// PPU interrupt propagation is **deferred by one tick**: interrupts
-    /// accumulated during the *previous* `tick()` call are propagated to IF
-    /// at the start of the current call, before the PPU advances.  This
-    /// models the real hardware behavior where the STAT interrupt line
-    /// update from one M-cycle is sampled by the interrupt controller on
-    /// the following M-cycle boundary.  Timer and serial IF updates remain
-    /// immediate (set during the same tick they occur in).
-    ///
-    /// The APU frame sequencer is clocked by DIV-APU falling edges from the
-    /// timer (bit 12 of the 16-bit internal counter = DIV bit 4).
+    /// Advance the bus by `m_cycles` M-cycles: see the shared sequence in
+    /// `tick_sequence.rs`.
     pub fn tick(&mut self, m_cycles: u8) {
-        self.tick_before_ppu(m_cycles);
-        self.ppu.tick_dots(u32::from(m_cycles) * 4);
-        self.tick_after_ppu(m_cycles);
-    }
-
-    fn tick_before_ppu(&mut self, m_cycles: u8) {
-        // Propagate PPU interrupts accumulated during the previous tick.
-        self.if_reg |= self.ppu.take_pending_interrupts();
-
-        for _ in 0..m_cycles {
-            let pre_counter = self.timer.raw_counter();
-            let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
-            if self.timer.interrupt_pending {
-                self.if_reg |= 0x04;
-                self.timer.interrupt_pending = false;
-            }
-
-            // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
-            for _ in 0..div_apu_rising {
-                self.apu.clock_div_apu_secondary();
-            }
-            // Falling edge steps the APU frame sequencer.
-            for _ in 0..div_apu_falling {
-                self.apu.clock_div_apu();
-            }
-
-            if self
-                .serial
-                .clock(pre_counter, self.timer.raw_counter(), false)
-            {
-                self.if_reg |= 0x08;
-            }
-
-            // OAM DMA: advance one M-cycle.
-            //
-            // Sequence: 1 warm-up tick (no copy) + 160 copy ticks (bytes 0–159)
-            // + 1 teardown tick = 162 DMA M-cycles total.
-            //
-            // OAM blocking (dma_oam_blocked) starts at the first COPY tick, not
-            // the warm-up.  tick() runs before each CPU memory access, so:
-            //   M=0: CPU writes $FF46 → dma_oam_blocked=false (fresh) or true (restart)
-            //   M=1: tick(warm-up) runs → dma_oam_blocked unchanged; CPU read/write
-            //        to OAM is accessible for a fresh DMA (blocked for a restart)
-            //   M=2: tick(copy) runs → dma_oam_blocked=true; OAM blocked
-            if self.dma_active {
-                match self.dma_position {
-                    0 => {
-                        // warm-up: bus is captured but no byte copied yet;
-                        // dma_oam_blocked is unchanged (false for fresh, true for restart)
-                        self.dma_position = 1;
-                    }
-                    1..=160 => {
-                        // Block OAM for the entire copy phase.
-                        self.dma_oam_blocked = true;
-                        let byte_idx = (self.dma_position - 1) as u16;
-                        let src = (self.dma_source as u16) << 8 | byte_idx;
-                        self.ppu.oam[byte_idx as usize] = self.read_raw(src);
-                        self.dma_position += 1;
-                    }
-                    161 => {
-                        // teardown: transfer complete, unblock OAM
-                        self.dma_active = false;
-                        self.dma_oam_blocked = false;
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-    }
-
-    fn tick_after_ppu(&mut self, m_cycles: u8) {
-        // PPU interrupts are now buffered in ppu.pending_interrupts and
-        // will be propagated to IF at the start of the NEXT tick() call.
-        self.apu.tick(m_cycles);
-        // Tick the cartridge (for MBC3 RTC)
-        self.cart.tick(u32::from(m_cycles));
+        TickSequence::tick(self, m_cycles);
     }
 
     /// Returns `true` when an audio sample is ready to be retrieved.
@@ -336,34 +221,8 @@ impl DmgBus {
         }
     }
 
-    fn dma_conflict_active(&self) -> bool {
-        self.dma_active && self.dma_oam_blocked && !matches!(self.dma_source, 0x80..=0x9F)
-    }
-
-    fn dma_conflict_byte(&self) -> u8 {
-        let byte_idx = self.dma_position.saturating_sub(2) as u16;
-        self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
-    }
-
     fn cartridge_header_logo(&self) -> [u8; 48] {
         std::array::from_fn(|index| self.cart.read(0x0104 + index as u16))
-    }
-
-    /// Begin a cycle-accurate OAM DMA transfer from `(val << 8)`.
-    ///
-    /// Sets the DMA state so that `tick()` copies one byte per M-cycle.
-    /// Total duration: 162 M-cycles (1 warm-up + 160 copy + 1 teardown).
-    ///
-    /// OAM blocking (`dma_oam_blocked`) is preserved when restarting an
-    /// in-progress DMA — the running transfer was already blocking OAM, so
-    /// the warm-up of the new transfer does not restore access.  For a fresh
-    /// start, blocking begins after the warm-up M-cycle.
-    fn do_oam_dma(&mut self, val: u8) {
-        let preserve_blocking = self.dma_active && self.dma_oam_blocked;
-        self.dma_active = true;
-        self.dma_source = val;
-        self.dma_position = 0;
-        self.dma_oam_blocked = preserve_blocking;
     }
 
     // ── Save-state capture / restore ───────────────────────────────────────
@@ -373,6 +232,7 @@ impl DmgBus {
         use crate::gb::console::save_state::{BusState, GbBusType};
         let mut wram_padded = [0u8; 0x8000];
         wram_padded[..0x2000].copy_from_slice(&self.wram);
+        let (dma_active, dma_source, dma_position, dma_oam_blocked) = self.oam_dma.parts();
         let mut state = BusState {
             bus_type: GbBusType::Dmg,
             ppu: self.ppu.clone(),
@@ -383,10 +243,10 @@ impl DmgBus {
             apu: self.apu.clone(),
             if_reg: self.if_reg,
             ie_reg: self.ie_reg,
-            dma_active: self.dma_active,
-            dma_source: self.dma_source,
-            dma_position: self.dma_position,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_active,
+            dma_source,
+            dma_position,
+            dma_oam_blocked,
             hdma: None,
             svbk: None,
             key1: None,
@@ -435,10 +295,12 @@ impl DmgBus {
         self.apu = state.apu.clone();
         self.if_reg = state.if_reg;
         self.ie_reg = state.ie_reg;
-        self.dma_active = state.dma_active;
-        self.dma_source = state.dma_source;
-        self.dma_position = state.dma_position;
-        self.dma_oam_blocked = state.dma_oam_blocked;
+        self.oam_dma = OamDma::from_parts(
+            state.dma_active,
+            state.dma_source,
+            state.dma_position,
+            state.dma_oam_blocked,
+        );
         if let Some(active) = state.boot_rom_active {
             self.boot_rom_active = active;
         }
@@ -498,8 +360,8 @@ impl MemoryMap for DmgBus {
             ie_reg: self.ie_reg,
             serial: &self.serial,
             cgb_mode: false,
-            dma_source: self.dma_source,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_source: self.oam_dma.source(),
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -519,7 +381,7 @@ impl MemoryMap for DmgBus {
             if_reg: &mut self.if_reg,
             ie_reg: &mut self.ie_reg,
             serial: &mut self.serial,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -538,7 +400,7 @@ impl MemoryMap for DmgBus {
 
     fn model_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
-            0xFEA0..=0xFEFF if self.dma_oam_blocked => Some(0xFF),
+            0xFEA0..=0xFEFF if self.oam_dma.blocks_oam() => Some(0xFF),
             0xFEA0..=0xFEFF => Some(self.ppu.read_forbidden_zone()),
             _ => self.model_peek(addr),
         }
@@ -569,7 +431,41 @@ impl MemoryMap for DmgBus {
     }
 
     fn start_oam_dma(&mut self, val: u8) {
-        self.do_oam_dma(val);
+        self.oam_dma.start(val);
+    }
+}
+
+impl TickSequence for DmgBus {
+    fn tick_parts(&mut self) -> TickParts<'_> {
+        TickParts {
+            ppu: &mut self.ppu,
+            timer: &mut self.timer,
+            apu: &mut self.apu,
+            if_reg: &mut self.if_reg,
+            serial: &mut self.serial,
+            oam_dma: &mut self.oam_dma,
+        }
+    }
+
+    fn oam_dma(&self) -> &OamDma {
+        &self.oam_dma
+    }
+
+    fn dma_read(&self, addr: u16) -> u8 {
+        self.read_raw(addr)
+    }
+
+    /// While a DMA from anywhere but VRAM copies, the CPU sees only HRAM and `$FF46`.
+    fn dma_conflicts_with(&self, addr: u16) -> bool {
+        self.oam_dma.holds_bus()
+            && !matches!(self.oam_dma.source(), 0x80..=0x9F)
+            && !matches!(addr, 0xFF46 | 0xFF80..=0xFFFE)
+    }
+
+    fn tick_after_ppu(&mut self, m_cycles: u8) {
+        self.apu.tick(m_cycles);
+        // The cartridge clock (MBC3 RTC).
+        self.cart.tick(u32::from(m_cycles));
     }
 }
 
@@ -587,30 +483,15 @@ impl GbBus for DmgBus {
     }
 
     fn tick(&mut self, m_cycles: u8) {
-        DmgBus::tick(self, m_cycles);
+        TickSequence::tick(self, m_cycles);
     }
 
     fn write_cpu_m_cycle(&mut self, addr: u16, val: u8) {
-        if self.needs_mode3_lcdc_write_phase(addr, val) {
-            self.tick_before_ppu(1);
-            self.ppu.tick_dots(3);
-            self.write(addr, val);
-            self.ppu.tick_dots(1);
-            self.tick_after_ppu(1);
-        } else {
-            self.tick(1);
-            if !self.dma_conflict_active() || matches!(addr, 0xFF46 | 0xFF80..=0xFFFE) {
-                self.write(addr, val);
-            }
-        }
+        self.cpu_write_m_cycle(addr, val);
     }
 
     fn read_cpu_m_cycle(&mut self, addr: u16) -> u8 {
-        if self.dma_conflict_active() && !matches!(addr, 0xFF46 | 0xFF80..=0xFFFE) {
-            self.dma_conflict_byte()
-        } else {
-            self.read(addr)
-        }
+        self.cpu_read_m_cycle(addr)
     }
 
     fn enter_stop_mode(&mut self) {
@@ -679,6 +560,7 @@ impl GbBus for DmgBus {
 mod tests {
     use super::*;
     use crate::gb::cartridge::load_cartridge;
+    use crate::gb::ppu::timing::PpuMode;
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -954,7 +836,7 @@ mod tests {
         // Then: returns $FF
         let mut bus = make_bus();
         tick_to_vblank(&mut bus);
-        bus.dma_oam_blocked = true;
+        bus.oam_dma = OamDma::from_parts(false, 0xFF, 0, true);
         assert_eq!(
             bus.read(0xFEA0),
             0xFF,
@@ -1899,9 +1781,15 @@ mod tests {
         let mut bus = make_bus();
         start_dma_from_wram(&mut bus);
         bus.tick(161);
-        assert!(bus.dma_active, "DMA must still be active after 161 ticks");
+        assert!(
+            bus.oam_dma.parts().0,
+            "DMA must still be active after 161 ticks"
+        );
         bus.tick(1); // 162nd tick — teardown
-        assert!(!bus.dma_active, "DMA must be inactive after 162 ticks");
+        assert!(
+            !bus.oam_dma.parts().0,
+            "DMA must be inactive after 162 ticks"
+        );
         // OAM is now accessible and contains the transferred data.
         assert_ne!(
             bus.read(0xFE00),
