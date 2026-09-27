@@ -132,9 +132,10 @@ canvas {
 
 .neser-toast-container {
   position: absolute;
-  left: 50%;
+  /* Span the picture, so a message wraps inside it however narrow the window. */
+  left: 12px;
+  right: 12px;
   bottom: 28px;
-  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -144,7 +145,8 @@ canvas {
 }
 
 .neser-toast {
-  max-width: min(420px, calc(100vw - 32px));
+  max-width: min(420px, 100%);
+  box-sizing: border-box;
   padding: 8px 12px;
   border-radius: 8px;
   background: rgba(10, 11, 15, 0.96);

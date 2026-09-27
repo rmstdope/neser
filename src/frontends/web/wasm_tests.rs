@@ -1380,6 +1380,63 @@ fn dsp1_rom_without_firmware_errors_and_loads_once_supplied() {
 }
 
 #[wasm_bindgen_test]
+fn a_super_scope_game_loads_with_the_scope_on_port2_and_says_so() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(
+        &titled(minimal_snes_rom(), b"METAL COMBAT         "),
+        "Metal Combat - Falcon's Revenge (Europe).sfc",
+    )
+    .expect("loads");
+    assert!(snes.has_superscope_on_port(2));
+    assert!(!snes.has_superscope_on_port(1));
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .iter()
+        .filter_map(|t| t.as_string())
+        .collect();
+    assert!(
+        toasts
+            .iter()
+            .any(|t| t == "Super Scope connected — click to aim with the mouse"),
+        "connected message queued: {toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+fn toggle_superscope_turbo_reports_the_new_switch_position() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(
+        &titled(minimal_snes_rom(), b"METAL COMBAT         "),
+        "mc.sfc",
+    )
+    .expect("loads");
+    assert_eq!(
+        snes.toggle_superscope_turbo(1),
+        None,
+        "port 1 is a controller"
+    );
+    assert_eq!(snes.toggle_superscope_turbo(2), Some(true));
+    assert_eq!(snes.toggle_superscope_turbo(2), Some(false));
+}
+
+#[wasm_bindgen_test]
+fn other_games_load_without_the_scope() {
+    let mut snes = WasmSnes::new();
+    snes.load_rom(&minimal_snes_rom(), "other.sfc")
+        .expect("loads");
+    assert!(!snes.has_superscope());
+    let toasts: Vec<String> = snes
+        .drain_toasts()
+        .iter()
+        .filter_map(|t| t.as_string())
+        .collect();
+    assert!(
+        !toasts.iter().any(|t| t.contains("Super Scope")),
+        "{toasts:?}"
+    );
+}
+
+#[wasm_bindgen_test]
 fn wasm_snes_constructs() {
     let _snes = WasmSnes::new();
 }

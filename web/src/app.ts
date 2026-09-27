@@ -67,7 +67,12 @@ import {
     computeShortcutHelpFontSizePx,
     toggleShortcutHelpVisibility
 } from "./shortcuts/shortcut_help";
-import { createCrosshair } from "./display/crosshair";
+import { createCrosshair, type CrosshairStyle } from "./display/crosshair";
+import {
+    createSuperScopeSession,
+    superScopeKeyAction,
+    superScopeTurboMessage,
+} from "./input/super_scope";
 import { computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./display/canvas_size";
 import {
     findNextVisibleZoomHeight,
@@ -336,7 +341,10 @@ let webglInitialized = false; // Track WebGL initialization state
 let idleScrollerActive = false;
 let idleScroller: { renderFrame: (ts: number) => Uint8Array } | null = null;
 let idleScrollerStartTime = 0;
-let crosshair: ReturnType<typeof createCrosshair> | null = null; // Crosshair overlay for Zapper
+let crosshair: ReturnType<typeof createCrosshair> | null = null; // Light-gun sight overlay
+let crosshairStyle: CrosshairStyle = "plus";
+// Capture state for playing a Super Scope game with the mouse; fresh for every game load.
+let superScopeSession = createSuperScopeSession();
 let windowFocused = true;
 let pointerReleasedByEscape = false;
 let lockedPointerX = 0;
@@ -1438,6 +1446,11 @@ async function start(): Promise<boolean> {
         }
 
         emulator!.inst.load_rom(romBytes, romName);
+        superScopeSession = createSuperScopeSession();
+        if (superScopePort() !== null && document.pointerLockElement === canvas) {
+            // Choosing the game asked for the lock; a scope is captured only by a click.
+            document.exitPointerLock?.();
+        }
         syncGbPaletteWithFilter(true);
         drainNesToasts(emulator?.inst ?? null, toastOverlay);
 
@@ -2728,6 +2741,38 @@ function isEditableKeyboardTarget(target: EventTarget | null) {
     return target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
+/** The 1-based port the Super Scope is plugged into, or null when none is. */
+function superScopePort(): number | null {
+    if (emulator?.kind !== "snes") {
+        return null;
+    }
+    const snesInst = emulator.inst;
+    return [1, 2].find((port) => snesInst.has_superscope_on_port(port)) ?? null;
+}
+
+/**
+ * With a Super Scope connected the Select key (4) flips its Turbo switch and the Start key
+ * (5) is its Pause button; neither then reaches port 1, so one press never pauses twice.
+ * Returns true when the key was the scope's.
+ */
+function handleSuperScopeKey(event: KeyboardEvent, pressed: boolean): boolean {
+    const port = superScopePort();
+    const action = superScopeKeyAction(event.key.toLowerCase());
+    if (emulator?.kind !== "snes" || port === null || action === null) {
+        return false;
+    }
+    event.preventDefault();
+    if (action === "pause") {
+        emulator.inst.set_superscope_pause(port, pressed);
+    } else if (pressed && !event.repeat) {
+        const on = emulator.inst.toggle_superscope_turbo(port);
+        if (on !== undefined) {
+            toastOverlay.show(superScopeTurboMessage(on));
+        }
+    }
+    return true;
+}
+
 async function handleKeyDown(event: KeyboardEvent) {
     if (isEditableKeyboardTarget(event.target)) {
         return;
@@ -2769,6 +2814,10 @@ async function handleKeyDown(event: KeyboardEvent) {
         return;
     }
 
+    if (handleSuperScopeKey(event, true)) {
+        return;
+    }
+
     const key = event.key.toLowerCase();
     const targets = getKeyboardControllerTarget(
         connectedGamepads.length,
@@ -2799,6 +2848,10 @@ function handleKeyUp(event: KeyboardEvent) {
             event.preventDefault();
             emulator.inst.set_button(1, button, false);
         }
+        return;
+    }
+
+    if (handleSuperScopeKey(event, false)) {
         return;
     }
 
@@ -2857,15 +2910,16 @@ function handleMouseMotion(event: MouseEvent) {
                 }
             }
         }
-        if (isSnesSuperScopeActive(snesInst)) {
-            // Super Scope uses absolute canvas position.
-            const x = event.clientX - rect.left;
-            const y = event.clientY - rect.top;
-            for (const port of [1, 2]) {
-                if (snesInst.has_superscope_on_port(port)) {
-                    applySnesSuperScopePosition(snesInst, port, x, y, rect.width, rect.height);
-                }
-            }
+        const scopePort = superScopePort();
+        if (scopePort !== null && superScopeSession.captured()) {
+            // Aim by the locked pointer's movement: under pointer lock clientX/Y stay put.
+            const { x, y } = superScopeSession.move(
+                event.movementX,
+                event.movementY,
+                rect.width,
+                rect.height,
+            );
+            applySnesSuperScopePosition(snesInst, scopePort, x, y, rect.width, rect.height);
             if (crosshair && crosshair.visible) {
                 crosshair.updatePosition(x, y);
             }
@@ -2933,10 +2987,15 @@ function isMouseControllerActive(nesInstance: WasmNes | null) {
     );
 }
 
-function setCrosshairVisible(visible: boolean) {
+function setCrosshairVisible(visible: boolean, style: CrosshairStyle = "plus") {
     if (visible) {
+        if (crosshair && crosshairStyle !== style) {
+            crosshair.destroy();
+            crosshair = null;
+        }
         if (!crosshair) {
-            crosshair = createCrosshair(canvas);
+            crosshair = createCrosshair(canvas, { style });
+            crosshairStyle = style;
         }
         crosshair.show();
         return;
@@ -2953,8 +3012,14 @@ function updateMouseCursorState() {
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
         if (isSnesSuperScopeActive(snesInst)) {
-            setCrosshairVisible(true);
-            document.body.style.cursor = "none";
+            // The sight and the hidden pointer belong to a captured mouse only.
+            const captured = superScopeSession.captured();
+            setCrosshairVisible(captured, "ring");
+            if (captured && crosshair) {
+                const { x, y } = superScopeSession.position();
+                crosshair.updatePosition(x, y);
+            }
+            document.body.style.cursor = captured ? "none" : "";
         } else if (isSnesMouseActive(snesInst)) {
             setCrosshairVisible(false);
             document.body.style.cursor = "none";
@@ -3037,6 +3102,23 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
 
 window.addEventListener("mousemove", handleMouseMotion);
 canvas.addEventListener("mousedown", (event) => {
+    const scopePort = superScopePort();
+    if (emulator?.kind === "snes" && scopePort !== null) {
+        const rect = canvas.getBoundingClientRect();
+        const locked = document.pointerLockElement === canvas;
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const { requestLock, forward } = superScopeSession.mouseDown(event.button, locked, x, y);
+        if (requestLock) {
+            requestPointerLockFromUserGesture();
+        }
+        if (forward) {
+            const aim = superScopeSession.position();
+            applySnesSuperScopePosition(emulator.inst, scopePort, aim.x, aim.y, rect.width, rect.height);
+            applySnesSuperScopeButton(emulator.inst, scopePort, event.button, true);
+        }
+        return;
+    }
     pointerReleasedByEscape = false;
     requestPointerLockFromUserGesture();
     updateMouseCursorState();
@@ -3050,9 +3132,25 @@ window.addEventListener("focus", () => {
 window.addEventListener("blur", () => {
     windowFocused = false;
     pointerReleasedByEscape = true;
+    if (superScopePort() !== null && document.pointerLockElement === canvas) {
+        // Losing focus is treated like Escape; the lock change says so.
+        document.exitPointerLock?.();
+    }
     updateMouseCursorState();
 });
 document.addEventListener("pointerlockchange", () => {
+    if (superScopePort() !== null) {
+        const locked = document.pointerLockElement === canvas;
+        const { toast, release } = superScopeSession.lockChanged(locked);
+        if (release) {
+            document.exitPointerLock?.();
+        }
+        if (toast) {
+            toastOverlay.show(toast);
+        }
+        updateMouseCursorState();
+        return;
+    }
     if (document.pointerLockElement === canvas) {
         const rect = canvas.getBoundingClientRect();
         lockedPointerX = rect.width * 0.5;
