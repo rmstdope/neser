@@ -35,6 +35,7 @@ pub struct NesEventMapper {
 
 impl NesEventMapper {
     const SNAPSHOT_SIZE: usize = 5;
+    const IRQ_COUNTER_IDX: usize = 3;
     const CHR_BANK_MASK: u8 = 0x1F;
     const MMC1_WRITE_COMPLETE_COUNT: u8 = 4;
     const MMC1_CHR_BANK0_REGISTER_ADDR: u16 = 0xA000;
@@ -340,7 +341,7 @@ mod tests {
         write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
         mapper.reset();
         assert_eq!(
-            mapper.registers_snapshot()[2] & 0x10,
+            mapper.registers_snapshot()[NesEventMapper::SNAPSHOT_SIZE + 3] & 0x10,
             0x10,
             "reset re-forces the timer bit"
         );
@@ -386,13 +387,6 @@ mod tests {
     }
 
     #[test]
-    fn mapper_105_prg_bank_switching_matches_mmc1_mode_3_at_8000_bfff() {
-        let mut mapper = make_mapper();
-        write_mmc1_register(mapper.as_mut(), 0xE000, 5);
-        assert_eq!(mapper.read_prg(0x8000), 5);
-    }
-
-    #[test]
     fn mapper_105_mirroring_modes_are_selectable_via_control_register() {
         let mut mapper = make_mapper();
 
@@ -409,77 +403,180 @@ mod tests {
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
+    /// The two 16 KiB banks mapped at $8000 and $C000, read through `banked_data`,
+    /// whose every byte is its own 16 KiB bank number.
+    fn prg_banks(mapper: &dyn Mapper) -> (u8, u8) {
+        (mapper.read_prg(0x8000), mapper.read_prg(0xC000))
+    }
+
+    /// nesdev NES-EVENT: "The first 32 KiB is hardwired until the timer is started
+    /// (write 0 then 1 to bit 4) for the first time."
+    fn unlock<M: Mapper + ?Sized>(mapper: &mut M) {
+        write_mmc1_register(mapper, 0xA000, 0b00000);
+        write_mmc1_register(mapper, 0xA000, 0b10000);
+    }
+
     #[test]
-    fn mapper_105_irq_fires_after_configured_cycle_count() {
-        let mut mapper = make_mapper();
+    fn nes_event_power_on_maps_first_32k_of_first_chip() {
+        let mapper = nes_event_board();
+        assert_eq!(prg_banks(mapper.as_ref()), (0, 1));
+    }
 
-        // Timer is armed on the final serial commit write; pre-commit cpu cycles
-        // in write_mmc1_register() do not consume the new countdown value.
-        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00011);
-        assert!(!mapper.irq_pending());
+    #[test]
+    fn nes_event_stays_locked_until_timer_bit_goes_0_then_1() {
+        let mut mapper = nes_event_board();
+        // $E000 and $8000 writes that would bank a plain MMC1 change nothing.
+        write_mmc1_register(mapper.as_mut(), 0xE000, 0b00101);
+        write_mmc1_register(mapper.as_mut(), 0x8000, 0b01100);
+        assert_eq!(prg_banks(mapper.as_ref()), (0, 1), "locked at power-on");
 
-        mapper.cpu_cycle();
-        mapper.cpu_cycle();
-        assert!(
-            !mapper.irq_pending(),
-            "IRQ should not fire before countdown"
-        );
+        // O=0, bank 2, with the timer bit still at its power-on 1.
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10100);
+        assert_eq!(prg_banks(mapper.as_ref()), (0, 1), "I never went to 0");
 
-        mapper.cpu_cycle();
-        assert!(
-            mapper.irq_pending(),
-            "IRQ should fire when countdown reaches zero"
-        );
+        // O=0, bank 2, timer running: I has gone to 0 but not back to 1.
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00100);
+        assert_eq!(prg_banks(mapper.as_ref()), (0, 1), "I went to 0 only");
 
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10100);
+        assert_eq!(prg_banks(mapper.as_ref()), (4, 5), "unlocked after 0 then 1");
+
+        // Once unlocked it stays unlocked whatever I does.
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00110);
+        assert_eq!(prg_banks(mapper.as_ref()), (6, 7));
+    }
+
+    #[test]
+    fn nes_event_unlocked_o0_selects_32k_from_first_chip() {
+        // nesdev: $A000 bits 1-2 "Select 32 KiB bank in $8000-$FFFF from lower 128KB ROM".
+        let mut mapper = nes_event_board();
+        unlock(mapper.as_mut());
+        for bank in 0..4u8 {
+            write_mmc1_register(mapper.as_mut(), 0xA000, 0b10000 | (bank << 1));
+            assert_eq!(prg_banks(mapper.as_ref()), (bank * 2, bank * 2 + 1));
+        }
+        // Bit 0 is "Not used": it must not move the PRG bank.
         write_mmc1_register(mapper.as_mut(), 0xA000, 0b10011);
-        assert!(
-            !mapper.irq_pending(),
-            "setting timer control bit must clear pending IRQ"
-        );
+        assert_eq!(prg_banks(mapper.as_ref()), (2, 3));
     }
 
     #[test]
-    fn mapper_105_timer_bit4_toggle_and_zero_reload_behavior() {
-        let mut mapper = make_mapper();
+    fn nes_event_unlocked_o1_uses_mmc1_modes_in_second_chip() {
+        // nesdev: with bit 3 set, "Normal MMC1 behavior from upper 128KB ROM".
+        let mut mapper = nes_event_board();
+        unlock(mapper.as_mut());
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b11000);
+        write_mmc1_register(mapper.as_mut(), 0xE000, 0b00101);
 
-        // Reload value 0 must still produce a 1-cycle timer when bit4 is clear.
-        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
-        assert!(!mapper.irq_pending());
+        write_mmc1_register(mapper.as_mut(), 0x8000, 0b01100); // mode 3
+        assert_eq!(prg_banks(mapper.as_ref()), (13, 15), "switch $8000, fix last");
+
+        write_mmc1_register(mapper.as_mut(), 0x8000, 0b01000); // mode 2
+        assert_eq!(prg_banks(mapper.as_ref()), (8, 13), "fix first, switch $C000");
+
+        write_mmc1_register(mapper.as_mut(), 0x8000, 0b00000); // mode 0: 32 KiB
+        assert_eq!(prg_banks(mapper.as_ref()), (12, 13), "32 KiB ignores bit 0");
+    }
+
+    #[test]
+    fn nes_event_reset_relocks_prg() {
+        // Disch's notes on nesdev: "On powerup and reset, the first 32k of PRG (from
+        // the first PRG chip) is selected at $8000 *no matter what*."
+        let mut mapper = nes_event_board();
+        unlock(mapper.as_mut());
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10110);
+        assert_eq!(prg_banks(mapper.as_ref()), (6, 7));
+
+        mapper.reset();
+        assert_eq!(prg_banks(mapper.as_ref()), (0, 1), "reset locks again");
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10110);
+        assert_eq!(prg_banks(mapper.as_ref()), (0, 1), "and needs 0 then 1 again");
+    }
+
+    #[test]
+    fn nes_event_chr_ram_is_not_banked() {
+        // nesdev: $A000 bit 0 "Not used"; the board has one fixed 8 KiB of CHR-RAM.
+        let mut mapper = nes_event_board();
+        mapper.write_chr(0x0000, 0xAB);
+        mapper.write_chr(0x1000, 0xCD);
+        write_mmc1_register(mapper.as_mut(), 0x8000, 0b11100); // 4 KiB CHR mode
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10001);
+        write_mmc1_register(mapper.as_mut(), 0xC000, 0b00000);
+        assert_eq!(mapper.read_chr(0x0000), 0xAB);
+        assert_eq!(mapper.read_chr(0x1000), 0xCD);
+    }
+
+    /// nesdev NES-EVENT: the counter fires "when it reaches a high enough value"; with
+    /// every DIP switch open (Disch's notes) that value is $20000000.
+    const IRQ_THRESHOLD_ALL_DIPS_OPEN: u32 = 0x2000_0000;
+
+    /// Puts the 30-bit counter at `value` through a snapshot round trip, so the test
+    /// does not have to run half a billion cycles.
+    fn set_irq_counter(mapper: &mut dyn Mapper, value: u32) {
+        let mut regs = mapper.registers_snapshot();
+        regs[NesEventMapper::IRQ_COUNTER_IDX..NesEventMapper::IRQ_COUNTER_IDX + 4]
+            .copy_from_slice(&value.to_le_bytes());
+        mapper.restore_registers(&regs);
+    }
+
+    #[test]
+    fn nes_event_irq_fires_when_counter_reaches_threshold() {
+        let mut mapper = nes_event_board();
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000); // run timer
+        set_irq_counter(mapper.as_mut(), IRQ_THRESHOLD_ALL_DIPS_OPEN - 2);
+
         mapper.cpu_cycle();
-        assert!(
-            mapper.irq_pending(),
-            "reload 0 should be treated as 1 cycle"
-        );
+        assert!(!mapper.irq_pending(), "one cycle short of the threshold");
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending(), "fires on reaching $20000000");
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending(), "stays pending until acknowledged");
 
-        // Bit4 set should disable timer and clear pending IRQ.
         write_mmc1_register(mapper.as_mut(), 0xA000, 0b10000);
-        assert!(!mapper.irq_pending());
-        mapper.cpu_cycle();
-        assert!(
-            !mapper.irq_pending(),
-            "timer should remain disabled while bit4 is set"
-        );
+        assert!(!mapper.irq_pending(), "setting the timer bit acknowledges");
     }
 
     #[test]
-    fn mapper_105_rewriting_same_chr_bank0_value_rearms_and_clears_irq() {
-        let mut mapper = make_mapper();
+    fn nes_event_timer_does_not_fire_early() {
+        // The old model fired within 16 cycles; a real run takes five minutes.
+        let mut mapper = nes_event_board();
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
+        for _ in 0..100_000 {
+            mapper.cpu_cycle();
+        }
+        assert!(!mapper.irq_pending());
+    }
 
-        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00001);
-        mapper.cpu_cycle();
-        assert!(mapper.irq_pending(), "initial timer arm should fire IRQ");
+    #[test]
+    fn nes_event_timer_bit_set_holds_counter_at_zero() {
+        // Disch's notes: "When set, the IRQ counter is reset to 0 and stays there".
+        let mut mapper = nes_event_board();
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
+        set_irq_counter(mapper.as_mut(), IRQ_THRESHOLD_ALL_DIPS_OPEN - 1);
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b10000);
+        for _ in 0..10 {
+            mapper.cpu_cycle();
+        }
+        assert!(!mapper.irq_pending(), "held while the bit is set");
 
-        // Rewriting the same committed value should re-apply timer control,
-        // clearing pending IRQ and re-arming the countdown.
-        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00001);
-        assert!(
-            !mapper.irq_pending(),
-            "same-value rewrite must clear pending IRQ and restart timer"
-        );
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00000);
         mapper.cpu_cycle();
-        assert!(
-            mapper.irq_pending(),
-            "re-armed timer should fire again after configured countdown"
-        );
+        assert!(!mapper.irq_pending(), "restarted from 0, not from where it was");
+    }
+
+    #[test]
+    fn nes_event_snapshot_round_trips_unlock_and_counter() {
+        let mut mapper = nes_event_board();
+        unlock(mapper.as_mut());
+        write_mmc1_register(mapper.as_mut(), 0xA000, 0b00110); // bank 3, timer running
+        for _ in 0..1234 {
+            mapper.cpu_cycle();
+        }
+        let saved = mapper.registers_snapshot();
+
+        let mut restored = nes_event_board();
+        restored.restore_registers(&saved);
+        assert_eq!(prg_banks(restored.as_ref()), (6, 7), "unlock and bank restored");
+        assert_eq!(restored.registers_snapshot(), saved, "counter restored");
     }
 }
