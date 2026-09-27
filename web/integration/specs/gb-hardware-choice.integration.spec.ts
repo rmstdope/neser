@@ -79,7 +79,21 @@ test.describe("Game Boy games run on", () => {
         await page.locator("#reset").click();
         await expect(note).toBeHidden();
         await expect(colors).toBeHidden();
-        await expect(palette).toHaveText("Palette: Grey");
+        // Under the Game Boy screen filter (on for Game Boy games), as when the game starts on the Game Boy.
+        await expect(page.locator("#filter-toggle")).toHaveText("Filter: Game Boy");
+        await expect(palette).toHaveText("Palette: DMG Green");
+
+        // The hard reset (Ctrl+Shift+R) applies the choice too.
+        await choice.selectOption("cgb");
+        await expect(note).toBeVisible();
+        await choice.evaluate((el) => (el as HTMLElement).blur());
+        await page.keyboard.press("Control+Shift+KeyR");
+        await expect(note).toBeHidden();
+        await expect(colors).toBeVisible();
+        await expect(palette).toHaveText(/^Palette: Auto \(/);
+        await choice.selectOption("dmg");
+        await page.locator("#reset").click();
+        await expect(colors).toBeHidden();
 
         // Loading another original Game Boy game after a change starts it on the chosen console.
         await choice.selectOption("cgb");

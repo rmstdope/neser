@@ -845,6 +845,11 @@ impl CgbBus {
         self.apu.set_sample_rate(rate);
     }
 
+    /// The APU output sample rate in Hz.
+    pub fn audio_sample_rate(&self) -> f32 {
+        self.apu.sample_rate()
+    }
+
     /// Hard reset: rebuild the bus exactly as [`CgbBus::new`] would.
     ///
     /// The constructor is the one place that knows initial state, so a reset

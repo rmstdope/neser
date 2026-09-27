@@ -121,6 +121,13 @@ impl GbConsole {
         }
     }
 
+    fn audio_sample_rate(&self) -> f32 {
+        match self {
+            Self::Dmg(gb) => gb.cpu.bus.audio_sample_rate(),
+            Self::Cgb(gb) => gb.cpu.bus.audio_sample_rate(),
+        }
+    }
+
     fn has_battery(&self) -> bool {
         match self {
             Self::Dmg(gb) => gb.cpu.bus.has_battery(),
@@ -298,19 +305,28 @@ impl GameBoy {
     }
 
     /// Powers the loaded game on again on the other bus, as when a cartridge
-    /// moves to another console: the battery RAM and the palette chosen for
-    /// each console stay.
+    /// moves to another console: the battery RAM and the frontend's audio
+    /// sample rate stay, and the palettes start as when the game starts on
+    /// that console (under the LCD filter too).
     fn power_on_on(&mut self, use_cgb_bus: bool) {
         let Some(cart) = self.rom.as_deref().and_then(|rom| load_cartridge(rom).ok()) else {
             return;
         };
-        let cart_ram = self.gb.as_ref().map(GbConsole::cart_ram_snapshot);
+        let carried = self
+            .gb
+            .as_ref()
+            .map(|gb| (gb.cart_ram_snapshot(), gb.audio_sample_rate()));
         let mut console = self.build_console(cart, use_cgb_bus);
-        if let Some(ram) = cart_ram {
+        if let Some((ram, sample_rate)) = carried {
             console.restore_cart_ram(&ram);
+            console.set_audio_sample_rate(sample_rate);
         }
         self.gb = Some(console);
-        self.apply_palette();
+        // The palettes start as when the game starts on this console.
+        let config = self.app_context.borrow().config().gb.clone();
+        self.palette = config.palette.unwrap_or_default();
+        self.gbc_palette = config.gbc_palette;
+        self.start_lcd_filter(self.lcd_filter_active);
         self.apply_gbc_palette();
     }
 
@@ -1594,19 +1610,62 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_that_switches_console_keeps_each_consoles_palette() {
+    fn test_reset_that_switches_console_keeps_the_audio_sample_rate() {
+        let mut gb = loaded(make_gameboy(), &minimal_rom());
+        gb.set_audio_sample_rate(48_000.0);
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        gb.reset(true);
+        assert!(gb.is_cgb_mode());
+        assert_eq!(gb.gb.as_ref().unwrap().audio_sample_rate(), 48_000.0);
+        choose_hardware(&gb, None);
+        gb.reset(true);
+        assert_eq!(gb.gb.as_ref().unwrap().audio_sample_rate(), 48_000.0);
+    }
+
+    #[test]
+    fn test_reset_that_switches_console_starts_from_that_consoles_starting_palette() {
         let mut gb = loaded(make_gameboy(), &minimal_rom());
         gb.cycle_palette(); // DMG Green
         choose_hardware(&gb, Some(GbHardware::Cgb));
         gb.reset(true);
+        assert_eq!(gb.gbc_palette(), GbcPalette::Auto);
         gb.cycle_gbc_palette(); // Brown
         choose_hardware(&gb, None);
         gb.reset(true);
-        assert_eq!(gb.palette(), GbPalette::DmgGreen);
-        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::DmgGreen.shades()));
+        assert_eq!(gb.palette(), GbPalette::Grey, "as when the game starts");
+        assert_eq!(gb.drawn_dmg_shades(), Some(GbPalette::Grey.shades()));
         choose_hardware(&gb, Some(GbHardware::Cgb));
         gb.reset(true);
-        assert_eq!(gb.drawn_compat_bg0(), Some(bg0_of(GbcPalette::Brown)));
+        assert_eq!(gb.gbc_palette(), GbcPalette::Auto);
+    }
+
+    #[test]
+    fn test_reset_onto_game_boy_under_the_lcd_filter_starts_in_dmg_green() {
+        let mut gb = loaded(make_gameboy_with_hardware(GbHardware::Cgb), &minimal_rom());
+        gb.start_lcd_filter(true);
+        assert_eq!(gb.palette(), GbPalette::Grey, "no shade palette on the GBC");
+        choose_hardware(&gb, None);
+        gb.reset(true);
+        assert_eq!(gb.palette(), GbPalette::DmgGreen, "as when the game starts");
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            GbPalette::DmgGreen.lcd_filter_colors()
+        );
+        choose_hardware(&gb, Some(GbHardware::Cgb));
+        gb.reset(true);
+        assert_eq!(
+            gb.lcd_filter_colors(),
+            crate::gb::ppu::dmg_palette::CLASSIC_LCD_FILTER_COLORS,
+            "the filter on the GBC as for colour games"
+        );
+    }
+
+    #[test]
+    fn test_reset_on_the_same_console_keeps_the_palette() {
+        let mut gb = loaded(make_gameboy(), &minimal_rom());
+        gb.cycle_palette(); // DMG Green
+        gb.reset(true);
+        assert_eq!(gb.palette(), GbPalette::DmgGreen);
     }
 
     #[test]
