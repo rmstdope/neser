@@ -127,7 +127,9 @@ chooses one of the twelve tints a real Game Boy Color offers through button
 combinations at start-up instead: `brown`, `red`, `dark-brown`, `blue`,
 `dark-blue`, `grayscale`, `pastel-mix`, `orange`, `yellow`, `green`,
 `dark-green` and `reverse`. F8 cycles them while playing. Game Boy Color games
-are not affected.
+are not affected. In the web frontend, choose Game Boy Color under 'Game Boy
+games run on' in the side panel; it applies from the next start or Reset and is
+remembered in the browser.
 
 ```bash
 neser --gb-hardware cgb --gbc-palette red path/to/game.gb
