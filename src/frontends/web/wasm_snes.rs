@@ -42,7 +42,7 @@ pub struct WasmSnes {
     rom_loaded: bool,
     pending_toasts: Vec<String>,
     /// Carries the fractions of SNES Mouse movement between pointer events; fresh per game.
-    mouse_motion: crate::snes::input::MouseMotionScale,
+    mouse_motion: crate::snes::input::mouse_motion::MouseMotionScale,
 }
 
 impl Default for WasmSnes {
@@ -132,7 +132,7 @@ impl WasmSnes {
             audio_muted: false,
             rom_loaded: false,
             pending_toasts: Vec::new(),
-            mouse_motion: crate::snes::input::MouseMotionScale::default(),
+            mouse_motion: crate::snes::input::mouse_motion::MouseMotionScale::default(),
         }
     }
 
@@ -173,7 +173,7 @@ impl WasmSnes {
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
         self.rom_loaded = false;
-        self.mouse_motion = crate::snes::input::MouseMotionScale::default();
+        self.mouse_motion = crate::snes::input::mouse_motion::MouseMotionScale::default();
         match self.snes.load_rom(rom, rom_name) {
             Ok(()) => {
                 self.rom_loaded = true;

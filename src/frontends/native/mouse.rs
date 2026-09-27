@@ -128,10 +128,10 @@ pub fn apply_snes_mouse_relative_motion(
 /// Moves the SNES's own SNES Mouse by a host movement of (`dx`, `dy`) over a picture drawn
 /// `picture_width` × `picture_height` large (see [`MouseMotionScale`]).
 ///
-/// [`MouseMotionScale`]: crate::snes::input::MouseMotionScale
+/// [`MouseMotionScale`]: crate::snes::input::mouse_motion::MouseMotionScale
 pub fn apply_snes_console_mouse_motion(
     console: &mut Console,
-    scale: &mut crate::snes::input::MouseMotionScale,
+    scale: &mut crate::snes::input::mouse_motion::MouseMotionScale,
     dx: f32,
     dy: f32,
     picture_width: f32,
@@ -873,7 +873,7 @@ mod tests {
     #[test]
     fn snes_console_mouse_motion_is_scaled_to_the_picture() {
         let mut console = make_snes_console_with_mouse();
-        let mut scale = crate::snes::input::MouseMotionScale::default();
+        let mut scale = crate::snes::input::mouse_motion::MouseMotionScale::default();
         // A 1024×896 picture is four times the game screen: 64 points is 16 pixels.
         apply_snes_console_mouse_motion(&mut console, &mut scale, 64.0, -32.0, 1024.0, 896.0);
         let state = snes_mouse_state(&console);

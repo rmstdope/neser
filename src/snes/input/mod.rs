@@ -16,7 +16,7 @@
 
 mod mouse_controller;
 mod mouse_games;
-mod mouse_motion;
+pub mod mouse_motion;
 mod multitap;
 mod standard_controller;
 mod super_scope;
@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 
 pub use mouse_controller::MouseController;
 pub use mouse_games::is_snes_mouse_game;
-pub use mouse_motion::MouseMotionScale;
 pub use multitap::{Multitap, MultitapState};
 pub use standard_controller::StandardController;
 pub use super_scope::SuperScopeController;

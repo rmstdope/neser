@@ -207,7 +207,7 @@ pub struct NativeAppState {
 
     /// Carries the fractions of the SNES's own SNES Mouse movement between host
     /// movements, so a slow hand in a large window still moves the game's pointer.
-    pub snes_mouse_motion: crate::snes::input::MouseMotionScale,
+    pub snes_mouse_motion: crate::snes::input::mouse_motion::MouseMotionScale,
 
     /// Last known Zapper position in NES coordinates for crosshair rendering.
     pub last_zapper_position: Option<(u8, u8)>,
