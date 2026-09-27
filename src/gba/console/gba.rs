@@ -235,7 +235,16 @@ impl Gba {
     }
 
     pub(crate) fn capture_cpu_state(&self) -> Arm7tdmiState {
-        self.cpu.capture_state()
+        // Every field is named, so a new one fails to build until it is saved or marked
+        // transient. The bus is saved alongside through `capture_memory_state`.
+        let Self {
+            app_context: _, // transient: host configuration
+            cpu,
+            bus: _,             // saved through GbaBus::capture_memory_state
+            rom_path: _,        // transient: host file path
+            bios_load_error: _, // transient: host-side load diagnostics
+        } = self;
+        cpu.capture_state()
     }
 
     pub(crate) fn restore_cpu_state(&mut self, state: &Arm7tdmiState) {
