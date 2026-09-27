@@ -173,6 +173,15 @@ class BuildWebTest(unittest.TestCase):
     def test_default_run_bundles_with_vite(self) -> None:
         self.assertEqual("npx vite build", self._run()[-1])
 
+    def test_an_unknown_argument_is_refused_before_building(self) -> None:
+        env = {"PATH": self.path, "HOME": str(self.tmp), "COMMAND_LOG": str(self.log)}
+        result = subprocess.run(
+            ["sh", str(BUILD_WEB), "--nobundle"], env=env, capture_output=True, text=True, check=False
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("usage: build_web.sh [--no-bundle]", result.stderr)
+        self.assertFalse(self.log.exists(), "nothing may run after an unknown argument")
+
     def test_no_bundle_builds_pkg_without_vite(self) -> None:
         commands = self._run("--no-bundle")
         self.assertTrue(commands[0].startswith("cargo build --profile wasm-release"), commands)
@@ -227,6 +236,13 @@ class WebIntegrationJobTest(unittest.TestCase):
         web_integration_filter = re.search(r"\n {12}web_integration:\n((?: {14}- .*\n)+)", ci)
         assert web_integration_filter is not None, "ci.yml has no web_integration path filter"
         self.assertIn("- 'tsconfig.json'", web_integration_filter.group(1))
+
+    def test_a_vite_config_change_runs_the_ci_typecheck(self) -> None:
+        """tsconfig.json includes vite.config.ts, so the job that runs tsc must see it change."""
+        ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        web_integration_filter = re.search(r"\n {12}web_integration:\n((?: {14}- .*\n)+)", ci)
+        assert web_integration_filter is not None, "ci.yml has no web_integration path filter"
+        self.assertIn("- 'vite.config.ts'", web_integration_filter.group(1))
 
 
 class GateTypecheckTest(unittest.TestCase):

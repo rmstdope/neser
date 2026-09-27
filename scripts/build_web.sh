@@ -13,9 +13,14 @@ unset RUSTUP_TOOLCHAIN
 # --no-bundle builds web/pkg (the wasm and its bindings, types included) and stops before vite:
 # the pre-merge gate type-checks against those bindings without bundling the app (nr-n48).
 BUNDLE=1
-if [ "${1:-}" = "--no-bundle" ]; then
-    BUNDLE=0
-fi
+case "$#:${1:-}" in
+    0:) ;;
+    1:--no-bundle) BUNDLE=0 ;;
+    *)
+        echo "usage: build_web.sh [--no-bundle]" >&2
+        exit 2
+        ;;
+esac
 
 # Only skip the WASM build when explicitly requested (e.g. in CI with pre-built artifacts)
 SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST="${SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST:-0}"
