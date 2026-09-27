@@ -3,6 +3,7 @@ use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
+use crate::gb::bus::oam_dma::OamDma;
 use crate::gb::bus::serial::Serial;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes::{self, GbcPalette};
@@ -72,14 +73,8 @@ pub struct CgbBus {
     apu: Apu,
     if_reg: u8,
     ie_reg: u8,
-    /// Whether an OAM DMA transfer is currently in progress.
-    dma_active: bool,
-    /// High byte of the OAM DMA source address.
-    dma_source: u8,
-    /// DMA position: 0=warm-up, 1–160=copy, 161=teardown.
-    dma_position: u8,
-    /// Whether OAM access is blocked by an active DMA transfer.
-    dma_oam_blocked: bool,
+    /// OAM DMA ($FF46).
+    oam_dma: OamDma,
     /// $FF01 SB, $FF02 SC and the internal-clock transfer (shared with DMG).
     serial: Serial,
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
@@ -196,7 +191,7 @@ impl CgbBus {
     }
 
     fn cgb_forbidden_region_blocked(&self) -> bool {
-        self.dma_oam_blocked
+        self.oam_dma.blocks_oam()
             || (self.ppu.is_lcd_enabled()
                 && matches!(self.ppu.mode(), PpuMode::OamScan | PpuMode::PixelTransfer))
     }
@@ -255,11 +250,8 @@ impl CgbBus {
             // Store internal value $01 (VBlank set), readback produces $E1.
             if_reg: 0x01,
             ie_reg: 0,
-            dma_active: false,
             // DMA = $00 at CGB boot (different from DMG which has $FF).
-            dma_source: 0x00,
-            dma_position: 0,
-            dma_oam_blocked: false,
+            oam_dma: OamDma::from_parts(false, 0x00, 0, false),
             serial: Serial::new(),
             hdma: HdmaState::new(),
             hdma_halt_cycles: 0,
@@ -624,24 +616,8 @@ impl CgbBus {
                 self.apu.clock_div_apu();
             }
 
-            if self.dma_active {
-                match self.dma_position {
-                    0 => {
-                        self.dma_position = 1;
-                    }
-                    1..=160 => {
-                        self.dma_oam_blocked = true;
-                        let byte_idx = (self.dma_position - 1) as u16;
-                        let src = (self.dma_source as u16) << 8 | byte_idx;
-                        self.ppu.oam[byte_idx as usize] = self.read_raw(src);
-                        self.dma_position += 1;
-                    }
-                    161 => {
-                        self.dma_active = false;
-                        self.dma_oam_blocked = false;
-                    }
-                    _ => unreachable!(),
-                }
+            if let Some((index, src)) = self.oam_dma.step() {
+                self.ppu.oam[index] = self.read_raw(src);
             }
         }
         double
@@ -785,13 +761,12 @@ impl CgbBus {
     }
 
     fn dma_conflict_active(&self, addr: u16) -> bool {
-        self.dma_active
-            && self.dma_oam_blocked
+        self.oam_dma.holds_bus()
             && Self::dma_bus_for_addr(addr).is_some_and(|bus| bus == self.dma_source_bus())
     }
 
     fn dma_source_bus(&self) -> CgbDmaBusKind {
-        Self::dma_bus_for_addr(u16::from(self.dma_source) << 8).unwrap_or(CgbDmaBusKind::Wram)
+        Self::dma_bus_for_addr(u16::from(self.oam_dma.source()) << 8).unwrap_or(CgbDmaBusKind::Wram)
     }
 
     fn dma_bus_for_addr(addr: u16) -> Option<CgbDmaBusKind> {
@@ -804,8 +779,7 @@ impl CgbBus {
     }
 
     fn dma_conflict_byte(&self) -> u8 {
-        let byte_idx = self.dma_position.saturating_sub(2) as u16;
-        self.read_raw((u16::from(self.dma_source) << 8) + byte_idx)
+        self.read_raw(self.oam_dma.conflict_address())
     }
 
     /// HDMA5 ($FF55) write: start a GDMA, start or arm an HDMA, or cancel one.
@@ -861,14 +835,6 @@ impl CgbBus {
                 self.ppu.seed_cgb_boot_fade_bg_palettes();
             }
         }
-    }
-
-    fn do_oam_dma(&mut self, val: u8) {
-        let preserve_blocking = self.dma_active && self.dma_oam_blocked;
-        self.dma_active = true;
-        self.dma_source = val;
-        self.dma_position = 0;
-        self.dma_oam_blocked = preserve_blocking;
     }
 
     /// Set a button state on the joypad and propagate any resulting interrupt.
@@ -934,6 +900,7 @@ impl CgbBus {
             let offset = bank * 0x1000;
             wram_flat[offset..offset + 0x1000].copy_from_slice(bank_data);
         }
+        let (dma_active, dma_source, dma_position, dma_oam_blocked) = self.oam_dma.parts();
         let mut state = BusState {
             bus_type: GbBusType::Cgb,
             ppu: self.ppu.clone(),
@@ -944,10 +911,10 @@ impl CgbBus {
             apu: self.apu.clone(),
             if_reg: self.if_reg,
             ie_reg: self.ie_reg,
-            dma_active: self.dma_active,
-            dma_source: self.dma_source,
-            dma_position: self.dma_position,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_active,
+            dma_source,
+            dma_position,
+            dma_oam_blocked,
             hdma: Some(self.hdma.clone()),
             svbk: Some(self.svbk),
             key1: Some(self.key1),
@@ -1006,10 +973,12 @@ impl CgbBus {
         self.apu.set_cgb_model(self.model);
         self.if_reg = state.if_reg;
         self.ie_reg = state.ie_reg;
-        self.dma_active = state.dma_active;
-        self.dma_source = state.dma_source;
-        self.dma_position = state.dma_position;
-        self.dma_oam_blocked = state.dma_oam_blocked;
+        self.oam_dma = OamDma::from_parts(
+            state.dma_active,
+            state.dma_source,
+            state.dma_position,
+            state.dma_oam_blocked,
+        );
         self.hdma = state.hdma.clone().unwrap_or_default();
         self.svbk = state.svbk.unwrap_or(0);
         self.key1 = state.key1.unwrap_or(0);
@@ -1082,8 +1051,8 @@ impl MemoryMap for CgbBus {
             ie_reg: self.ie_reg,
             serial: &self.serial,
             cgb_mode: !self.ppu.dmg_compat,
-            dma_source: self.dma_source,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_source: self.oam_dma.source(),
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -1101,7 +1070,7 @@ impl MemoryMap for CgbBus {
             if_reg: &mut self.if_reg,
             ie_reg: &mut self.ie_reg,
             serial: &mut self.serial,
-            dma_oam_blocked: self.dma_oam_blocked,
+            dma_oam_blocked: self.oam_dma.blocks_oam(),
         }
     }
 
@@ -1219,7 +1188,7 @@ impl MemoryMap for CgbBus {
     }
 
     fn start_oam_dma(&mut self, val: u8) {
-        self.do_oam_dma(val);
+        self.oam_dma.start(val);
     }
 }
 
