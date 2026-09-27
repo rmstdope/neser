@@ -113,9 +113,8 @@ impl WasmNes {
             .config_mut()
             .apply_rom_timing_mode(rom_timing_mode);
         self.nes = Nes::new(app_context.clone());
-        self.nes.insert_cartridge(cart);
+        self.nes.load_cartridge(cart);
         log_hardware_selection(&app_context, applied);
-        self.nes.reset(false);
         self.debugger_view_state = DebuggerViewState::default();
         self.rom_loaded = true;
         self.pending_toasts

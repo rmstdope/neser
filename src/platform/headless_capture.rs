@@ -89,8 +89,7 @@ pub fn run(
     rom_path: &str,
     capture: &HeadlessCapture,
 ) -> Result<(), String> {
-    let mut console = load_console(app_context, rom_path)?;
-    console.reset(false);
+    let mut console = loaded_console(app_context, rom_path)?;
 
     let mut done = 0u32;
     if let Some(every) = capture.every {
@@ -111,6 +110,12 @@ pub fn run(
     }
     advance_frames(&mut console, capture.frames - done, done)?;
     write_frame(&console, &capture.output)
+}
+
+/// The console a capture runs, as it stands before its first frame: exactly as loaded, since
+/// loading is the power-on and a reset on top is not a no-op on every core (nr-phv, nr-sc7).
+fn loaded_console(app_context: &SharedAppContext, rom_path: &str) -> Result<Console, String> {
+    load_console(app_context, rom_path)
 }
 
 /// Where the checkpoint at `frame` goes: `<stem>_<frame>.png` next to
@@ -179,7 +184,9 @@ mod tests {
     use crate::nes::console::{Config, RamInitMode};
     use crate::platform::app_context::AppContext;
     use crate::platform::config::{DEFAULT_CAPTURE_FRAMES, FrontendConfig};
-    use crate::platform::test_roms::minimal_nes_rom;
+    use crate::platform::test_roms::{
+        minimal_gb_rom, minimal_gba_rom, minimal_nes_rom, minimal_snes_rom,
+    };
     use std::cell::RefCell;
     use std::path::Path;
     use std::rc::Rc;
@@ -448,6 +455,66 @@ mod tests {
     }
 
     // --- end-to-end capture ---
+
+    /// Write `rom` to a file named `game.<extension>` in `dir` and return its path.
+    fn write_rom(dir: &TempDir, extension: &str, rom: &[u8]) -> String {
+        let path = dir.path().join(format!("game.{extension}"));
+        std::fs::write(&path, rom).expect("write ROM fixture");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// A Game Boy Color image: `minimal_gb_rom` with the CGB flag set and its header checksum
+    /// recomputed.
+    fn minimal_cgb_rom() -> Vec<u8> {
+        let mut rom = minimal_gb_rom();
+        rom[0x0143] = 0x80;
+        rom[0x014D] = rom[0x0134..=0x014C]
+            .iter()
+            .fold(0u8, |sum, byte| sum.wrapping_sub(*byte).wrapping_sub(1));
+        rom
+    }
+
+    /// The headless path runs the console exactly as loaded: a hard reset on top would run the
+    /// SNES CPU's 186-clock startup delay a second time while the PPU keeps counting (nr-phv).
+    #[test]
+    fn captured_snes_console_starts_at_the_power_on_clock() {
+        let temp = TempDir::new().expect("create temp dir");
+        let rom = write_rom(&temp, "sfc", &minimal_snes_rom());
+
+        let console = loaded_console(&make_app_context(), &rom).expect("SNES ROM should load");
+
+        let snes = console.as_snes().expect("a SNES console");
+        assert_eq!(snes.master_clock_for_tests(), Some(186));
+    }
+
+    /// A headless capture and the web frontend (which builds the console and calls
+    /// `load_rom`) start every system from the same power-on console. Before nr-sc7 the
+    /// capture hard-reset what it loaded, which left NES and CGB consoles in a different
+    /// state from the web's.
+    #[test]
+    fn captured_console_starts_as_the_web_frontend_does() {
+        type NewConsole = fn(SharedAppContext) -> Console;
+        let systems: [(&str, Vec<u8>, NewConsole); 5] = [
+            ("nes", minimal_nes_rom(false), Console::new_nes),
+            ("gb", minimal_gb_rom(), Console::new_gameboy),
+            ("gbc", minimal_cgb_rom(), Console::new_gameboy),
+            ("gba", minimal_gba_rom(), Console::new_gba),
+            ("sfc", minimal_snes_rom(), Console::new_snes),
+        ];
+        for (extension, rom, new_console) in systems {
+            let temp = TempDir::new().expect("create temp dir");
+            let rom_path = write_rom(&temp, extension, &rom);
+
+            let headless = loaded_console(&make_app_context(), &rom_path).expect("ROM loads");
+            let mut web = new_console(make_app_context());
+            web.load_rom(&rom, &rom_path).expect("ROM loads");
+
+            assert!(
+                headless.save_state_bytes().unwrap() == web.save_state_bytes().unwrap(),
+                "{extension}: headless and web consoles differ"
+            );
+        }
+    }
 
     #[test]
     fn run_writes_a_png_with_the_console_dimensions() {

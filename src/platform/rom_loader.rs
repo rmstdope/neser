@@ -7,8 +7,8 @@
 //! the two paths from drifting — in particular, a duplicated loader that forgot
 //! `apply_rom_timing_mode` would silently capture PAL NES ROMs at NTSC timing.
 //!
-//! Resetting the console is deliberately left to the caller, so the native path
-//! can keep configuring audio before its `reset`.
+//! The console comes back powered on and ready to run, as the web frontend's
+//! `load_rom` leaves it: no caller resets it again (nr-sc7).
 
 use crate::platform::app_context::SharedAppContext;
 use crate::platform::emulator::{Console, SystemType};
@@ -93,7 +93,7 @@ pub fn detect_system_type(path: &str) -> SystemType {
 ///
 /// Adds a cartridge-load toast to `app_context` on both success and failure,
 /// and applies the NES ROM's timing mode to the configuration. The returned
-/// console has **not** been reset.
+/// console is powered on and ready to run; do not reset it.
 pub fn load_console(app_context: &SharedAppContext, rom_path: &str) -> Result<Console, String> {
     let result = build_console(app_context, rom_path);
 
@@ -163,7 +163,7 @@ fn build_nes_console(
     console
         .as_nes_mut()
         .expect("Console::new_nes always returns the Nes variant")
-        .insert_cartridge(cartridge);
+        .load_cartridge(cartridge);
 
     Ok(console)
 }
@@ -404,8 +404,23 @@ mod tests {
         // When it is loaded
         let console = load_console(&app_context, &rom_path).expect("NES ROM should load");
 
-        // Then a NES console is returned, ready to be reset
+        // Then a NES console is returned
         assert_eq!(console.system_type(), SystemType::Nes);
+    }
+
+    #[test]
+    fn load_console_leaves_a_nes_console_ready_to_run() {
+        // Given an NROM image whose reset vector is $C000
+        let dir = TempDir::new().expect("create temp dir");
+        let rom_path = write_rom(&dir, "nes", &minimal_nes_rom(false));
+        let app_context = make_app_context();
+
+        // When it is loaded
+        let console = load_console(&app_context, &rom_path).expect("NES ROM should load");
+
+        // Then it is powered on: no frontend resets what it loaded
+        let nes = console.as_nes().expect("a NES console");
+        assert_eq!(nes.cpu_ref().pc(), 0xC000);
     }
 
     #[test]

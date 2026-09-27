@@ -36,6 +36,9 @@ pub trait Emulator {
     /// Names correspond to the first element of each entry in
     /// [`crate::platform::shaders::SHADER_PRESETS`].
     fn allowed_shaders(&self) -> &'static [&'static str];
+    /// Load a ROM and power the console on. Loading is the only power-on path: the console
+    /// is left ready to run, exactly as on real hardware when switched on, and no frontend
+    /// resets it afterwards (a second reset is not a no-op on every core; nr-phv, nr-sc7).
     fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String>;
     fn run_tick(&mut self) -> u8;
     fn is_ready_to_render(&self) -> bool;
@@ -405,9 +408,10 @@ impl Console {
     /// Uses the console's own `app_context` for ROM database lookups
     /// (auto-detection of controller types, timing modes, etc.).
     ///
-    /// Note: inserts the cartridge directly. For startup flows that need
-    /// to inspect the cartridge before insertion (timing mode, toasts),
-    /// destructure the Console variant and use `insert_cartridge` directly.
+    /// Leaves the console powered on and ready to run (see [`Emulator::load_rom`]).
+    /// For startup flows that need to inspect a NES cartridge before insertion
+    /// (timing mode, toasts), destructure the Console variant and use
+    /// `Nes::load_cartridge` directly.
     pub fn load_rom(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
         self.as_core_mut().load_rom(bytes, name)
     }
@@ -732,7 +736,6 @@ mod tests {
         let mut console = Console::new_nes(app_context.clone());
         let rom = create_minimal_rom();
         console.load_rom(&rom, "test.nes").expect("load ROM");
-        console.reset(false);
         (console, app_context)
     }
 
@@ -904,7 +907,6 @@ mod tests {
         let mut nes = make_nes();
         let rom = create_minimal_rom();
         nes.load_rom(&rom, "test.nes").unwrap();
-        nes.reset(false);
 
         let emu: &mut dyn Emulator = &mut nes;
         assert_eq!(emu.system_type(), SystemType::Nes);

@@ -424,10 +424,9 @@ impl NativeEventLoop {
         };
 
         if let Some(nes) = self.console.as_nes_mut() {
-            nes.insert_cartridge(cartridge);
+            nes.load_cartridge(cartridge);
         }
         crate::nes::console::log_hardware_selection(self.console.app_context(), applied);
-        self.console.reset(false);
     }
 
     // ── Autorun ──────────────────────────────────────────────────────────────
