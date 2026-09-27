@@ -434,7 +434,8 @@ jobs:
       - name: Run web integration tests
         # Playwright splits shards by test count in file order, and the slowest specs sort last:
         # an even split gave shard 2 about 280 worker-seconds to shard 1's 170. Shard 1 therefore
-        # takes two thirds of the tests. PWTEST_SHARD_WEIGHTS is read by the Playwright CLI.
+        # takes two thirds of the tests. PWTEST_SHARD_WEIGHTS is read by the Playwright 1.60 CLI; a
+        # Playwright upgrade that drops it silently falls back to an even split, so check it then.
         env:
           PWTEST_SHARD_WEIGHTS: "2:1"
         run: npm run test:integration:web -- --shard=${{ matrix.shard }}/2
