@@ -9,3 +9,4 @@ mod cgb_bus;
 mod dmg_bus;
 pub mod hdma;
 mod memory_map;
+mod serial;

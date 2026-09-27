@@ -2,6 +2,7 @@ use crate::gb::apu::Apu;
 use crate::gb::boot_rom::{DMG_BOOT_ROM, DMG0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
+use crate::gb::bus::serial::Serial;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::input::joypad::Joypad;
 use crate::gb::model::{CgbModel, DmgBootVariant, DmgModel};
@@ -66,30 +67,8 @@ pub struct DmgBus {
     /// (position 1 → 2) and is preserved when a DMA is restarted while one is
     /// already running.
     dma_oam_blocked: bool,
-    /// $FF01 Serial Data Register (SB).
-    sb: u8,
-    /// $FF02 Serial Control Register (SC).
-    sc: u8,
-    /// Bytes captured via serial transfer (written by ROM via SB/SC).
-    serial_buf: Vec<u8>,
-    /// Bits remaining in the current internal-clock serial transfer.
-    /// 0 means no transfer is in progress; 1–8 means a transfer is active.
-    /// Each time the serial master clock (see below) transitions to false,
-    /// one bit is shifted; when this reaches 0 the transfer completes.
-    serial_bits_remaining: u8,
-    /// Persistent serial master clock toggle.
-    ///
-    /// Toggles on every falling edge of bit 7 of the internal DIV counter
-    /// (i.e., every 256 T-cycles = 64 M-cycles).  A serial bit is shifted
-    /// only when this flag transitions to `false`, giving an effective clock
-    /// period of 512 T-cycles = 128 M-cycles = 8192 Hz.
-    ///
-    /// The flag is NOT reset when a transfer starts; it persists continuously
-    /// from power-on.  On SC write (start/restart transfer), if the flag is
-    /// currently `true` it is immediately forced to `false` — ensuring the
-    /// first serial bit is
-    /// timed at the correct phase relative to the div counter.
-    serial_master_clock: bool,
+    /// $FF01 SB, $FF02 SC and the internal-clock transfer (shared with CGB).
+    serial: Serial,
     /// Hardware model variant (DMG-ABC or DMG-0).
     /// Determines which boot ROM is loaded and which CPU post-boot register
     /// values are used on reset.
@@ -135,11 +114,7 @@ impl DmgBus {
             ie_reg: 0,
             boot_rom,
             boot_rom_active: true,
-            sb: 0x00,
-            sc: 0x7E,
-            serial_buf: Vec::new(),
-            serial_bits_remaining: 0,
-            serial_master_clock: false,
+            serial: Serial::new(),
             dma_active: false,
             dma_source: 0xFF,
             dma_position: 0,
@@ -192,11 +167,7 @@ impl DmgBus {
         self.ie_reg = 0;
         self.boot_rom = boot_rom;
         self.boot_rom_active = true;
-        self.sb = 0x00;
-        self.sc = 0x7E;
-        self.serial_buf.clear();
-        self.serial_bits_remaining = 0;
-        self.serial_master_clock = false;
+        self.serial = Serial::new();
         self.dma_active = false;
         self.dma_source = 0xFF;
         self.dma_position = 0;
@@ -216,13 +187,6 @@ impl DmgBus {
         self.model
     }
 
-    /// Returns bytes captured via serial transfer ($FF01/$FF02).
-    ///
-    /// Each byte pushed by the ROM via `SB`/`SC` appears here in order.
-    pub fn serial_output(&self) -> &[u8] {
-        &self.serial_buf
-    }
-
     /// Set a button state on the joypad and propagate any resulting interrupt.
     ///
     /// Sets IF bit 4 (joypad interrupt) when pressing a button in the
@@ -238,12 +202,8 @@ impl DmgBus {
     ///
     /// Propagates any timer interrupt to the IF register ($FF0F bit 2).
     /// Propagates PPU VBlank (bit 0) and STAT (bit 1) interrupts.
-    /// Drives the serial transfer: on each falling edge of bit 7 of the
-    /// internal DIV counter (64 M-cycles = 256 T-cycles), `serial_master_clock`
-    /// is toggled.  When it transitions to `false` and an internal-clock
-    /// transfer is active (SC = $81), one bit is shifted.  After 8 such
-    /// transitions the transfer completes, SB is overwritten with 0xFF,
-    /// SC bit 7 is cleared, and IF bit 3 (serial interrupt) is raised.
+    /// Clocks the serial port off the DIV counter (see [`Serial::clock`]) and
+    /// raises IF bit 3 when a transfer completes.
     ///
     /// PPU interrupt propagation is **deferred by one tick**: interrupts
     /// accumulated during the *previous* `tick()` call are propagated to IF
@@ -267,7 +227,6 @@ impl DmgBus {
 
         for _ in 0..m_cycles {
             let pre_counter = self.timer.raw_counter();
-            let pre_bit7 = pre_counter & 0x080;
             let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
             if self.timer.interrupt_pending {
                 self.if_reg |= 0x04;
@@ -283,22 +242,11 @@ impl DmgBus {
                 self.apu.clock_div_apu();
             }
 
-            // Falling edge of bit 7 of the DIV counter (runs continuously).
-            let post_bit7 = self.timer.raw_counter() & 0x080;
-            if pre_bit7 != 0 && post_bit7 == 0 {
-                self.serial_master_clock ^= true;
-                if !self.serial_master_clock
-                    && self.serial_bits_remaining > 0
-                    && self.sc & 0x81 == 0x81
-                {
-                    self.serial_bits_remaining -= 1;
-                    if self.serial_bits_remaining == 0 {
-                        self.serial_buf.push(self.sb);
-                        self.sb = 0xFF;
-                        self.if_reg |= 0x08;
-                        self.sc &= 0x7F;
-                    }
-                }
+            if self
+                .serial
+                .clock(pre_counter, self.timer.raw_counter(), false)
+            {
+                self.if_reg |= 0x08;
             }
 
             // OAM DMA: advance one M-cycle.
@@ -425,7 +373,7 @@ impl DmgBus {
         use crate::gb::console::save_state::{BusState, GbBusType};
         let mut wram_padded = [0u8; 0x8000];
         wram_padded[..0x2000].copy_from_slice(&self.wram);
-        BusState {
+        let mut state = BusState {
             bus_type: GbBusType::Dmg,
             ppu: self.ppu.clone(),
             wram: Box::new(wram_padded),
@@ -452,14 +400,16 @@ impl DmgBus {
             key0_locked: None,
             cgb_extra_oam: None,
             boot_rom_active: Some(self.boot_rom_active),
-            sb: Some(self.sb),
-            sc: Some(self.sc),
-            serial_buf: Some(self.serial_buf.clone()),
-            serial_bits_remaining: Some(self.serial_bits_remaining),
-            serial_master_clock: Some(self.serial_master_clock),
+            sb: None,
+            sc: None,
+            serial_buf: None,
+            serial_bits_remaining: None,
+            serial_master_clock: None,
             model: Some(self.model),
             sgb: self.sgb.clone(),
-        }
+        };
+        self.serial.capture_into(&mut state);
+        state
     }
 
     /// Restore bus state from a deserialized snapshot.
@@ -492,21 +442,7 @@ impl DmgBus {
         if let Some(active) = state.boot_rom_active {
             self.boot_rom_active = active;
         }
-        if let Some(sb) = state.sb {
-            self.sb = sb;
-        }
-        if let Some(sc) = state.sc {
-            self.sc = sc;
-        }
-        if let Some(ref buf) = state.serial_buf {
-            self.serial_buf = buf.clone();
-        }
-        if let Some(bits) = state.serial_bits_remaining {
-            self.serial_bits_remaining = bits;
-        }
-        if let Some(clock) = state.serial_master_clock {
-            self.serial_master_clock = clock;
-        }
+        self.serial.restore_from(state);
         if let Some(model) = state.model {
             self.model = model;
             self.boot_rom = match model.boot_variant() {
@@ -560,8 +496,8 @@ impl MemoryMap for DmgBus {
             joypad: &self.joypad,
             if_reg: self.if_reg,
             ie_reg: self.ie_reg,
-            sb: self.sb,
-            sc: self.sc,
+            serial: &self.serial,
+            cgb_mode: false,
             dma_source: self.dma_source,
             dma_oam_blocked: self.dma_oam_blocked,
         }
@@ -582,7 +518,7 @@ impl MemoryMap for DmgBus {
             joypad: &mut self.joypad,
             if_reg: &mut self.if_reg,
             ie_reg: &mut self.ie_reg,
-            sb: &mut self.sb,
+            serial: &mut self.serial,
             dma_oam_blocked: self.dma_oam_blocked,
         }
     }
@@ -617,25 +553,6 @@ impl MemoryMap for DmgBus {
                 }
                 self.joypad.write(val);
             }
-            0xFF02 => {
-                // Clock-alignment step when *starting* an
-                // internal-clock transfer and serial_master_clock is currently
-                // true, immediately force it to false before latching SC.
-                // This ensures the first serial bit is always timed at the
-                // correct phase — exactly what real hardware does when a
-                // transfer begins mid-period.  Restricting to internal-clock
-                // starts avoids unintentionally shifting the clock phase on
-                // writes that merely inspect or clear SC.
-                if val & 0x81 == 0x81 && self.serial_master_clock {
-                    self.serial_master_clock = false;
-                }
-                self.sc = val;
-                if val & 0x80 != 0 && val & 0x01 != 0 {
-                    // Internal clock (bit 0 set): start / restart 8-bit transfer.
-                    self.serial_bits_remaining = 8;
-                }
-                // External clock (bit 0 clear): store SC but never start a transfer.
-            }
             0xFF50 => {
                 if self.boot_rom_active
                     && matches!(self.model.boot_variant(), DmgBootVariant::Production)
@@ -657,6 +574,10 @@ impl MemoryMap for DmgBus {
 }
 
 impl GbBus for DmgBus {
+    fn serial_output(&self) -> &[u8] {
+        self.serial.output()
+    }
+
     fn read(&mut self, addr: u16) -> u8 {
         self.map_read(addr)
     }

@@ -19,7 +19,7 @@ fn serial_is_done(output: &[u8]) -> bool {
 /// or until `BLARGG_CYCLE_LIMIT` M-cycles have elapsed.
 ///
 /// Returns the full serial output collected as a `String`.
-fn run_blargg_rom(gb: &mut Gb<DmgBus>) -> String {
+fn run_blargg_rom<B: GbBus>(gb: &mut Gb<B>) -> String {
     let start = gb.cycles();
     loop {
         let output = gb.cpu.bus.serial_output();
@@ -214,6 +214,18 @@ fn run_blargg_rom_lcd<B: GbBus>(gb: &mut Gb<B>) -> String {
 #[test]
 fn test_cpu_instrs_01_special() {
     let mut gb = load_gb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/01-special.gb");
+    let output = run_blargg_rom(&mut gb);
+    assert!(
+        output.contains("Passed"),
+        "expected Passed, got: {output:?}"
+    );
+}
+
+/// A CGB-bus run of a ROM that reports over serial: the CGB serial port
+/// shifts SB out, so the ROM's verdict reaches `serial_output()`.
+#[test]
+fn test_cgb_cpu_instrs_01_special_reports_over_serial() {
+    let mut gb = load_cgb_rom("roms/gb/automated_tests/blargg/cpu_instrs/individual/01-special.gb");
     let output = run_blargg_rom(&mut gb);
     assert!(
         output.contains("Passed"),

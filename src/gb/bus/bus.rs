@@ -130,6 +130,13 @@ pub trait GbBus {
     fn read_for_debugger(&self, _addr: u16) -> u8 {
         panic!("read_for_debugger() not available on this bus implementation")
     }
+
+    /// Bytes shifted out by completed serial transfers ($FF01/$FF02), oldest
+    /// first. Test ROMs such as blargg's report their results this way.
+    /// The default is empty: a bus without a serial port never sends anything.
+    fn serial_output(&self) -> &[u8] {
+        &[]
+    }
 }
 
 /// Bus stub that returns 0xFF for every read and silently discards writes.

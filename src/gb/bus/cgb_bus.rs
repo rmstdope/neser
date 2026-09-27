@@ -3,6 +3,7 @@ use crate::gb::boot_rom::{CGB_BOOT_ROM, CGB0_BOOT_ROM};
 use crate::gb::bus::GbBus;
 use crate::gb::bus::hdma::{HdmaAction, HdmaState};
 use crate::gb::bus::memory_map::{MapView, MapViewMut, MemoryMap};
+use crate::gb::bus::serial::Serial;
 use crate::gb::cartridge::GbCartridge;
 use crate::gb::compat_palettes::{self, GbcPalette};
 use crate::gb::input::joypad::Joypad;
@@ -79,10 +80,8 @@ pub struct CgbBus {
     dma_position: u8,
     /// Whether OAM access is blocked by an active DMA transfer.
     dma_oam_blocked: bool,
-    /// Serial control register (SC / $FF02). Bit 7 = transfer start, cleared by hardware.
-    sc: u8,
-    /// Serial data register (SB / $FF01).
-    sb: u8,
+    /// $FF01 SB, $FF02 SC and the internal-clock transfer (shared with DMG).
+    serial: Serial,
     /// CGB VRAM DMA (HDMA/GDMA) state for registers $FF51–$FF55.
     hdma: HdmaState,
     /// Number of M-cycles the CPU should be halted due to active HDMA transfer.
@@ -261,8 +260,7 @@ impl CgbBus {
             dma_source: 0x00,
             dma_position: 0,
             dma_oam_blocked: false,
-            sc: 0,
-            sb: 0,
+            serial: Serial::new(),
             hdma: HdmaState::new(),
             hdma_halt_cycles: 0,
             svbk: 0,
@@ -603,10 +601,18 @@ impl CgbBus {
         let double = self.is_double_speed();
 
         for _ in 0..m_cycles {
+            let pre_counter = self.timer.raw_counter();
             let (div_apu_falling, div_apu_rising) = self.timer.tick(1);
             if self.timer.interrupt_pending {
                 self.if_reg |= 0x04;
                 self.timer.interrupt_pending = false;
+            }
+            let cgb_mode = !self.ppu.dmg_compat;
+            if self
+                .serial
+                .clock(pre_counter, self.timer.raw_counter(), cgb_mode)
+            {
+                self.if_reg |= 0x08;
             }
 
             // Rising edge fires the APU secondary event (for envelope phantom-tick detection).
@@ -865,12 +871,6 @@ impl CgbBus {
         self.dma_oam_blocked = preserve_blocking;
     }
 
-    /// Returns bytes captured via serial transfer ($FF01/$FF02).
-    /// CGB bus accepts serial writes but discards the data (no test harness needed).
-    pub fn serial_output(&self) -> &[u8] {
-        &[]
-    }
-
     /// Set a button state on the joypad and propagate any resulting interrupt.
     pub fn set_joypad_button(&mut self, id: u8, pressed: bool) {
         if self.joypad.set_button(id, pressed) {
@@ -934,7 +934,7 @@ impl CgbBus {
             let offset = bank * 0x1000;
             wram_flat[offset..offset + 0x1000].copy_from_slice(bank_data);
         }
-        BusState {
+        let mut state = BusState {
             bus_type: GbBusType::Cgb,
             ppu: self.ppu.clone(),
             wram: Box::new(wram_flat),
@@ -968,7 +968,9 @@ impl CgbBus {
             serial_master_clock: None,
             model: None,
             sgb: None,
-        }
+        };
+        self.serial.capture_into(&mut state);
+        state
     }
 
     /// Restore bus state from a deserialized snapshot.
@@ -992,6 +994,8 @@ impl CgbBus {
             let offset = bank * 0x1000;
             bank_data.copy_from_slice(&state.wram[offset..offset + 0x1000]);
         }
+        self.serial = Serial::new();
+        self.serial.restore_from(state);
         self.hram = state.hram;
         self.timer = state.timer.clone();
         self.joypad = state.joypad.clone();
@@ -1076,8 +1080,8 @@ impl MemoryMap for CgbBus {
             joypad: &self.joypad,
             if_reg: self.if_reg,
             ie_reg: self.ie_reg,
-            sb: self.sb,
-            sc: self.sc,
+            serial: &self.serial,
+            cgb_mode: !self.ppu.dmg_compat,
             dma_source: self.dma_source,
             dma_oam_blocked: self.dma_oam_blocked,
         }
@@ -1096,7 +1100,7 @@ impl MemoryMap for CgbBus {
             joypad: &mut self.joypad,
             if_reg: &mut self.if_reg,
             ie_reg: &mut self.ie_reg,
-            sb: &mut self.sb,
+            serial: &mut self.serial,
             dma_oam_blocked: self.dma_oam_blocked,
         }
     }
@@ -1152,11 +1156,6 @@ impl MemoryMap for CgbBus {
                 if !self.cgb_forbidden_region_blocked() {
                     self.cgb_forbidden_region_write(addr, val);
                 }
-            }
-            0xFF02 => {
-                // SC: Serial Control. Writing bit 7=1 starts transfer.
-                // For stub implementation, immediately clear bit 7 to signal completion.
-                self.sc = val & 0x7F;
             }
             0xFF26 => {
                 // NR52 special handling: pass DIV-APU bit state for power-on skip logic.
@@ -1225,6 +1224,10 @@ impl MemoryMap for CgbBus {
 }
 
 impl GbBus for CgbBus {
+    fn serial_output(&self) -> &[u8] {
+        self.serial.output()
+    }
+
     fn read(&mut self, addr: u16) -> u8 {
         self.map_read(addr)
     }
@@ -1704,12 +1707,103 @@ mod tests {
         assert_eq!(MemoryMap::map_peek(&bus, 0xFF80), 0xA5);
     }
 
+    /// Tick `bus` one M-cycle at a time until IF bit 3 rises or `limit` passes;
+    /// returns the M-cycle count at completion.
+    fn ticks_until_serial_interrupt(bus: &mut CgbBus, limit: u32) -> Option<u32> {
+        (1..=limit).find(|_| {
+            bus.tick(1);
+            bus.if_reg & 0x08 != 0
+        })
+    }
+
+    fn start_transfer(bus: &mut CgbBus, sb: u8, sc: u8) {
+        bus.if_reg &= !0x08;
+        bus.write(0xFF01, sb);
+        bus.write(0xFF02, sc);
+    }
+
     #[test]
-    fn cgb_serial_control_write_reads_back_with_the_transfer_bit_clear() {
+    fn cgb_serial_control_keeps_the_transfer_bit_until_the_transfer_ends() {
         let mut bus = make_bus_post_boot();
-        bus.write(0xFF02, 0x81);
-        assert_eq!(bus.read(0xFF02), 0x7F);
-        assert_eq!(bus.read_for_debugger(0xFF02), 0x7F);
+        start_transfer(&mut bus, 0x00, 0x81);
+        assert_eq!(
+            bus.read(0xFF02),
+            0xFD,
+            "CGB mode: bits 6-2 read 1, bit 1 as written"
+        );
+        assert_eq!(bus.read_for_debugger(0xFF02), 0xFD);
+        assert!(ticks_until_serial_interrupt(&mut bus, 1024).is_some());
+        assert_eq!(bus.read(0xFF02), 0x7D);
+    }
+
+    #[test]
+    fn cgb_internal_clock_transfer_captures_byte_and_raises_serial_interrupt() {
+        // 8192 Hz: 16 falls of DIV bit 7, one every 64 M-cycles.
+        let mut bus = make_bus_post_boot();
+        start_transfer(&mut bus, 0x41, 0x81);
+        let done = ticks_until_serial_interrupt(&mut bus, 1024).expect("transfer completes");
+        assert!(
+            done > 900,
+            "normal clock is not the fast clock: done at {done}"
+        );
+        assert_eq!(bus.serial_output(), &[0x41]);
+        assert_eq!(bus.read(0xFF01), 0xFF, "absent peer shifts in $FF");
+        assert_eq!(bus.read(0xFF02) & 0x80, 0);
+    }
+
+    #[test]
+    fn cgb_fast_clock_transfer_completes_in_32_m_cycles() {
+        // 262144 Hz: 16 falls of DIV bit 2, one every 2 M-cycles.
+        let mut bus = make_bus_post_boot();
+        start_transfer(&mut bus, 0x99, 0x83);
+        let done = ticks_until_serial_interrupt(&mut bus, 34).expect("fast transfer completes");
+        assert!(done >= 30, "done at {done}");
+        assert_eq!(bus.serial_output(), &[0x99]);
+    }
+
+    #[test]
+    fn cgb_double_speed_keeps_serial_timing_in_m_cycles() {
+        // DIV counts CPU clocks, so double speed doubles both serial rates in
+        // real time and leaves the M-cycle counts unchanged.
+        let mut bus = make_bus_post_boot();
+        bus.write(0xFF4D, 0x01);
+        assert!(bus.try_speed_switch());
+        assert!(bus.is_double_speed());
+        start_transfer(&mut bus, 0x41, 0x81);
+        let done = ticks_until_serial_interrupt(&mut bus, 1024).expect("normal clock completes");
+        assert!(done > 900, "done at {done}");
+        start_transfer(&mut bus, 0x99, 0x83);
+        let done = ticks_until_serial_interrupt(&mut bus, 34).expect("fast clock completes");
+        assert!(done >= 30, "done at {done}");
+        assert_eq!(bus.serial_output(), &[0x41, 0x99]);
+    }
+
+    #[test]
+    fn cgb_dmg_compat_ignores_the_fast_clock_bit() {
+        let mut bus = make_dmg_compat_bus_post_boot();
+        start_transfer(&mut bus, 0x99, 0x83);
+        assert_eq!(
+            bus.read(0xFF02),
+            0xFF,
+            "bit 1 reads 1 in DMG compatibility mode"
+        );
+        assert_eq!(ticks_until_serial_interrupt(&mut bus, 64), None);
+        assert!(ticks_until_serial_interrupt(&mut bus, 1024).is_some());
+        assert_eq!(bus.serial_output(), &[0x99]);
+    }
+
+    #[test]
+    fn cgb_serial_state_survives_save_state_round_trip() {
+        let mut bus = make_bus_post_boot();
+        start_transfer(&mut bus, 0x5A, 0x81);
+        assert_eq!(ticks_until_serial_interrupt(&mut bus, 500), None);
+        let state = bus.capture_bus_state();
+
+        let mut restored = make_bus_post_boot();
+        restored.restore_bus_state(&state).expect("CGB state");
+        assert_eq!(restored.read(0xFF02), 0xFD);
+        assert!(ticks_until_serial_interrupt(&mut restored, 1024).is_some());
+        assert_eq!(restored.serial_output(), &[0x5A]);
     }
 
     #[test]
@@ -2981,8 +3075,6 @@ mod tests {
                 "{case}: snapshot field `{key}` differs from a fresh bus"
             );
         }
-        assert_eq!(reset.sb, fresh.sb, "{case}: sb");
-        assert_eq!(reset.sc, fresh.sc, "{case}: sc");
         assert_eq!(
             reset.hdma_halt_cycles, fresh.hdma_halt_cycles,
             "{case}: hdma_halt_cycles"
