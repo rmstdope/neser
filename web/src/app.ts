@@ -78,6 +78,13 @@ import {
     findNextVisibleZoomHeight,
 } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
+import {
+    browserStorage,
+    gbHardwareNoteVisible,
+    readGbHardwareChoice,
+    writeGbHardwareChoice,
+    type GbHardwareChoice
+} from "./rom/gb_hardware_choice";
 import { createGamepadInitToastNotifier } from "./ui/gamepad_init_toast";
 import { renderDisasmLines } from "./debugger/debugger_disasm";
 import { buildOamHtml } from "./debugger/debugger_oam";
@@ -844,6 +851,42 @@ function updatePaletteButton() {
 
 paletteCycleBtn?.addEventListener("click", () => cyclePaletteAction());
 
+/** "Game Boy games run on": remembered in this browser, applied when an original Game Boy game starts or is Reset. */
+const gbHardwareSelect = document.getElementById("gb-hardware") as HTMLSelectElement | null;
+const gbHardwareNote = document.getElementById("gb-hardware-note");
+let gbHardware: GbHardwareChoice = readGbHardwareChoice(browserStorage());
+if (gbHardwareSelect) gbHardwareSelect.value = gbHardware;
+
+/** Show "Applies when you press Reset" only while an original Game Boy game runs on the other console. */
+function updateGbHardwareNote() {
+    if (!gbHardwareNote) return;
+    const gb = emulator?.kind === "gb" ? emulator.inst : null;
+    const visible = gbHardwareNoteVisible({
+        kind: emulator?.kind ?? null,
+        running,
+        isOriginalGame: gb?.is_original_game() ?? false,
+        runsOnColor: gb?.is_color() ?? false,
+        choice: gbHardware
+    });
+    gbHardwareNote.classList.toggle("hidden", !visible);
+}
+
+gbHardwareSelect?.addEventListener("change", () => {
+    gbHardware = gbHardwareSelect.value === "cgb" ? "cgb" : "dmg";
+    writeGbHardwareChoice(browserStorage(), gbHardware);
+    if (emulator?.kind === "gb") emulator.inst.set_original_games_on_color(gbHardware === "cgb");
+    updateGbHardwareNote();
+});
+
+/** After a Reset or a state load, which may have moved a Game Boy game to the other console. */
+function refreshAfterGbConsoleChange() {
+    if (emulator?.kind !== "gb") return;
+    syncGbPaletteWithFilter(false);
+    updateCgbColorButton();
+    updatePaletteButton();
+    updateGbHardwareNote();
+}
+
 // ── Autorun context + DOM elements ───────────────────────────────────────────
 const autorunCtx = createAutorunContext();
 const autorunCreateCheckbox = document.getElementById("autorun-create") as HTMLInputElement | null;
@@ -908,6 +951,7 @@ function updateEmulationButtons() {
     }
     updateCgbColorButton();
     updatePaletteButton();
+    updateGbHardwareNote();
 }
 
 /** Create a fresh emulator instance and update kind-dependent UI. */
@@ -919,6 +963,7 @@ function createEmulatorInstance(kind: WebRomConsoleKind): void {
     if (kind === "gb") {
         const gb = new WasmGb();
         gb.set_cgb_color_correction(cgbColor.enabled());
+        gb.set_original_games_on_color(gbHardware === "cgb");
         emulator = { kind: "gb", inst: gb };
     } else if (kind === "gba") {
         const gba = new WasmGba();
@@ -1227,7 +1272,7 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
 
 async function refreshSaveStateController() {
     let saveStateRuntime: SaveStateRuntime | null = null;
-    if (emulator?.kind === "nes" || emulator?.kind === "snes") {
+    if (emulator && emulator.kind !== "gba" && supportsWebSaveState(emulator.kind)) {
         saveStateRuntime = emulator.inst;
     }
     if (!saveStateRuntime || !romMetadata) {
@@ -3407,6 +3452,7 @@ async function resetAction() {
         return;
     }
     emulator.inst.reset(true);
+    refreshAfterGbConsoleChange();
     setStatus("Soft reset", false);
 }
 
@@ -3418,6 +3464,7 @@ async function hardResetAction() {
         return;
     }
     emulator.inst.reset(false);
+    refreshAfterGbConsoleChange();
     setStatus("Hard reset", false);
 }
 
@@ -3488,6 +3535,7 @@ async function loadStateAction() {
     if (!saveStateController) return;
     const ok = await saveStateController.load();
     if (ok) {
+        refreshAfterGbConsoleChange();
         saveSlot = "loaded";
         updateSaveStateButtons();
     }
