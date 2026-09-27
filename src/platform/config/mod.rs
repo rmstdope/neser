@@ -17,6 +17,7 @@ mod autorun;
 mod cartridge;
 mod debugger;
 pub(crate) mod headless;
+mod parse;
 mod video;
 
 pub use cli::ParseResult;

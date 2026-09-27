@@ -21,7 +21,7 @@ pub use config::HardwareMode;
 #[allow(unused_imports)] // Used by integration tests and lib consumers
 pub use config::HardwareModel;
 pub use config::NesConfig;
-pub(crate) use config::{CLI_FLAGS, NES_OPTIONAL_BOOL_FLAGS};
+pub(crate) use config::{CLI_FLAGS, NES_FILTER_NAMES, NES_OPTIONAL_BOOL_FLAGS};
 pub use nes::Nes;
 pub use nes::SaveState;
 

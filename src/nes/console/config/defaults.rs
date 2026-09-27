@@ -1,10 +1,6 @@
 use super::*;
 
-use crate::gba::console::config::GBA_FILTER_NAMES;
-use crate::platform::config::{Config, parse_hex_u8};
-use crate::platform::shaders::SHADER_PRESETS;
-use std::fs;
-use std::path::Path;
+use crate::platform::config::parse_hex_u8;
 
 impl NesConfig {
     /// Apply a single config file key-value pair to NES configuration.
@@ -149,131 +145,6 @@ impl NesConfig {
     }
 }
 
-impl Config {
-    /// Default config file name.
-    pub(crate) const CONFIG_FILE_NAME: &'static str = "neser.conf";
-
-    /// Load configuration from a config file.
-    ///
-    /// The config file uses a simple key=value format, one setting per line.
-    /// Lines starting with '#' are treated as comments.
-    /// Unknown keys are ignored.
-    ///
-    /// # Example config file:
-    /// ```text
-    /// # Hardware mode: nes-ntsc, nes-pal, famicom, or dendy
-    /// nes-hardware=nes-ntsc
-    ///
-    /// # Expansion port: none or famicom-four-players
-    /// nes-expansion-port=none
-    ///
-    /// # Audio settings
-    /// audio=true
-    /// vsync=true
-    ///
-    /// # Fullscreen settings
-    /// fullscreen=false
-    /// display=0
-    ///
-    /// # Window settings (windowed mode only)
-    /// window_height=896
-    ///
-    /// # Shader/filter
-    /// # NES valid values: crt, ntsc, smooth, pal, none
-    /// nes-filter=crt
-    /// # GB valid values: dmg, none
-    /// gb-filter=dmg
-    ///
-    /// # APU channel toggles
-    /// nes-pulse1=true
-    /// nes-pulse2=true
-    /// nes-triangle=true
-    /// nes-noise=true
-    /// nes-dmc=true
-    /// ```
-    pub(crate) fn load_from_file(&mut self, path: &Path) -> Result<(), String> {
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => return Ok(()), // File doesn't exist or can't be read - silently ignore
-        };
-
-        for line in content.lines() {
-            let line = line.trim();
-
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            // Parse key=value
-            if let Some((key, value)) = line.split_once('=') {
-                let key = key.trim();
-                let value = value.trim();
-                self.apply_config_value(key, value)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Map a filter name to a shader path, validating against an allowed list.
-    ///
-    /// `allowed` must be a subset of names defined in [`crate::platform::shaders::SHADER_PRESETS`].
-    pub(crate) fn map_filter_name_for(name: &str, allowed: &[&str]) -> Result<String, String> {
-        if !allowed.contains(&name) {
-            return Err(format!(
-                "Invalid filter name: '{}'. Valid options are: {}",
-                name,
-                allowed.join(", ")
-            ));
-        }
-        SHADER_PRESETS
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, path)| (*path).to_string())
-            .ok_or_else(|| format!("Filter '{}' has no shader path defined", name))
-    }
-
-    /// Apply a single config file key-value pair.
-    ///
-    /// Keys are normalized: dashes are treated as underscores, so both
-    /// `nes-hardware` and `nes_hardware` are accepted.
-    pub(crate) fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
-        let key = key.replace('-', "_");
-        // Delegate to sub-configs first
-        self.frontend.apply_config_value(&key, value)?;
-        self.nes.apply_config_value(&key, value)?;
-        self.gb.apply_config_value(&key, value)?;
-        self.gba.apply_config_value(&key, value)?;
-        self.snes.apply_config_value(&key, value)?;
-
-        // Handle keys that need Config-level coordination or haven't been moved yet.
-        match key.as_str() {
-            "nes_filter" => {
-                if !value.is_empty() {
-                    self.frontend.shader_path = Some(Self::map_filter_name_for(
-                        value,
-                        &["none", "crt", "smooth", "ntsc", "pal"],
-                    )?);
-                }
-            }
-            "gb_filter" => {
-                if !value.is_empty() {
-                    self.frontend.shader_path =
-                        Some(Self::map_filter_name_for(value, &["none", "dmg"])?);
-                }
-            }
-            "gba_filter" => {
-                if !value.is_empty() {
-                    self.frontend.shader_path =
-                        Some(Self::map_filter_name_for(value, GBA_FILTER_NAMES)?);
-                }
-            }
-            _ => {} // Unknown keys are silently ignored (may have been handled by sub-configs)
-        }
-        Ok(())
-    }
-}
-
 /// The warning printed for an unknown `nes-palette` config-file value.
 fn invalid_nes_palette_warning(value: &str, kept: NesPalette) -> String {
     format!(
@@ -287,7 +158,8 @@ fn invalid_nes_palette_warning(value: &str, kept: NesPalette) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::config::{ParseResult, RamInitMode};
+    use crate::platform::config::{Config, ParseResult, RamInitMode};
+    use std::path::Path;
 
     fn config_new(mut args: Vec<String>) -> Result<ParseResult, String> {
         use std::io::Write;

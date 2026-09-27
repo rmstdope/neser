@@ -8,6 +8,9 @@ use crate::gb::model::{CgbModel, DmgModel, GbHardware};
 use crate::gb::ppu::GbPalette;
 use crate::platform::config::CliFlag;
 
+/// Names accepted by `--gb-filter` / `gb-filter` (see `platform::shaders::SHADER_PRESETS`).
+pub(crate) const GB_FILTER_NAMES: &[&str] = &["none", "dmg"];
+
 /// GB-specific CLI flags, defined here so that the GB module owns its flag
 /// declarations and parsing logic. These are chained into the global flag list
 /// by the platform config parser for validation and help-text generation.

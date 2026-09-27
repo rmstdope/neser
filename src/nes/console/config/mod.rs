@@ -16,6 +16,9 @@ pub mod defaults;
 
 pub(crate) use cli::{CLI_FLAGS, NES_OPTIONAL_BOOL_FLAGS};
 
+/// Names accepted by `--nes-filter` / `nes-filter` (see `platform::shaders::SHADER_PRESETS`).
+pub(crate) const NES_FILTER_NAMES: &[&str] = &["none", "crt", "smooth", "ntsc", "pal"];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HardwareModel {
     NesNtsc,
