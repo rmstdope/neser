@@ -168,8 +168,9 @@ impl WasmSnes {
                 self.snes.set_audio_sample_rate(44_100.0);
                 self.pending_toasts
                     .push(cartridge_load_toast_message(rom_name, true));
-                // The core's own copy of this message sits in the AppContext, which the web
-                // never shows, so it is queued here too.
+                // The core raises no toasts on load (they need a clock the browser build
+                // lacks), so the web says this itself, as `rom_loader::load_console` does on
+                // desktop.
                 if self.snes.has_superscope() {
                     self.pending_toasts
                         .push(crate::snes::frontend_toasts::SUPER_SCOPE_CONNECTED.to_string());

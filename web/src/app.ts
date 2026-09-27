@@ -2755,6 +2755,15 @@ function superScopePort(): number | null {
  * (5) is its Pause button; neither then reaches port 1, so one press never pauses twice.
  * Returns true when the key was the scope's.
  */
+/** Let go of the scope's Fire and Cursor, so a release mid-press never leaves them held. */
+function releaseSuperScopeButtons() {
+    const port = superScopePort();
+    if (emulator?.kind === "snes" && port !== null) {
+        applySnesSuperScopeButton(emulator.inst, port, 0, false);
+        applySnesSuperScopeButton(emulator.inst, port, 2, false);
+    }
+}
+
 function handleSuperScopeKey(event: KeyboardEvent, pressed: boolean): boolean {
     const port = superScopePort();
     const action = superScopeKeyAction(event.key.toLowerCase());
@@ -3132,15 +3141,22 @@ window.addEventListener("focus", () => {
 window.addEventListener("blur", () => {
     windowFocused = false;
     pointerReleasedByEscape = true;
-    if (superScopePort() !== null && document.pointerLockElement === canvas) {
-        // Losing focus is treated like Escape; the lock change says so.
-        document.exitPointerLock?.();
+    if (superScopePort() !== null) {
+        // No mouseup arrives once focus has gone.
+        releaseSuperScopeButtons();
+        if (document.pointerLockElement === canvas) {
+            // Losing focus is treated like Escape; the lock change says so.
+            document.exitPointerLock?.();
+        }
     }
     updateMouseCursorState();
 });
 document.addEventListener("pointerlockchange", () => {
     if (superScopePort() !== null) {
         const locked = document.pointerLockElement === canvas;
+        if (!locked) {
+            releaseSuperScopeButtons();
+        }
         const { toast, release } = superScopeSession.lockChanged(locked);
         if (release) {
             document.exitPointerLock?.();
@@ -3159,6 +3175,18 @@ document.addEventListener("pointerlockchange", () => {
         pointerReleasedByEscape = true;
     }
     updateMouseCursorState();
+});
+
+document.addEventListener("pointerlockerror", () => {
+    if (superScopePort() !== null) {
+        superScopeSession.lockRefused();
+    }
+});
+canvas.addEventListener("contextmenu", (event) => {
+    // Right click is the Super Scope's Cursor button, not the browser's menu.
+    if (superScopePort() !== null) {
+        event.preventDefault();
+    }
 });
 
 // Screen size controls

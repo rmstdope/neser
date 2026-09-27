@@ -163,6 +163,17 @@ pub(crate) fn toast_wrap_width(draw_w: f32, padding: f32) -> f32 {
     (draw_w - 2.0 * TOAST_SIDE_MARGIN - 2.0 * padding).max(1.0)
 }
 
+/// The picture size, in native pixels, that the ring sight's aim and sizes are measured in
+/// for a frame `cropped_size` large: hi-res/interlaced frames double both axes.
+pub(crate) fn super_scope_sight_picture(cropped_size: [u32; 2]) -> [u32; 2] {
+    let height = if cropped_size[1] > 239 {
+        cropped_size[1] / 2
+    } else {
+        cropped_size[1]
+    };
+    [256, height]
+}
+
 /// The Super Scope's ring sight, in window coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct SightShapes {
@@ -390,6 +401,13 @@ mod tests {
                 [[cx, cy + 8.0], [cx, cy + 28.0]],
             ]
         );
+    }
+
+    #[test]
+    fn the_sight_is_measured_in_native_pixels_when_the_frame_is_hi_res() {
+        assert_eq!(super_scope_sight_picture([256, 224]), [256, 224]);
+        assert_eq!(super_scope_sight_picture([512, 448]), [256, 224]);
+        assert_eq!(super_scope_sight_picture([256, 239]), [256, 239]);
     }
 
     #[test]

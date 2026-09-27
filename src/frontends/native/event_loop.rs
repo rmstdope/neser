@@ -687,6 +687,8 @@ impl ApplicationHandler for NativeEventLoop {
                 if !focused {
                     // A captured Super Scope treats focus loss like Escape: the next
                     // click recaptures without firing, and the player is told how.
+                    // (A Super Scope is never captured automatically, so macOS's
+                    // start-up Focused(false) cannot reach this: it needs a capture.)
                     if let Some(toast) = mouse::super_scope_release_toast(
                         mouse::has_super_scope(&self.console),
                         self.state.mouse_grabbed,
@@ -694,8 +696,9 @@ impl ApplicationHandler for NativeEventLoop {
                         self.state.mouse_released_by_escape = true;
                         self.console.app_context().borrow_mut().add_toast(toast);
                     }
-                    // Release grab on focus loss, but do NOT set
-                    // mouse_released_by_escape — that flag is only for
+                    mouse::release_super_scope_buttons(&mut self.console);
+                    // For the NES-style devices, release grab on focus loss but do NOT
+                    // set mouse_released_by_escape — for them that flag is only for
                     // explicit Escape key presses. Keeping it clear means
                     // auto-grab resumes when focus returns, which is the
                     // right behaviour. (On macOS, Focused(false) also fires
@@ -861,6 +864,7 @@ impl ApplicationHandler for NativeEventLoop {
 
                 // If keyboard handler released the mouse grab (Escape), apply it.
                 if mouse_grabbed_before && !self.state.mouse_grabbed {
+                    mouse::release_super_scope_buttons(&mut self.console);
                     if let Some(toast) = mouse::super_scope_release_toast(
                         mouse::has_super_scope(&self.console),
                         true,
@@ -884,8 +888,12 @@ impl ApplicationHandler for NativeEventLoop {
                 // Locked grab mode — the reported position is always the lock point.
                 // Before a capture it is where the player sees the pointer, which is
                 // where a Super Scope's capturing shot lands.
-                if !self.state.mouse_grabbed {
-                    self.state.pointer_position = Some((position.x as f32, position.y as f32));
+                if !self.state.mouse_grabbed
+                    && let Some(ref gl) = self.gl_wrapper
+                {
+                    // Physical pixels in; the virtual cursor works in logical ones.
+                    let logical = position.to_logical::<f32>(gl.window().scale_factor());
+                    self.state.pointer_position = Some((logical.x, logical.y));
                 }
             }
 

@@ -57,6 +57,19 @@ describe("createSuperScopeSession", () => {
         expect(session.mouseDown(0, true, 0, 0)).toEqual({ requestLock: false, forward: true });
     });
 
+    it("still recaptures without firing when the browser refuses a lock", () => {
+        const session = createSuperScopeSession();
+        session.mouseDown(0, false, 0, 0);
+        session.lockChanged(true);
+        session.lockChanged(false);
+        expect(session.mouseDown(0, false, 0, 0).forward).toBe(false);
+        session.lockRefused();
+        expect(session.mouseDown(0, false, 0, 0)).toEqual({ requestLock: true, forward: false });
+        session.lockRefused();
+        // A lock the page asks for later is still not taken as the scope's capture.
+        expect(session.lockChanged(true)).toEqual({ toast: null, release: true });
+    });
+
     it("says nothing when the lock is lost before it was ever captured", () => {
         const session = createSuperScopeSession();
         expect(session.lockChanged(false)).toEqual({ toast: null, release: false });

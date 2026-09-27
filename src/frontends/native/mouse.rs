@@ -74,7 +74,7 @@ pub fn update_mouse_motion(
     window_width: u32,
     window_height: u32,
 ) -> Option<(u8, u8)> {
-    let picture_height = console.screen_height();
+    let picture_height = super_scope_picture_height(console.screen_height());
     let mouse = console.as_mouse_input_mut()?;
     if mouse.has_super_scope() {
         // The scope aims at a picture pixel: the whole window spans the 256-pixel-wide
@@ -165,6 +165,28 @@ pub fn super_scope_sight(
         y: f32::from(y),
         style: CrosshairStyle::Ring,
     })
+}
+
+/// The scanlines the Super Scope aims over for a frame `frame_height` rows tall: hi-res and
+/// interlaced output double the frame's rows, not the picture's lines.
+pub fn super_scope_picture_height(frame_height: u32) -> u32 {
+    if frame_height > 239 {
+        frame_height / 2
+    } else {
+        frame_height
+    }
+}
+
+/// Let go of the Super Scope's Fire and Cursor. Called whenever the capture ends (Escape,
+/// focus loss), since the button-up of a press held across it never reaches the scope.
+pub fn release_super_scope_buttons(console: &mut Console) {
+    if !has_super_scope(console) {
+        return;
+    }
+    if let Some(mouse) = console.as_mouse_input_mut() {
+        mouse.set_mouse_button(MouseInputButton::Left, false);
+        mouse.set_mouse_button(MouseInputButton::Right, false);
+    }
 }
 
 // ── Capture policy ───────────────────────────────────────────────────────────
@@ -559,6 +581,27 @@ mod tests {
         assert!(scope_state(&console).superscope_cursor);
         update_mouse_button(&mut console, MouseButton::Right, false);
         assert!(!scope_state(&console).superscope_cursor);
+    }
+
+    #[test]
+    fn releasing_the_capture_lets_go_of_fire_and_cursor() {
+        let mut console = make_snes_console_with_scope();
+        update_mouse_button(&mut console, MouseButton::Left, true);
+        update_mouse_button(&mut console, MouseButton::Right, true);
+
+        release_super_scope_buttons(&mut console);
+
+        let state = scope_state(&console);
+        assert!(!state.superscope_trigger && !state.superscope_cursor);
+    }
+
+    #[test]
+    fn the_scope_aims_over_the_picture_lines_even_in_hi_res_output() {
+        assert_eq!(super_scope_picture_height(224), 224);
+        assert_eq!(super_scope_picture_height(239), 239);
+        // Hi-res/interlaced output doubles the frame's rows; the aim stays in scanlines.
+        assert_eq!(super_scope_picture_height(448), 224);
+        assert_eq!(super_scope_picture_height(478), 239);
     }
 
     #[test]

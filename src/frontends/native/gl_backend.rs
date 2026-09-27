@@ -334,7 +334,10 @@ fn draw_egui_crosshair(ui: &mut egui::Ui, crosshair: Crosshair, draw_ctx: &Cross
         let sight = crate::frontends::native::ui_geometry::super_scope_sight_shapes(
             [draw_ctx.x0, draw_ctx.y0],
             [draw_ctx.draw_w, draw_ctx.draw_h],
-            [draw_ctx.cropped_w, draw_ctx.cropped_h],
+            crate::frontends::native::ui_geometry::super_scope_sight_picture([
+                draw_ctx.cropped_w,
+                draw_ctx.cropped_h,
+            ]),
             [ix, iy],
         );
         let center = egui::pos2(sight.center[0], sight.center[1]);

@@ -48,10 +48,10 @@ export function createSuperScopeSession() {
             }
             x = atX;
             y = atY;
-            const forward = !releasedByPlayer;
-            releasedByPlayer = false;
+            // A click after a release never fires until a capture has actually happened,
+            // even when the browser refuses the lock it asks for.
             lockRequested = true;
-            return { requestLock: true, forward };
+            return { requestLock: true, forward: !releasedByPlayer };
         },
 
         /**
@@ -65,6 +65,7 @@ export function createSuperScopeSession() {
                     return { toast: null, release: true };
                 }
                 lockRequested = false;
+                releasedByPlayer = false;
                 isCaptured = true;
                 return { toast: null, release: false };
             }
@@ -75,6 +76,11 @@ export function createSuperScopeSession() {
             isCaptured = false;
             releasedByPlayer = true;
             return { toast: SUPER_SCOPE_MOUSE_RELEASED, release: false };
+        },
+
+        /** The browser refused the lock a click asked for (`pointerlockerror`). */
+        lockRefused() {
+            lockRequested = false;
         },
 
         /** Pointer movement while locked, kept inside a `width`×`height` picture. */

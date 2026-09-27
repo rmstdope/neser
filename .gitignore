@@ -86,6 +86,8 @@ test-results/
 obj
 
 test.state
+# Written into the working directory by the keyboard hotkey tests (F6 save state).
+*-hotkey-test.state
 
 # Production secrets
 .env
