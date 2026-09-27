@@ -879,7 +879,7 @@ impl CgbBus {
         BusState {
             bus_type: GbBusType::Cgb,
             ppu: self.ppu.clone(),
-            wram: wram_flat,
+            wram: Box::new(wram_flat),
             hram: self.hram,
             timer: self.timer.clone(),
             joypad: self.joypad.clone(),

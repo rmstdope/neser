@@ -60,8 +60,10 @@ pub struct Sm83State {
 pub struct BusState {
     pub bus_type: GbBusType,
     pub ppu: Ppu,
-    #[serde_as(as = "[_; 0x8000]")]
-    pub wram: [u8; 0x8000],
+    /// Boxed, like `GbSaveState::bus`, so deserializing does not copy 32 KB
+    /// through every serde frame: wasm's 1 MB stack overflowed silently.
+    #[serde_as(as = "Box<[_; 0x8000]>")]
+    pub wram: Box<[u8; 0x8000]>,
     #[serde_as(as = "[_; 0x7F]")]
     pub hram: [u8; 0x7F],
     pub timer: Timer,
@@ -117,8 +119,10 @@ pub struct GbSaveState {
     pub version: u32,
     /// CPU state.
     pub cpu: Sm83State,
-    /// Bus state (PPU, APU, timer, joypad, RAM, etc.).
-    pub bus: BusState,
+    /// Bus state (PPU, APU, timer, joypad, RAM, etc.). Boxed so that
+    /// deserializing moves a pointer, not 50 KB, through serde's frames (the
+    /// JSON is the same).
+    pub bus: Box<BusState>,
     /// Cartridge RAM snapshot (battery-backed SRAM).
     pub cart_ram: Vec<u8>,
     /// MBC register state (opaque bytes).
@@ -150,7 +154,7 @@ impl Gb<DmgBus> {
         GbSaveState {
             version: GB_SAVESTATE_VERSION,
             cpu: self.cpu.capture_state(),
-            bus: self.cpu.bus.capture_bus_state(),
+            bus: Box::new(self.cpu.bus.capture_bus_state()),
             cart_ram: self.cpu.bus.cart_ram_snapshot(),
             mbc_state: self.cpu.bus.mbc_state_snapshot(),
         }
@@ -259,7 +263,7 @@ mod tests {
         let save = GbSaveState {
             version: GB_SAVESTATE_VERSION,
             cpu: gb.cpu.capture_state(),
-            bus: gb.cpu.bus.capture_bus_state(),
+            bus: Box::new(gb.cpu.bus.capture_bus_state()),
             cart_ram: gb.cpu.bus.cart_ram_snapshot(),
             mbc_state: gb.cpu.bus.mbc_state_snapshot(),
         };
@@ -287,7 +291,7 @@ mod tests {
         let save = GbSaveState {
             version: GB_SAVESTATE_VERSION,
             cpu: gb.cpu.capture_state(),
-            bus: gb.cpu.bus.capture_bus_state(),
+            bus: Box::new(gb.cpu.bus.capture_bus_state()),
             cart_ram: gb.cpu.bus.cart_ram_snapshot(),
             mbc_state: gb.cpu.bus.mbc_state_snapshot(),
         };
@@ -341,7 +345,7 @@ mod tests {
         let save = GbSaveState {
             version: GB_SAVESTATE_VERSION,
             cpu: cpu_state,
-            bus: bus_state,
+            bus: Box::new(bus_state),
             cart_ram: gb.cpu.bus.cart_ram_snapshot(),
             mbc_state: gb.cpu.bus.mbc_state_snapshot(),
         };
@@ -461,7 +465,7 @@ mod tests {
         let save = GbSaveState {
             version: GB_SAVESTATE_VERSION,
             cpu: gb.cpu.capture_state(),
-            bus: gb.cpu.bus.capture_bus_state(),
+            bus: Box::new(gb.cpu.bus.capture_bus_state()),
             cart_ram: gb.cpu.bus.cart_ram_snapshot(),
             mbc_state: gb.cpu.bus.mbc_state_snapshot(),
         };

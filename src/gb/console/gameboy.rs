@@ -154,14 +154,14 @@ impl GbConsole {
             Self::Dmg(gb) => GbSaveState {
                 version: GB_SAVESTATE_VERSION,
                 cpu: gb.cpu.capture_state(),
-                bus: gb.cpu.bus.capture_bus_state(),
+                bus: Box::new(gb.cpu.bus.capture_bus_state()),
                 cart_ram: gb.cpu.bus.cart_ram_snapshot(),
                 mbc_state: gb.cpu.bus.mbc_state_snapshot(),
             },
             Self::Cgb(gb) => GbSaveState {
                 version: GB_SAVESTATE_VERSION,
                 cpu: gb.cpu.capture_state(),
-                bus: gb.cpu.bus.capture_bus_state(),
+                bus: Box::new(gb.cpu.bus.capture_bus_state()),
                 cart_ram: gb.cpu.bus.cart_ram_snapshot(),
                 mbc_state: gb.cpu.bus.mbc_state_snapshot(),
             },

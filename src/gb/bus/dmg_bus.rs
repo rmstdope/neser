@@ -426,7 +426,7 @@ impl DmgBus {
         BusState {
             bus_type: GbBusType::Dmg,
             ppu: self.ppu.clone(),
-            wram: wram_padded,
+            wram: Box::new(wram_padded),
             hram: self.hram,
             timer: self.timer.clone(),
             joypad: self.joypad.clone(),

@@ -1952,3 +1952,38 @@ fn wasm_gb_colour_game_is_not_an_original_game() {
     gb.load_rom(&idling_gb_rom(0xC0), "test.gbc").unwrap();
     assert!(!gb.is_original_game());
 }
+
+#[wasm_bindgen_test]
+fn wasm_gb_save_state_round_trips() {
+    let mut gb = WasmGb::new();
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    gb.render_frame_rgba();
+    let state = gb.save_state_bytes();
+    assert!(!state.is_empty());
+    let next = gb.render_frame_rgba();
+    gb.render_frame_rgba();
+    gb.load_state_bytes(&state).unwrap();
+    assert_eq!(
+        gb.render_frame_rgba(),
+        next,
+        "carries on from the saved moment"
+    );
+}
+
+#[wasm_bindgen_test]
+fn wasm_gb_load_state_restores_on_the_saved_console() {
+    let mut gb = WasmGb::new();
+    gb.set_original_games_on_color(true);
+    gb.load_rom(&idling_gb_rom(0x00), "test.gb").unwrap();
+    gb.render_frame_rgba();
+    let colour_state = gb.save_state_bytes();
+    gb.set_original_games_on_color(false);
+    gb.reset(true);
+    assert!(!gb.is_color());
+    gb.load_state_bytes(&colour_state).unwrap();
+    assert!(
+        gb.is_color(),
+        "restored on the Game Boy Color it was saved on"
+    );
+    assert!(gb.palette_label().starts_with("Palette: Auto"));
+}
