@@ -1257,6 +1257,12 @@ mod tests {
         mapper.write_prg(0x6000, 0xAB);
         assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5A), 0x5A);
         assert_eq!(mapper.read_prg_open_bus(0x7FFF, 0xC3), 0xC3);
+
+        // CHR A16 (SNROM's PRG-RAM /CE) changes nothing: there is no RAM to gate.
+        write_register(&mut mapper, 0xA000, 0b10000);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5A), 0x5A);
+        write_register(&mut mapper, 0xA000, 0b00000);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0x5A), 0x5A);
     }
 
     #[test]

@@ -1934,17 +1934,10 @@ mod tests {
     // Capability: max_prg_ram_kb
 
     #[test]
-    fn bandai_fcg_reports_zero_prg_ram() {
-        // mapper 16 now supports PRG-RAM when the header specifies it;
-        // with the default test context (1 × 8KB), expect 8KB.
-        assert_eq!(make_mapper(16).capabilities().max_prg_ram_kb, 8);
-    }
-
-    #[test]
     fn capability_prg_ram_follows_the_header_rule() {
         // Mappers that size PRG-RAM from the header report what header_prg_ram_kb() gives:
         // nothing when the header leaves the size unspecified, the header size otherwise.
-        // 34 is built as BNROM (CHR-RAM, submapper 0); NINA-001 fixes its own 8 KiB.
+        // 34 is built as BNROM (submapper 2); NINA-001 fixes its own 8 KiB.
         for id in [16u16, 18, 28, 30, 31, 34, 35] {
             let ctx = || {
                 let chr = if id == 34 {
@@ -1958,6 +1951,7 @@ mod tests {
                     chr,
                     NametableLayout::Horizontal,
                 )
+                .with_submapper(if id == 34 { 2 } else { 0 })
             };
             let unspecified = create_mapper(ctx().with_unspecified_prg_ram_size())
                 .unwrap_or_else(|_| panic!("mapper {id}"));

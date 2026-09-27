@@ -41,7 +41,9 @@ impl NesEventMapper {
     const MMC1_LAST_CHR_REG_ADDR_HI_IDX: usize = 24;
     const MMC1_MIN_REG_SNAPSHOT_SIZE: usize = Self::MMC1_LAST_CHR_REG_ADDR_HI_IDX + 1;
 
-    pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+    pub fn new(mut ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        // Board exception: NES-EVENT carries 8 KiB of PRG-RAM whatever the header says.
+        ctx.set_board_prg_ram(1);
         let mut inner = MMC1Mapper::new(ctx);
         Self::force_timer_disable_bit_on_powerup(&mut inner);
         let chr_bank_0 = Self::chr_bank_0_from_mapper(&inner);
@@ -237,6 +239,29 @@ mod tests {
     use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{MapperContext, create_mapper};
     use crate::nes::cartridge::test_helpers::banked_data;
+
+    #[test]
+    fn nes_event_board_carries_8k_prg_ram_whatever_the_header_says() {
+        // nesdev NES-EVENT: the board has "8K of PRG RAM", fixed on the board.
+        for ctx in [
+            MapperContext::new_for_test(
+                105,
+                vec![0; 256 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_unspecified_prg_ram_size(),
+            MapperContext::new_for_test(
+                105,
+                vec![0; 256 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0),
+        ] {
+            assert_eq!(NesEventMapper::new(ctx).wram_size(), 8 * 1024);
+        }
+    }
 
     const PRG_BANKS_16K: usize = 11;
     const CHR_BANKS_4K: usize = 9;
