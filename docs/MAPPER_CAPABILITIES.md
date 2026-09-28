@@ -1,6 +1,8 @@
 # Mapper Capabilities Matrix
 
 This document lists the hardware capabilities reported by each supported mapper via the `MapperCapabilities` struct. The data is sourced from each mapper's `capabilities()` implementation.
+For board-specific register behavior, known software quirks, and implementation sources, see
+[`MAPPER_SUPPORT.md`](MAPPER_SUPPORT.md).
 
 ## Capability Fields
 

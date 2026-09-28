@@ -63,7 +63,7 @@ use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - `$8201`:       IRQ counter high byte; enables IRQ when mode bit 7 is set
 /// - `$8300–$8302`: PRG 8KB banks (r[8], r[9], r[10]); clears 32KB mode
 /// - `$8310–$8317`: CHR 1KB banks (r[0]–r[7]); $8312–$8315 also clears 2KB mode
-/// - `$B000/$B0FF/$B1FF`: alias for $8000 (Dragon Ball Z Party [p1] BMC)
+/// - `$B000/$B0FF/$B1FF`: 32KB PRG-bank alias (Dragon Ball Z Party [p1] BMC)
 pub struct Mapper83 {
     base: BaseMapper,
     /// r[0..7] = CHR 1KB bank indices; r[8..10] = PRG 8KB bank indices.
@@ -231,8 +231,14 @@ impl Mapper for Mapper83 {
             0x5100..=0x5103 => {
                 self.ex_regs[(addr & 0x03) as usize] = value;
             }
-            0x8000 | 0xB000 | 0xB0FF | 0xB1FF => {
+            0x8000 => {
                 self.is_2k_bank = true;
+                self.bank = value;
+                self.mode |= Self::MODE_32KB_PRG;
+                self.update_state();
+            }
+            0xB000 | 0xB0FF | 0xB1FF => {
+                // Mesen2 Mapper83: DBZ aliases select only the 32KB PRG bank.
                 self.bank = value;
                 self.mode |= Self::MODE_32KB_PRG;
                 self.update_state();
@@ -523,6 +529,21 @@ mod tests {
             4,
             "$B000 must behave like $8000 for bank selection"
         );
+    }
+
+    #[test]
+    fn dbz_prg_aliases_do_not_enable_2kb_chr_banking() {
+        for alias in [0xB000, 0xB0FF, 0xB1FF] {
+            let mut mapper = make_mapper();
+            mapper.write_prg(alias, 0);
+            mapper.write_prg(0x8310, 3);
+
+            assert_eq!(
+                mapper.read_chr(0x0000),
+                3,
+                "DBZ PRG alias ${alias:04X} must retain 1KB CHR banking"
+            );
+        }
     }
 
     // --- CHR 1KB mode banking ---
