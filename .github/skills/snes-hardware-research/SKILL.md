@@ -103,6 +103,13 @@ Every hardware research skill in this repository uses the same three tiers. The 
      covering WRAM/VRAM/CGRAM/OAM/ARAM/SA-1 I-RAM), so pin that side as well: the automated
      suites already do via `RunConfig`'s `RamInitMode::Zero` default, `--headless` capture
      forces `zero`, and any other route needs an explicit `--ram-init-mode zero`.
+   - **Plug in the same controllers on BOTH sides** (nr-0an). Mesen2's testRunner takes its
+     SNES ports from `settings.json`, and a local install may have port 2 empty, while
+     NESER has a standard pad in each port by default. Pass
+     `--snes.port1.type=SnesController --snes.port2.type=SnesController`. Games that read
+     which pads are connected play differently otherwise: Super Bomberman 3's attract demo
+     took a lag frame on Mesen2 only, which looked like a CPU-timing drift until a trace
+     showed a branch on the game's "player 2 connected" byte going the other way.
      `test_dmatiming/demo.smc` was recorded in #3063 as a "~0.93% DMA-timing divergence"
      for exactly this reason -- two default Mesen2 captures of that ROM differ from each
      other by 1.06%, more than either differs from NESER. Matched, the real divergence was
