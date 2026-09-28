@@ -541,9 +541,9 @@ impl Sa1Bus {
     /// `GetHandler(_state.PC)`, the 16-bit PC alone, so they test bank `$00`, not the
     /// program bank. fullsnes leaves these penalties undocumented ("XXX pg 62..66 timings"),
     /// so NESER follows Mesen2 here, bank quirk included: with the program bank honoured,
-    /// Super Mario RPG's attract demo drifts several frames from Mesen2 by frame 2100
-    /// (nr-7v3), because its SA-1 routines run from `$C3:05xx`, whose bank-`$00` twin is
-    /// I-RAM.
+    /// Super Mario RPG's attract demo, identical to Mesen2 at every 300-frame checkpoint to
+    /// 3600 with the quirk, differs from frame 900 on and is black at frame 2100 without it
+    /// (nr-7v3): its SA-1 routines run from `$C3:05xx`, whose bank-`$00` twin is I-RAM.
     fn pc_is_in_rom(&self, target: u32) -> bool {
         self.is_rom(target & 0xFFFF)
     }
@@ -748,7 +748,7 @@ impl SnesBus for Sa1Bus {
     /// Mesen2 decides both from `_lastAccessMemType` before `ReadSa1`/`WriteSa1` update it,
     /// so a cycle pays for the memory the SA-1's PREVIOUS access touched. NESER keeps that
     /// ordering: charged against the current access instead, Super Mario RPG's attract demo
-    /// loses frames against Mesen2 from frame 900 (nr-7v3).
+    /// falls a frame behind Mesen2 from frame 3000 on (nr-7v3).
     fn access_clocks(&self, addr: u32, _fast_rom: bool) -> u8 {
         let charged = self.last_access.replace(self.cart_access(addr));
         let snes = self.snes_access.get();
