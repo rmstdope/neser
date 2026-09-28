@@ -392,17 +392,22 @@ impl Gsu {
 
     fn write_sfr(&mut self, value: u8) {
         let s = &mut self.state;
+        let was_running = s.go;
         s.zero = value & 0x02 != 0;
         s.carry = value & 0x04 != 0;
         s.sign = value & 0x08 != 0;
         s.overflow = value & 0x10 != 0;
         s.go = value & 0x20 != 0;
-        if !s.go {
+        if was_running && !s.go {
             // Aborting also ends any wait for a bus, so it cannot carry into the next start.
             s.waiting_for_rom = false;
             s.waiting_for_ram = false;
-            // fullsnes "Code-Cache": an S-CPU write of GO=0 sets CBR to 0 and marks every cache
-            // line empty (how the S-CPU prepares to write code into the cache itself).
+            // Aborting sets CBR to 0 and marks every cache line empty (fullsnes "Code-Cache"; how
+            // the S-CPU prepares to write code into the cache itself). fullsnes says any GO=0
+            // write does this, even to a GSU already stopped by STOP. Mesen2 (`Gsu::Write`) and
+            // ares (`SuperFX::writeIO`) both clear only when the write stops a running GSU, and
+            // Yoshi's Island, which writes SFR=0 before every job, keeps pace with Mesen2 only
+            // that way (nr-2cn; navigator's decision to follow them).
             s.cbr = 0;
             self.invalidate_all_code_cache_lines();
         }
