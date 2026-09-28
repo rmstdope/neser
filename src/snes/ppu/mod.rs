@@ -113,7 +113,7 @@ pub(super) const HDMA_INIT_BASE_POSITION: u16 = 12;
 /// Note what the vectors do and do not settle: all 29 undisbeliever ROMs are a 0-pixel match
 /// against Mesen2 with this value, but moving it to 277 leaves every one of them unchanged
 /// (checked by mutation in #3083), because the write still lands in hblank ahead of the next
-/// line's dot-22 INIDISP latch. They pin the scanline the transfer belongs to, not its exact
+/// line's first visible pixel. They pin the scanline the transfer belongs to, not its exact
 /// dot; the dot follows Mesen2, whose own event clock is the only source that states one.
 pub(super) const HDMA_TRANSFER_POSITION: u16 = 276 * (MASTER_CYCLES_PER_DOT as u16);
 
@@ -392,11 +392,11 @@ pub struct Ppu {
     /// half-pixel on the hires path. Kept so hires color math can read the finalized
     /// main pixel one dot to the left when composing the even/sub half.
     line_main_final: [u16; SCREEN_WIDTH],
-    /// INIDISP ($2100) latched once per scanline, at that scanline's first
-    /// visible dot. HDMA commonly rewrites INIDISP every scanline (fade and
-    /// scanline-banding effects), so forced-blank/brightness must be applied
-    /// per scanline at snapshot time rather than with one frame-wide value.
-    line_inidisp: Vec<u8>,
+    /// INIDISP ($2100) as it was when each [`Self::framebuffer`] entry was drawn, same
+    /// indexing. Forced blank and brightness take effect from the next pixel after a
+    /// write, mid-line included (Mesen2 `RenderScanline`; nr-2wn), and are applied at
+    /// snapshot time.
+    pixel_inidisp: Vec<u8>,
     /// Count of VBlank entries (completed visible frames) not yet drained via
     /// [`Ppu::take_completed_frames`]. A counter rather than a bool so that
     /// vblanks elapsing while the CPU is stalled inside one instruction-length
@@ -580,7 +580,7 @@ impl Ppu {
             line_main: [ScreenPixel::default(); SCREEN_WIDTH],
             line_sub: [ScreenPixel::default(); SCREEN_WIDTH],
             line_main_final: [0; SCREEN_WIDTH],
-            line_inidisp: vec![0; SCREEN_HEIGHT_MAX],
+            pixel_inidisp: vec![0; SCREEN_WIDTH_MAX * SCREEN_HEIGHT_MAX],
             pending_completed_frames: 0,
             auto_joypad_latch: false,
             bg_mode: 0,

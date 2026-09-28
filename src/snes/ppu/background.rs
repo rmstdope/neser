@@ -3338,9 +3338,9 @@ mod tests {
             if let Some(column) = write_at {
                 tick_to_column(&mut ppu, column);
                 // VRAM is CPU-writable only in VBlank or forced blank, so take the same
-                // route the hvdma ROM does: force-blank, then burst. The row still
-                // renders, because INIDISP is latched once per scanline at its first
-                // visible dot and this write lands after that (the #2973 limitation).
+                // route the hvdma ROM does: force-blank, burst, then end forced blank.
+                // No dot is drawn between the writes, so forced blank itself blacks out
+                // no column (INIDISP applies per pixel, nr-2wn).
                 ppu.write_register(0x2100, 0x8F);
                 // Blank char 1 so its pixels fall through to the backdrop. A 2bpp char is
                 // 8 words, so char 1 starts at word 8.
@@ -3351,6 +3351,7 @@ mod tests {
                     ppu.write_register(0x2118, 0x00);
                     ppu.write_register(0x2119, 0x00);
                 }
+                ppu.write_register(0x2100, 0x0F);
             }
             render_lines(&mut ppu, 1);
             let rgb = ppu.screen_snapshot_rgb();

@@ -43,16 +43,6 @@ impl Ppu {
         let y = (line - VISIBLE_LINE_START) as usize;
         let row = self.framebuffer_row(y);
         let duplicates_row = self.duplicates_row();
-        if dot == VISIBLE_DOT_START {
-            self.line_inidisp[row] = self.inidisp;
-            if duplicates_row {
-                // The duplicate row is presented like any other, so it needs this
-                // line's brightness/forced-blank too -- otherwise every second output
-                // row of a progressive hires frame reads brightness 0 and comes out
-                // black.
-                self.line_inidisp[row + 1] = self.inidisp;
-            }
-        }
         let base_x = self.framebuffer_x(x);
         let stride = self.framebuffer_stride();
         let base = row * stride + base_x;
@@ -72,18 +62,20 @@ impl Ppu {
                 let out = self.compose_pixels(x as u16, y as u16, main, sub);
                 (out, out)
             };
-            self.framebuffer[base] = even;
-            self.framebuffer[base + 1] = odd;
+            self.put_pixel(base, even);
+            self.put_pixel(base + 1, odd);
             if duplicates_row {
-                self.framebuffer[base + stride] = even;
-                self.framebuffer[base + stride + 1] = odd;
+                // The duplicate row is presented like any other, so it carries this
+                // dot's brightness/forced blank too.
+                self.put_pixel(base + stride, even);
+                self.put_pixel(base + stride + 1, odd);
             }
             // The finalized main pixel is the odd half in both branches.
             self.line_main_final[x] = odd;
         } else {
             let out = self.compose_pixels(x as u16, y as u16, main, sub);
             self.line_main_final[x] = out;
-            self.framebuffer[base] = out;
+            self.put_pixel(base, out);
         }
         // Mesen2's render pipeline ends every pixel chunk with `RenderBgColor`, which
         // fetches the backdrop for any pixel the sub screen doesn't cover. With no
@@ -94,6 +86,19 @@ impl Ppu {
         if self.ts & 0x1F == 0 {
             self.cgram_render_index.set(0);
         }
+    }
+
+    /// Store one output pixel with the INIDISP ($2100) value in force as it is drawn.
+    ///
+    /// Forced blank and master brightness apply per pixel, from the pixel after the
+    /// write: Mesen2 flushes the line up to `x = H - 22` with the old value on every
+    /// PPU write and draws the rest with the new one (`SnesPpu::Write` ->
+    /// `RenderScanline`, `ApplyBrightness`). They are applied at snapshot time
+    /// ([`Self::screen_snapshot_rgb`]) so the framebuffer itself keeps the composed
+    /// colour.
+    fn put_pixel(&mut self, index: usize, color: u16) {
+        self.framebuffer[index] = color;
+        self.pixel_inidisp[index] = self.inidisp;
     }
 
     /// Upgrade the frame in progress to the hires layout, re-laying-out every row
@@ -133,15 +138,18 @@ impl Ppu {
             let dst = y * 2 * stride;
             for x in (0..SCREEN_WIDTH).rev() {
                 let color = self.framebuffer[src + x];
-                self.framebuffer[dst + x * 2] = color;
-                self.framebuffer[dst + x * 2 + 1] = color;
+                let inidisp = self.pixel_inidisp[src + x];
+                for column in [dst + x * 2, dst + x * 2 + 1] {
+                    self.framebuffer[column] = color;
+                    // The brightness each pixel was drawn with moves with it, or the
+                    // converted rows would render black.
+                    self.pixel_inidisp[column] = inidisp;
+                }
             }
             self.framebuffer
                 .copy_within(dst..dst + stride, dst + stride);
-            // The per-row brightness latch moves with its row, or the converted rows
-            // would render black.
-            self.line_inidisp[y * 2 + 1] = self.line_inidisp[y];
-            self.line_inidisp[y * 2] = self.line_inidisp[y];
+            self.pixel_inidisp
+                .copy_within(dst..dst + stride, dst + stride);
         }
     }
 
@@ -156,8 +164,9 @@ impl Ppu {
         (low | (high << 8)) & 0x7FFF
     }
 
-    /// Snapshot the visible framebuffer as packed RGB888, applying INIDISP forced-blank and
-    /// master brightness. Forced blank or brightness 0 yields a black screen.
+    /// Snapshot the visible framebuffer as packed RGB888, applying the INIDISP forced blank
+    /// and master brightness each pixel was drawn with. Forced blank or brightness 0 yields
+    /// a black pixel.
     ///
     /// The output dimensions match [`Self::frame_dimensions`]. No normalization happens
     /// here: a hires or interlaced frame was already written 512 columns wide, and
@@ -184,14 +193,14 @@ impl Ppu {
 
         for y in 0..height {
             let fb_y = y + y_fb_offset;
-            let line_inidisp = self.line_inidisp[fb_y];
-            let forced_blank = line_inidisp & 0x80 != 0;
-            let brightness = (line_inidisp & 0x0F) as u32;
-            if forced_blank || brightness == 0 {
-                continue; // row already all-black
-            }
             for x in 0..width {
-                let pixel = self.framebuffer[fb_y * stride + x];
+                let index = fb_y * stride + x;
+                let inidisp = self.pixel_inidisp[index];
+                let brightness = (inidisp & 0x0F) as u32;
+                if inidisp & 0x80 != 0 || brightness == 0 {
+                    continue; // forced blank or brightness 0: already black
+                }
+                let pixel = self.framebuffer[index];
                 let (r, g, b) = bgr555_to_rgb888(pixel, brightness);
                 let idx = (y * width + x) * 3;
                 out[idx] = r;
@@ -320,6 +329,13 @@ mod tests {
         }
     }
 
+    /// Finish drawing the rest of the current line (at most one more line of ticks).
+    fn finish_line(ppu: &mut Ppu) {
+        for _ in 0..(u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
+    }
+
     fn row0_pixel(rgb: &[u8], x: usize) -> [u8; 3] {
         [rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]]
     }
@@ -339,7 +355,7 @@ mod tests {
             ppu.write_register(0x2100, 0x0F);
             tick_to_row0_column(&mut ppu, column);
             ppu.write_register(0x2100, 0x80);
-            render_full_frame(&mut ppu);
+            finish_line(&mut ppu);
 
             let rgb = ppu.screen_snapshot_rgb();
             let split = usize::from(column);
@@ -367,7 +383,7 @@ mod tests {
         ppu.write_register(0x2100, 0x0F);
         tick_to_row0_column(&mut ppu, 100);
         ppu.write_register(0x2100, 0x07);
-        render_full_frame(&mut ppu);
+        finish_line(&mut ppu);
 
         let rgb = ppu.screen_snapshot_rgb();
         assert_eq!(row0_pixel(&rgb, 100), [255, 0, 0], "drawn at brightness 15");
@@ -615,8 +631,8 @@ mod tests {
 
     #[test]
     fn brightness_applies_to_both_rows_of_a_doubled_line() {
-        // line_inidisp is indexed by framebuffer row, so the duplicate row needs its
-        // own latch -- otherwise every second output row reads brightness 0 and the
+        // The INIDISP latch is per framebuffer entry, so the duplicate row needs its
+        // own copy -- otherwise every second output row reads brightness 0 and the
         // frame comes out half black.
         let mut ppu = Ppu::new();
         set_backdrop(&mut ppu, 0x001F); // full red

@@ -4,8 +4,8 @@
 //! cleared and redrawn over the following frame.
 
 use super::{
-    CGRAM_SIZE, OAM_SIZE, Ppu, PpuLineTimingProfile, ScanPosition, SnesVideoRegion,
-    VISIBLE_DOT_START, VISIBLE_LINE_START, VRAM_SIZE, VramAddressTranslation,
+    CGRAM_SIZE, OAM_SIZE, Ppu, PpuLineTimingProfile, ScanPosition, SnesVideoRegion, VRAM_SIZE,
+    VramAddressTranslation,
 };
 use crate::snes::console::save_state::SnesPpuState;
 
@@ -68,7 +68,7 @@ impl Ppu {
             line_main: _,       // transient: per-scanline buffer, reset on restore
             line_sub: _,        // transient: per-scanline buffer, reset on restore
             line_main_final: _, // transient: per-scanline buffer, reset on restore
-            line_inidisp: _,    // transient: relatched on restore and each frame
+            pixel_inidisp: _,   // transient: rewritten with each pixel drawn
             pending_completed_frames,
             auto_joypad_latch: _, // one-shot: raised and consumed within one master clock
             bg_mode,
@@ -472,25 +472,8 @@ impl Ppu {
         self.line_main = [super::ScreenPixel::default(); super::SCREEN_WIDTH];
         self.line_sub = [super::ScreenPixel::default(); super::SCREEN_WIDTH];
         self.line_main_final = [0; super::SCREEN_WIDTH];
-        // Per-scanline latched INIDISP is transient too; the next frame relatches it.
-        self.line_inidisp.iter_mut().for_each(|v| *v = 0);
-        debug_assert_eq!(self.line_inidisp.len(), super::SCREEN_HEIGHT_MAX);
-        // The scanline currently being rendered already passed its own latch
-        // point (VISIBLE_DOT_START) before this snapshot was taken, so it
-        // won't be relatched by render_dot this frame -- restore it directly
-        // from the (already-restored) live INIDISP value.
-        if self.position.scanline >= VISIBLE_LINE_START
-            && self.position.dot > VISIBLE_DOT_START
-            && (self.position.scanline as usize)
-                < VISIBLE_LINE_START as usize + self.active_screen_height()
-        {
-            let y = (self.position.scanline - VISIBLE_LINE_START) as usize;
-            let row = self.framebuffer_row(y);
-            self.line_inidisp[row] = self.inidisp;
-            if self.duplicates_row() {
-                self.line_inidisp[row + 1] = self.inidisp;
-            }
-        }
+        // The INIDISP each pixel was drawn with is transient like the pixel itself.
+        self.pixel_inidisp.iter_mut().for_each(|v| *v = 0);
         Ok(())
     }
 }
