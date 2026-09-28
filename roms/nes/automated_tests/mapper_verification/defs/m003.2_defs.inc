@@ -1,13 +1,11 @@
-; m003.0_defs.inc — CNROM (Mapper 3, Submapper 0) — Bus conflicts unspecified
+; m003.2_defs.inc — CNROM (Mapper 3, Submapper 2) — AND-type Bus Conflicts
 ;
 ; NESdev spec: https://www.nesdev.org/wiki/CNROM
 ;              https://www.nesdev.org/wiki/NES_2.0_submappers (003: 0, 1, 2)
 ;
-; Submapper 0: default iNES behaviour, bus-conflict behaviour unknown. This
-; ROM therefore asserts neither the presence nor the absence of bus
-; conflicts: it only tests CHR banking, and every bank-select write stores a
-; value equal to the PRG-ROM byte at the written address, so the result is
-; the same with or without AND-type bus conflicts.
+; Submapper 2: bus conflicts occur, producing the bitwise AND of the written
+; value and the PRG-ROM byte at the written address. The bus_conflicts
+; aspect asserts this.
 ;
 ; Features:
 ;   - No PRG banking (32KB fixed)
@@ -15,10 +13,10 @@
 ;   - Fixed mirroring
 ;   - No PRG-RAM
 ;   - No IRQ
-;   - Bus conflicts: unspecified (not asserted; all writes are conflict-safe)
+;   - Bus conflicts: effective value = written AND ROM value
 
 .define MAPPER_NUM 3
-.define SUBMAPPER_NUM 0
+.define SUBMAPPER_NUM 2
 
 PRG_ROM_16K   = 2        ; 32KB
 CHR_ROM_8K    = 4        ; 32KB = 4 × 8KB
@@ -32,7 +30,7 @@ CHR_RAM_SHIFT = 0
 .define HAS_IRQ 0
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
-.define HAS_BUS_CONFLICTS 0     ; Not asserted; writes are conflict-safe without bank_table
+.define HAS_BUS_CONFLICTS 1
 .define MAX_MIRRORING_MODES 0       ; No mirroring control
 
 ; Bank sizes
@@ -48,15 +46,10 @@ CHR_RAM_SHIFT = 0
 .macro select_prg_bank slot, bank
 .endmacro
 
-; Select 8KB CHR bank. Conflict-safe: the value is stored to the address of
-; the LDA's own immediate operand byte, which holds 'bank'. (No shared
-; bank_table is used: it is only linked into combined ROMs together with the
-; bus_conflicts aspect, which submapper 0 omits.)
+; Select 8KB CHR bank. Bus conflicts apply.
 .macro select_chr_bank slot, bank
-    .local imm
-imm:
     lda #bank
-    sta imm + 1             ; ROM byte at imm+1 == bank: safe either way
+    sta bank_table + bank   ; Safe bus-conflict-aware address
 .endmacro
 
 .macro set_mirroring mode

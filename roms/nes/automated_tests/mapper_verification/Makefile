@@ -38,11 +38,15 @@ SINGLES := \
 	$(SINGLES_DIR)/m001.0_prg_ram.nes \
 	$(SINGLES_DIR)/m001.5_prg_banking.nes \
 	$(SINGLES_DIR)/m002.0_prg_banking.nes \
-	$(SINGLES_DIR)/m002.0_bus_conflicts.nes \
+	$(SINGLES_DIR)/m002.1_prg_banking.nes \
+	$(SINGLES_DIR)/m002.1_bus_conflicts.nes \
 	$(SINGLES_DIR)/m002.2_prg_banking.nes \
+	$(SINGLES_DIR)/m002.2_bus_conflicts.nes \
 	$(SINGLES_DIR)/m003.0_chr_banking.nes \
-	$(SINGLES_DIR)/m003.0_bus_conflicts.nes \
 	$(SINGLES_DIR)/m003.1_chr_banking.nes \
+	$(SINGLES_DIR)/m003.1_bus_conflicts.nes \
+	$(SINGLES_DIR)/m003.2_chr_banking.nes \
+	$(SINGLES_DIR)/m003.2_bus_conflicts.nes \
 	$(SINGLES_DIR)/m004.0_prg_banking.nes \
 	$(SINGLES_DIR)/m004.0_chr_banking.nes \
 	$(SINGLES_DIR)/m004.0_nametable.nes \
@@ -323,9 +327,11 @@ COMBINED := \
 	$(BIN_DIR)/m001.0.nes \
 	$(BIN_DIR)/m001.5.nes \
 	$(BIN_DIR)/m002.0.nes \
+	$(BIN_DIR)/m002.1.nes \
 	$(BIN_DIR)/m002.2.nes \
 	$(BIN_DIR)/m003.0.nes \
 	$(BIN_DIR)/m003.1.nes \
+	$(BIN_DIR)/m003.2.nes \
 	$(BIN_DIR)/m004.0.nes \
 	$(BIN_DIR)/m004.1.nes \
 	$(BIN_DIR)/m005.0.nes \
@@ -509,19 +515,27 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m001.0_prg_ram.nes,prg_ram,m001.0))
 # Mapper 1, Submapper 5 (Fixed PRG)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m001.5_prg_banking.nes,prg_banking,m001.5))
 
-# Mapper 2, Submapper 0 (Bus Conflicts)
+# Mapper 2, Submapper 0 (Bus conflicts unspecified: not asserted)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m002.0_prg_banking.nes,prg_banking,m002.0))
-$(eval $(call ROM_RULE,$(SINGLES_DIR)/m002.0_bus_conflicts.nes,bus_conflicts,m002.0))
 
-# Mapper 2, Submapper 2 (No Bus Conflicts)
+# Mapper 2, Submapper 1 (No Bus Conflicts)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m002.1_prg_banking.nes,prg_banking,m002.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m002.1_bus_conflicts.nes,bus_conflicts,m002.1))
+
+# Mapper 2, Submapper 2 (AND-type Bus Conflicts)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m002.2_prg_banking.nes,prg_banking,m002.2))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m002.2_bus_conflicts.nes,bus_conflicts,m002.2))
 
-# Mapper 3, Submapper 0 (Bus Conflicts)
+# Mapper 3, Submapper 0 (Bus conflicts unspecified: not asserted)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m003.0_chr_banking.nes,chr_banking,m003.0))
-$(eval $(call ROM_RULE,$(SINGLES_DIR)/m003.0_bus_conflicts.nes,bus_conflicts,m003.0))
 
 # Mapper 3, Submapper 1 (No Bus Conflicts)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m003.1_chr_banking.nes,chr_banking,m003.1))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m003.1_bus_conflicts.nes,bus_conflicts,m003.1))
+
+# Mapper 3, Submapper 2 (AND-type Bus Conflicts)
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m003.2_chr_banking.nes,chr_banking,m003.2))
+$(eval $(call ROM_RULE,$(SINGLES_DIR)/m003.2_bus_conflicts.nes,bus_conflicts,m003.2))
 
 # Mapper 4, Submapper 0 (Sharp IRQ)
 $(eval $(call ROM_RULE,$(SINGLES_DIR)/m004.0_prg_banking.nes,prg_banking,m004.0))
@@ -690,10 +704,12 @@ $(eval $(call ROM_RULE,$(SINGLES_DIR)/m025.3_nametable.nes,nametable,m025.3))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m000.0.nes,m000.0,prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m001.0.nes,m001.0,prg_banking chr_banking nametable prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m001.5.nes,m001.5,prg_banking))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m002.0.nes,m002.0,prg_banking bus_conflicts))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m002.2.nes,m002.2,prg_banking))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m003.0.nes,m003.0,chr_banking bus_conflicts))
-$(eval $(call COMBINED_RULE,$(BIN_DIR)/m003.1.nes,m003.1,chr_banking))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m002.0.nes,m002.0,prg_banking))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m002.1.nes,m002.1,prg_banking bus_conflicts))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m002.2.nes,m002.2,prg_banking bus_conflicts))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m003.0.nes,m003.0,chr_banking))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m003.1.nes,m003.1,chr_banking bus_conflicts))
+$(eval $(call COMBINED_RULE,$(BIN_DIR)/m003.2.nes,m003.2,chr_banking bus_conflicts))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m004.0.nes,m004.0,prg_banking chr_banking nametable irq prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m004.1.nes,m004.1,irq mmc6_prg_ram))
 $(eval $(call COMBINED_RULE,$(BIN_DIR)/m005.0.nes,m005.0,prg_banking chr_banking nametable irq prg_ram multiplier exram mmc5_chr))

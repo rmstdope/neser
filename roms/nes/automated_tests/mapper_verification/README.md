@@ -29,7 +29,7 @@ mapper_verification/
 │   ├── test_prg_ram.s           # PRG-RAM read/write at $6000-$7FFF
 │   ├── test_write_protect.s     # PRG-RAM write-protection verification
 │   ├── test_mmc6_prg_ram.s      # MMC6 internal 1 KB PRG-RAM enables (mapper 4.1)
-│   ├── test_bus_conflicts.s     # Bus conflict AND behavior
+│   ├── test_bus_conflicts.s     # Bus conflict AND behavior, or its absence
 │   ├── test_chr_latch.s         # PPU-triggered CHR latch (MMC2/MMC4)
 │   ├── test_chr_ram_banking.s   # CHR-RAM bank switching (CPROM)
 │   ├── test_nt_from_chr.s       # Namco 163 nametable-from-CHR verification
@@ -165,11 +165,13 @@ Writes known patterns to `$6004`–`$7FFF` (leaving the low `$6000` area availab
 
 ### Bus Conflicts (`test_bus_conflicts.s`)
 
-Discrete logic mappers (UxROM submapper 0, CNROM submapper 0, AxROM submapper 0) have bus conflicts: the effective register value is the AND of the CPU write and the ROM byte at the write address. The test:
+Discrete logic mappers may have bus conflicts: the effective register value is the AND of the CPU write and the ROM byte at the write address. For mappers 2, 3 and 7 the [NES 2.0 submapper](https://www.nesdev.org/wiki/NES_2.0_submappers) says which: submapper 1 = no bus conflicts, submapper 2 = AND-type bus conflicts, submapper 0 = behaviour unknown. The test:
 
 1. Places a `bank_table` in ROM where `bank_table[N] = N`
-2. Writes a value that intentionally conflicts with the ROM value
-3. Verifies the resulting bank selection matches `write_value AND rom_value`
+2. Writes matching values (`N` to `bank_table + N`), which select bank `N` either way
+3. Writes values that differ from the ROM byte, and verifies the resulting bank selection is `write_value AND rom_value` when `HAS_BUS_CONFLICTS = 1`, or the unmasked `write_value` when `HAS_BUS_CONFLICTS = 0`
+
+The aspect is built only for submappers whose behaviour is specified. Submapper 0 ROMs of mappers 2 and 3 run banking tests alone, with every bank-select write storing a value equal to the ROM byte at the written address, so they pass with or without bus conflicts.
 
 ### CHR-RAM Banking (`test_chr_ram_banking.s`)
 
@@ -481,8 +483,8 @@ All mapper numbers from `0` through `48` have been reviewed against NESdev docum
 |--------|------|------------|-------|
 | 0 | NROM | 0 | PRG-RAM |
 | 1 | MMC1 | 0, 5 | PRG banking, CHR banking, nametable, PRG-RAM |
-| 2 | UxROM | 0, 2 | PRG banking, bus conflicts |
-| 3 | CNROM | 0, 1 | CHR banking, bus conflicts |
+| 2 | UxROM | 0, 1, 2 | PRG banking; bus conflicts (sub 1: none, sub 2: AND; sub 0 not asserted) |
+| 3 | CNROM | 0, 1, 2 | CHR banking; bus conflicts (sub 1: none, sub 2: AND; sub 0 not asserted) |
 | 4 | MMC3 | 0, 1 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, write-protect |
 | 5 | MMC5 | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM, multiplier, write-protect, ext-attr†, split†, sprite-chr† |
 | 6 | Front Fareast | 0 | PRG banking, CHR banking, nametable, IRQ, PRG-RAM |
