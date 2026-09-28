@@ -328,6 +328,11 @@ impl Bus {
     }
 
     /// Copy a 512-byte trainer into cartridge memory at the mapper's trainer address.
+    ///
+    /// The copy goes through `write_prg`, so it obeys the mapper's current RAM
+    /// enable and write protection. At insertion and at the first power-on those are
+    /// at their defaults; a later hard reset of a game that left its PRG-RAM
+    /// protected (an MMC3 `$A001` write, say) keeps the RAM as it was instead.
     fn load_trainer(cartridge: &mut Cartridge, trainer_bytes: &[u8]) {
         let mapper = cartridge.mapper_mut();
         let base = mapper.capabilities().trainer_load_address;

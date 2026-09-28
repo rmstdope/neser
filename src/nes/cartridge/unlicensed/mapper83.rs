@@ -4,7 +4,8 @@
 //! - Fallback: Mesen2 `Mapper83.h` (NesDev unavailable)
 //!
 //! Known Limitations:
-//! - DIP switch read at $5000 always returns 0x00; DIP bits are not emulated.
+//! - DIP switches are not emulated: the CPU reads $5000 as open bus with D1..D0
+//!   (the DIP bits) clear, and `read_prg(0x5000)` returns 0x00.
 
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
