@@ -34,6 +34,8 @@ pub struct Zapper {
     y: u8,
     trigger: bool,
     light: Cell<bool>,
+    strobe: bool,
+    vs_button_index: u8,
     ppu: Rc<RefCell<Ppu>>,
     app_context: Rc<RefCell<AppContext>>,
 }
@@ -45,6 +47,8 @@ impl Zapper {
             y: 0,
             trigger: false,
             light: Cell::new(false),
+            strobe: false,
+            vs_button_index: 0,
             ppu,
             app_context,
         }
@@ -65,19 +69,54 @@ impl Zapper {
         // Physical trigger state at save time is meaningless after restore.
         self.trigger = false;
         self.light.set(state.light);
+        self.strobe = false;
+        self.vs_button_index = 0;
+    }
+
+    fn is_vs_system(&self) -> bool {
+        self.app_context.borrow().config().nes.expansion_port
+            == crate::nes::console::ExpansionPort::VsSystem
+    }
+
+    fn detect_light_now(&self) -> bool {
+        let detection_size = self.app_context.borrow().config().nes.zapper_detection_size;
+        let ppu = self.ppu.borrow();
+        let light_now = self.detect_light(
+            ppu.timing().scanline(),
+            ppu.timing().pixel(),
+            ppu.screen_buffer(),
+            detection_size,
+        );
+        self.light.set(light_now);
+        light_now
     }
 }
 
 impl crate::nes::input::Controller for Zapper {
-    fn write_strobe(&mut self, _value: u8) {}
+    fn write_strobe(&mut self, value: u8) {
+        let new_strobe = value & 0x01 != 0;
+        if self.strobe && !new_strobe {
+            self.vs_button_index = 0;
+        }
+        self.strobe = new_strobe;
+    }
 
-    fn read(&mut self, _is_dummy_read: bool) -> u8 {
-        let detection_size = self.app_context.borrow().config().nes.zapper_detection_size;
-        let ppu = self.ppu.borrow();
-        let scanline = ppu.timing().scanline();
-        let pixel = ppu.timing().pixel();
-        let light_now = self.detect_light(scanline, pixel, ppu.screen_buffer(), detection_size);
-        self.light.set(light_now);
+    fn read(&mut self, is_dummy_read: bool) -> u8 {
+        let light_now = self.detect_light_now();
+
+        if self.is_vs_system() {
+            let value = match self.vs_button_index {
+                4 => 1,
+                6 => light_now as u8,
+                7 => self.trigger as u8,
+                8.. => 1,
+                _ => 0,
+            };
+            if !self.strobe && !is_dummy_read {
+                self.vs_button_index = self.vs_button_index.saturating_add(1);
+            }
+            return value;
+        }
 
         let trigger_bit = (self.trigger as u8) << 4;
         let light_bit = if light_now { 0 } else { 1 << 3 };
@@ -233,6 +272,30 @@ mod tests {
         let value = zapper.read(false);
         assert_eq!((value >> 3) & 0x01, 1);
         assert_eq!((value >> 4) & 0x01, 0);
+    }
+
+    #[test]
+    fn test_vs_zapper_reports_light_and_trigger_over_the_serial_protocol() {
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
+        zapper
+            .app_context
+            .borrow_mut()
+            .config_mut()
+            .nes
+            .expansion_port = crate::nes::console::ExpansionPort::VsSystem;
+        zapper.set_mouse_x_position(0);
+        zapper.set_mouse_y_position(0);
+        zapper.set_mouse_left_button(true);
+        advance_ppu_to(&ppu, 1, 0);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(0, 0, 255, 255, 255);
+
+        zapper.write_strobe(1);
+        zapper.write_strobe(0);
+        let report: Vec<_> = (0..8).map(|_| zapper.read(false) & 0x01).collect();
+
+        assert_eq!(report, [0, 0, 0, 0, 1, 0, 1, 1]);
     }
 
     #[test]
