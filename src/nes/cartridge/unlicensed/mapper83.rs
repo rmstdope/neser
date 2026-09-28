@@ -238,6 +238,7 @@ impl Mapper for Mapper83 {
                 self.update_state();
             }
             0xB000 | 0xB0FF | 0xB1FF => {
+                // Mesen2 Mapper83: DBZ aliases select only the 32KB PRG bank.
                 self.bank = value;
                 self.mode |= Self::MODE_32KB_PRG;
                 self.update_state();
@@ -531,16 +532,18 @@ mod tests {
     }
 
     #[test]
-    fn dbz_prg_alias_does_not_enable_2kb_chr_banking() {
-        let mut mapper = make_mapper();
-        mapper.write_prg(0xB000, 0);
-        mapper.write_prg(0x8310, 3);
+    fn dbz_prg_aliases_do_not_enable_2kb_chr_banking() {
+        for alias in [0xB000, 0xB0FF, 0xB1FF] {
+            let mut mapper = make_mapper();
+            mapper.write_prg(alias, 0);
+            mapper.write_prg(0x8310, 3);
 
-        assert_eq!(
-            mapper.read_chr(0x0000),
-            3,
-            "DBZ PRG aliases must retain 1KB CHR banking"
-        );
+            assert_eq!(
+                mapper.read_chr(0x0000),
+                3,
+                "DBZ PRG alias ${alias:04X} must retain 1KB CHR banking"
+            );
+        }
     }
 
     // --- CHR 1KB mode banking ---
