@@ -543,7 +543,8 @@ impl ParsedRom {
         if let Some(vs_ppu) = entry.vs_ppu_type {
             self.header.vs_ppu_type = Some(vs_ppu.to_raw());
         }
-        // The database knows the console better than a header's Vs. bit, as in Mesen2.
+        // A database row for a non-Vs. game overrides a header's Vs. bit for the Vs. PPU and
+        // board (the header's console type itself is left as it was).
         if entry.hardware.is_some_and(|h| h != HardwareType::VsSystem) {
             self.header.vs_ppu_type = None;
             self.header.vs_hardware_type = None;
