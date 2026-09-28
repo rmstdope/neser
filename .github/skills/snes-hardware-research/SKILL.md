@@ -120,7 +120,23 @@ Every hardware research skill in this repository uses the same three tiers. The 
      the same type (`SnesMouse`, `SuperScope`) instead. Games that read which pads are
      connected play differently otherwise: Super Bomberman 3's attract demo took a lag frame
      on Mesen2 only, which looked like a CPU-timing drift until a trace showed a branch on
-     the game's "player 2 connected" byte going the other way.
+     the game's "player 2 connected" byte going the other way. The lists are
+     `src/snes/input/super_scope_games.rs` and `mouse_games.rs`; check them before copying
+     a sweep command (Metal Combat is a Super Scope game, nr-2fw).
+   - **A PAL game drifts against Mesen2 by design** (nr-2fw). Mesen2 shortens scanline 240
+     of every non-interlaced field-1 frame to 1360 clocks at 50 Hz as well as at 60 Hz;
+     fullsnes ("Long and Short Scanlines") and ares make it NTSC-only, and NESER follows
+     them (`short_scanline_240_is_ntsc_only`). NESER therefore falls 4 clocks behind every
+     two frames, and a game whose timing depends on that can end up whole frames apart
+     (Metal Combat, PAL: 2 frames by frame 252). Mesen2 also has no PAL long line (fullsnes,
+     ares and NESER make line 311 of an interlaced field-1 frame 1368 clocks), so an
+     interlaced PAL game drifts the other way. Check which region NESER runs the ROM in
+     before investigating any divergence: the header's region byte at `$FFD9`, unless a
+     `snes-hardware` line in `neser.conf` overrides it. To confirm the rule is the whole
+     difference, change `line_timing_profile_for_scanline` locally and re-capture: drop the
+     `SnesVideoRegion::Ntsc` condition for the short line, or return `Normal` instead of
+     `Long` for the long one. For Metal Combat every checkpoint then matched at 0 px.
+     Never commit that change.
    - **Before reading a picture-ROM's pixel diff as a timing signal, work out what the ROM
      actually displays.** Disassembling/reading `demo.asm` showed its NMI handler is a bare
      `RTI` (confirmable in the binary: `$40` at the handler's file offset), so two of its
