@@ -20,6 +20,9 @@ const EMPHASIS_ATTENUATION: f64 = 0.84;
 /// `$xE` and `$xF` are not affected. The factor and the order of the multiplications follow
 /// Mesen2, so the `mesen` palette matches its captures exactly.
 ///
+/// This is the 2C02's behaviour. The RGB PPUs of the Vs. System instead force the emphasised
+/// channel to maximum; that is not modelled yet, and they get this darkening too.
+///
 /// On NES: bit layout is 0x01 = red, 0x02 = green, 0x04 = blue.
 /// On Famicom: green and blue are swapped (0x02 = blue, 0x04 = green).
 /// Set `swap_green_blue` to `true` for Famicom emphasis behavior.
