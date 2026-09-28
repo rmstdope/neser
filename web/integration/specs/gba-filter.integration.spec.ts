@@ -56,8 +56,10 @@ async function loadShades(page: Page) {
         buffer: readFileSync(path.join(process.cwd(), "roms", "gba", "automated_tests", "gba-tests", "ppu", "shades.gba"))
     });
     await waitForRunningState(page);
-    // Past the boot logo: the top of the screen shows the game's blue bands.
-    await expect.poll(async () => isBlue((await pictureAt(page, [TOP_RIGHT]))[0]), { timeout: 20_000 }).toBe(true);
+    // Past the boot logo: the top of the screen shows the game's blue bands. The web always plays
+    // the BIOS intro, about 290 frames: under 5 s at full speed, but a CI runner running several
+    // GBA games at once has taken over 20 s.
+    await expect.poll(async () => isBlue((await pictureAt(page, [TOP_RIGHT]))[0]), { timeout: 100_000 }).toBe(true);
 }
 
 async function pressFilterUntil(page: Page, name: string) {
@@ -150,6 +152,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
     });
 
     test("Given a GBA game, then every look changes the picture and LCD Grid draws the console around it", async ({ page }) => {
+        test.slow(); // waits out the BIOS intro
         await openApp(page);
         await loadShades(page);
         const [noneRight] = await pictureAt(page, [RIGHT_MIDDLE]);
@@ -159,15 +162,16 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
             await expect.poll(async () => {
                 const [rgb] = await pictureAt(page, [RIGHT_MIDDLE]);
                 return rgb.some((v, i) => Math.abs(v - noneRight[i]) > 12);
-            }, { message: `${name} changes the picture` }).toBe(true);
+            }, { message: `${name} changes the picture`, timeout: 15_000 }).toBe(true);
         }
 
         await pressFilterUntil(page, "LCD Grid");
         // The top of the screen is now above the console: black, where None shows the game.
-        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_RIGHT]))[0])).toBe(true);
+        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_RIGHT]))[0]), { timeout: 15_000 }).toBe(true);
     });
 
     test("Given LCD Grid's console art still being fetched, then the picture stays on the previous look until it arrives", async ({ page }) => {
+        test.slow(); // waits out the BIOS intro
         await openApp(page);
         let release: () => void = () => {};
         const held = new Promise<void>((resolve) => { release = resolve; });
@@ -180,10 +184,11 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await page.waitForTimeout(500);
         expect(isBlue((await pictureAt(page, [TOP_RIGHT]))[0])).toBe(true);
         release();
-        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_RIGHT]))[0])).toBe(true);
+        await expect.poll(async () => isBlack((await pictureAt(page, [TOP_RIGHT]))[0]), { timeout: 15_000 }).toBe(true);
     });
 
     test("Given a paused GBA game, then a new look is drawn at once", async ({ page }) => {
+        test.slow(); // waits out the BIOS intro
         await openApp(page);
         await loadShades(page);
         await page.locator("#pause").click();
@@ -194,7 +199,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await expect.poll(async () => {
             const [rgb] = await pictureAt(page, [RIGHT_MIDDLE]);
             return rgb.some((v, i) => Math.abs(v - before[i]) > 12);
-        }).toBe(true);
+        }, { timeout: 15_000 }).toBe(true);
     });
 
     test("Given a GBA game after an NES game, then it starts on None", async ({ page }) => {
