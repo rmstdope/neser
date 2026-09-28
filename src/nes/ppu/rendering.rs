@@ -72,6 +72,7 @@ impl Rendering {
 
         // Apply color emphasis/tint
         (r, g, b) = crate::nes::ppu::color_effects::apply_color_emphasis(
+            color_value,
             r,
             g,
             b,
@@ -245,10 +246,8 @@ mod tests {
 
     #[test]
     fn test_apply_color_emphasis_red_only() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x01, false);
-        assert_eq!(r, 110);
-        assert_eq!(g, 75);
-        assert_eq!(b, 75);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, false);
+        assert_eq!((r, g, b), (100, 84, 84));
     }
 
     #[test]
