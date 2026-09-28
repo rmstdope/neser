@@ -123,7 +123,8 @@ const KNOWN_DIVERGENT_VECTORS: &[&str] = &[
     "a1 e 9677",
     // PEI, E=1, DL == 0: the vector wraps the pointer high-byte fetch within the direct page
     // where the 5A22 carries into the next page.
-    "d4 e 232", // JSR (abs,X), E=1, S == $0100: the vector wraps the return address's low-byte push to
+    "d4 e 232",
+    // JSR (abs,X), E=1, S == $0100: the vector wraps the return address's low-byte push to
     // $01FF where the 5A22 writes $00FF (nr-4lq).
     "fc e 458",
     "fc e 811",

@@ -54,7 +54,7 @@ FAMILY_ORDER = (
     # Every call, return and indexed-indirect jump on its own, so the corpus carries their
     # vectors: they pin where each spends its internal cycles (JSR: before the pushes; JSL:
     # between the PBR push and the bank byte; RTS/RTL/RTI: two before the pulls; PER and
-    # JMP (a,X): after the operand; JSR (a,X): after the pointer's high byte). NESER used to
+    # JMP (a,X): after the operand; JSR (a,X): after the operand's high byte). NESER used to
     # leave them all trailing after the last bus access, which moves the cycle boundaries
     # that NMI recognition and the HDMA start are measured against (nr-4lq).
     "jump_subroutine",
