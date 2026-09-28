@@ -68,7 +68,10 @@ impl AxROMMapper {
             ..Default::default()
         };
 
-        let bus_conflicts = submapper != 1;
+        // NES 2.0 reserves AND-type bus conflicts for submapper 2. The
+        // default iNES behavior (submapper 0) and submapper 1 leave writes
+        // unmasked so ANROM/AOROM games with older headers remain compatible.
+        let bus_conflicts = submapper == 2;
         let mut base = BaseMapper::new(&ctx, capabilities);
         // AxROM uses CHR-RAM regardless of header
         base.set_chr_memory(ChrMemory::new_ram(8192));
@@ -416,9 +419,9 @@ mod tests {
     }
 
     #[test]
-    fn test_axrom_submapper_0_applies_bus_conflicts_for_amrom_aorom() {
-        // AMROM/AOROM (submapper 0, the default) have AND-type bus conflicts.
-        // Writing 0x01 while bank 0 data is 0x00 → 0x01 & 0x00 = 0x00 → bank stays 0.
+    fn test_axrom_submapper_0_has_no_bus_conflicts() {
+        // NESdev defines the default iNES behavior as no bus conflicts for AxROM.
+        // Writing 0x01 while bank 0 data is 0x00 must select bank 1 unmasked.
         let mut prg_rom = vec![0; 64 * 1024];
         for byte in &mut prg_rom[0..32 * 1024] {
             *byte = 0x00;
@@ -437,8 +440,8 @@ mod tests {
 
         assert_eq!(
             mapper.read_prg(0x8000),
-            0x00,
-            "submapper 0 (AMROM/AOROM) must apply bus conflicts and keep bank 0 selected"
+            0x01,
+            "submapper 0 must select bank 1 without bus conflicts"
         );
     }
 

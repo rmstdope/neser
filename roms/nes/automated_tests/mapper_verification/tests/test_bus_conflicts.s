@@ -35,6 +35,10 @@ test_title_string:
 .segment "CODE"
 
 .proc run_tests
+    .if PRG_BANK_SIZE = 32
+        jsr install_bus_conflict_trampoline
+    .endif
+
     ; ========================================
     ; Test 1: Safe write (value matches ROM)
     ; ========================================
@@ -43,12 +47,22 @@ test_title_string:
     ; bank_table[0] = 0, so writing 0 to bank_table+0 → 0 AND 0 = 0
     .if HAS_PRG_BANKING
         ; For PRG banking mappers (UxROM, AxROM)
+        ; 32KB mappers place executable code in bank 0, so select bank 1
+        ; where the test's PRG signature is available.
+        .if PRG_BANK_SIZE = 32
+        lda #1
+        ldx #1
+        jsr call_bus_conflict_trampoline
+        lda bus_conflict_result
+        assert_a_eq $A5
+        .else
         ; Select bank 0 via safe write
         lda #0
         sta bank_table          ; Write 0 to address containing 0
         ; Verify bank 0 is selected by reading signature
         lda $8000
         assert_a_eq $A5         ; Bank 0 signature
+        .endif
     .else
         ; For CHR banking mappers (CNROM)
         ; Select CHR bank 0 via safe write
@@ -74,11 +88,19 @@ test_title_string:
     start_test 2, "Safe write 2"
 
     .if HAS_PRG_BANKING
-        ; Select bank 1: bank_table[1] = 1, write 1
+        ; Select bank 1 for 16KB mappers, bank 2 for 32KB mappers.
+        .if PRG_BANK_SIZE = 32
+        lda #2
+        ldx #2
+        jsr call_bus_conflict_trampoline
+        lda bus_conflict_result + 1
+        assert_a_eq 2
+        .else
         lda #1
         sta bank_table + 1
         lda $8000 + 1           ; Bank ID byte
         assert_a_eq 1
+        .endif
     .else
         lda #1
         sta bank_table + 1
@@ -104,9 +126,16 @@ test_title_string:
     ; Effective = 3 AND 2 = 2
     .if HAS_PRG_BANKING
         lda #3
+        .if PRG_BANK_SIZE = 32
+        ldx #2
+        jsr call_bus_conflict_trampoline
+        lda bus_conflict_result + 1
+        assert_a_eq 2
+        .else
         sta bank_table + 2      ; 3 AND 2 = 2
         lda $8000 + 1           ; Should be bank 2
         assert_a_eq 2
+        .endif
     .else
         lda #3
         sta bank_table + 2
@@ -129,10 +158,20 @@ test_title_string:
     ; bank_table[0] = 0 = %00000000
     ; Write any non-zero value → effective = X AND 0 = 0
     .if HAS_PRG_BANKING
+        .if PRG_BANK_SIZE = 32
+        ; Bank 0 carries executable code rather than a signature. Use bank
+        ; table byte 2 to verify that extra written bits are masked away.
+        lda #7                  ; 7 AND 2 = 2
+        ldx #2
+        jsr call_bus_conflict_trampoline
+        lda bus_conflict_result + 1
+        assert_a_eq 2
+        .else
         lda #7                  ; Write 7 to address containing 0
         sta bank_table          ; 7 AND 0 = 0
         lda $8000 + 1           ; Should be bank 0
         assert_a_eq 0
+        .endif
     .else
         lda #7
         sta bank_table
@@ -157,9 +196,16 @@ test_title_string:
     ; No bus conflicts → effective = 3 (AND would give 2)
     .if HAS_PRG_BANKING
         lda #3
+        .if PRG_BANK_SIZE = 32
+        ldx #2
+        jsr call_bus_conflict_trampoline
+        lda bus_conflict_result + 1
+        assert_a_eq 3
+        .else
         sta bank_table + 2
         lda $8000 + 1           ; Should be bank 3
         assert_a_eq 3
+        .endif
     .else
         lda #3
         sta bank_table + 2
@@ -184,9 +230,16 @@ test_title_string:
     ; No bus conflicts → effective = 1 (AND would give 0)
     .if HAS_PRG_BANKING
         lda #1
+        .if PRG_BANK_SIZE = 32
+        ldx #0
+        jsr call_bus_conflict_trampoline
+        lda bus_conflict_result + 1
+        assert_a_eq 1
+        .else
         sta bank_table
         lda $8000 + 1           ; Should be bank 1
         assert_a_eq 1
+        .endif
     .else
         lda #1
         sta bank_table
@@ -222,6 +275,58 @@ test_title_string:
 ; Export unique name for combined ROM builds
 run_bus_conflicts = run_tests
 .export run_bus_conflicts
+
+.if PRG_BANK_SIZE = 32
+
+.segment "BSS"
+bus_conflict_result: .res 2
+bus_conflict_value: .res 1
+bus_conflict_offset: .res 1
+
+BUS_CONFLICT_TRAMPOLINE_ADDR = $0300
+BUS_CONFLICT_TRAMPOLINE_SIZE = bus_conflict_trampoline_end - bus_conflict_trampoline
+
+.segment "CODE"
+
+.proc install_bus_conflict_trampoline
+    ldx #0
+@copy:
+    lda bus_conflict_trampoline, x
+    sta BUS_CONFLICT_TRAMPOLINE_ADDR, x
+    inx
+    cpx #BUS_CONFLICT_TRAMPOLINE_SIZE
+    bne @copy
+    rts
+.endproc
+
+.proc call_bus_conflict_trampoline
+    sta bus_conflict_value
+    txa
+    sta bus_conflict_offset
+    lda #<bank_table
+    clc
+    adc bus_conflict_offset
+    sta TEST_TEMP
+    lda #>bank_table
+    adc #0
+    sta TEST_TEMP2
+    jmp BUS_CONFLICT_TRAMPOLINE_ADDR
+.endproc
+
+bus_conflict_trampoline:
+    ldy #0
+    lda bus_conflict_value
+    sta (TEST_TEMP), y
+    lda $8000
+    sta bus_conflict_result
+    lda $8001
+    sta bus_conflict_result + 1
+    lda #0
+    sta $FFF0
+    rts
+bus_conflict_trampoline_end:
+
+.endif
 
 ; ============================================================
 ; Bus conflict lookup table

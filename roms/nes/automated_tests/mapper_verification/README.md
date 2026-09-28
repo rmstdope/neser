@@ -165,13 +165,13 @@ Writes known patterns to `$6004`–`$7FFF` (leaving the low `$6000` area availab
 
 ### Bus Conflicts (`test_bus_conflicts.s`)
 
-Discrete logic mappers may have bus conflicts: the effective register value is the AND of the CPU write and the ROM byte at the write address. For mappers 2, 3 and 7 the [NES 2.0 submapper](https://www.nesdev.org/wiki/NES_2.0_submappers) says which: submapper 1 = no bus conflicts, submapper 2 = AND-type bus conflicts, submapper 0 = behaviour unknown. The test:
+Discrete logic mappers may have bus conflicts: the effective register value is the AND of the CPU write and the ROM byte at the write address. For mappers 2, 3 and 7 the [NES 2.0 submapper](https://www.nesdev.org/wiki/NES_2.0_submappers) says which: submapper 1 = no bus conflicts and submapper 2 = AND-type bus conflicts. Submapper 0 is unspecified for mappers 2 and 3, but mapper 7 defaults to no bus conflicts. The test:
 
 1. Places a `bank_table` in ROM where `bank_table[N] = N`
 2. Writes matching values (`N` to `bank_table + N`), which select bank `N` either way
 3. Writes values that differ from the ROM byte, and verifies the resulting bank selection is `write_value AND rom_value` when `HAS_BUS_CONFLICTS = 1`, or the unmasked `write_value` when `HAS_BUS_CONFLICTS = 0`
 
-The aspect is built only for submappers whose behaviour is specified. Submapper 0 ROMs of mappers 2 and 3 run banking tests alone, with every bank-select write storing a value equal to the ROM byte at the written address, so they pass with or without bus conflicts.
+The aspect is built only for submappers whose behaviour is specified. Submapper 0 ROMs of mappers 2 and 3 run banking tests alone, with every bank-select write storing a value equal to the ROM byte at the written address, so they pass with or without bus conflicts. Mapper 7 submapper 0 runs the no-conflict assertions.
 
 ### CHR-RAM Banking (`test_chr_ram_banking.s`)
 
