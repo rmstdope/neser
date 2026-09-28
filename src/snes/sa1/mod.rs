@@ -38,6 +38,7 @@ use crate::snes::bus::SnesBus;
 use crate::snes::console::save_state::SnesCpuState;
 use crate::snes::cpu::Cpu;
 use crate::snes::ppu::Ppu;
+use serde::{Deserialize, Serialize};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -423,7 +424,7 @@ const SA1_CYCLE_CLOCKS: u8 = 2;
 /// Which SA-1 cartridge memory an access touches. The SA-1 waits when it wants the memory the
 /// S-CPU (or its DMA) touched last (Mesen2 `Sa1Cpu::IsAccessConflict`, comparing
 /// `GetSa1MemoryType` with `GetSnesCpuMemoryType`, i.e. `GetMemoryTypeBusA`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SnesCartAccess {
     Rom,
     BwRam,
@@ -474,8 +475,7 @@ pub struct Sa1Bus {
     /// What the S-CPU is touching right now, written by `SnesSystemBus`.
     snes_access: Rc<Cell<SnesBusActivity>>,
     /// The memory the SA-1's previous access touched: see [`SnesBus::access_clocks`] below
-    /// for why the wait is charged against it. Transient, as in Mesen2, which does not
-    /// serialize `_lastAccessMemType` either.
+    /// for why the wait is charged against it. Saved, as Mesen2 saves `_lastAccessMemType`.
     last_access: Cell<SnesCartAccess>,
 }
 
@@ -505,6 +505,15 @@ impl Sa1Bus {
     /// The cell `SnesSystemBus` writes the S-CPU's current cartridge access into.
     pub(crate) fn snes_access(&self) -> Rc<Cell<SnesBusActivity>> {
         Rc::clone(&self.snes_access)
+    }
+
+    /// The memory the SA-1's previous access touched, for save states.
+    pub(crate) fn last_access(&self) -> SnesCartAccess {
+        self.last_access.get()
+    }
+
+    pub(crate) fn set_last_access(&mut self, access: SnesCartAccess) {
+        self.last_access.set(access);
     }
 
     fn is_rom(&self, addr: u32) -> bool {
@@ -754,6 +763,19 @@ impl SnesBus for Sa1Bus {
         cycles * SA1_CYCLE_CLOCKS
     }
 
+    /// Mesen2 `Sa1::ReadVector`: the NMI, IRQ and reset vectors come from the `$2203-$2208`
+    /// registers and the BRK/COP ones from ROM through `ReadSa1`, none of them with a bus
+    /// cycle. Only the ROM reads make ROM the last access. (Mesen2 takes only the native NMI
+    /// and IRQ vectors from registers; NESER also overrides the emulation-mode pair, as
+    /// fullsnes describes, so those count as register reads here too.)
+    fn free_vector_read(&mut self, addr: u32) -> Option<u8> {
+        let addr = addr & 0xFF_FFFF;
+        if Self::vector_override_byte(addr, &self.registers.borrow()).is_none() {
+            self.last_access.set(SnesCartAccess::Rom);
+        }
+        Some(self.read(addr))
+    }
+
     /// Internal cycles run at the full 10.74 MHz (Mesen2 `Sa1Cpu::Idle`: "internal SA-1
     /// cycles are still 10.74 MHz").
     fn internal_cycle_clocks(&self) -> u8 {
@@ -872,6 +894,15 @@ impl Sa1Core {
     /// The cell `SnesSystemBus` writes the S-CPU's current cartridge access into.
     pub(crate) fn snes_access(&self) -> Rc<Cell<SnesBusActivity>> {
         self.cpu.bus().snes_access()
+    }
+
+    /// The memory the SA-1's previous access touched, for save states.
+    pub(crate) fn last_access(&self) -> SnesCartAccess {
+        self.cpu.bus().last_access()
+    }
+
+    pub(crate) fn set_last_access(&mut self, access: SnesCartAccess) {
+        self.cpu.bus_mut().set_last_access(access);
     }
 
     #[cfg(test)]
@@ -1578,16 +1609,18 @@ mod tests {
         assert_eq!(core.cpu().read_pc(), 0x9006, "RTI returns to the idle loop");
     }
 
-    /// An SA-1 core booting at `$9000` into `code`, released from reset, with the S-CPU side
-    /// reporting `snes` as its current cartridge access.
+    /// An SA-1 core booting at `$9000` into `code`, released from reset with I-RAM writable,
+    /// with the S-CPU side reporting `snes` as its current cartridge access.
     fn timing_core(code: &[u8], snes: SnesBusActivity) -> Sa1Core {
         let registers = Rc::new(RefCell::new(Sa1ControlRegisters::new()));
         let mut rom = vec![0u8; 0x8000];
         rom[0x1000..0x1000 + code.len()].copy_from_slice(code);
         write_vector(&mut registers.borrow_mut(), 0x2203, 0x2204, 0x9000);
+        let iram = fresh_iram();
+        iram.borrow_mut().set_sa1_write_protect(0xFF); // CIWP: the stack lives in I-RAM
         let core = Sa1Core::new(
             Rc::clone(&registers),
-            fresh_iram(),
+            iram,
             fresh_memory_control(),
             Rc::new(rom),
             fresh_sram(0x2000),
@@ -1737,5 +1770,88 @@ mod tests {
             0,
             "even"
         );
+    }
+
+    /// A return into ROM pays `IdleEndJump` too, not only JMP (Mesen2 `SnesCpu::RTS`/`JSR`).
+    /// JSR and RTS take 6 cycles each plus the penalty, 14 clocks apiece, so the NOP after the
+    /// JSR runs from clock 29.
+    #[test]
+    fn sa1_call_and_return_into_rom_each_take_an_extra_cycle() {
+        let code = [0x20, 0x05, 0x90, 0xEA, 0xEA, 0x60]; // JSR $9005; NOP; NOP; RTS
+        let mut core = timing_core(&code, snes_on(SnesCartAccess::Other, false));
+
+        for _ in 0..32 {
+            core.tick_one_master_clock();
+        }
+
+        assert_eq!(
+            core.cpu().read_pc(),
+            0x9004,
+            "JSR, RTS, then one NOP at clock 29"
+        );
+    }
+
+    /// Mesen2 `Sa1Cpu::IdleTakeBranch`: a taken branch to an odd ROM address takes one cycle
+    /// more than its three, so the NOP at `$9003` runs from clock 9.
+    #[test]
+    fn sa1_taken_branch_to_an_odd_rom_address_takes_an_extra_cycle() {
+        let code = [0x80, 0x01, 0x00, 0xEA, 0xEA, 0xEA]; // BRA $9003
+        let mut core = timing_core(&code, snes_on(SnesCartAccess::Other, false));
+
+        for _ in 0..12 {
+            core.tick_one_master_clock();
+        }
+
+        assert_eq!(core.cpu().read_pc(), 0x9004, "BRA, then one NOP at clock 9");
+    }
+
+    /// Mesen2 `Sa1Cpu::ReadVector` -> `Sa1::ReadVector` hands the SA-1 its NMI/IRQ vector
+    /// from the `$2205-$2208` registers with no bus cycle, so a native-mode NMI takes six
+    /// cycles, not eight: the dummy opcode read, an internal cycle and four pushes.
+    #[test]
+    fn sa1_interrupt_vector_fetch_takes_no_cycles() {
+        // CLC; XCE (native mode); CLI; BRA self.
+        let mut core = timing_core(
+            &[0x18, 0xFB, 0x58, 0x80, 0xFE],
+            snes_on(SnesCartAccess::Other, false),
+        );
+        write_vector(&mut core.registers.borrow_mut(), 0x2205, 0x2206, 0x9100); // CNV
+        core.registers.borrow_mut().write(0x220A, 0x10); // CIE: SA-1-side NMI enabled
+        for _ in 0..40 {
+            core.tick_one_master_clock();
+        }
+        core.registers.borrow_mut().write(0x2200, 0x10); // CCNT: NMI
+
+        let mut dispatched = None;
+        for _ in 0..40 {
+            core.tick_one_master_clock();
+            if core.cpu().read_pc() == 0x9100 {
+                dispatched = Some(core.master_clock_debt + 1);
+                break;
+            }
+        }
+
+        assert_eq!(dispatched, Some(12), "six cycles of two master clocks");
+    }
+
+    /// Mesen2 `Sa1::ReadVector` reads the BRK/COP vectors from ROM through `ReadSa1`, which
+    /// charges no cycle but does make ROM the SA-1's last access; the NMI/IRQ vectors come
+    /// from registers and leave it alone.
+    #[test]
+    fn sa1_vector_fetches_update_the_last_access_only_from_rom() {
+        let mut bus = timing_bus();
+        bus.access_clocks(0x00_3000, false); // last access: I-RAM
+        assert_eq!(
+            bus.free_vector_read(0x00_FFEA),
+            Some(0x00),
+            "NMI vector register"
+        );
+        assert_eq!(bus.last_access.get(), SnesCartAccess::IRam);
+        assert!(
+            bus.free_vector_read(0x00_FFE6).is_some(),
+            "BRK vector from ROM"
+        );
+        assert_eq!(bus.last_access.get(), SnesCartAccess::Rom);
+        assert_eq!(bus.take_clocks(), 0, "neither costs a cycle");
     }
 }

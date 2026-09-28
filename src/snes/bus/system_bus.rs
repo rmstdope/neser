@@ -731,9 +731,7 @@ impl SnesSystemBus {
         let Some(cell) = &self.sa1_snes_access else {
             return;
         };
-        let access = if Self::is_dma_a_bus_mmio(addr) {
-            SnesCartAccess::Other
-        } else if self.sa1_rom_index(addr).is_some() {
+        let access = if self.sa1_rom_index(addr).is_some() {
             SnesCartAccess::Rom
         } else if self.sa1_bwram_index(addr).is_some() {
             SnesCartAccess::BwRam
@@ -749,10 +747,11 @@ impl SnesSystemBus {
     }
 
     fn dma_read_a_bus_impl(&self, addr: u32, open_bus: u8) -> u8 {
-        self.note_sa1_snes_access(addr);
         if Self::is_dma_a_bus_mmio(addr) {
+            // Mesen2 `ReadDma` leaves `_memTypeBusA` alone on a register access.
             return open_bus;
         }
+        self.note_sa1_snes_access(addr);
 
         if let Some(byte) = self.sa1_snes_vector_override_byte(addr) {
             return byte;
@@ -871,10 +870,11 @@ impl SnesSystemBus {
     }
 
     fn dma_write_a_bus_impl(&mut self, addr: u32, value: u8) {
-        self.note_sa1_snes_access(addr);
         if Self::is_dma_a_bus_mmio(addr) {
+            // Mesen2 `WriteDma` leaves `_memTypeBusA` alone on a register access.
             return;
         }
+        self.note_sa1_snes_access(addr);
 
         if let Some(index) = Self::decode_wram_index(addr) {
             self.wram[index] = value;
@@ -1225,7 +1225,7 @@ impl SnesSystemBus {
             sa1_iram: _,           // captured by capture_sa1_state
             sa1_memory_control: _, // captured by capture_sa1_state
             sa1_core: _,           // captured by capture_sa1_state
-            sa1_snes_access: _,    // transient: rewritten by the next S-CPU access
+            sa1_snes_access: _,    // captured by capture_sa1_state
             ref cx4,
             obc1: _, // transient: cartridge board; the OBC1 keeps its registers in sram
             ref gsu,
@@ -1279,6 +1279,11 @@ impl SnesSystemBus {
             .expect("sa1_core is constructed alongside sa1_registers");
         let (math_control, math_ma, math_mb, math_mr, math_overflow) = core.arithmetic().raw();
         let (cpu, booted, master_clock_debt) = core.save_parts();
+        let activity = self
+            .sa1_snes_access
+            .as_ref()
+            .expect("sa1_snes_access is constructed alongside sa1_core")
+            .get();
         Some(SnesSa1State {
             ccnt: registers.ccnt(),
             sie: registers.sie(),
@@ -1312,6 +1317,9 @@ impl SnesSystemBus {
             math_mb,
             math_mr,
             math_overflow,
+            sa1_last_access: core.last_access(),
+            snes_cart_access: activity.access,
+            snes_fast_cycle: activity.fast_cycle,
         })
     }
 
@@ -1445,6 +1453,9 @@ impl SnesSystemBus {
             math_mb,
             math_mr,
             math_overflow,
+            sa1_last_access,
+            snes_cart_access,
+            snes_fast_cycle,
         } = state;
         let (Some(registers), Some(iram), Some(memory_control), Some(core)) = (
             &self.sa1_registers,
@@ -1476,6 +1487,13 @@ impl SnesSystemBus {
         core.restore_cpu_state(cpu);
         core.set_booted(booted);
         core.set_master_clock_debt(master_clock_debt);
+        core.set_last_access(sa1_last_access);
+        if let Some(activity) = &self.sa1_snes_access {
+            activity.set(SnesBusActivity {
+                access: snes_cart_access,
+                fast_cycle: snes_fast_cycle,
+            });
+        }
         core.arithmetic_mut()
             .restore_raw(math_control, math_ma, math_mb, math_mr, math_overflow);
     }
@@ -5500,6 +5518,14 @@ mod tests {
             SnesCartAccess::Rom,
             "DMA write toward ROM"
         );
+        // Mesen2 `ReadDma`/`WriteDma` update `_memTypeBusA` outside the register branches only.
+        bus.dma_read_a_bus(0x00_2118, 0);
+        bus.dma_write_a_bus(0x00_4300, 0);
+        assert_eq!(
+            activity.get().access,
+            SnesCartAccess::Rom,
+            "DMA to MMIO keeps it"
+        );
         bus.write(0x00_3000, 0x00);
 
         bus.set_cpu_speed(6);
@@ -5510,6 +5536,43 @@ mod tests {
             activity.get().access,
             SnesCartAccess::IRam,
             "speed leaves the memory alone"
+        );
+    }
+
+    /// Mesen2 serializes both sides of the SA-1's bus-conflict state (`Sa1::Serialize`
+    /// `_lastAccessMemType`, `SnesMemoryManager::Serialize` `_memTypeBusA`), so a restored
+    /// console times its next SA-1 instruction as the saved one would have.
+    #[test]
+    fn save_state_round_trips_the_sa1_bus_conflict_state() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        bus.set_cpu_speed(6);
+        bus.read(0x00_3000); // S-CPU on I-RAM, in a 6-clock cycle
+        bus.sa1_core
+            .as_mut()
+            .expect("SA-1 cartridge")
+            .bus_mut_for_tests()
+            .access_clocks(0x00_6000, false); // SA-1 last on BW-RAM
+        let state = bus.capture_state();
+
+        let mut restored = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        restored.restore_state(&state).expect("restore");
+
+        let activity = restored
+            .sa1_snes_access
+            .clone()
+            .expect("SA-1 cartridge")
+            .get();
+        assert_eq!(activity.access, SnesCartAccess::IRam);
+        assert!(activity.fast_cycle);
+        let sa1_bus = restored
+            .sa1_core
+            .as_mut()
+            .expect("SA-1 cartridge")
+            .bus_mut_for_tests();
+        assert_eq!(
+            sa1_bus.access_clocks(0x00_8000, false),
+            4,
+            "charged the saved BW-RAM access"
         );
     }
 

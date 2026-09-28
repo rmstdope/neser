@@ -79,9 +79,20 @@ pub trait SnesBus {
 
     /// Master clocks one CPU memory access to `addr` takes. The default is the S-CPU's
     /// region speed ([`mem_access_cycles`](crate::snes::cpu::mem_speed::mem_access_cycles)); the SA-1
-    /// bus overrides it and the three hooks below (nr-7v3).
+    /// bus overrides it and the hooks below (nr-7v3).
+    ///
+    /// The CPU calls it exactly once per bus access, just before that access: the SA-1 bus
+    /// advances its record of the previous access here, so an extra call (for a trace line,
+    /// say) would shift which access its waits are charged to.
     fn access_clocks(&self, addr: u32, fast_rom: bool) -> u8 {
         crate::snes::cpu::mem_speed::mem_access_cycles(addr, fast_rom)
+    }
+
+    /// Read an interrupt vector byte without a bus cycle, or `None` to read it as an ordinary
+    /// access. Only the SA-1 bus returns `Some` (Mesen2 `Sa1::ReadVector`); the S-CPU's
+    /// vector fetches are real bus cycles.
+    fn free_vector_read(&mut self, _addr: u32) -> Option<u8> {
+        None
     }
 
     /// A jump or return has just loaded PC with `target`. No cost on the S-CPU.

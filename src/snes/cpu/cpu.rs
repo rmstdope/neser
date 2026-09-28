@@ -3896,6 +3896,20 @@ impl<B: SnesBus> Cpu<B> {
         self.tick_read(addr & 0xFF_FFFF)
     }
 
+    /// Read an interrupt vector byte: a bus cycle on the S-CPU, free on the SA-1
+    /// ([`SnesBus::free_vector_read`]). A free read still counts toward `memory_bus_cycles`,
+    /// so the caller's trailing [`Self::tick_internal_cycles_for`] does not bill it as an
+    /// internal cycle instead.
+    fn read_vector8(&mut self, addr: u32) -> u8 {
+        match self.bus.free_vector_read(addr) {
+            Some(value) => {
+                self.memory_bus_cycles += 1;
+                value
+            }
+            None => self.read8(addr),
+        }
+    }
+
     /// Write one byte to the bus, ticking the master clock per access speed.
     fn write8(&mut self, addr: u32, value: u8) {
         self.tick_write(addr & 0xFF_FFFF, value);
@@ -4530,8 +4544,8 @@ impl<B: SnesBus> Cpu<B> {
             self.push8(self.p | FLAG_INDEX_WIDTH); // B flag = bit 4 in emulation mode
             self.set_flag_i(true);
             self.set_flag_d(false);
-            let lo = self.read8(0x00FFFE);
-            let hi = self.read8(0x00FFFF);
+            let lo = self.read_vector8(0x00FFFE);
+            let hi = self.read_vector8(0x00FFFF);
             self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             7
@@ -4543,8 +4557,8 @@ impl<B: SnesBus> Cpu<B> {
             self.push8(self.p);
             self.set_flag_i(true);
             self.set_flag_d(false);
-            let lo = self.read8(0x00FFE6);
-            let hi = self.read8(0x00FFE7);
+            let lo = self.read_vector8(0x00FFE6);
+            let hi = self.read_vector8(0x00FFE7);
             self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             8
@@ -4561,8 +4575,8 @@ impl<B: SnesBus> Cpu<B> {
             self.push8(self.p);
             self.set_flag_i(true);
             self.set_flag_d(false);
-            let lo = self.read8(0x00FFF4);
-            let hi = self.read8(0x00FFF5);
+            let lo = self.read_vector8(0x00FFF4);
+            let hi = self.read_vector8(0x00FFF5);
             self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             7
@@ -4574,8 +4588,8 @@ impl<B: SnesBus> Cpu<B> {
             self.push8(self.p);
             self.set_flag_i(true);
             self.set_flag_d(false);
-            let lo = self.read8(0x00FFE4);
-            let hi = self.read8(0x00FFE5);
+            let lo = self.read_vector8(0x00FFE4);
+            let hi = self.read_vector8(0x00FFE5);
             self.pbr = 0x00;
             self.pc = lo as u16 | (hi as u16) << 8;
             8
@@ -4613,8 +4627,8 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_i(true);
             self.irq_i_shadow = true;
             self.set_flag_d(false);
-            let lo = self.read8(emu_vector) as u16;
-            let hi = self.read8(emu_vector + 1) as u16;
+            let lo = self.read_vector8(emu_vector) as u16;
+            let hi = self.read_vector8(emu_vector + 1) as u16;
             self.pc = lo | hi << 8;
             7
         } else {
@@ -4627,8 +4641,8 @@ impl<B: SnesBus> Cpu<B> {
             self.set_flag_i(true);
             self.irq_i_shadow = true;
             self.set_flag_d(false);
-            let lo = self.read8(native_vector) as u16;
-            let hi = self.read8(native_vector + 1) as u16;
+            let lo = self.read_vector8(native_vector) as u16;
+            let hi = self.read_vector8(native_vector + 1) as u16;
             self.pc = lo | hi << 8;
             8
         }

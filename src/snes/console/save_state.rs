@@ -7,6 +7,7 @@ use crate::snes::apu::SnesApuState;
 use crate::snes::cartridge::Mapping;
 use crate::snes::cx4::Cx4State;
 use crate::snes::input::InputPortsState;
+use crate::snes::sa1::SnesCartAccess;
 use crate::snes::sdd1::Sdd1State;
 
 pub const SNES_SAVESTATE_VERSION: u32 = 2;
@@ -257,6 +258,16 @@ pub struct SnesSa1State {
     /// `$230B` OF bit 7.
     #[serde(default)]
     pub math_overflow: bool,
+    /// The memory the SA-1's previous access touched, which its next wait is charged
+    /// against (nr-7v3).
+    #[serde(default)]
+    pub sa1_last_access: SnesCartAccess,
+    /// The memory the S-CPU (or its DMA) touched last, as the SA-1 sees it (nr-7v3).
+    #[serde(default)]
+    pub snes_cart_access: SnesCartAccess,
+    /// Whether the S-CPU's current cycle is a 6-clock one (nr-7v3).
+    #[serde(default)]
+    pub snes_fast_cycle: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
