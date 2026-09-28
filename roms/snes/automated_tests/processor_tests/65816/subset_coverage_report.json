@@ -140,6 +140,16 @@
         "58"
       ]
     },
+    "jump_indirect_indexed": {
+      "files": [
+        "7c.e.json",
+        "7c.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "7c"
+      ]
+    },
     "jump_long": {
       "files": [
         "22.e.json",
@@ -150,6 +160,26 @@
         "22"
       ]
     },
+    "jump_subroutine": {
+      "files": [
+        "20.e.json",
+        "20.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "20"
+      ]
+    },
+    "jump_subroutine_indirect": {
+      "files": [
+        "fc.e.json",
+        "fc.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "fc"
+      ]
+    },
     "load_store": {
       "files": [
         "a9.e.json",
@@ -158,6 +188,46 @@
       "opcode_count": 1,
       "opcodes": [
         "a9"
+      ]
+    },
+    "push_relative": {
+      "files": [
+        "62.e.json",
+        "62.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "62"
+      ]
+    },
+    "return": {
+      "files": [
+        "60.e.json",
+        "60.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "60"
+      ]
+    },
+    "return_interrupt": {
+      "files": [
+        "40.e.json",
+        "40.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "40"
+      ]
+    },
+    "return_long": {
+      "files": [
+        "6b.e.json",
+        "6b.n.json"
+      ],
+      "opcode_count": 1,
+      "opcodes": [
+        "6b"
       ]
     },
     "rmw_absolute": {
@@ -242,12 +312,12 @@
     }
   },
   "integrity": {
-    "file_count": 48,
+    "file_count": 62,
     "kind": "tree_sha256",
-    "sha256": "6560815e6b5484a0d8070bce5b55520fd85d19e6a3e0c27c7628ff7f05494e55",
-    "total_size_bytes": 1093999
+    "sha256": "ac1ff3bcd13a3f79f9c5c90d8cdd4011e3726141f76a314890701016d8e78ede",
+    "total_size_bytes": 1321633
   },
-  "selected_file_count": 48,
+  "selected_file_count": 62,
   "selected_files": [
     "ea.e.json",
     "ea.n.json",
@@ -295,7 +365,21 @@
     "1e.n.json",
     "04.e.json",
     "04.n.json",
+    "20.e.json",
+    "20.n.json",
+    "fc.e.json",
+    "fc.n.json",
     "22.e.json",
-    "22.n.json"
+    "22.n.json",
+    "7c.e.json",
+    "7c.n.json",
+    "60.e.json",
+    "60.n.json",
+    "6b.e.json",
+    "6b.n.json",
+    "40.e.json",
+    "40.n.json",
+    "62.e.json",
+    "62.n.json"
   ]
 }

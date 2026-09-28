@@ -51,16 +51,30 @@ FAMILY_ORDER = (
     "rmw_absolute",
     "rmw_absolute_indexed",
     "rmw_test_bits",
-    # JSL on its own, so the corpus carries its vectors: they pin the 65816's order of the
-    # long call's cycles (push PBR, internal, bank byte, push PC), whose last cycle decides
-    # whether an NMI rising in it is taken after JSL or one instruction later (nr-4lq).
+    # Every call, return and indexed-indirect jump on its own, so the corpus carries their
+    # vectors: they pin where each spends its internal cycles (JSR: before the pushes; JSL:
+    # between the PBR push and the bank byte; RTS/RTL/RTI: two before the pulls; PER and
+    # JMP (a,X): after the operand; JSR (a,X): after the pointer's high byte). NESER used to
+    # leave them all trailing after the last bus access, which moves the cycle boundaries
+    # that NMI recognition and the HDMA start are measured against (nr-4lq).
+    "jump_subroutine",
+    "jump_subroutine_indirect",
     "jump_long",
+    "jump_indirect_indexed",
+    "return",
+    "return_long",
+    "return_interrupt",
+    "push_relative",
 )
 
 OPCODE_FAMILY: dict[int, str] = {
     0x00: "system_control",
-    0x40: "system_control",
-    0x60: "system_control",
+    0x40: "return_interrupt",
+    0x60: "return",
+    0x6B: "return_long",
+    0x62: "push_relative",
+    0x7C: "jump_indirect_indexed",
+    0xFC: "jump_subroutine_indirect",
     0xEA: "system_control",
     0x80: "branch",
     0x90: "branch",
@@ -69,7 +83,7 @@ OPCODE_FAMILY: dict[int, str] = {
     0xF0: "branch",
     0x4C: "branch",
     0x6C: "branch",
-    0x20: "stack",
+    0x20: "jump_subroutine",
     0x22: "jump_long",
     0x48: "stack",
     0x68: "stack",
