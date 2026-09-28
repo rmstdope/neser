@@ -174,6 +174,10 @@ impl Ppu {
             || (self.position.dot == super::HBLANK_START_DOT && self.master_cycle_accumulator >= 1)
     }
 
+    /// fullsnes "Long and Short Scanlines", and ares `PPUcounter::tickScanline`. Deliberately
+    /// not Mesen2, which shortens line 240 at 50 Hz too and models no long line; PAL frame
+    /// comparisons against Mesen2 drift for that reason alone (nr-2fw,
+    /// `short_scanline_240_is_ntsc_only`).
     fn line_timing_profile_for_scanline(&self) -> PpuLineTimingProfile {
         if self.video_region == super::SnesVideoRegion::Ntsc
             && !self.interlace_enabled()
@@ -1472,6 +1476,46 @@ mod tests {
                 scanline: 241,
                 dot: 0
             }
+        );
+    }
+
+    /// Where scanline 240 of a non-interlaced field-1 frame has ended after 1360 master
+    /// clocks, with its timing profile latched by running through scanline 239 first.
+    fn position_1360_clocks_into_scanline_240(region: SnesVideoRegion) -> ScanPosition {
+        let mut ppu = Ppu::new_with_region(region);
+        ppu.write_register(0x2133, 0x00); // non-interlaced output
+        ppu.position.scanline = 239;
+        ppu.position.dot = 0;
+        ppu.interlace_field = true;
+        for _ in 0..u32::from(DOTS_PER_SCANLINE) * MASTER_CYCLES_PER_DOT {
+            ppu.tick();
+        }
+        assert_eq!(ppu.position().scanline, 240);
+        for _ in 0..1360 {
+            ppu.tick();
+        }
+        ppu.position()
+    }
+
+    #[test]
+    fn short_scanline_240_is_ntsc_only() {
+        // fullsnes "Long and Short Scanlines": "Short Line --> at 60Hz frame rate +
+        // interlace=off + field=1 + line=240"; ares `PPUcounter::tickScanline` agrees.
+        // Mesen2 (`SnesPpu::ProcessEndOfScanline`) also shortens it at 50 Hz, which puts
+        // PAL games 4 clocks per two frames behind NESER; Metal Combat's attract demo ends
+        // up two frames apart by frame 252 (nr-2fw). NESER follows the specification.
+        assert_eq!(
+            position_1360_clocks_into_scanline_240(SnesVideoRegion::Ntsc),
+            ScanPosition {
+                scanline: 241,
+                dot: 0
+            },
+            "NTSC: line 240 of a field-1 frame is 1360 clocks"
+        );
+        assert_eq!(
+            position_1360_clocks_into_scanline_240(SnesVideoRegion::Pal).scanline,
+            240,
+            "PAL: line 240 is a normal 1364-clock line"
         );
     }
 
