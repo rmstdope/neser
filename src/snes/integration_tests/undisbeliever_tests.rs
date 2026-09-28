@@ -239,16 +239,15 @@ mod tests {
     // INIDISP per pixel, row 88 shows from the write on, as in Mesen2, and the frame
     // differs from a fresh Mesen2 capture (stable across runs) in 45 px (it was 238 px
     // with the per-scanline latch, whose CRC this test carried under a "matches Mesen2"
-    // comment that no longer held). What is left is two other model differences:
+    // comment that no longer held). The Mesen2 stale-latch OBJ model now removes the 23-pixel
+    // row-89 difference. What is left is the 22-pixel BG fetch-stage difference:
     // row 88 x=41-62 is Mesen2's BG fetch-ahead, skipped during forced blank, showing
     // stale tile data (see the fetch-stage characterisation in `ppu/background.rs`),
-    // and row 89 x=73-95 is OBJ evaluation for that line running partly in forced
-    // blank, where Mesen2 drops an entry that NESER's pause model keeps. Tracked
-    // in nr-1xa.
+    // while row 89 x=73-95 follows Mesen2's stale-latch OBJ-evaluation drop. Tracked in nr-1xa.
     undisbeliever_rom_test!(
         inidisp_enable_display_mid_frame_matches_mesen2,
         "inidisp_enable_display_mid_frame.sfc",
-        0x515A_B51B
+        0x518D_C63E
     );
 
     // Fixed by mid-scanline HDMA activation (#2943): ROMs write to HDMAEN mid-scanline
