@@ -79,3 +79,27 @@ fn slow_multiply_costs_more_than_fast() {
     // Mesen2: (MS0 ? 3 : 7) GSU cycles on top of the fetch, one master clock each at 21 MHz.
     assert_eq!(run(0x00) - run(0x20), 4);
 }
+
+/// Master clocks, on a warm cache at 21 MHz, for `before` followed by ALT1; RPIX; STOP.
+fn time_rpix_after(before: u8) -> u64 {
+    let program = [0x02, before, 0x3D, 0x4C, 0x00, 0x01]; // CACHE; before; RPIX; STOP; NOP
+    let mut rig = Rig::new(&program);
+    rig.gsu.write_register(0x3039, 0x01);
+    rig.gsu.write_register(0x303A, 0x18); // RON, RAN, 4 colours: RPIX reads two planes
+    rig.write16(0x301E, PROGRAM);
+    rig.run_until_stop();
+    rig.tick(1000);
+    rig.write16(0x301E, PROGRAM);
+    rig.run_until_stop()
+}
+
+#[test]
+fn rpix_overlaps_a_pending_ram_write_with_its_reads() {
+    // STW (R1) costs one fetch plus waiting out its first byte's write (5 master clocks), and
+    // leaves the second byte in the RAM write buffer. RPIX does not wait for that buffer before
+    // reading: it lands during RPIX's own plane reads (Mesen2 `Gsu::ReadPixel` and ares
+    // `SuperFX::rpix` start their reads without a `WaitRamOperation`; fullsnes is silent). So
+    // the store costs RPIX nothing extra over a NOP in its place. Yoshi's Island's intro runs
+    // SMS; RPIX from the cache, and 3 extra clocks there each time drifted it from Mesen2 (nr-2cn).
+    assert_eq!(time_rpix_after(0x31) - time_rpix_after(0x01), 5);
+}
