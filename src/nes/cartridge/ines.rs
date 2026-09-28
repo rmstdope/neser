@@ -1,7 +1,8 @@
 // iNES / NES 2.0 header parsing helpers
 // Purpose: centralize header parsing so multiple callers can reuse the logic.
 
-use crate::nes::cartridge::rom_db::{DbVsPpu, RomDb};
+use crate::nes::cartridge::HardwareType;
+use crate::nes::cartridge::rom_db::RomDb;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -539,10 +540,13 @@ impl ParsedRom {
         if let Some(vs_hw) = entry.vs_hardware_type {
             self.header.vs_hardware_type = Some(vs_hw.to_raw());
         }
-        match entry.vs_ppu_type {
-            Some(DbVsPpu::Vs(vs_ppu)) => self.header.vs_ppu_type = Some(vs_ppu.to_raw()),
-            Some(DbVsPpu::Standard2c02) => self.header.vs_ppu_type = None,
-            None => {}
+        if let Some(vs_ppu) = entry.vs_ppu_type {
+            self.header.vs_ppu_type = Some(vs_ppu.to_raw());
+        }
+        // The database knows the console better than a header's Vs. bit, as in Mesen2.
+        if entry.hardware.is_some_and(|h| h != HardwareType::VsSystem) {
+            self.header.vs_ppu_type = None;
+            self.header.vs_hardware_type = None;
         }
 
         Ok(())
@@ -1183,11 +1187,33 @@ mod tests {
         assert_eq!(info.vs_hardware_type, None);
     }
 
-    /// Vs. Duck Hunt (ABE1A0C2): the database says its board carries a standard 2C02, which
-    /// replaces the RP2C03B the iNES 1.0 header implies, so it keeps the standard palette
-    /// while still being run as a Vs. System.
+    /// A header that sets the Vs. bit on a game the database knows as a plain NES game is
+    /// wrong, and the database wins, as in Mesen2: no Vs. PPU, no Vs. hardware.
     #[test]
-    fn apply_db_overrides_standard_2c02_clears_vs_ppu_type_but_keeps_vs_system() {
+    fn apply_db_overrides_non_vs_entry_clears_vs_types_implied_by_ines1_header() {
+        use crate::nes::cartridge::rom_db::RomDb;
+
+        let csv = "1,NES Game,,DEADBEEF,0,Licensed,0,0,,32768,,,,8192,,,,0,,,\n";
+        let db = RomDb::from_csv_content(csv);
+
+        let mut data = vec![0u8; 16 + 32768 + 8192];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 2;
+        data[5] = 1;
+        data[7] = 0x01; // Vs. System bit, iNES 1.0
+
+        let mut parsed = ParsedRom::parse(&data, Some(&db)).unwrap();
+        parsed.crc32 = 0xDEADBEEF;
+        parsed.apply_db_overrides(&data, &db).unwrap();
+
+        assert_eq!(parsed.header.vs_ppu_type, None);
+        assert_eq!(parsed.header.vs_hardware_type, None);
+    }
+
+    /// Vs. Duck Hunt (ABE1A0C2): the database's 0 is the NES 2.0 nibble "any RP2C03", the
+    /// PPU the Vs. System page on nesdev gives the game, so it keeps the RGB palette.
+    #[test]
+    fn apply_db_overrides_keeps_rp2c03_for_vs_duck_hunt_entry() {
         use crate::nes::cartridge::rom_db::RomDb;
 
         let csv = "2286,,,DEADBEEF,3,Vs. System,99,0,4,32768,,0,2048,16384,,0,0,0,0,0,7\n";
@@ -1204,15 +1230,8 @@ mod tests {
         parsed.crc32 = 0xDEADBEEF;
         parsed.apply_db_overrides(&data, &db).unwrap();
 
-        assert_eq!(
-            parsed.header.vs_ppu_type, None,
-            "a 2C02 has no Vs. PPU type"
-        );
-        assert_eq!(
-            parsed.header.vs_hardware_type,
-            Some(0),
-            "still a Vs. UniSystem"
-        );
+        assert_eq!(parsed.header.vs_ppu_type, Some(0), "RP2C03");
+        assert_eq!(parsed.header.vs_hardware_type, Some(0), "Vs. UniSystem");
     }
 
     #[test]

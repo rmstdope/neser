@@ -33,7 +33,7 @@ pub struct RomDbEntry {
     pub chr_ram_size: Option<u32>,
     pub battery: Option<bool>,
     pub vs_hardware_type: Option<VsHardwareType>,
-    pub vs_ppu_type: Option<DbVsPpu>,
+    pub vs_ppu_type: Option<VsPpuType>,
     pub expansion_type: Option<ExpansionType>,
 }
 
@@ -133,15 +133,6 @@ impl VsPpuType {
             Self::Unknown(v) => v,
         }
     }
-}
-
-/// The PPU the ROM database says a Vs. System board carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DbVsPpu {
-    /// A standard 2C02: the game keeps the standard palette and plain PPU registers.
-    Standard2c02,
-    /// One of the Vs. PPUs, as the NES 2.0 header would name it.
-    Vs(VsPpuType),
 }
 
 /// iNES 2.0 Controller types
@@ -487,26 +478,9 @@ fn parse_optional_vs_hardware_type(raw: &str) -> Option<VsHardwareType> {
     Some(VsHardwareType::from_raw(value))
 }
 
-/// The vs_ppu_type column comes from Mesen2's database, whose column 17 is its `PpuModel`
-/// enum rather than the NES 2.0 byte-13 nibble: 0 is a standard 2C02, 1 the 2C03, 2-5 the
-/// RP2C04-0001..0004 and 6-10 the RC2C05-01..05. Mesen2 has no model above 10, so a larger
-/// value (only Vs. Top Gun's 11) is read as the NES 2.0 nibble.
-fn parse_optional_vs_ppu_type(raw: &str) -> Option<DbVsPpu> {
+fn parse_optional_vs_ppu_type(raw: &str) -> Option<VsPpuType> {
     let value = parse_optional_u8_decimal(raw)?;
-    Some(match value {
-        0 => DbVsPpu::Standard2c02,
-        1 => DbVsPpu::Vs(VsPpuType::Rp2c03b),
-        2 => DbVsPpu::Vs(VsPpuType::Rp2c04_0001),
-        3 => DbVsPpu::Vs(VsPpuType::Rp2c04_0002),
-        4 => DbVsPpu::Vs(VsPpuType::Rp2c04_0003),
-        5 => DbVsPpu::Vs(VsPpuType::Rp2c04_0004),
-        6 => DbVsPpu::Vs(VsPpuType::Rc2c05_01),
-        7 => DbVsPpu::Vs(VsPpuType::Rc2c05_02),
-        8 => DbVsPpu::Vs(VsPpuType::Rc2c05_03),
-        9 => DbVsPpu::Vs(VsPpuType::Rc2c05_04),
-        10 => DbVsPpu::Vs(VsPpuType::Rc2c05_05),
-        other => DbVsPpu::Vs(VsPpuType::from_raw(other)),
-    })
+    Some(VsPpuType::from_raw(value))
 }
 
 fn parse_optional_expansion_type(raw: &str) -> Option<ExpansionType> {
@@ -812,38 +786,8 @@ mod tests {
         assert_eq!(entry.chr_ram_size, Some(8192));
         assert_eq!(entry.battery, Some(true));
         assert_eq!(entry.vs_hardware_type, Some(VsHardwareType::VsDualSystem));
-        assert_eq!(entry.vs_ppu_type, Some(DbVsPpu::Vs(VsPpuType::Rc2c05_05)));
+        assert_eq!(entry.vs_ppu_type, Some(VsPpuType::Rc2c05_03));
         assert_eq!(entry.expansion_type, Some(ExpansionType::NesFourScore));
-    }
-
-    /// The vs_ppu_type column is Mesen2's `PpuModel` numbering (its database's column 17),
-    /// not the NES 2.0 byte-13 nibble: 0 is a standard 2C02, 1 the 2C03, 2-5 the four
-    /// 2C04s and 6-10 the five 2C05s. Vs. Duck Hunt (ABE1A0C2) carries 0, and Mesen2
-    /// draws it with the standard palette.
-    #[test]
-    fn test_rom_db_vs_ppu_column_uses_mesen2_ppu_model_numbering() {
-        let expected = [
-            (0, DbVsPpu::Standard2c02),
-            (1, DbVsPpu::Vs(VsPpuType::Rp2c03b)),
-            (2, DbVsPpu::Vs(VsPpuType::Rp2c04_0001)),
-            (3, DbVsPpu::Vs(VsPpuType::Rp2c04_0002)),
-            (4, DbVsPpu::Vs(VsPpuType::Rp2c04_0003)),
-            (5, DbVsPpu::Vs(VsPpuType::Rp2c04_0004)),
-            (6, DbVsPpu::Vs(VsPpuType::Rc2c05_01)),
-            (7, DbVsPpu::Vs(VsPpuType::Rc2c05_02)),
-            (8, DbVsPpu::Vs(VsPpuType::Rc2c05_03)),
-            (9, DbVsPpu::Vs(VsPpuType::Rc2c05_04)),
-            (10, DbVsPpu::Vs(VsPpuType::Rc2c05_05)),
-            // Beyond Mesen2's range (Vs. Top Gun): read as the NES 2.0 nibble.
-            (11, DbVsPpu::Vs(VsPpuType::Rc2c05_04)),
-        ];
-        for (raw, want) in expected {
-            let csv =
-                format!("1,Vs,,DEADBEEF,3,Vs. System,99,0,4,32768,,0,2048,8192,,0,0,0,0,{raw},4\n");
-            let db = RomDb::from_csv_content(&csv);
-            let entry = db.get_by_crc(0xDEADBEEF).expect("entry");
-            assert_eq!(entry.vs_ppu_type, Some(want), "column value {raw}");
-        }
     }
 
     #[test]
