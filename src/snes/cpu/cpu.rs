@@ -618,8 +618,8 @@ impl<B: SnesBus> Cpu<B> {
         for _ in 0..RESET_STARTUP_DELAY_CLOCKS {
             self.bus.tick();
         }
-        let lo = self.read8(0x00FFFC) as u16;
-        let hi = self.read8(0x00FFFD) as u16;
+        let lo = self.read_vector8(0x00FFFC) as u16;
+        let hi = self.read_vector8(0x00FFFD) as u16;
         self.pc = lo | hi << 8;
     }
 
