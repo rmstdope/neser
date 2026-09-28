@@ -172,9 +172,9 @@ fn build_hardware(app_context: &SharedAppContext) -> Hardware {
     )));
     let cpu = Cpu::new(tv_system, bus.clone(), ppu.clone(), apu.clone());
 
-    // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
-    // This creates a one-cycle offset where PPU state changes become
-    // visible to the CPU one cycle later, matching hardware behavior
+    // A console that is never reset (unit tests that set PC directly) keeps this 1-dot PPU
+    // lead. Loading a ROM resets the console, and `Nes::reset` replaces it with the
+    // region's `power_on_ppu_lead`.
     ppu.borrow_mut().run_ppu_cycles(1);
 
     Hardware { ppu, apu, bus, cpu }
@@ -456,8 +456,18 @@ impl Nes {
         self.ready_to_render = false;
         self.recent_cpu_trace.clear();
 
-        // Re-establish 1-cycle PPU offset after reset
-        self.ppu.borrow_mut().run_ppu_cycles(1);
+        // The PPU leads the CPU after any reset, soft or hard; on NTSC by 5 dots. The PPU
+        // restarts its timing on both, and NESER has always re-applied the same lead on
+        // each. How the CPU and PPU line up at power-on is left open by the specification (it varies between consoles),
+        // so NESER takes Mesen2's: its CPU runs 8 cycles before the first opcode
+        // (`NesCpu::Reset`) where NESER's reset runs 7, and its master clock starts a cycle
+        // in. The 7 cycles stay, since the CPU cycle count and the APU's phase after reset
+        // are what blargg's timing ROMs pin; the PPU instead gets the missing cycle's 3 dots
+        // on top of the 2-dot lead that puts every CPU read and write on Mesen2's dot. With
+        // a 1-dot lead, games polling $2002 for their first vblanks drifted a frame from
+        // Mesen2 (nr-f6o).
+        let lead = self.ppu.borrow().timing().region().power_on_ppu_lead;
+        self.ppu.borrow_mut().run_ppu_cycles(lead);
     }
 
     /// On hard reset with a trainer: simulate JSR $7003 so trainer code runs
@@ -1660,7 +1670,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nes_reset_reestablishes_1_cycle_ppu_offset() {
+    fn test_nes_reset_leads_the_cpu_by_5_ppu_dots() {
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
 
@@ -1669,10 +1679,10 @@ mod tests {
         ));
         nes.insert_cartridge(cartridge);
 
-        // After a power-on reset, CPU reset consumes 7 cycles (21 PPU cycles at 3x).
-        // The emulator maintains a 1-cycle PPU lead for timing quirks (sprite-0 hit, etc).
+        // After a power-on reset, CPU reset consumes 7 cycles (21 PPU cycles at 3x), and
+        // the PPU leads by 5 dots, which puts CPU bus accesses on Mesen2's dots (nr-f6o).
         nes.reset(false);
-        assert_eq!(nes.ppu.borrow().total_cycles(), 22);
+        assert_eq!(nes.ppu.borrow().total_cycles(), 26);
     }
 
     /// Loading is the power-on: every frontend runs a console straight after `load_rom`, so
@@ -1687,6 +1697,66 @@ mod tests {
 
         assert_eq!(nes.cpu_ref().pc(), 0x8000);
         assert_eq!(nes.cpu_ref().get_total_cycles(), 7);
+    }
+
+    /// Excitebike's reset code up to its first vblank wait: SEI, CLD, LDA #0, STA $2000,
+    /// LDX #$FF, TXS, `nops` NOPs, then `LDA $2002 / AND #$80 / BEQ` until the VBlank flag
+    /// shows. The program then stores 1 at $0300 and spins.
+    fn vblank_poll_rom(nops: usize) -> Vec<u8> {
+        let mut program = vec![0x78, 0xD8, 0xA9, 0x00, 0x8D, 0x00, 0x20, 0xA2, 0xFF, 0x9A];
+        program.extend(std::iter::repeat_n(0xEA, nops));
+        // Poll $2002, then STA $0300.
+        program.extend([
+            0xAD, 0x02, 0x20, 0x29, 0x80, 0xF0, 0xF9, 0xA9, 0x01, 0x8D, 0x00, 0x03,
+        ]);
+        let spin = 0x8000 + program.len() as u16;
+        program.extend([0x4C, spin as u8, (spin >> 8) as u8]);
+        let mut rom = create_minimal_rom();
+        rom[16..16 + program.len()].copy_from_slice(&program);
+        rom
+    }
+
+    /// Power on with zero RAM, run `vblank_poll_rom(nops)` until just after the first
+    /// vblank has begun, and return the flag the program stores once its loop exits.
+    fn first_vblank_seen(nops: usize) -> u8 {
+        let mut config = Config::default();
+        config.frontend.ram_init_mode = crate::nes::console::RamInitMode::Zero;
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            config,
+        ));
+        nes.load_rom(&vblank_poll_rom(nops), "test.nes").unwrap();
+        // The first vblank starts at CPU cycle 27393; the loop takes 9 cycles a turn.
+        while nes.cpu_ref().get_total_cycles() < 27_450 {
+            nes.run_cpu_tick();
+        }
+        nes.bus.borrow_mut().read(0x0300, false)
+    }
+
+    /// nr-f6o: Excitebike, Kung Fu and 62 other games ran one frame behind or ahead of
+    /// Mesen2 because NESER's power-on put the PPU four dots behind Mesen2's against the
+    /// CPU. Excitebike's `$2002` poll of the first vblank then landed on scanline 241 dot 0,
+    /// the read that suppresses the flag, so the game saw the vblank a whole frame after
+    /// Mesen2 did. The specification leaves the CPU/PPU phase at power-on open (it varies
+    /// between consoles); in Mesen2 that read lands on dot 4 and sees the flag.
+    #[test]
+    fn power_on_lets_a_vblank_poll_loop_see_the_first_vblank_as_mesen2_does() {
+        assert_eq!(
+            first_vblank_seen(0),
+            1,
+            "the poll loop sees the first vblank, not the second"
+        );
+    }
+
+    /// nr-f6o: four NOPs move that read 8 CPU cycles, to scanline 241 dot 1, where the flag
+    /// is already set. Mesen2 still sees the first vblank; with the PPU a dot further
+    /// behind (a 4-dot lead) the read would land on the suppressing dot 0.
+    #[test]
+    fn power_on_lets_a_vblank_poll_read_on_dot_1_see_the_first_vblank_as_mesen2_does() {
+        assert_eq!(
+            first_vblank_seen(4),
+            1,
+            "a $2002 read on dot 1 of the first vblank sees the flag"
+        );
     }
 
     #[test]
