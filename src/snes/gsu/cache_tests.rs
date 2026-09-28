@@ -207,3 +207,21 @@ fn a_rom_fill_while_stopped_does_not_block_a_restart_in_cache() {
     rig.write16(0x301E, PROGRAM);
     rig.run_until_stop();
 }
+
+#[test]
+fn a_wait_latched_by_the_prefetch_after_stop_does_not_outlive_the_stop() {
+    // STOP ends its cache line, so the byte after it is fetched from the next, empty line, which
+    // with RON clear latches a wait while GO is still set. STOP must not leave the stopped GSU
+    // waiting: a GO=0 write to a stopped GSU no longer clears anything (nr-2cn), so a restart
+    // on cached code would otherwise never run.
+    let mut rig = Rig::new(&[]);
+    let mut line = [0x01; 16];
+    line[15] = 0x00; // STOP at $000F
+    inject(&mut rig, &line, 16);
+    start_in_cache(&mut rig);
+    rig.run_until_stop();
+    assert!(
+        !rig.gsu.state.waiting_for_rom,
+        "no wait left on a stopped GSU"
+    );
+}

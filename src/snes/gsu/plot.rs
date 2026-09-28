@@ -204,9 +204,10 @@ impl Gsu {
     }
 
     fn read_pixel(&mut self, x: u8, y: u8) -> u8 {
-        // Unlike LDW, RPIX does not first wait out a store still in the RAM write buffer: that
-        // store lands during the memory steps of the flushes and reads below (Mesen2
-        // `Gsu::ReadPixel` and ares `SuperFX::rpix`; fullsnes is silent). Waiting first cost Yoshi's Island 3 clocks per
+        // Unlike LDW, RPIX does not first wait out a store still in the RAM write buffer, nor
+        // for the RAM bus: that store lands during the memory steps of the flushes and reads
+        // below, and only a flushed row's write waits for RAN (Mesen2 `Gsu::ReadPixel` and ares
+        // `SuperFX::rpix`; fullsnes is silent). Waiting first cost Yoshi's Island 3 clocks per
         // SMS; RPIX and drifted it from Mesen2 (nr-2cn).
         let secondary = self.state.secondary_pixels;
         self.write_pixel_row(secondary);
