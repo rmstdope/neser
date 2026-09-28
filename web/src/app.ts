@@ -5,6 +5,7 @@ import init, {
     WasmSnes,
     gamepad_init_toast_message,
     rom_extension_table,
+    snes_firmware_chips_json,
     snes_dsp_firmware_is_genuine,
     snes_rom_dsp_chip
 } from "../pkg/neser";
@@ -15,7 +16,8 @@ import {
     chipByKey,
     notStartedMessage,
     notStartedStatus,
-    romDisplayName
+    romDisplayName,
+    initializeSnesFirmwareChips
 } from "./firmware/snes_firmware_words";
 import { loadRawButtonLayoutsFromDb, mapStandardGamepadState, selectGamepads } from "./input/gamepad";
 
@@ -236,7 +238,11 @@ function createWasmUrl() {
 
 function ensureWasmInitialized() {
     if (!wasmInitPromise) {
-        wasmInitPromise = init({ module_or_path: createWasmUrl() });
+        wasmInitPromise = init({ module_or_path: createWasmUrl() }).then((result) => {
+            return initializeSnesFirmwareChips(snes_firmware_chips_json, () => snesFirmwareSidebar.refresh()).then(
+                () => result
+            );
+        });
     }
     return wasmInitPromise;
 }

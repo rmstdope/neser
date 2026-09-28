@@ -1365,6 +1365,22 @@ fn snes_rom_dsp_chip_names_emulated_chips_only() {
     assert_eq!(snes_rom_dsp_chip(&[1, 2, 3]), None);
 }
 
+#[wasm_bindgen_test]
+fn snes_firmware_chip_metadata_comes_from_the_rust_registry() {
+    use crate::wasm_snes::snes_firmware_chips_json;
+    let chips: serde_json::Value =
+        serde_json::from_str(&snes_firmware_chips_json()).expect("metadata is JSON");
+    assert_eq!(
+        chips,
+        serde_json::json!([
+            {"key": "dsp1", "label": "DSP-1", "file": "dsp1b.rom"},
+            {"key": "dsp2", "label": "DSP-2", "file": "dsp2.rom"},
+            {"key": "dsp3", "label": "DSP-3", "file": "dsp3.rom"},
+            {"key": "dsp4", "label": "DSP-4", "file": "dsp4.rom"},
+        ])
+    );
+}
+
 /// SD Gundam GX's header title: "SD Gundam GX" in half-width katakana, space-padded.
 const DSP3_TITLE: &[u8; 21] = b"SD\xB6\xDE\xDD\xC0\xDE\xD1GX           ";
 

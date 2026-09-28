@@ -18,6 +18,7 @@
 
 use crate::snes::cartridge::{Cartridge, EnhancementChip};
 use crate::snes::upd77c25::{DSP_IMAGE_SIZE, Upd77c25Firmware};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -47,7 +48,10 @@ impl DspModel {
     /// The chip's rows of `table` in the order this game tries the files: an original DSP-1
     /// game (Pilotwings) prefers `dsp1.rom`, every other game keeps the table order.
     pub fn firmware_files(self, table: FirmwareTable) -> Vec<&'static FirmwareFile> {
-        let mut files: Vec<_> = table.iter().filter(|f| f.chip == self.chip()).collect();
+        let mut files = table
+            .iter()
+            .find(|entry| entry.chip == self.chip())
+            .map_or_else(Vec::new, |entry| entry.firmware_files.iter().collect());
         if self == Self::Dsp1 {
             files.sort_by_key(|f| f.name != DSP1_FILE);
         }
@@ -60,10 +64,7 @@ impl DspModel {
     /// (SHVC-1B5B-02: `20-3f,a0-bf:8000-ffff`); the DSP-1/DSP-4 1 MB board is at `30-3F`.
     /// Mesen2 maps every LoROM DSP at `30-3F` only.
     pub fn lorom_port_first_bank(self) -> u8 {
-        match self {
-            Self::Dsp2 | Self::Dsp3 => 0x20,
-            Self::Dsp1 | Self::Dsp1B | Self::Dsp4 => 0x30,
-        }
+        self.chip().metadata().lorom_port_first_bank
     }
 }
 
@@ -81,22 +82,12 @@ impl DspChip {
 
     /// The chip's name in messages: "DSP-1".
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Dsp1 => "DSP-1",
-            Self::Dsp2 => "DSP-2",
-            Self::Dsp3 => "DSP-3",
-            Self::Dsp4 => "DSP-4",
-        }
+        self.metadata().label
     }
 
     /// The chip's key for the browser version (wasm and its firmware store): "dsp1".
     pub fn key(self) -> &'static str {
-        match self {
-            Self::Dsp1 => "dsp1",
-            Self::Dsp2 => "dsp2",
-            Self::Dsp3 => "dsp3",
-            Self::Dsp4 => "dsp4",
-        }
+        self.metadata().key
     }
 
     /// The chip whose [`key`](Self::key) is `key`.
@@ -106,17 +97,14 @@ impl DspChip {
 
     /// The file every message about this chip names: `dsp1b.rom` for the DSP-1.
     pub fn message_file(self) -> &'static str {
-        match self {
-            Self::Dsp1 => DSP1B_FILE,
-            Self::Dsp2 => "dsp2.rom",
-            Self::Dsp3 => "dsp3.rom",
-            Self::Dsp4 => "dsp4.rom",
-        }
+        self.metadata().message_file
     }
 
     /// Whether NESER emulates the chip: `table` knows at least one genuine dump of it.
     pub fn is_emulated(self, table: FirmwareTable) -> bool {
-        table.iter().any(|f| f.chip == self)
+        table
+            .iter()
+            .any(|entry| entry.chip == self && !entry.firmware_files.is_empty())
     }
 
     /// Checks a firmware image with no file name (the browser's): the right size, and one of
@@ -127,8 +115,18 @@ impl DspChip {
         table: FirmwareTable,
     ) -> Result<Upd77c25Firmware, ImageProblem> {
         check_image(image, |hash| {
-            table.iter().any(|f| f.chip == self && f.sha256 == *hash)
+            table
+                .iter()
+                .find(|entry| entry.chip == self)
+                .is_some_and(|entry| entry.firmware_files.iter().any(|file| file.sha256 == *hash))
         })
+    }
+
+    fn metadata(self) -> &'static FirmwareChipMetadata {
+        firmware_chip_metadata()
+            .iter()
+            .find(|entry| entry.chip == self)
+            .expect("every DspChip has metadata")
     }
 }
 
@@ -146,13 +144,22 @@ pub struct FirmwareFile {
     pub sha256: [u8; 32],
 }
 
-/// A list of recognised firmware files; [`FIRMWARE_FILES`] outside tests.
-pub type FirmwareTable = &'static [FirmwareFile];
+/// Every fact that identifies a chip: the browser's key and label, the firmware image it asks
+/// for, the genuine images it accepts, and the cartridge's LoROM DSP port map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FirmwareChipMetadata {
+    chip: DspChip,
+    key: &'static str,
+    label: &'static str,
+    message_file: &'static str,
+    firmware_files: &'static [FirmwareFile],
+    lorom_port_first_bank: u8,
+}
 
-/// Every firmware NESER accepts. The hashes are Mesen2's (`UI/Interop/
-/// FirmwareTypeExtensions.cs`); BizHawk's firmware list gives the same `dsp1b.rom` and
-/// `dsp2.rom` values. Within a chip, the first row is the file its messages name.
-pub const FIRMWARE_FILES: FirmwareTable = &[
+/// A list of recognised chip metadata; [`FIRMWARE_FILES`] outside tests.
+pub type FirmwareTable = &'static [FirmwareChipMetadata];
+
+const DSP1_FIRMWARE_FILES: &[FirmwareFile] = &[
     FirmwareFile {
         chip: DspChip::Dsp1,
         name: DSP1B_FILE,
@@ -163,22 +170,85 @@ pub const FIRMWARE_FILES: FirmwareTable = &[
         name: DSP1_FILE,
         sha256: hex32("91E87D11E1C30D172556BED2211CCE2EFA94BA595F58C5D264809EF4D363A97B"),
     },
-    FirmwareFile {
+];
+const DSP2_FIRMWARE_FILES: &[FirmwareFile] = &[FirmwareFile {
+    chip: DspChip::Dsp2,
+    name: "dsp2.rom",
+    sha256: hex32("03EF4EF26C9F701346708CB5D07847B5203CF1B0818BF2930ACD34510FFDD717"),
+}];
+const DSP3_FIRMWARE_FILES: &[FirmwareFile] = &[FirmwareFile {
+    chip: DspChip::Dsp3,
+    name: "dsp3.rom",
+    sha256: hex32("0971B08F396C32E61989D1067DDDF8E4B14649D548B2188F7C541B03D7C69E4E"),
+}];
+const DSP4_FIRMWARE_FILES: &[FirmwareFile] = &[FirmwareFile {
+    chip: DspChip::Dsp4,
+    name: "dsp4.rom",
+    sha256: hex32("752D03B2D74441E430B7F713001FA241F8BBCFC1A0D890ED4143F174DBE031DA"),
+}];
+
+/// Every firmware NESER accepts. The hashes are Mesen2's (`UI/Interop/
+/// FirmwareTypeExtensions.cs`); BizHawk's firmware list gives the same `dsp1b.rom` and
+/// `dsp2.rom` values. Within a chip, the first row is the file its messages name.
+pub const FIRMWARE_FILES: FirmwareTable = &[
+    FirmwareChipMetadata {
+        chip: DspChip::Dsp1,
+        key: "dsp1",
+        label: "DSP-1",
+        message_file: DSP1B_FILE,
+        firmware_files: DSP1_FIRMWARE_FILES,
+        lorom_port_first_bank: 0x30,
+    },
+    FirmwareChipMetadata {
         chip: DspChip::Dsp2,
-        name: "dsp2.rom",
-        sha256: hex32("03EF4EF26C9F701346708CB5D07847B5203CF1B0818BF2930ACD34510FFDD717"),
+        key: "dsp2",
+        label: "DSP-2",
+        message_file: "dsp2.rom",
+        firmware_files: DSP2_FIRMWARE_FILES,
+        lorom_port_first_bank: 0x20,
     },
-    FirmwareFile {
+    FirmwareChipMetadata {
         chip: DspChip::Dsp3,
-        name: "dsp3.rom",
-        sha256: hex32("0971B08F396C32E61989D1067DDDF8E4B14649D548B2188F7C541B03D7C69E4E"),
+        key: "dsp3",
+        label: "DSP-3",
+        message_file: "dsp3.rom",
+        firmware_files: DSP3_FIRMWARE_FILES,
+        lorom_port_first_bank: 0x20,
     },
-    FirmwareFile {
+    FirmwareChipMetadata {
         chip: DspChip::Dsp4,
-        name: "dsp4.rom",
-        sha256: hex32("752D03B2D74441E430B7F713001FA241F8BBCFC1A0D890ED4143F174DBE031DA"),
+        key: "dsp4",
+        label: "DSP-4",
+        message_file: "dsp4.rom",
+        firmware_files: DSP4_FIRMWARE_FILES,
+        lorom_port_first_bank: 0x30,
     },
 ];
+
+/// The one metadata table for all emulated DSP chips.
+pub fn firmware_chip_metadata() -> FirmwareTable {
+    FIRMWARE_FILES
+}
+
+/// The firmware-chip facts the browser needs. Hashes and cartridge mappings remain core details.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct WebFirmwareChip {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub file: &'static str,
+}
+
+/// Every firmware chip in the order browser controls display them.
+pub fn web_firmware_chips() -> Vec<WebFirmwareChip> {
+    firmware_chip_metadata()
+        .iter()
+        .map(|chip| WebFirmwareChip {
+            key: chip.key,
+            label: chip.label,
+            file: chip.message_file,
+        })
+        .collect()
+}
 
 /// A 64-digit hex string as 32 bytes, at compile time.
 const fn hex32(hex: &str) -> [u8; 32] {
@@ -232,15 +302,35 @@ pub fn check_image(
 /// A table recognising exactly `entries`' images, for tests whose firmware is synthetic.
 #[cfg(test)]
 pub(crate) fn test_table(entries: &[(DspChip, &'static str, &[u8])]) -> FirmwareTable {
-    let rows: Vec<FirmwareFile> = entries
-        .iter()
-        .map(|(chip, name, image)| FirmwareFile {
-            chip: *chip,
-            name,
-            sha256: canonical_sha256(&Upd77c25Firmware::from_image(image).expect("8192 bytes")),
+    let chips: Vec<FirmwareChipMetadata> = DspChip::ALL
+        .into_iter()
+        .filter_map(|chip| {
+            let files: Vec<FirmwareFile> = entries
+                .iter()
+                .filter(|(entry_chip, _, _)| *entry_chip == chip)
+                .map(|(_, name, image)| FirmwareFile {
+                    chip,
+                    name,
+                    sha256: canonical_sha256(
+                        &Upd77c25Firmware::from_image(image).expect("8192 bytes"),
+                    ),
+                })
+                .collect();
+            if files.is_empty() {
+                return None;
+            }
+            let metadata = chip.metadata();
+            Some(FirmwareChipMetadata {
+                chip,
+                key: metadata.key,
+                label: metadata.label,
+                message_file: metadata.message_file,
+                firmware_files: Box::leak(files.into_boxed_slice()),
+                lorom_port_first_bank: metadata.lorom_port_first_bank,
+            })
         })
         .collect();
-    Box::leak(rows.into_boxed_slice())
+    Box::leak(chips.into_boxed_slice())
 }
 
 /// Identifies a DSP cartridge's chip by its header title, or `None` for a cartridge without a
@@ -479,6 +569,31 @@ mod tests {
     }
 
     #[test]
+    fn firmware_chip_metadata_is_the_complete_source_of_chip_facts() {
+        let facts: Vec<_> = firmware_chip_metadata()
+            .iter()
+            .map(|chip| {
+                (
+                    chip.key,
+                    chip.label,
+                    chip.message_file,
+                    chip.lorom_port_first_bank,
+                    chip.firmware_files.len(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            facts,
+            [
+                ("dsp1", "DSP-1", "dsp1b.rom", 0x30, 2),
+                ("dsp2", "DSP-2", "dsp2.rom", 0x20, 1),
+                ("dsp3", "DSP-3", "dsp3.rom", 0x20, 1),
+                ("dsp4", "DSP-4", "dsp4.rom", 0x30, 1),
+            ]
+        );
+    }
+
+    #[test]
     fn from_key_round_trips() {
         for chip in DspChip::ALL {
             assert_eq!(DspChip::from_key(chip.key()), Some(chip));
@@ -507,6 +622,7 @@ mod tests {
         };
         let rows: Vec<_> = FIRMWARE_FILES
             .iter()
+            .flat_map(|chip| chip.firmware_files)
             .map(|f| (f.chip, f.name, hex(f)))
             .collect();
         assert_eq!(
