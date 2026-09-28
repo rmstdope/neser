@@ -66,7 +66,9 @@ For the SNES replace the two `--nes.*` flags with `--snes.disableFrameSkipping=t
 --snes.RamPowerOnState=AllZeros --snes.port1.type=SnesController
 --snes.port2.type=SnesController`. The port flags plug in the standard pad NESER has in each
 port by default; without them Mesen2 takes the ports from `settings.json`, where port 2 may
-be empty. Games that read which pads are connected then play differently: Super Bomberman 3's
+be empty. Pin NESER's side too with `--snes-controller-port1 standard --snes-controller-port2
+standard`, since a `neser.conf` port line would otherwise apply; for a game NESER recognises as
+a Mouse or Super Scope game, give Mesen2 that type (`SnesMouse`, `SuperScope`) instead. Games that read which pads are connected then play differently: Super Bomberman 3's
 attract demo lags a frame at frame 2917 with port 2 empty, which showed as a 0.9% difference
 at frame 3000 with no emulation difference behind it (nr-0an). The frame-skip flag is mandatory for animated content:
 testRunner emulation runs far faster than real time and otherwise renders only every other

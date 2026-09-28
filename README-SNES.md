@@ -575,6 +575,10 @@ directory and are never committed. To approve a new or changed golden:
    Mesen2's testRunner renders only every other frame and screenshots of
    animated content show stale frames (found in #2990); the video overrides
    keep personal Mesen2 config from rescaling or filtering the capture.
+   Also pass `--snes.port1.type=SnesController --snes.port2.type=SnesController`:
+   Mesen2 otherwise takes its controller ports from its own settings, which may
+   leave port 2 empty, and games that check which pads are connected then play
+   differently from NESER, which has a standard pad in each port (nr-0an).
 3. If the ROM can display uninitialised RAM, add
    `--snes.RamPowerOnState=AllZeros` to the Mesen2 command line. Mesen2's SNES
    default is `RamState::Random`, and without the flag the ground truth is not

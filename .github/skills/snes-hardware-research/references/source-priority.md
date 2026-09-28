@@ -127,6 +127,9 @@ specification authority, one or two implementation references, one screenshot re
      --snes.disableFrameSkipping=true` (the frame-skip switch is mandatory for animated
      content, see SKILL.md), plus `--snes.RamPowerOnState=AllZeros` for any ROM that can
      display uninitialised WRAM; pin NESER's side with `--ram-init-mode zero` too.
+     Always add `--snes.port1.type=SnesController --snes.port2.type=SnesController`, the
+     standard pads NESER has in each port by default, and pin NESER with
+     `--snes-controller-port1 standard --snes-controller-port2 standard` (nr-0an).
    - Capture twice before trusting any non-zero diff; a capture that changes between
      identical runs means the reference is not pinned.
    - Diff the captures with `python -m scripts.diff_screenshots <neser> <mesen> --shift-search 1`
