@@ -17,8 +17,8 @@ const EMPHASIS_ATTENUATION: f64 = 0.84;
 ///
 /// Per nesdev (Colour emphasis) each bit emphasises one colour by darkening the other two;
 /// nothing is brightened, so with all three bits set the whole picture darkens. Columns
-/// `$xE` and `$xF` are not affected. The factor and the order of the multiplications follow
-/// Mesen2, so the `mesen` palette matches its captures exactly.
+/// On the 2C02, `$xE` and `$xF` are not affected. The factor and the order of the multiplications
+/// follow Mesen2, so the `mesen` palette matches its captures exactly.
 ///
 /// RGB PPUs in the Vs. System force each emphasised channel to maximum brightness instead.
 ///
@@ -35,7 +35,7 @@ pub(crate) fn apply_color_emphasis(
     swap_green_blue: bool,
     rgb_ppu: bool,
 ) -> (u8, u8, u8) {
-    if color_emphasis == 0 || (color_value & 0x0F) >= 0x0E {
+    if color_emphasis == 0 {
         return (r, g, b);
     }
 
@@ -52,6 +52,10 @@ pub(crate) fn apply_color_emphasis(
             if emphasis & 0x02 != 0 { 0xFF } else { g },
             if emphasis & 0x04 != 0 { 0xFF } else { b },
         );
+    }
+
+    if (color_value & 0x0F) >= 0x0E {
+        return (r, g, b);
     }
 
     let mut fr = f64::from(r);
@@ -158,17 +162,19 @@ mod tests {
 
     #[test]
     fn rgb_ppu_emphasis_forces_selected_channels_to_maximum() {
-        for (emphasis, expected) in [
-            (0x01, (255, 101, 102)),
-            (0x02, (100, 255, 102)),
-            (0x04, (100, 101, 255)),
-            (0x07, (255, 255, 255)),
-        ] {
-            assert_eq!(
-                apply_color_emphasis(0x30, 100, 101, 102, emphasis, false, true),
-                expected,
-                "emphasis ${emphasis:02X}"
-            );
+        for color_value in [0x30, 0x0E, 0x0F] {
+            for (emphasis, expected) in [
+                (0x01, (255, 101, 102)),
+                (0x02, (100, 255, 102)),
+                (0x04, (100, 101, 255)),
+                (0x07, (255, 255, 255)),
+            ] {
+                assert_eq!(
+                    apply_color_emphasis(color_value, 100, 101, 102, emphasis, false, true),
+                    expected,
+                    "colour ${color_value:02X}, emphasis ${emphasis:02X}"
+                );
+            }
         }
     }
 
