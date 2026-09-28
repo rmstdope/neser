@@ -17,11 +17,10 @@ const EMPHASIS_ATTENUATION: f64 = 0.84;
 ///
 /// Per nesdev (Colour emphasis) each bit emphasises one colour by darkening the other two;
 /// nothing is brightened, so with all three bits set the whole picture darkens. Columns
-/// `$xE` and `$xF` are not affected. The factor and the order of the multiplications follow
-/// Mesen2, so the `mesen` palette matches its captures exactly.
+/// On the 2C02, `$xE` and `$xF` are not affected. The factor and the order of the multiplications
+/// follow Mesen2, so the `mesen` palette matches its captures exactly.
 ///
-/// This is the 2C02's behaviour. The RGB PPUs of the Vs. System instead force the emphasised
-/// channel to maximum; that is not modelled yet, and they get this darkening too.
+/// RGB PPUs in the Vs. System force each emphasised channel to maximum brightness instead.
 ///
 /// On NES: bit layout is 0x01 = red, 0x02 = green, 0x04 = blue.
 /// On Famicom: green and blue are swapped (0x02 = blue, 0x04 = green).
@@ -34,8 +33,9 @@ pub(crate) fn apply_color_emphasis(
     b: u8,
     color_emphasis: u8,
     swap_green_blue: bool,
+    rgb_ppu: bool,
 ) -> (u8, u8, u8) {
-    if color_emphasis == 0 || (color_value & 0x0F) >= 0x0E {
+    if color_emphasis == 0 {
         return (r, g, b);
     }
 
@@ -45,6 +45,18 @@ pub(crate) fn apply_color_emphasis(
     } else {
         color_emphasis
     };
+
+    if rgb_ppu {
+        return (
+            if emphasis & 0x01 != 0 { 0xFF } else { r },
+            if emphasis & 0x02 != 0 { 0xFF } else { g },
+            if emphasis & 0x04 != 0 { 0xFF } else { b },
+        );
+    }
+
+    if (color_value & 0x0F) >= 0x0E {
+        return (r, g, b);
+    }
 
     let mut fr = f64::from(r);
     let mut fg = f64::from(g);
@@ -73,32 +85,32 @@ mod tests {
 
     #[test]
     fn test_apply_color_emphasis_red_only() {
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, false);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, false, false);
         assert_eq!((r, g, b), (100, 84, 84));
     }
 
     #[test]
     fn test_apply_color_emphasis_green_only() {
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x02, false);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x02, false, false);
         assert_eq!((r, g, b), (84, 100, 84));
     }
 
     #[test]
     fn test_apply_color_emphasis_blue_only() {
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x04, false);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x04, false, false);
         assert_eq!((r, g, b), (84, 84, 100));
     }
 
     #[test]
     fn test_apply_color_emphasis_red_green() {
         // Blue is dimmed by both bits, red and green by one each.
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x03, false);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x03, false, false);
         assert_eq!((r, g, b), (84, 84, 70));
     }
 
     #[test]
     fn test_apply_color_emphasis_none() {
-        let (r, g, b) = apply_color_emphasis(0x00, 123, 45, 67, 0x00, false);
+        let (r, g, b) = apply_color_emphasis(0x00, 123, 45, 67, 0x00, false, false);
         assert_eq!((r, g, b), (123, 45, 67));
     }
 
@@ -107,13 +119,13 @@ mod tests {
         // nesdev: "$1D black is affected by color emphasis, but $0F black is not."
         for color in [0x0E, 0x0F, 0x1E, 0x1F, 0x2E, 0x2F, 0x3E, 0x3F] {
             assert_eq!(
-                apply_color_emphasis(color, 100, 100, 100, 0x07, false),
+                apply_color_emphasis(color, 100, 100, 100, 0x07, false, false),
                 (100, 100, 100),
                 "colour ${color:02X}"
             );
         }
         assert_eq!(
-            apply_color_emphasis(0x3D, 100, 100, 100, 0x07, false),
+            apply_color_emphasis(0x3D, 100, 100, 100, 0x07, false, false),
             (70, 70, 70)
         );
     }
@@ -121,21 +133,21 @@ mod tests {
     #[test]
     fn test_famicom_emphasis_bit_0x02_emphasizes_blue_not_green() {
         // On Famicom, bit 0x02 = blue (swapped from NES green)
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x02, true);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x02, true, false);
         assert_eq!((r, g, b), (84, 84, 100));
     }
 
     #[test]
     fn test_famicom_emphasis_bit_0x04_emphasizes_green_not_blue() {
         // On Famicom, bit 0x04 = green (swapped from NES blue)
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x04, true);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x04, true, false);
         assert_eq!((r, g, b), (84, 100, 84));
     }
 
     #[test]
     fn test_famicom_emphasis_red_unchanged() {
         // Red (bit 0x01) is the same on both NES and Famicom
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, true);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, true, false);
         assert_eq!((r, g, b), (100, 84, 84));
     }
 
@@ -144,8 +156,26 @@ mod tests {
     /// set every channel is darkened twice. White must turn grey, never stay white.
     #[test]
     fn all_three_emphasis_bits_darken_white_to_grey() {
-        let (r, g, b) = apply_color_emphasis(0x30, 0xFF, 0xFE, 0xFF, 0x07, false);
+        let (r, g, b) = apply_color_emphasis(0x30, 0xFF, 0xFE, 0xFF, 0x07, false, false);
         assert_eq!((r, g, b), (179, 179, 179));
+    }
+
+    #[test]
+    fn rgb_ppu_emphasis_forces_selected_channels_to_maximum() {
+        for color_value in [0x30, 0x0E, 0x0F] {
+            for (emphasis, expected) in [
+                (0x01, (255, 101, 102)),
+                (0x02, (100, 255, 102)),
+                (0x04, (100, 101, 255)),
+                (0x07, (255, 255, 255)),
+            ] {
+                assert_eq!(
+                    apply_color_emphasis(color_value, 100, 101, 102, emphasis, false, true),
+                    expected,
+                    "colour ${color_value:02X}, emphasis ${emphasis:02X}"
+                );
+            }
+        }
     }
 
     #[test]

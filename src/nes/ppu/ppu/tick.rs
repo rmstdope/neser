@@ -539,8 +539,15 @@ fn tick_pixel_output(ppu: &mut Ppu) {
             let (r, g, b) = ppu.lookup_system_palette(color_value);
 
             // Apply color emphasis/tint
-            let (final_r, final_g, final_b) =
-                apply_color_emphasis(color_value, r, g, b, color_emphasis, ppu.famicom_emphasis);
+            let (final_r, final_g, final_b) = apply_color_emphasis(
+                color_value,
+                r,
+                g,
+                b,
+                color_emphasis,
+                ppu.famicom_emphasis,
+                ppu.vs_palette.is_some(),
+            );
 
             // Write pixel to screen buffer
             ppu.rendering
@@ -611,6 +618,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 b,
                 ppu.registers.color_emphasis(),
                 ppu.famicom_emphasis,
+                ppu.vs_palette.is_some(),
             );
 
             // Write backdrop color to screen buffer

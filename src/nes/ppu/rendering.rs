@@ -78,6 +78,7 @@ impl Rendering {
             b,
             color_emphasis,
             self.famicom_emphasis,
+            false,
         );
 
         // Write to the screen buffer
