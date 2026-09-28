@@ -425,6 +425,10 @@ pub struct Ppu {
     bg_vofs: [u16; 4],
     /// Shared write-twice latch (BG_old) for the BGnHOFS/BGnVOFS registers.
     bg_old: u8,
+    /// The last byte written to any BGnHOFS register, whose bits 0-2 become the next HOFS
+    /// write's bits 0-2 (ares `latch.bgofsPPU2`, Mesen2 `_hScrollLatchValue`). VOFS writes
+    /// leave it alone.
+    bg_old_hofs: u8,
     /// TM ($212C): main-screen layer enable (bits 0-3 = BG1-4, bit 4 = OBJ).
     tm: u8,
     /// TS ($212D): sub-screen layer enable (bits 0-3 = BG1-4, bit 4 = OBJ).
@@ -588,6 +592,7 @@ impl Ppu {
             bg_hofs: [0; 4],
             bg_vofs: [0; 4],
             bg_old: 0,
+            bg_old_hofs: 0,
             tm: 0,
             ts: 0,
             tmw: 0,

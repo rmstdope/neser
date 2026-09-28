@@ -80,6 +80,7 @@ impl Ppu {
             bg_hofs,
             bg_vofs,
             bg_old,
+            bg_old_hofs,
             tm,
             ts,
             tmw,
@@ -177,6 +178,7 @@ impl Ppu {
             bg_hofs,
             bg_vofs,
             bg_old,
+            bg_old_hofs,
             tm,
             ts,
             tmw,
@@ -276,6 +278,7 @@ impl Ppu {
             bg_hofs,
             bg_vofs,
             bg_old,
+            bg_old_hofs,
             tm,
             ts,
             tmw,
@@ -406,6 +409,7 @@ impl Ppu {
         self.bg_hofs = bg_hofs;
         self.bg_vofs = bg_vofs;
         self.bg_old = bg_old;
+        self.bg_old_hofs = bg_old_hofs;
         self.tm = tm;
         self.ts = ts;
         self.tmw = tmw;
@@ -554,6 +558,18 @@ mod tests {
             restored.hdma_init_position, expected,
             "the HDMA init trigger clock must survive a save-state round trip"
         );
+    }
+
+    #[test]
+    fn save_state_round_trips_the_hofs_low_bits_latch() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x210F, 0x05); // BG2HOFS loads the HOFS-only latch
+        let state = ppu.capture_state();
+
+        let mut restored = Ppu::new();
+        restored.restore_state(&state).expect("restore");
+        restored.write_register(0x210D, 0x00); // BG1HOFS takes bits 0-2 from it
+        assert_eq!(restored.bg_hofs[0] & 0x07, 0x05);
     }
 
     #[test]

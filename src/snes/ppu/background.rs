@@ -45,17 +45,20 @@ pub(crate) struct ScreenPixel {
 }
 
 impl Ppu {
-    /// Handle a write to `BGnHOFS` (horizontal scroll, write-twice via the shared BG_old latch):
-    /// `hofs = (data << 8) | (bg_old & ~7) | ((hofs >> 8) & 7)`.
+    /// Handle a write to `BGnHOFS` (horizontal scroll, write-twice via two latches):
+    /// `hofs = (data << 8) | (bg_old & ~7) | (bg_old_hofs & 7)`.
     ///
-    /// The value is stored unmasked; the self-referential `(hofs >> 8) & 7` term depends on the
-    /// full previous value, so masking here would corrupt the hardware write-twice behavior.
-    /// Callers mask to the active scroll width when applying it.
+    /// fullsnes writes the last term as `((Reg>>8)&7)` without saying what `Reg` is. ares
+    /// (`latch.bgofsPPU2`) and Mesen2 (`_hScrollLatchValue`) both take it from a second latch
+    /// that every BGnHOFS write loads, on any layer, and BGnVOFS writes do not; that is what
+    /// puts Spider-Man: The Animated Series' publisher logo where Mesen2 draws it (nr-nbn).
+    /// Callers mask the stored value to the active scroll width when applying it.
     pub(super) fn write_bg_hofs(&mut self, bg: usize, value: u8) {
         let prev = self.bg_old as u16;
-        let old_high = (self.bg_hofs[bg] >> 8) & 0x07;
-        self.bg_hofs[bg] = ((value as u16) << 8) | (prev & !0x07) | old_high;
+        let low = (self.bg_old_hofs as u16) & 0x07;
+        self.bg_hofs[bg] = ((value as u16) << 8) | (prev & !0x07) | low;
         self.bg_old = value;
+        self.bg_old_hofs = value;
     }
 
     /// Handle a write to `BGnVOFS` (vertical scroll, write-twice via the shared BG_old latch):
@@ -2472,6 +2475,31 @@ mod tests {
         ppu.write_register(0x210D, 0x02);
 
         assert_eq!(ppu.bg_hofs[0], 0x21F);
+    }
+
+    /// BGnHOFS bits 0-2 come from a second latch that only HOFS writes load (ares
+    /// `latch.bgofsPPU2`, Mesen2 `_hScrollLatchValue`), shared by all four layers: here the
+    /// low bits of BG1's first-ever write are those of the byte just written to BG2HOFS, not
+    /// of BG1's own previous value (nr-nbn, Spider-Man's publisher logo sat 2 px left).
+    #[test]
+    fn bg_hofs_low_bits_come_from_the_last_hofs_write_to_any_layer() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x210F, 0x03); // BG2HOFS
+        ppu.write_register(0x210D, 0x00); // BG1HOFS: (0x00<<8) | (0x03&~7) | (0x03&7)
+
+        assert_eq!(ppu.bg_hofs[0] & 0x3FF, 0x003);
+    }
+
+    /// A VOFS write reloads the shared BG_old latch but not the HOFS-only one, so the next HOFS
+    /// write takes bits 3-7 from the VOFS byte and bits 0-2 from the last HOFS byte.
+    #[test]
+    fn bg_vofs_write_does_not_load_the_hofs_low_bits_latch() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x210D, 0x05); // BG1HOFS
+        ppu.write_register(0x210E, 0x3A); // BG1VOFS
+        ppu.write_register(0x210F, 0x01); // BG2HOFS: (0x01<<8) | (0x3A&~7) | (0x05&7)
+
+        assert_eq!(ppu.bg_hofs[1] & 0x3FF, 0x13D);
     }
 
     #[test]
