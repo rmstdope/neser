@@ -1,6 +1,7 @@
 //! Automates all 29 vendored undisbeliever/snes-test-roms hardware ROMs
-//! (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`), every
-//! one of them a 0-pixel match against a Mesen2 capture of the same frame.
+//! (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`), each
+//! a 0-pixel match against a Mesen2 capture of the same frame except
+//! `inidisp_enable_display_mid_frame`, whose comment names its residual.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
 //! Fourteen of the 29 automated here demonstrate a real, documented
@@ -122,7 +123,7 @@ mod tests {
     // What these three pin, verified by mutation: making `hdma_transfer_due`
     // skip scanline 0 (a one-line banding phase shift) breaks all three. Moving
     // `HDMA_TRANSFER_POSITION` from dot 276 to 277 does NOT -- the write still
-    // lands in hblank, before the next line's dot-22 INIDISP latch. So they are
+    // lands in hblank, before the next line's first visible pixel. So they are
     // a frame-phase oracle, not a within-line clock oracle; the sub-line timing
     // is pinned by the unit tests in `bus/system_bus.rs` instead.
     //
@@ -233,13 +234,21 @@ mod tests {
         0x6E8D_8520
     );
 
-    // Fixed by the per-scanline INIDISP latch (was previously left un-automated
-    // under #2944): the top of the frame is force-blanked (black), then the
-    // display is enabled partway down, matching Mesen2 exactly.
+    // The top of the frame is force-blanked (black), then the display is enabled
+    // mid-line on row 88. Record-current, NOT a 0-pixel match: since nr-2wn applied
+    // INIDISP per pixel, row 88 shows from the write on, as in Mesen2, and the frame
+    // differs from a fresh Mesen2 capture (stable across runs) in 45 px (it was 238 px
+    // with the per-scanline latch, whose CRC this test carried under a "matches Mesen2"
+    // comment that no longer held). What is left is two other model differences:
+    // row 88 x=41-62 is Mesen2's BG fetch-ahead, skipped during forced blank, showing
+    // stale tile data (see the fetch-stage characterisation in `ppu/background.rs`),
+    // and row 89 x=73-95 is OBJ evaluation for that line running partly in forced
+    // blank, where Mesen2 drops an entry that NESER's pause model keeps. Tracked
+    // in nr-1xa.
     undisbeliever_rom_test!(
         inidisp_enable_display_mid_frame_matches_mesen2,
         "inidisp_enable_display_mid_frame.sfc",
-        0xD3AE_551F
+        0x515A_B51B
     );
 
     // Fixed by mid-scanline HDMA activation (#2943): ROMs write to HDMAEN mid-scanline
@@ -275,30 +284,16 @@ mod tests {
     // Tests mid-scanline INIDISP (brightness) changes: an H-IRQ at dot 309
     // writes INIDISP directly (no HDMA involved, despite this ROM's name
     // implying otherwise) to step the master brightness up/down on specific
-    // scanlines. NESER latches INIDISP once per scanline at
-    // `VISIBLE_DOT_START` (`Ppu::render_dot`/`line_inidisp` in
-    // `framebuffer.rs`), applying the whole row's brightness at once, while
-    // real hardware has some (undocumented) pixel-level delay between the
-    // write and the visible change. This produces a 4.45% pixel diff vs
-    // Mesen2 concentrated at brightness band edges (issue #2973).
-    //
-    // Investigated and left as a documented known limitation rather than a
-    // bug fix: fullsnes itself is explicitly unsure of the exact delay
-    // ("Forced blank doesn't apply immediately... so one must wait whatever
-    // (maybe a scanline)... or is it only vice-versa... shows garbage
-    // pixels?"), and no cycle-accurate real-hardware measurement is
-    // documented anywhere -- undisbeliever's `inidisp_brightness_delay.asm`
-    // source (designed to visualize the effect via real-hardware photos)
-    // asserts no specific delay value either. Any "fix" here would just
-    // mean picking one undocumented emulator's model over another, not
-    // matching a known-correct reference -- same shared-limitation
-    // reasoning as the `inidisp_hammer_*` glitch tests above (#2949) and
-    // related low-severity timing issues #2967/#2971. The golden CRC is
-    // unchanged; no behavior/timing code was modified for this issue.
+    // scanlines. A 0-pixel match against Mesen2 since nr-2wn, which applies
+    // INIDISP per pixel from the write on (Mesen2 `RenderScanline`) instead of
+    // latching it once per scanline; with the latch this ROM differed by 4.45%
+    // at the brightness band edges (issue #2973). fullsnes is unsure of the
+    // hardware's own delay, so this pins parity with the reference, not a
+    // measured hardware delay.
     undisbeliever_rom_test!(
         inidisp_brightness_delay_matches_mesen2,
         "inidisp_brightness_delay.sfc",
-        0xA6F2_AED7
+        0xE4B0_2BCF
     );
 
     // Demonstrates forgetting to force-blank before uploading to the PPU (#2944):
