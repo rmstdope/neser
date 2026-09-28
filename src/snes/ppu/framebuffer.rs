@@ -392,6 +392,56 @@ mod tests {
         assert_eq!(row0_pixel(&rgb, 255), [115, 0, 0], "drawn at brightness 7");
     }
 
+    /// A mid-line brightness split survives a later switch into hires on the same line:
+    /// `convert_to_hires` carries each pixel's INIDISP with it, column by column, into
+    /// both rows of the doubled line.
+    #[test]
+    fn a_mid_line_brightness_split_survives_a_switch_into_hires() {
+        let mut ppu = Ppu::new();
+        set_backdrop(&mut ppu, 0x001F); // full red
+        ppu.write_register(0x2100, 0x0F);
+        tick_to_row0_column(&mut ppu, 100);
+        ppu.write_register(0x2100, 0x07); // brightness 7 from column 101
+        for _ in 0..(50 * MASTER_CYCLES_PER_DOT) {
+            ppu.tick(); // through column 150
+        }
+        ppu.write_register(0x2133, 0x08); // pseudo-hires: converts the drawn prefix
+        finish_line(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(rgb.len(), 512 * 448 * 3, "the frame is in the hires layout");
+        let at = |x: usize, y: usize| {
+            let i = (y * 512 + x) * 3;
+            [rgb[i], rgb[i + 1], rgb[i + 2]]
+        };
+        for y in [0, 1] {
+            for x in [0, 100] {
+                assert_eq!(
+                    at(2 * x, y),
+                    [255, 0, 0],
+                    "row {y}, column {x}: brightness 15"
+                );
+                assert_eq!(
+                    at(2 * x + 1, y),
+                    [255, 0, 0],
+                    "row {y}, column {x}: brightness 15"
+                );
+            }
+            for x in [101, 150, 255] {
+                assert_eq!(
+                    at(2 * x, y),
+                    [115, 0, 0],
+                    "row {y}, column {x}: brightness 7"
+                );
+                assert_eq!(
+                    at(2 * x + 1, y),
+                    [115, 0, 0],
+                    "row {y}, column {x}: brightness 7"
+                );
+            }
+        }
+    }
+
     #[test]
     fn inidisp_changed_mid_frame_only_affects_later_scanlines() {
         let mut ppu = Ppu::new();

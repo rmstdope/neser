@@ -243,7 +243,8 @@ mod tests {
     // row 88 x=41-62 is Mesen2's BG fetch-ahead, skipped during forced blank, showing
     // stale tile data (see the fetch-stage characterisation in `ppu/background.rs`),
     // and row 89 x=73-95 is OBJ evaluation for that line running partly in forced
-    // blank, where Mesen2 drops an entry that NESER's pause model keeps.
+    // blank, where Mesen2 drops an entry that NESER's pause model keeps. Tracked
+    // in nr-1xa.
     undisbeliever_rom_test!(
         inidisp_enable_display_mid_frame_matches_mesen2,
         "inidisp_enable_display_mid_frame.sfc",
