@@ -5516,6 +5516,80 @@ mod tests {
         );
     }
 
+    /// Runs the one instruction at `$00:8000` (WS1 ROM, 8 clocks) and returns the speed each
+    /// of its cycles published, in cycle order. In emulation mode the stack is page 1 (WRAM,
+    /// 8 clocks); in native mode it sits at `$00:41F0`, the 12-clock joypad region, so a
+    /// program fetch (8), a stack access (12) and an internal cycle (6) are all distinct.
+    fn cycle_speeds_of(opcode_and_operands: &[u8], native: bool) -> Vec<u8> {
+        let mut bus = CpuSpeedRecordingBus::default();
+        for (offset, byte) in opcode_and_operands.iter().enumerate() {
+            bus.mem.insert(0x00_8000 + offset as u32, *byte);
+        }
+        let mut cpu = Cpu::new(bus);
+        cpu.pc = 0x8000;
+        if native {
+            cpu.e = false;
+        }
+        cpu.s = if native { 0x41F0 } else { 0x01F0 };
+        cpu.step();
+        cpu.bus
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                SpeedEvent::Speed(speed) => Some(*speed),
+                SpeedEvent::Hook => None,
+            })
+            .collect()
+    }
+
+    /// nr-dh7: the 65816's return and long-call instructions spend their internal cycles at
+    /// fixed places between the bus accesses (WDC datasheet, table 5-7; Mesen2
+    /// `SnesCpu::RTS`/`RTL`/`RTI`/`JSL`). The total is the same wherever they fall, but an
+    /// HDMA armed during the instruction runs at the start of a particular cycle and pads to
+    /// that cycle's speed, so a 6-clock internal cycle placed after the stack pulls instead of
+    /// before them made an RTS straddling the HDMA point 2 master clocks short. That was
+    /// enough to move Biker Mice from Mars' idle-loop star seed and shift its title-screen
+    /// star field by 33 pixels from Mesen2's. The order itself was fixed by nr-4lq; this pins
+    /// the speed each cycle publishes to the DMA hook, which is what the HDMA pad reads.
+    #[test]
+    fn return_and_long_call_instructions_place_internal_cycles_as_the_65816_does() {
+        assert_eq!(
+            cycle_speeds_of(&[0x60], false),
+            vec![8, 6, 6, 8, 8, 6],
+            "RTS: opcode, IO, IO, pull PCL, pull PCH, IO"
+        );
+        assert_eq!(
+            cycle_speeds_of(&[0x6B], true),
+            vec![8, 6, 6, 12, 12, 12],
+            "RTL: opcode, IO, IO, pull PCL, pull PCH, pull PBR"
+        );
+        assert_eq!(
+            cycle_speeds_of(&[0x40], true),
+            vec![8, 6, 6, 12, 12, 12, 12],
+            "RTI (native): opcode, IO, IO, pull P, pull PCL, pull PCH, pull PBR"
+        );
+        assert_eq!(
+            cycle_speeds_of(&[0x40], false),
+            vec![8, 6, 6, 8, 8, 8],
+            "RTI (emulation): opcode, IO, IO, pull P, pull PCL, pull PCH"
+        );
+        assert_eq!(
+            cycle_speeds_of(&[0x22, 0x00, 0x90, 0x00], true),
+            vec![8, 8, 8, 12, 6, 8, 12, 12],
+            "JSL: opcode, AAL, AAH, push PBR, IO, AAB, push PCH, push PCL"
+        );
+        assert_eq!(
+            cycle_speeds_of(&[0x20, 0x00, 0x90], false),
+            vec![8, 8, 8, 6, 8, 8],
+            "JSR abs: opcode, AAL, AAH, IO, push PCH, push PCL"
+        );
+        assert_eq!(
+            cycle_speeds_of(&[0xFC, 0x00, 0x90], true),
+            vec![8, 8, 12, 12, 8, 6, 8, 8],
+            "JSR (abs,X): opcode, AAL, push PCH, push PCL, AAH, IO, pointer low, pointer high"
+        );
+    }
+
     struct TraceReset;
 
     impl TraceReset {
