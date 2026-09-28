@@ -11,11 +11,21 @@ import {
     notStartedMessage,
     notStartedStatus,
     romDisplayName,
+    setSnesFirmwareChips,
     sidebarStored,
     storedMessage,
     wrongFileTitle,
     wrongSizeDetail
 } from "./snes_firmware_words";
+
+setSnesFirmwareChips(
+    JSON.stringify([
+        { key: "dsp1", label: "DSP-1", file: "dsp1b.rom" },
+        { key: "dsp2", label: "DSP-2", file: "dsp2.rom" },
+        { key: "dsp3", label: "DSP-3", file: "dsp3.rom" },
+        { key: "dsp4", label: "DSP-4", file: "dsp4.rom" }
+    ])
+);
 
 const dsp1 = chipByKey("dsp1")!;
 const dsp2 = chipByKey("dsp2")!;

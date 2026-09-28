@@ -8,6 +8,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
+/// Every firmware chip the browser can ask a player to supply, serialized as
+/// `[{ "key", "label", "file" }]` from the Rust-owned DSP metadata table.
+#[wasm_bindgen]
+pub fn snes_firmware_chips_json() -> String {
+    serde_json::to_string(&dsp::web_firmware_chips()).expect("firmware chip metadata serializes")
+}
+
 /// The key (`"dsp1"` to `"dsp4"`) of the DSP chip whose firmware a SNES ROM image needs before
 /// it can start (see [`WasmSnes::set_dsp_firmware`]), or `None` when it needs none that NESER
 /// emulates.

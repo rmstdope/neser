@@ -9,16 +9,23 @@ export type SnesFirmwareChip = {
     readonly file: string;
 };
 
-/**
- * Every chip NESER emulates, in the order the sidebar lists them. A new chip adds one entry
- * here and its row in the Rust firmware table (`src/snes/dsp`).
- */
-export const SNES_FIRMWARE_CHIPS: readonly SnesFirmwareChip[] = [
-    { key: "dsp1", label: "DSP-1", file: "dsp1b.rom" },
-    { key: "dsp2", label: "DSP-2", file: "dsp2.rom" },
-    { key: "dsp3", label: "DSP-3", file: "dsp3.rom" },
-    { key: "dsp4", label: "DSP-4", file: "dsp4.rom" }
-];
+/** Every chip NESER emulates, populated from Rust after its WASM module initializes. */
+export const SNES_FIRMWARE_CHIPS: SnesFirmwareChip[] = [];
+
+function isFirmwareChip(value: unknown): value is SnesFirmwareChip {
+    if (!value || typeof value !== "object") return false;
+    const chip = value as Record<string, unknown>;
+    return typeof chip.key === "string" && typeof chip.label === "string" && typeof chip.file === "string";
+}
+
+/** Replaces the browser's list with the Rust firmware-chip metadata WASM export provides. */
+export function setSnesFirmwareChips(json: string): void {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed) || !parsed.every(isFirmwareChip)) {
+        throw new Error("Invalid SNES firmware chip metadata from WASM");
+    }
+    SNES_FIRMWARE_CHIPS.splice(0, SNES_FIRMWARE_CHIPS.length, ...parsed);
+}
 
 export function chipByKey(key: string): SnesFirmwareChip | undefined {
     return SNES_FIRMWARE_CHIPS.find((chip) => chip.key === key);
