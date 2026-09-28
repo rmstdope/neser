@@ -7,8 +7,9 @@ const INJECTED_LINE: [u8; 16] = [
     0xF1, 0x34, 0x12, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
 ];
 
-/// Writes `line` into cache line 0 through the S-CPU window after clearing GO (which zeroes CBR
-/// and empties the cache), writing `len` of its bytes.
+/// Writes `line` into cache line 0 through the S-CPU window after writing GO=0, writing `len` of
+/// its bytes. CBR must already be 0: on a GSU that never ran, or after the GO=0 write aborts a
+/// running one (which zeroes CBR and empties the cache).
 fn inject(rig: &mut Rig, line: &[u8; 16], len: usize) {
     rig.gsu.write_register(0x3030, 0x00);
     for (i, &byte) in line.iter().enumerate().take(len) {
@@ -62,14 +63,50 @@ fn snes_write_to_last_byte_of_line_marks_it_valid() {
     assert_ne!(rig.reg(1), 0x1234);
 }
 
+/// Starts the GSU at `$00:9000`, outside any cache window, with RON clear, so it is running
+/// (waiting for the ROM bus) when the S-CPU next writes SFR. The stalled fetch still completes,
+/// so the byte at `$00:9000` is the opcode a later restart executes first.
+fn start_waiting_for_rom(rig: &mut Rig) {
+    rig.gsu.write_register(0x303A, 0x08); // RAN only
+    rig.write16(0x301E, 0x9000);
+    // The previous run's last instruction can leave the GSU's catch-up count ahead of the
+    // master clock, so give it time to reach the fetch.
+    rig.tick(500);
+    assert!(rig.gsu.state.waiting_for_rom, "running, waiting for ROM");
+}
+
 #[test]
-fn clearing_go_from_snes_zeroes_cbr_and_empties_cache() {
+fn aborting_a_running_gsu_zeroes_cbr_and_empties_cache() {
     let mut program = vec![0x01; 0x13];
     program.extend_from_slice(&[0x02, 0x00, 0x01]);
     let mut rig = Rig::run(&program);
     assert_eq!(rig.read16(0x303E), 0x8010);
+    start_waiting_for_rom(&mut rig);
     rig.gsu.write_register(0x3030, 0x00);
     assert_eq!(rig.read16(0x303E), 0x0000);
+    assert!(
+        rig.gsu.state.code_cache_valid.iter().all(|&valid| !valid),
+        "every line empty"
+    );
+}
+
+/// fullsnes says an S-CPU write of GO=0 sets CBR to 0 and empties the cache, and that after STOP
+/// "one must clear the cache by writing GO=0". Mesen2 (`Gsu::Write` $3030) and ares
+/// (`SuperFX::writeIO` $3030) both do so only when the write stops a running GSU, and
+/// Yoshi's Island, which writes SFR=0 before every job, keeps pace with Mesen2 only that way
+/// (nr-2cn: its intro stork drifted from frame 1441 on). Navigator's decision: follow them.
+#[test]
+fn go_0_write_to_a_stopped_gsu_keeps_cbr_and_the_cache() {
+    let mut program = vec![0x01; 0x13];
+    program.extend_from_slice(&[0x02, 0x00, 0x01]); // $8013 CACHE: CBR = $8010
+    let mut rig = Rig::run(&program);
+    rig.gsu.write_register(0x3030, 0x00);
+    assert_eq!(rig.read16(0x303E), 0x8010, "CBR kept");
+    // The line holding CACHE; STOP is still valid: restarted there with neither bus, the GSU
+    // runs it from the cache and stops instead of waiting for ROM.
+    rig.gsu.write_register(0x303A, 0x00);
+    rig.write16(0x301E, PROGRAM + 0x13);
+    rig.run_until_stop();
 }
 
 #[test]
@@ -89,9 +126,14 @@ fn stop_keeps_the_cache() {
 fn ljmp_empties_the_cache() {
     // Code cached at $00:8000.. is not reused once LJMP has emptied the cache: after the jump
     // back to it with RON clear, the GSU must refetch from ROM and waits.
-    let mut rig = Rig::new(&[0x02, 0x01, 0x00, 0x01]); // CACHE; NOP; STOP
+    let mut rig = Rig::with_rom(|rom| {
+        rom[..4].copy_from_slice(&[0x02, 0x01, 0x00, 0x01]); // CACHE; NOP; STOP
+        rom[0x1000] = 0x01; // NOP at $00:9000, the prefetch the restart below executes first
+    });
     rig.start_at(PROGRAM);
     rig.run_until_stop();
+    // Only aborting a running GSU zeroes CBR for the injection into line 0.
+    start_waiting_for_rom(&mut rig);
     // LJMP to $00:8000 (R8 = bank 0, Sreg = R9 = $8000), injected into cache line 0.
     #[rustfmt::skip]
     let line: [u8; 16] = [
@@ -164,4 +206,22 @@ fn a_rom_fill_while_stopped_does_not_block_a_restart_in_cache() {
     rig.tick(50);
     rig.write16(0x301E, PROGRAM);
     rig.run_until_stop();
+}
+
+#[test]
+fn a_wait_latched_by_the_prefetch_after_stop_does_not_outlive_the_stop() {
+    // STOP ends its cache line, so the byte after it is fetched from the next, empty line, which
+    // with RON clear latches a wait while GO is still set. STOP must not leave the stopped GSU
+    // waiting: a GO=0 write to a stopped GSU no longer clears anything (nr-2cn), so a restart
+    // on cached code would otherwise never run.
+    let mut rig = Rig::new(&[]);
+    let mut line = [0x01; 16];
+    line[15] = 0x00; // STOP at $000F
+    inject(&mut rig, &line, 16);
+    start_in_cache(&mut rig);
+    rig.run_until_stop();
+    assert!(
+        !rig.gsu.state.waiting_for_rom,
+        "no wait left on a stopped GSU"
+    );
 }

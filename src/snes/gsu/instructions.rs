@@ -392,6 +392,12 @@ impl Gsu {
     /// by a NOP so a restart does not execute that stale byte (Mesen2 `Gsu::STOP`).
     fn op_stop(&mut self) {
         self.state.go = false;
+        // The prefetch of the byte after STOP may have latched a wait for a bus the S-CPU holds;
+        // a stopped GSU never waits (see `wait_for_rom_access`), and since a GO=0 write to a
+        // stopped GSU no longer clears the wait (nr-2cn), STOP does. Mesen2 keeps its wait until
+        // SCMR hands the bus back.
+        self.state.waiting_for_rom = false;
+        self.state.waiting_for_ram = false;
         self.state.irq = true;
         self.state.program_prefetch = super::NOP_OPCODE;
         self.reset_prefixes();
