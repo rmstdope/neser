@@ -53,12 +53,19 @@ fn sa1_version_code_test_matches_approved_register_dump() {
     // single 8x8 glyph cell at rows 95-102 / x 232-239 -- one hex digit of the
     // latched counter. Every other pixel of the register dump is identical, so
     // no register VALUE moved, only the latch's scan position.
+    //
+    // nr-7v3 (the SA-1 runs at 10.74 MHz, two master clocks per cycle, with Mesen2's
+    // BW-RAM and bus-conflict waits, where it had run at one clock per cycle) is the same
+    // shape again, measured against an `origin/main` capture (1af57c3d): 51 px, all inside the
+    // two glyph cells at rows 95-102 / x 224-239, the SA-1 column's `$2302 HCRL`, which moves
+    // from $51 to $D9. The slower SA-1 reaches its latch later in the line; every other
+    // register value is identical.
     assert_rom_screen_crc(
         ROOT,
         "SA1VersionCodeTest.sfc",
         "sa1_absindx_tests",
         150,
-        0xF6D7_35B3,
+        0xC7D1_3DAC,
         RunConfig::new(400_000_000, 0),
     );
 }

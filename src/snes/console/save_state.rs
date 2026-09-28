@@ -7,6 +7,7 @@ use crate::snes::apu::SnesApuState;
 use crate::snes::cartridge::Mapping;
 use crate::snes::cx4::Cx4State;
 use crate::snes::input::InputPortsState;
+use crate::snes::sa1::SnesCartAccess;
 use crate::snes::sdd1::Sdd1State;
 
 pub const SNES_SAVESTATE_VERSION: u32 = 2;
@@ -50,6 +51,12 @@ fn default_sa1_bwpa() -> u8 {
 /// slots 1/2/3 in order). Used as `#[serde(default)]` fallbacks so a `SnesSa1State` saved before
 /// these fields existed (i.e. before #2959) deserializes to the same ROM mapping as power-on --
 /// plain `0` would incorrectly show ROM slot 0 in all three quarters instead.
+/// A fresh SA-1 bus starts with ROM as its previous access (Mesen2 `Sa1::Sa1`), so a state
+/// saved before `sa1_last_access` existed restores to the same.
+fn default_sa1_last_access() -> SnesCartAccess {
+    SnesCartAccess::Rom
+}
+
 fn default_sa1_dxb() -> u8 {
     0x01
 }
@@ -257,6 +264,16 @@ pub struct SnesSa1State {
     /// `$230B` OF bit 7.
     #[serde(default)]
     pub math_overflow: bool,
+    /// The memory the SA-1's previous access touched, which its next wait is charged
+    /// against (nr-7v3).
+    #[serde(default = "default_sa1_last_access")]
+    pub sa1_last_access: SnesCartAccess,
+    /// The memory the S-CPU (or its DMA) touched last, as the SA-1 sees it (nr-7v3).
+    #[serde(default)]
+    pub snes_cart_access: SnesCartAccess,
+    /// Whether the S-CPU's current cycle is a 6-clock one (nr-7v3).
+    #[serde(default)]
+    pub snes_fast_cycle: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
