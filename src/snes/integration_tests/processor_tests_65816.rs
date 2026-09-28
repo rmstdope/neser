@@ -1323,12 +1323,13 @@ mod tests {
     #[test]
     fn known_divergent_vectors_all_diverge_when_full_vectors_available() {
         let full_root = Path::new(PROCESSOR_TESTS_FULL_ROOT);
-        if !full_root.join("a1.e.json").exists() || !full_root.join("d4.e.json").exists() {
+        let files = ["a1.e.json", "d4.e.json", "fc.e.json"];
+        if !files.iter().all(|file| full_root.join(file).exists()) {
             return;
         }
 
         let mut checked = 0;
-        for file in ["a1.e.json", "d4.e.json"] {
+        for file in files {
             let vectors = load_vectors_from_file(&full_root.join(file)).expect("load full vectors");
             for vector in &vectors {
                 if !KNOWN_DIVERGENT_VECTORS.contains(&vector.name.as_str()) {
@@ -1338,7 +1339,7 @@ mod tests {
                 let result = run_vector_case(vector);
                 assert!(
                     result.is_err(),
-                    "expected {} to diverge from the hardware-backed wrap rule, but it passed",
+                    "expected {} to diverge from the hardware-backed wrap or push rule, but it passed",
                     vector.name
                 );
             }
