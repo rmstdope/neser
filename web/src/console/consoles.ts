@@ -21,8 +21,8 @@ export interface ConsoleProfile {
         /** Which normalizer in audio/audio_normalizer.ts brings its samples into Web Audio's range. */
         sampleScale: "nes" | "gb" | "gba";
     };
-    /** Which filters F4 cycles through: the NES set, the Game Boy set, or the stock filter alone. */
-    filterFamily: "nes" | "gb" | "stock";
+    /** Which filters F4 cycles through: the NES set, the Game Boy set, or the Game Boy Advance set. */
+    filterFamily: "nes" | "gb" | "gba";
     /** The filter a game of this console starts on when the current one does not apply. */
     defaultFilter: string;
     /** Keyboard bindings shown in the help overlay, one entry per player shown. */
@@ -68,7 +68,7 @@ export const CONSOLES: Readonly<Record<ConsoleKind, ConsoleProfile>> = {
     gba: {
         frameFormat: "rgb",
         audio: { stereo: true, sampleScale: "gba" },
-        filterFamily: "stock",
+        filterFamily: "gba",
         defaultFilter: "stock",
         playerKeyBindings: [AGB_KEYS],
         saveState: false,

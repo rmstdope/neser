@@ -80,7 +80,7 @@ jobs:
               # that graph must re-run the reachability and exact-case tests in
               # scripts/test_package_release.py. That means the preset list, the
               # vendored presets, and the local ones under shaders/ — which
-              # SHADER_PRESETS also points at (stock.slangp, gba-lcd.slangp).
+              # SHADER_PRESETS also points at (stock.slangp).
               # The bare vendor path detects submodule (gitlink) pointer bumps.
               # See docs/VENDOR_SUBMODULES.md.
               - 'vendor/slang-shaders'

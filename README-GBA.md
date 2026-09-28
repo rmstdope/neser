@@ -74,17 +74,19 @@ The native frontend also supports gamepads through `gilrs`.
 GBA shader presets are selected with `--gba-filter` or `gba-filter`:
 
 ```bash
-neser --gba-filter gba-lcd path/to/game.gba
+neser --gba-filter agb001 path/to/game.gba
 ```
 
 Documented presets include:
 
 - `none`
-- `gba-lcd`
 - `agb001`
 - `nso-gba-color`
 - `sp101-color`
 - `gba-lcd-grid`
+
+F4 cycles them in that order. In the web frontend, F4 and the Filter button cycle the same looks
+for GBA games as None, AGB-001, Switch Online, GBA SP and LCD Grid; a GBA game starts on None.
 
 GBA LCD color correction can be enabled with:
 

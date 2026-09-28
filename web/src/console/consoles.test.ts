@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { CONSOLE_KINDS, CONSOLES } from "./consoles";
 
 describe("the console table", () => {
+    it("gives GBA games their own looks and starts them on None", () => {
+        expect(CONSOLES.gba.filterFamily).toBe("gba");
+        expect(CONSOLES.gba.defaultFilter).toBe("stock");
+    });
+
     it("has exactly one row per console kind", () => {
         expect(Object.keys(CONSOLES).sort()).toEqual([...CONSOLE_KINDS].sort());
     });

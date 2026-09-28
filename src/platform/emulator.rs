@@ -1119,7 +1119,7 @@ mod tests {
         let shaders = gba.allowed_shaders();
         assert!(!shaders.is_empty());
         assert!(shaders.contains(&"none"));
-        assert!(shaders.contains(&"gba-lcd"));
+        assert!(!shaders.contains(&"gba-lcd"));
     }
 
     #[test]

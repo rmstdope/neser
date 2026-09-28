@@ -620,9 +620,7 @@ mod tests {
             assert!(result.is_err());
             let msg = result.unwrap_err();
             assert!(msg.contains("bogus"));
-            assert!(
-                msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid")
-            );
+            assert!(msg.contains("none, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
         }
 
         #[test]
@@ -825,8 +823,32 @@ mod tests {
             assert!(result.is_err());
             let msg = result.unwrap_err();
             assert!(msg.contains("bogus"));
-            assert!(
-                msg.contains("none, gba-lcd, agb001, nso-gba-color, sp101-color, gba-lcd-grid")
+            assert!(msg.contains("none, agb001, nso-gba-color, sp101-color, gba-lcd-grid"));
+        }
+
+        #[test]
+        fn test_config_cmdline_gba_filter_rejects_gba_lcd() {
+            let args = vec![
+                "neser".to_string(),
+                "--gba-filter".to_string(),
+                "gba-lcd".to_string(),
+            ];
+            let msg = config_new(args).unwrap_err();
+            assert_eq!(
+                msg,
+                "Invalid filter name: 'gba-lcd'. Valid options are: none, agb001, nso-gba-color, sp101-color, gba-lcd-grid"
+            );
+        }
+
+        #[test]
+        fn test_config_file_gba_filter_rejects_gba_lcd() {
+            let mut config = Config::default();
+            let msg = config
+                .apply_config_value("gba-filter", "gba-lcd")
+                .unwrap_err();
+            assert_eq!(
+                msg,
+                "Invalid filter name: 'gba-lcd'. Valid options are: none, agb001, nso-gba-color, sp101-color, gba-lcd-grid"
             );
         }
 
