@@ -217,4 +217,27 @@ mod tests {
         );
         assert_eq!(mapper.mapper_number(), 180);
     }
+
+    #[test]
+    fn test_submapper_0_keeps_and_type_bus_conflicts() {
+        // Mapper 180 defines no NES 2.0 submappers, so unlike mapper 2 (nr-9h6)
+        // submapper 0 keeps the AND-type bus conflicts of the UNROM board it
+        // reuses. PRG-ROM is all zeros: writing 3 to $C000 ANDs to bank 0.
+        let mut mapper = UxromInvertedMapper::new(
+            MapperContext::new_for_test(
+                180,
+                vec![0; 128 * 1024],
+                vec![],
+                NametableLayout::Horizontal,
+            )
+            .with_prg_ram_banks(0)
+            .with_submapper(0),
+        );
+        mapper.write_prg(0xC000, 3);
+        assert_eq!(
+            mapper.registers_snapshot()[0],
+            0,
+            "mapper 180 submapper 0: bus conflict should force the bank to 3 & 0x00 = 0"
+        );
+    }
 }

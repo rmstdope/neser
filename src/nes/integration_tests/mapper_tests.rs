@@ -703,7 +703,7 @@ mod tests {
     );
 
     // ================================================================
-    // Mapper 2 (UxROM), Submapper 0 (Bus Conflicts)
+    // Mapper 2 (UxROM), Submapper 0 (bus conflicts unspecified; not asserted)
     // ================================================================
 
     setup_rom_test!(
@@ -711,16 +711,29 @@ mod tests {
         "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.0_prg_banking.nes"
     );
     setup_rom_test!(
-        test_mv_m002_0_bus_conflicts,
-        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.0_bus_conflicts.nes"
-    );
-    setup_rom_test!(
         test_mv_m002_0_combined,
         "roms/nes/automated_tests/mapper_verification/bin/m002.0.nes"
     );
 
     // ================================================================
-    // Mapper 2, Submapper 2 (No Bus Conflicts)
+    // Mapper 2, Submapper 1 (No Bus Conflicts)
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m002_1_prg_banking,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.1_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m002_1_bus_conflicts,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.1_bus_conflicts.nes"
+    );
+    setup_rom_test!(
+        test_mv_m002_1_combined,
+        "roms/nes/automated_tests/mapper_verification/bin/m002.1.nes"
+    );
+
+    // ================================================================
+    // Mapper 2, Submapper 2 (AND-type Bus Conflicts)
     // ================================================================
 
     setup_rom_test!(
@@ -728,21 +741,21 @@ mod tests {
         "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.2_prg_banking.nes"
     );
     setup_rom_test!(
+        test_mv_m002_2_bus_conflicts,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m002.2_bus_conflicts.nes"
+    );
+    setup_rom_test!(
         test_mv_m002_2_combined,
         "roms/nes/automated_tests/mapper_verification/bin/m002.2.nes"
     );
 
     // ================================================================
-    // Mapper 3 (CNROM), Submapper 0 (Bus Conflicts)
+    // Mapper 3 (CNROM), Submapper 0 (bus conflicts unspecified; not asserted)
     // ================================================================
 
     setup_rom_test!(
         test_mv_m003_0_chr_banking,
         "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.0_chr_banking.nes"
-    );
-    setup_rom_test!(
-        test_mv_m003_0_bus_conflicts,
-        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.0_bus_conflicts.nes"
     );
     setup_rom_test!(
         test_mv_m003_0_combined,
@@ -758,8 +771,29 @@ mod tests {
         "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.1_chr_banking.nes"
     );
     setup_rom_test!(
+        test_mv_m003_1_bus_conflicts,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.1_bus_conflicts.nes"
+    );
+    setup_rom_test!(
         test_mv_m003_1_combined,
         "roms/nes/automated_tests/mapper_verification/bin/m003.1.nes"
+    );
+
+    // ================================================================
+    // Mapper 3, Submapper 2 (AND-type Bus Conflicts)
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m003_2_chr_banking,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.2_chr_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m003_2_bus_conflicts,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m003.2_bus_conflicts.nes"
+    );
+    setup_rom_test!(
+        test_mv_m003_2_combined,
+        "roms/nes/automated_tests/mapper_verification/bin/m003.2.nes"
     );
 
     // ================================================================

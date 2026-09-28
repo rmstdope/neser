@@ -123,9 +123,11 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> SimpleFixedPrgMapper<CHR_BA
     ///
     /// * `ctx` - Mapper construction context with ROM data and header details
     pub fn new(ctx: MapperContext) -> Self {
-        // Submapper 1 = explicitly no bus conflicts; all others (including 0 = original
-        // CNROM hardware) emulate AND-type bus conflicts.
-        let bus_conflicts = ctx.submapper != 1;
+        // NES 2.0 submappers (nesdev): 1 = no bus conflicts, 2 = AND-type bus
+        // conflicts, 0 = unknown. Submapper 0 has none, as in Mesen2 (CNROM.h):
+        // licensed carts get submapper 2 from the ROM database, and mapper hacks
+        // with archaic headers rely on the absence of conflicts (nr-9h6).
+        let bus_conflicts = ctx.submapper == 2;
         let capabilities = MapperCapabilities {
             has_chr_banking: true,
             max_prg_ram_kb: ctx.header_prg_ram_kb(),
@@ -232,9 +234,16 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8, const FIXED_LAST: bool>
         let prg_bank_size = PRG_BANK_KB * 1024;
         let num_banks = (ctx.prg_rom.len() / prg_bank_size).max(1);
         let bank_select_mask = (num_banks.next_power_of_two() - 1) as u8;
-        // Submapper 2 = explicitly no bus conflicts; all others (including 0 = original
-        // UxROM hardware) emulate AND-type bus conflicts.
-        let bus_conflicts = ctx.submapper != 2;
+        // UxROM (mapper 2) follows the NES 2.0 submappers (nesdev): 1 = no bus
+        // conflicts, 2 = AND-type bus conflicts, 0 = unknown, which has none as
+        // in Mesen2 (UNROM.h); licensed carts get submapper 2 from the ROM
+        // database (nr-9h6). Mapper 180 defines no submappers and keeps
+        // conflicts unless submapper 2 is given.
+        let bus_conflicts = if MAPPER_NUM == 2 {
+            ctx.submapper == 2
+        } else {
+            ctx.submapper != 2
+        };
 
         let capabilities = MapperCapabilities {
             max_prg_ram_kb: ctx.header_prg_ram_kb(),
@@ -592,7 +601,7 @@ mod tests {
 
             let mut mapper = TestMapper::new(
                 MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
-                    .with_submapper(2),
+                    .with_submapper(1),
             );
 
             // Initially bank 0 at $8000-$BFFF
@@ -675,7 +684,7 @@ mod tests {
                     vec![],
                     NametableLayout::Horizontal,
                 )
-                .with_submapper(2),
+                .with_submapper(1),
             );
             mapper.write_prg(0x8000, 3);
             mapper.write_chr(0x0000, 0x5A);
@@ -685,7 +694,7 @@ mod tests {
 
             let mut restored = TestMapper::new(
                 MapperContext::new_for_test(2, prg_rom, vec![], NametableLayout::Horizontal)
-                    .with_submapper(2),
+                    .with_submapper(1),
             );
             restored.restore_registers(&regs);
             restored.restore_chr_ram(&chr);

@@ -416,34 +416,48 @@ mod tests {
         assert_eq!(mapper.wram_size(), 8 * 1024);
     }
 
-    #[test]
-    fn test_cnrom_submapper_0_applies_and_type_bus_conflicts() {
-        // Submapper 0 = original CNROM hardware, which has AND-type bus conflicts.
-        // Effective bank = written_value & ROM_value_at_written_address.
-        let mut chr_rom = vec![0; 32 * 1024]; // 4 banks of 8KB
+    /// CHR-ROM of four 8 KiB banks whose bytes read `bank * 10`, and PRG-ROM
+    /// whose byte at CPU $8000 is 0x02, so writing 0x01 there selects bank 1
+    /// without bus conflicts and bank 0 (0x01 & 0x02) with them.
+    fn bus_conflict_probe(submapper: u8) -> CNROMMapper {
+        let mut chr_rom = vec![0; 32 * 1024];
         for bank in 0..4usize {
             let start = bank * 8 * 1024;
             for byte in &mut chr_rom[start..start + 8 * 1024] {
                 *byte = (bank * 10) as u8;
             }
         }
-
-        // PRG-ROM: offset 0 (= CPU $8000) contains 0x02
         let mut prg_rom = vec![0xFF; 32 * 1024];
         prg_rom[0] = 0x02;
-
         let mut mapper = CNROMMapper::new(
             MapperContext::new_for_test(3, prg_rom, chr_rom, NametableLayout::Horizontal)
-                .with_submapper(0)
+                .with_submapper(submapper)
                 .with_prg_ram_banks(0),
         );
-
-        // Write 0x01 to $8000. ROM[0] = 0x02. Bus conflict: 0x01 & 0x02 = 0x00 → bank 0
         mapper.write_prg(0x8000, 0x01);
+        mapper
+    }
+
+    #[test]
+    fn test_cnrom_submapper_0_has_no_bus_conflicts() {
+        // nesdev: submapper 0 = "bus conflict behavior unknown". NESER follows
+        // Mesen2 (CNROM.h: conflicts only at submapper 2); known carts get
+        // submapper 2 from the ROM database. Mapper hacks such as the Porno
+        // Island hack (nr-9h6) require the absence of conflicts.
         assert_eq!(
-            mapper.read_chr(0x0000),
+            bus_conflict_probe(0).read_chr(0x0000),
+            10,
+            "submapper 0: no bus conflict, write value selects bank directly"
+        );
+    }
+
+    #[test]
+    fn test_cnrom_submapper_2_applies_and_type_bus_conflicts() {
+        // nesdev: submapper 2 = AND-type bus conflicts.
+        assert_eq!(
+            bus_conflict_probe(2).read_chr(0x0000),
             0,
-            "submapper 0: AND-type bus conflict must reduce effective bank to write & ROM"
+            "submapper 2: AND-type bus conflict must reduce effective bank to write & ROM"
         );
     }
 

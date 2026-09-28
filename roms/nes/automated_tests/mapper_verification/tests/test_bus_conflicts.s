@@ -1,14 +1,19 @@
 ; test_bus_conflicts.s — Bus Conflict Verification
 ;
-; Tests that bus conflicts produce the expected AND behavior:
-;   effective_value = written_value AND ROM_value_at_write_address
-;
 ; The test uses a lookup table where byte at offset N contains value N.
 ; It then tests:
-;   1. Writing matching value (N to offset N) → should work
-;   2. Writing mismatched value → effective = AND of both
+;   1-2. Writing matching value (N to offset N) → selects bank N either way
+;   3-4. Writing mismatched value:
+;        HAS_BUS_CONFLICTS = 1 (AND-type bus conflicts, e.g. NES 2.0
+;          submapper 2 of mappers 2/3/7):
+;            effective_value = written_value AND ROM_value_at_write_address
+;        HAS_BUS_CONFLICTS = 0 (bus conflicts do not occur, e.g. NES 2.0
+;          submapper 1 of mappers 2/3/7):
+;            effective_value = written_value (unmasked)
 ;
-; Only built for mappers with HAS_BUS_CONFLICTS = 1
+; Only build this aspect for a mapper whose bus-conflict behaviour is
+; specified. Never build it for a submapper where the behaviour is unknown
+; (e.g. submapper 0 of mappers 2/3/7).
 
 .include "test_macros.inc"
 .include "mapper_config.inc"
@@ -88,6 +93,7 @@ test_title_string:
     .endif
     pass_test
 
+.if HAS_BUS_CONFLICTS
     ; ========================================
     ; Test 3: Conflict write (AND behavior)
     ; ========================================
@@ -140,6 +146,61 @@ test_title_string:
         assert_a_eq 0
     .endif
     pass_test
+.else
+    ; ========================================
+    ; Test 3: Mismatched write is not masked
+    ; ========================================
+    start_test 3, "No AND mask"
+
+    ; bank_table[2] = 2 = %00000010
+    ; Write 3 = %00000011 to bank_table+2
+    ; No bus conflicts → effective = 3 (AND would give 2)
+    .if HAS_PRG_BANKING
+        lda #3
+        sta bank_table + 2
+        lda $8000 + 1           ; Should be bank 3
+        assert_a_eq 3
+    .else
+        lda #3
+        sta bank_table + 2
+        bit PPUSTATUS
+        lda #$00
+        sta PPUADDR
+        lda #$01
+        sta PPUADDR
+        lda PPUDATA
+        lda PPUDATA
+        assert_a_eq 3
+    .endif
+    pass_test
+
+    ; ========================================
+    ; Test 4: Write over a zero byte is not zeroed
+    ; ========================================
+    start_test 4, "No AND zero"
+
+    ; bank_table[0] = 0 = %00000000
+    ; Write 1 to bank_table+0
+    ; No bus conflicts → effective = 1 (AND would give 0)
+    .if HAS_PRG_BANKING
+        lda #1
+        sta bank_table
+        lda $8000 + 1           ; Should be bank 1
+        assert_a_eq 1
+    .else
+        lda #1
+        sta bank_table
+        bit PPUSTATUS
+        lda #$00
+        sta PPUADDR
+        lda #$01
+        sta PPUADDR
+        lda PPUDATA
+        lda PPUDATA
+        assert_a_eq 1
+    .endif
+    pass_test
+.endif
 
     .if HAS_PRG_BANKING
         ; Restore to a sensible bank

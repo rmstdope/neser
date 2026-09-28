@@ -15,6 +15,7 @@ Use this skill every time you create or update a ROM under `roms/automated_tests
    - If mapper behavior is unclear, invoke `nes-hardware-research`.
    - For verification-ROM work, use only the NESdev/wiki-backed specification results from that research.
    - Never use this emulator's source code or any emulator implementation as the reference for ROM behavior.
+   - Take what each submapper means from the NESdev page for that mapper and from the NES 2.0 submappers page, every time. Never copy it from an existing ROM's `defs/`, `configs/` or header comments: those can encode an implementation bug (nr-9h6: m002.2 was built as "no bus conflicts" while nesdev defines UxROM submapper 2 as AND-type bus conflicts, matching a swap in the emulator).
 
 2. Reuse before adding new assembly.
    - Check whether an existing aspect in `tests/test_*.s` already covers the behavior.
