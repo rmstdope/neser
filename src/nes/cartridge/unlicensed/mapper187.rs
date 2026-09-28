@@ -29,7 +29,7 @@
 //!   M.NB BBb.
 //!   | |+-+++-- BBBb (bits 4:1): 16 KiB PRG-ROM bank number
 //!   | +------- N (bit 5): 0 = NROM-128 (16 KiB at both halves)
-//!   |                     1 = NROM-256 (32 KiB; replace bank bit 1 with CPU A14)
+//!   |                     1 = NROM-256 (32 KiB; replace register bit 1, `b`, with CPU A14)
 //!   +--------- M (bit 7): 0 = use MMC3 PRG bank; 1 = use this register
 //! ```
 //!
@@ -60,9 +60,9 @@
 //!
 //! When M=1, with `bank_16k = (reg & 0x1E) >> 1`:
 //! - N=0 (NROM-128): 16 KiB bank `bank_16k` at both `$8000–$BFFF` and `$C000–$FFFF`.
-//! - N=1 (NROM-256): CPU A14 replaces bit 1 of `bank_16k`; effectively a 32 KiB
-//!   window where the lower half is `bank_16k & !2` and the upper half is
-//!   `(bank_16k & !2) | 2`.
+//! - N=1 (NROM-256): CPU A14 replaces register bit 1, which is bit 0 of `bank_16k`;
+//!   effectively a 32 KiB window where the lower half is `bank_16k & !1` and the
+//!   upper half is `bank_16k | 1`.
 //!
 //! ## CHR Banking
 //!
@@ -123,9 +123,9 @@ impl Mapper187 {
             // NROM-128: same 16 KiB bank mirrored at both $8000–$BFFF and $C000–$FFFF.
             bank_16k * 2 + slot_in_16k
         } else {
-            // NROM-256: replace bit 1 of bank_16k with CPU A14.
+            // NROM-256: replace register bit 1 (bit 0 of bank_16k) with CPU A14.
             let a14 = usize::from(addr >= 0xC000);
-            let bank_eff = (bank_16k & !2) | (a14 << 1);
+            let bank_eff = (bank_16k & !1) | a14;
             bank_eff * 2 + slot_in_16k
         }
     }
@@ -356,20 +356,40 @@ mod tests {
     }
 
     #[test]
-    fn nrom256_override_uses_cpu_a14_for_bank_bit1() {
+    fn nrom256_override_uses_cpu_a14_for_register_bit1() {
         let mut mapper = make_mapper();
-        // M=1, N=1, bank_16k=0 → reg = 0x80 | 0x20 = 0xA0
-        // bank_16k=0, N=1: low_half=bank&~2=0, high_half=bank|2=2
-        // $8000-$BFFF: pages 0,1; $C000-$FFFF: pages 4,5
+        // M=1, N=1, BBBb=0 -> reg = $A0. Register bit 1 (the lowest 16 KiB bank
+        // bit, b) is replaced by CPU A14, so the window is 16 KiB banks 0 and 1.
         mapper.write_prg(0x5000, 0xA0);
         assert_eq!(mapper.read_prg(0x8000), 0, "$8000 must be page 0");
         assert_eq!(mapper.read_prg(0xA000), 1, "$A000 must be page 1");
+        assert_eq!(mapper.read_prg(0xC000), 2, "$C000 must be page 2 (bank 1)");
+        assert_eq!(mapper.read_prg(0xE000), 3, "$E000 must be page 3");
+    }
+
+    #[test]
+    fn nrom256_override_keeps_the_upper_bank_bits() {
+        let mut mapper = make_mapper();
+        // M=1, N=1, BBBb=0101 -> reg = $AA; b is replaced by A14, BBB=010 kept:
+        // 16 KiB banks 4 and 5, pages 8-11.
+        mapper.write_prg(0x5000, 0xAA);
+        assert_eq!(mapper.read_prg(0x8000), 8, "$8000 must be page 8 (bank 4)");
+        assert_eq!(mapper.read_prg(0xA000), 9, "$A000 must be page 9");
         assert_eq!(
             mapper.read_prg(0xC000),
-            4,
-            "$C000 must be page 4 (A14=1, bit1=1 → bank_eff=2)"
+            10,
+            "$C000 must be page 10 (bank 5)"
         );
-        assert_eq!(mapper.read_prg(0xE000), 5, "$E000 must be page 5");
+        assert_eq!(mapper.read_prg(0xE000), 11, "$E000 must be page 11");
+    }
+
+    #[test]
+    fn kof96_boot_value_maps_the_first_32k() {
+        let mut mapper = make_mapper();
+        // The King of Fighters '96 writes $E0 from RAM and then jumps to $FC80,
+        // which must be the last page of the first 32 KiB.
+        mapper.write_prg(0x5000, 0xE0);
+        assert_eq!(mapper.read_prg(0xFC80), 3, "$FC80 must be in page 3");
     }
 
     #[test]

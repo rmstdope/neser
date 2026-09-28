@@ -4,7 +4,8 @@
 //! - Fallback: Mesen2 `Mapper83.h` (NesDev unavailable)
 //!
 //! Known Limitations:
-//! - DIP switch read at $5000 always returns 0x00; DIP bits are not emulated.
+//! - DIP switches are not emulated: the CPU reads $5000 as open bus with D1..D0
+//!   (the DIP bits) clear, and `read_prg(0x5000)` returns 0x00.
 
 use crate::nes::cartridge::NametableLayout;
 use crate::nes::cartridge::base_mapper::BaseMapper;
@@ -208,6 +209,20 @@ impl Mapper for Mapper83 {
             0x5100..=0x5103 => self.ex_regs[(addr & 0x03) as usize],
             0x8000..=0xFFFF => self.base.read_prg_rom(addr),
             _ => 0,
+        }
+    }
+
+    /// The CPU bus reads `$4020-$5FFF` through here, so the DIP switches at `$5000`
+    /// and the scratch registers at `$5100-$5103` must be answered here too, or the
+    /// CPU sees open bus where the ASIC drives the data lines.
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            // DIP switches not emulated (all off); the upper six bits float.
+            0x5000 => open_bus & 0xFC,
+            0x5100..=0x5103 => self.read_prg(addr),
+            _ => self
+                .base
+                .read_prg_open_bus(addr, open_bus, |a| self.read_prg(a)),
         }
     }
 
@@ -752,6 +767,25 @@ mod tests {
         assert_eq!(mapper.read_prg(0x5101), 0xCD);
         assert_eq!(mapper.read_prg(0x5102), 0xEF);
         assert_eq!(mapper.read_prg(0x5103), 0x12);
+    }
+
+    #[test]
+    fn cpu_bus_reads_the_ex_regs_not_open_bus() {
+        // The CPU reads $4020-$5FFF through read_prg_open_bus. Dragon Ball Z 4-in-1
+        // writes $60 to $5103 and loops until it reads it back.
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x5100, 0xAB);
+        mapper.write_prg(0x5103, 0x60);
+        assert_eq!(mapper.read_prg_open_bus(0x5100, 0x51), 0xAB);
+        assert_eq!(mapper.read_prg_open_bus(0x5103, 0x51), 0x60);
+    }
+
+    #[test]
+    fn cpu_bus_reads_dip_switches_at_5000_with_open_bus_above() {
+        // $5000 drives only D1..D0 (the DIP switches, all off); D7..D2 float.
+        let mapper = make_mapper();
+        assert_eq!(mapper.read_prg_open_bus(0x5000, 0x50), 0x50);
+        assert_eq!(mapper.read_prg_open_bus(0x5000, 0xFF), 0xFC);
     }
 
     // --- Snapshot / restore ---

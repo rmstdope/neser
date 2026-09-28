@@ -282,7 +282,7 @@ impl Bus {
     /// bank switching state.
     pub fn map_cartridge(&mut self, cartridge: Cartridge) {
         // Extract trainer data before wrapping in Rc<RefCell<>>
-        let trainer_data = cartridge.trainer().map(|t| t.to_vec());
+        let trainer_data = cartridge.trainer().map(<[u8]>::to_vec);
         let vs_ppu_type = cartridge.vs_ppu_type();
         let vs_hardware_type = cartridge.vs_hardware_type();
 
@@ -291,13 +291,7 @@ impl Bus {
 
         // Load trainer data into cartridge memory at the mapper-specified address
         if let Some(trainer_bytes) = trainer_data {
-            let mut cart = cartridge_rc.borrow_mut();
-            let mapper = cart.mapper_mut();
-            let base = mapper.capabilities().trainer_load_address;
-            // Trainer data is always exactly 512 bytes from parsing validation
-            for (i, byte) in trainer_bytes.iter().enumerate() {
-                mapper.write_prg(base + i as u16, *byte);
-            }
+            Self::load_trainer(&mut cartridge_rc.borrow_mut(), &trainer_bytes);
         }
 
         // Share cartridge reference with PPU for dynamic CHR access
@@ -333,6 +327,20 @@ impl Bus {
         self.reset_cartridge(soft_reset, ram_init_mode);
     }
 
+    /// Copy a 512-byte trainer into cartridge memory at the mapper's trainer address.
+    ///
+    /// The copy goes through `write_prg`, so it obeys the mapper's current RAM
+    /// enable and write protection. At insertion and at the first power-on those are
+    /// at their defaults; a later hard reset of a game that left its PRG-RAM
+    /// protected (an MMC3 `$A001` write, say) keeps the RAM as it was instead.
+    fn load_trainer(cartridge: &mut Cartridge, trainer_bytes: &[u8]) {
+        let mapper = cartridge.mapper_mut();
+        let base = mapper.capabilities().trainer_load_address;
+        for (i, byte) in trainer_bytes.iter().enumerate() {
+            mapper.write_prg(base + i as u16, *byte);
+        }
+    }
+
     /// Reset the cartridge (if present) to its power-on state.
     ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
@@ -346,9 +354,16 @@ impl Bus {
             return;
         };
 
-        // On hard reset, re-initialize cartridge RAM before resetting mapper state
+        // On hard reset, re-initialize cartridge RAM before resetting mapper state.
+        // The trainer lives in that RAM, so it is copied in again afterwards, as it
+        // was when the cartridge was mapped: otherwise the power-on reset that
+        // follows insertion wipes it before the game can call into it.
         if !soft_reset {
-            cartridge.borrow_mut().initialize_ram(ram_init_mode);
+            let mut cart = cartridge.borrow_mut();
+            cart.initialize_ram(ram_init_mode);
+            if let Some(trainer_bytes) = cart.trainer().map(<[u8]>::to_vec) {
+                Self::load_trainer(&mut cart, &trainer_bytes);
+            }
         }
 
         cartridge.borrow_mut().reset();
@@ -2756,6 +2771,36 @@ mod tests {
                 actual, expected,
                 "Trainer data mismatch at ${:04X}: expected ${:02X}, got ${:02X}",
                 addr, expected, actual
+            );
+        }
+    }
+
+    #[test]
+    fn trainer_survives_the_power_on_reset() {
+        // A console powers on after the cartridge is inserted, and that hard reset
+        // re-initialises cartridge RAM. The trainer lives in that RAM, so it must be
+        // copied in again: Dragon Ball: Dragon Mystery (mapper 34, trainer) calls
+        // JSR $7050 in its reset handler and ran into zeroed RAM when it was wiped.
+        let mut memory = create_test_memory();
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A, 1, 1, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        rom.extend((0..512).map(|i| (i as u8).wrapping_add(0x42)));
+        rom.extend(vec![0xAA; 16 * 1024]);
+        rom.extend(vec![0xBB; 8 * 1024]);
+        let cartridge =
+            crate::nes::cartridge::Cartridge::load_from_file(&rom, "bus-trainer-reset.nes", None)
+                .unwrap();
+        memory.map_cartridge(cartridge);
+
+        memory.reset(false, crate::nes::console::RamInitMode::Zero);
+
+        for i in 0..512u16 {
+            let addr = 0x7000 + i;
+            assert_eq!(
+                memory.read(addr, false),
+                (i as u8).wrapping_add(0x42),
+                "trainer byte at ${addr:04X} after a hard reset"
             );
         }
     }
