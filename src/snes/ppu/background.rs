@@ -2468,7 +2468,7 @@ mod tests {
     #[test]
     fn bg_hofs_uses_the_shared_write_twice_latch() {
         let mut ppu = Ppu::new();
-        // First HOFS write sets BG_old and the intermediate high bits; second supplies the high
+        // First HOFS write loads BG_old and the HOFS-only low-bits latch; second supplies the high
         // byte. The hardware result reconstructs bits 0-7 from the first byte and bits 8-10 from
         // the second: (0x02 & 7) << 8 | 0x1F = 0x21F.
         ppu.write_register(0x210D, 0x1F);
