@@ -72,6 +72,7 @@ impl Rendering {
 
         // Apply color emphasis/tint
         (r, g, b) = crate::nes::ppu::color_effects::apply_color_emphasis(
+            color_value,
             r,
             g,
             b,
@@ -124,7 +125,7 @@ fn select_palette_index(bg_pixel: u8, sprite_pixel: Option<(u8, usize, bool)>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
+    use crate::nes::ppu::color_effects::apply_grayscale;
 
     #[test]
     fn test_rendering_new() {
@@ -241,14 +242,6 @@ mod tests {
         let (palette_index, sprite_0_hit) = select_palette_index(1, Some((16, 0, true)));
         assert_eq!(palette_index, 16);
         assert!(sprite_0_hit);
-    }
-
-    #[test]
-    fn test_apply_color_emphasis_red_only() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x01, false);
-        assert_eq!(r, 110);
-        assert_eq!(g, 75);
-        assert_eq!(b, 75);
     }
 
     #[test]

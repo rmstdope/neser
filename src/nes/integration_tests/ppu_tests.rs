@@ -163,16 +163,18 @@ mod tests {
     // full_palette
     // All test have been manually verified to produce the expected palette output,
     // so we can just do CRC checks on the screen buffer for regression testing.
+    // Re-pinned in nr-wm5 when emphasis stopped brightening: with --nes-palette mesen the
+    // set of colours on screen equals Mesen2's capture exactly (402 in full_palette).
     setup_rom_crc_test!(
         test_full_palette,
         "roms/nes/automated_tests/full_palette/full_palette.nes",
-        [(20, 1088707371)]
+        [(20, 2906271879)]
     );
 
     setup_rom_crc_test!(
         test_full_palette_smooth,
         "roms/nes/automated_tests/full_palette/full_palette_smooth.nes",
-        [(20, 3951169934)]
+        [(20, 3281662806)]
     );
 
     setup_rom_crc_test!(
@@ -181,12 +183,12 @@ mod tests {
         [
             // Capture 5s intervals during 30s of flowing palette changes
             // to get a good variety of colors in the test coverage.
-            (60 * 5, 1173975945),
-            (60 * 10, 2466726507),
-            (60 * 15, 323663815),
-            (60 * 20, 4246641473),
-            (60 * 25, 3307063340),
-            (60 * 30, 1135778393),
+            (60 * 5, 3263342480),
+            (60 * 10, 4056382126),
+            (60 * 15, 1170236989),
+            (60 * 20, 3673580313),
+            (60 * 25, 1588761297),
+            (60 * 30, 1793106743),
         ]
     );
 

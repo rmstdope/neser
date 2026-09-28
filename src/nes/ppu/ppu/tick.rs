@@ -540,7 +540,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
 
             // Apply color emphasis/tint
             let (final_r, final_g, final_b) =
-                apply_color_emphasis(r, g, b, color_emphasis, ppu.famicom_emphasis);
+                apply_color_emphasis(color_value, r, g, b, color_emphasis, ppu.famicom_emphasis);
 
             // Write pixel to screen buffer
             ppu.rendering
@@ -605,6 +605,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
             color_value = apply_grayscale(color_value, ppu.registers.is_grayscale());
             let (r, g, b) = ppu.lookup_system_palette(color_value);
             let (final_r, final_g, final_b) = apply_color_emphasis(
+                color_value,
                 r,
                 g,
                 b,

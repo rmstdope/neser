@@ -9,21 +9,33 @@ pub(crate) fn apply_grayscale(color_value: u8, grayscale: bool) -> u8 {
     }
 }
 
-/// Apply PPUMASK color emphasis bits to RGB output,
-/// boosting the emphasized channels and attenuating the others to mimic NES/Famicom tinting.
+/// How much each emphasis bit dims the two channels it does not emphasise, as Mesen2's
+/// `NesDefaultVideoFilter::GenerateFullColorPalette` does for the 2C02.
+const EMPHASIS_ATTENUATION: f64 = 0.84;
+
+/// Apply PPUMASK color emphasis bits to the RGB of palette entry `color_value`.
+///
+/// Per nesdev (Colour emphasis) each bit emphasises one colour by darkening the other two;
+/// nothing is brightened, so with all three bits set the whole picture darkens. Columns
+/// `$xE` and `$xF` are not affected. The factor and the order of the multiplications follow
+/// Mesen2, so the `mesen` palette matches its captures exactly.
+///
+/// This is the 2C02's behaviour. The RGB PPUs of the Vs. System instead force the emphasised
+/// channel to maximum; that is not modelled yet, and they get this darkening too.
 ///
 /// On NES: bit layout is 0x01 = red, 0x02 = green, 0x04 = blue.
 /// On Famicom: green and blue are swapped (0x02 = blue, 0x04 = green).
 /// Set `swap_green_blue` to `true` for Famicom emphasis behavior.
 #[inline(always)]
 pub(crate) fn apply_color_emphasis(
+    color_value: u8,
     r: u8,
     g: u8,
     b: u8,
     color_emphasis: u8,
     swap_green_blue: bool,
 ) -> (u8, u8, u8) {
-    if color_emphasis == 0 {
+    if color_emphasis == 0 || (color_value & 0x0F) >= 0x0E {
         return (r, g, b);
     }
 
@@ -34,45 +46,24 @@ pub(crate) fn apply_color_emphasis(
         color_emphasis
     };
 
-    let emphasize_red = (emphasis & 0x01) != 0;
-    let emphasize_green = (emphasis & 0x02) != 0;
-    let emphasize_blue = (emphasis & 0x04) != 0;
+    let mut fr = f64::from(r);
+    let mut fg = f64::from(g);
+    let mut fb = f64::from(b);
 
-    const ATTENUATION: f32 = 0.75;
-    const BOOST: f32 = 1.1;
-
-    let mut fr = r as f32;
-    let mut fg = g as f32;
-    let mut fb = b as f32;
-
-    if emphasize_red {
-        fr = (fr * BOOST).min(255.0);
-        if !emphasize_green {
-            fg *= ATTENUATION;
-        }
-        if !emphasize_blue {
-            fb *= ATTENUATION;
-        }
+    if emphasis & 0x01 != 0 {
+        fg *= EMPHASIS_ATTENUATION;
+        fb *= EMPHASIS_ATTENUATION;
     }
-    if emphasize_green {
-        fg = (fg * BOOST).min(255.0);
-        if !emphasize_red {
-            fr *= ATTENUATION;
-        }
-        if !emphasize_blue {
-            fb *= ATTENUATION;
-        }
+    if emphasis & 0x02 != 0 {
+        fr *= EMPHASIS_ATTENUATION;
+        fb *= EMPHASIS_ATTENUATION;
     }
-    if emphasize_blue {
-        fb = (fb * BOOST).min(255.0);
-        if !emphasize_red {
-            fr *= ATTENUATION;
-        }
-        if !emphasize_green {
-            fg *= ATTENUATION;
-        }
+    if emphasis & 0x04 != 0 {
+        fr *= EMPHASIS_ATTENUATION;
+        fg *= EMPHASIS_ATTENUATION;
     }
 
+    // Truncation, as Mesen2's `(uint8_t)` cast; the values only ever shrink.
     (fr as u8, fg as u8, fb as u8)
 }
 
@@ -82,75 +73,79 @@ mod tests {
 
     #[test]
     fn test_apply_color_emphasis_red_only() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x01, false);
-        assert_eq!(r, 110);
-        assert_eq!(g, 75);
-        assert_eq!(b, 75);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, false);
+        assert_eq!((r, g, b), (100, 84, 84));
     }
 
     #[test]
     fn test_apply_color_emphasis_green_only() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x02, false);
-        assert_eq!(r, 75);
-        assert_eq!(g, 110);
-        assert_eq!(b, 75);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x02, false);
+        assert_eq!((r, g, b), (84, 100, 84));
     }
 
     #[test]
     fn test_apply_color_emphasis_blue_only() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x04, false);
-        assert_eq!(r, 75);
-        assert_eq!(g, 75);
-        assert_eq!(b, 110);
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x04, false);
+        assert_eq!((r, g, b), (84, 84, 100));
     }
 
     #[test]
     fn test_apply_color_emphasis_red_green() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x03, false);
-        assert_eq!(r, 110);
-        assert_eq!(g, 110);
-        assert_eq!(b, 56);
-    }
-
-    #[test]
-    fn test_apply_color_emphasis_all() {
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x07, false);
-        assert_eq!(r, 110);
-        assert_eq!(g, 110);
-        assert_eq!(b, 110);
+        // Blue is dimmed by both bits, red and green by one each.
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x03, false);
+        assert_eq!((r, g, b), (84, 84, 70));
     }
 
     #[test]
     fn test_apply_color_emphasis_none() {
-        let (r, g, b) = apply_color_emphasis(123, 45, 67, 0x00, false);
+        let (r, g, b) = apply_color_emphasis(0x00, 123, 45, 67, 0x00, false);
         assert_eq!((r, g, b), (123, 45, 67));
+    }
+
+    #[test]
+    fn emphasis_leaves_columns_xe_and_xf_alone() {
+        // nesdev: "$1D black is affected by color emphasis, but $0F black is not."
+        for color in [0x0E, 0x0F, 0x1E, 0x1F, 0x2E, 0x2F, 0x3E, 0x3F] {
+            assert_eq!(
+                apply_color_emphasis(color, 100, 100, 100, 0x07, false),
+                (100, 100, 100),
+                "colour ${color:02X}"
+            );
+        }
+        assert_eq!(
+            apply_color_emphasis(0x3D, 100, 100, 100, 0x07, false),
+            (70, 70, 70)
+        );
     }
 
     #[test]
     fn test_famicom_emphasis_bit_0x02_emphasizes_blue_not_green() {
         // On Famicom, bit 0x02 = blue (swapped from NES green)
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x02, true);
-        assert_eq!(r, 75); // attenuated
-        assert_eq!(g, 75); // attenuated
-        assert_eq!(b, 110); // boosted (blue on Famicom)
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x02, true);
+        assert_eq!((r, g, b), (84, 84, 100));
     }
 
     #[test]
     fn test_famicom_emphasis_bit_0x04_emphasizes_green_not_blue() {
         // On Famicom, bit 0x04 = green (swapped from NES blue)
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x04, true);
-        assert_eq!(r, 75); // attenuated
-        assert_eq!(g, 110); // boosted (green on Famicom)
-        assert_eq!(b, 75); // attenuated
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x04, true);
+        assert_eq!((r, g, b), (84, 100, 84));
     }
 
     #[test]
     fn test_famicom_emphasis_red_unchanged() {
         // Red (bit 0x01) is the same on both NES and Famicom
-        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x01, true);
-        assert_eq!(r, 110); // boosted
-        assert_eq!(g, 75); // attenuated
-        assert_eq!(b, 75); // attenuated
+        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, true);
+        assert_eq!((r, g, b), (100, 84, 84));
+    }
+
+    /// Mesen2 `NesDefaultVideoFilter::GenerateFullColorPalette` (2C02): each emphasis bit
+    /// attenuates the two other channels by 0.84 and boosts nothing, so with R, G and B all
+    /// set every channel is darkened twice. White must turn grey, never stay white.
+    #[test]
+    fn all_three_emphasis_bits_darken_white_to_grey() {
+        let (r, g, b) = apply_color_emphasis(0x30, 0xFF, 0xFE, 0xFF, 0x07, false);
+        assert_eq!((r, g, b), (179, 179, 179));
     }
 
     #[test]
