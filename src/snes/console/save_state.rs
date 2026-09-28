@@ -554,6 +554,10 @@ pub struct SnesPpuState {
     /// pixel addressing.
     #[serde(default)]
     pub use_high_res_output: Option<bool>,
+    /// The BGnHOFS-only low-bits latch (nr-nbn). A state written before it existed restores
+    /// it as 0, its power-on value; the next HOFS write pair reloads it.
+    #[serde(default)]
+    pub bg_old_hofs: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
