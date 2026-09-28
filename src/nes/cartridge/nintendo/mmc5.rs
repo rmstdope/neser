@@ -1544,7 +1544,7 @@ impl Mapper for MMC5Mapper {
         // This is analogous to Mesen's `(_splitTileNumber + 2) % 42` which accounts for
         // 42 reads (32 visible + 8 sprite garbage + 2 prefetch) in its PPU model.
         if self.ppumask_rendering_enabled && is_tile_fetch {
-            let column = (self.split_tile_count + 2) % 34;
+            let column = ((u16::from(self.split_tile_count) + 2) % 34) as u8;
             self.split_active = self.split_region_for_tile(column);
             // Compute the ExRAM tile index from the split scroll counter and column.
             // The split region uses its own vertical position derived from split_scroll
@@ -4078,6 +4078,22 @@ mod tests {
             0x00,
             "in_frame bit should clear after 3 CPU cycles"
         );
+    }
+
+    /// nr-f6o: the tile count saturates at 255 when nametable reads go on with rendering
+    /// enabled and no scanline start in between (the MMC5 verification ROM's write-protect
+    /// test does this once the PPU runs a few dots further ahead). Adding the 2 prefetched
+    /// columns to the saturated count overflowed and panicked.
+    #[test]
+    fn test_mmc5_tile_fetch_with_a_saturated_split_tile_count_does_not_overflow() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+        mmc5.ppu_write_mask(0x18);
+
+        for tile in 0..300u16 {
+            let _ = mmc5.read_nametable(0x2000 + (tile % 0x3C0));
+        }
+
+        assert_eq!(mmc5.split_tile_count, u8::MAX);
     }
 
     #[test]

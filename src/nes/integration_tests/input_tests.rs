@@ -302,23 +302,27 @@ mod tests {
     #[test]
     fn ruder_x_tracking_reports_position() {
         // X tracking is menu item 2 (1 down in left column).
-        // The xyon kernel estimates horizontal position in ~18-pixel bins (0–14).
+        // The xyon kernel estimates horizontal position in ~18-pixel bins (0–14), counted
+        // in CPU cycles, so the result depends on how the CPU and PPU line up at power-on.
+        // With Mesen2's alignment (nr-f6o) both positions land in bin floor(x / 18); the
+        // earlier 8 and 3 came from NESER's own old alignment, which would have put x=255
+        // in a bin 15 the ROM does not have.
 
-        // Position 1: MouseX=128, MouseY=120 → expected X=8, Y=120
+        // Position 1: MouseX=128, MouseY=120 → expected X=7, Y=120
         let text1 = run_ruder_tracking_test(1, 128, 120, 400);
         let x1 = parse_ruder_value(&text1, "X").expect("X value should be present");
         let y1 = parse_ruder_value(&text1, "Y").expect("Y value should be present");
-        assert_eq!(x1, 8, "X tracking at MouseX=128: expected X=8, got {x1}");
+        assert_eq!(x1, 7, "X tracking at MouseX=128: expected X=7, got {x1}");
         assert_eq!(
             y1, 120,
             "X tracking at MouseY=120: expected Y=120, got {y1}"
         );
 
-        // Position 2: MouseX=40, MouseY=120 → expected X=3, Y=120
+        // Position 2: MouseX=40, MouseY=120 → expected X=2, Y=120
         let text2 = run_ruder_tracking_test(1, 40, 120, 400);
         let x2 = parse_ruder_value(&text2, "X").expect("X value should be present");
         let y2 = parse_ruder_value(&text2, "Y").expect("Y value should be present");
-        assert_eq!(x2, 3, "X tracking at MouseX=40: expected X=3, got {x2}");
+        assert_eq!(x2, 2, "X tracking at MouseX=40: expected X=2, got {x2}");
         assert_eq!(
             y2, 120,
             "X tracking at MouseY=120: expected Y=120, got {y2}"

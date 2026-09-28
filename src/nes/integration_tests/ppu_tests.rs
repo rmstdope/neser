@@ -182,13 +182,15 @@ mod tests {
         "roms/nes/automated_tests/full_palette/flowing_palette.nes",
         [
             // Capture 5s intervals during 30s of flowing palette changes
-            // to get a good variety of colors in the test coverage.
+            // to get a good variety of colors in the test coverage. NESER's own output,
+            // re-pinned for Mesen2's power-on alignment in nr-f6o: 2-4% of pixels differ
+            // from Mesen2's captures, against up to 92% from frame 600 on before.
             (60 * 5, 3263342480),
-            (60 * 10, 4056382126),
-            (60 * 15, 1170236989),
-            (60 * 20, 3673580313),
-            (60 * 25, 1588761297),
-            (60 * 30, 1793106743),
+            (60 * 10, 3627033367),
+            (60 * 15, 4276079309),
+            (60 * 20, 3392642034),
+            (60 * 25, 3357611192),
+            (60 * 30, 2419539841),
         ]
     );
 
@@ -228,34 +230,38 @@ mod tests {
         let upper = normalize_nametable_rows(&text).to_uppercase();
 
         // Full expected output: 26 lines of 10 hex values each (last line has 6).
-        // This covers all 256 nametable positions from the ROM's $2004 read test.
+        // This covers all 256 nametable positions from the ROM's $2004 read test. Where
+        // the reads start depends on how the CPU and PPU line up at power-on: with Mesen2's
+        // alignment (nr-f6o) the output opens `FF AA AA 01 01 10 10`, as Mesen2's does at
+        // frame 300, instead of ten `FF`s (1.4% of pixels still differ from its capture,
+        // against 9.7% before).
         let expected_full = "\
-FF FF FF FF FF FF FF FF FF FF\n\
-AA AA 01 01 10 10 01 01 00 00\n\
-00 00 20 20 01 01 01 01 00 00\n\
-30 30 01 01 02 02 00 00 40 40\n\
-02 02 03 03 00 00 50 50 02 02\n\
-04 04 00 00 60 60 02 02 05 05\n\
-00 00 70 70 03 03 06 06 00 00\n\
-80 80 03 03 07 07 05 01 A0 01\n\
-41 01 0B 01 05 01 E0 01 81 01\n\
-0F 01 05 01 F3 01 00 01 12 01\n\
-05 01 F5 01 05 01 05 01 05 01\n\
-05 01 05 01 05 01 06 01 06 01\n\
-06 01 06 01 06 01 06 01 06 01\n\
-06 01 07 01 07 01 07 01 08 01\n\
-09 01 0A 01 0A 01 0B 01 0C 01\n\
-0D 01 0E 01 0F 01 0F 01 0F 01\n\
-0F 01 0F 01 0F 01 0F 01 0F 01\n\
-0F 01 0F 01 0F 01 0F 01 0F 01\n\
-0F 01 0F 01 0F 01 0F 01 0F 01\n\
-10 01 AA 01 01 01 00 01 00 01\n\
-00 01 01 01 10 10 01 01 00 00\n\
-00 00 20 20 01 01 01 01 00 00\n\
-30 30 01 01 02 02 00 00 40 40\n\
-02 02 03 03 00 00 50 50 02 02\n\
-04 04 00 00 60 60 02 02 05 05\n\
-00 00 00 00 00 00";
+FF AA AA 01 01 10 10 01 01 00\n\
+00 00 00 20 20 01 01 01 01 00\n\
+00 30 30 01 01 02 02 00 00 40\n\
+40 02 02 03 03 00 00 50 50 02\n\
+02 04 04 00 00 60 60 02 02 05\n\
+05 00 00 70 70 03 03 06 06 00\n\
+00 80 80 03 03 07 07 05 01 A0\n\
+01 41 01 0B 01 05 01 E0 01 81\n\
+01 0F 01 05 01 F3 01 00 01 12\n\
+01 05 01 F5 01 05 01 05 01 05\n\
+01 05 01 05 01 05 01 06 01 06\n\
+01 06 01 06 01 06 01 06 01 06\n\
+01 06 01 07 01 07 01 07 01 08\n\
+01 09 01 0A 01 0A 01 0B 01 0C\n\
+01 0D 01 0E 01 0F 01 0F 01 0F\n\
+01 0F 01 0F 01 0F 01 0F 01 0F\n\
+01 0F 01 0F 01 0F 01 0F 01 0F\n\
+01 0F 01 0F 01 0F 01 0F 01 0F\n\
+01 10 01 AA 01 01 01 00 01 00\n\
+01 00 01 01 01 10 10 01 01 00\n\
+00 00 00 20 20 01 01 01 01 00\n\
+00 30 30 01 01 02 02 00 00 40\n\
+40 02 02 03 03 00 00 50 50 02\n\
+02 04 04 00 00 60 60 02 02 05\n\
+05 00 00 70 70 03 03 06 06 00\n\
+00 80 00 00 00 00";
 
         assert_eq!(
             upper, expected_full,

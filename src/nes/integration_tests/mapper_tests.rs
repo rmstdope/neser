@@ -462,14 +462,17 @@ mod tests {
     setup_rom_crc_test!(
         test_mmc5_exram_crc_sequence,
         "roms/nes/automated_tests/exram/mmc5exram.nes",
+        // NESER's own output, re-pinned for Mesen2's power-on alignment in nr-f6o: the
+        // copper bars' positions depend on it. Each checkpoint is now within 25 pixels of
+        // Mesen2's capture (9-11% of pixels differed with the old alignment).
         [
-            (60, 0x81DA35FBu32),
-            (120, 0xDD03B416u32),
-            (180, 0x33BD2C6Eu32),
-            (240, 0x16F1B79Au32),
-            (300, 0x6896149Cu32),
-            (360, 0x83185A7Cu32),
-            (420, 0xC7784FB2u32),
+            (60, 0x77C968EFu32),
+            (120, 0x8D17137Au32),
+            (180, 0xBD9EC54Cu32),
+            (240, 0x4B5A6EA4u32),
+            (300, 0x0EB170D6u32),
+            (360, 0x857F0B8Fu32),
+            (420, 0x230879C6u32),
         ]
     );
 
