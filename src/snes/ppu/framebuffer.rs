@@ -311,6 +311,71 @@ mod tests {
         assert_eq!(rgb[2], 0);
     }
 
+    /// Tick from power-on until framebuffer row 0 has been drawn through column `x`
+    /// inclusive (display line 1 draws row 0, starting at `VISIBLE_DOT_START`).
+    fn tick_to_row0_column(ppu: &mut Ppu, x: u16) {
+        let dots = u32::from(DOTS_PER_SCANLINE) + u32::from(super::VISIBLE_DOT_START + x);
+        for _ in 0..(dots * MASTER_CYCLES_PER_DOT) {
+            ppu.tick();
+        }
+    }
+
+    fn row0_pixel(rgb: &[u8], x: usize) -> [u8; 3] {
+        [rgb[x * 3], rgb[x * 3 + 1], rgb[x * 3 + 2]]
+    }
+
+    /// A mid-line INIDISP write takes effect from the next pixel drawn, not from the
+    /// next scanline. Mesen2 flushes the line up to `x = H - 22` with the old value on
+    /// every PPU write (`SnesPpu::Write` -> `RenderScanline`), then draws the rest with
+    /// the new forced-blank flag and brightness (`RenderScanline`'s forced-blank
+    /// memset, `ApplyBrightness`). Mighty Morphin Power Rangers: The Movie forces blank
+    /// late on line 211 of its intro, and Mesen2 shows the last two pixels of that row
+    /// black (nr-2wn).
+    #[test]
+    fn forced_blank_written_mid_line_blanks_the_rest_of_that_line() {
+        for column in [100u16, 253] {
+            let mut ppu = Ppu::new();
+            set_backdrop(&mut ppu, 0x001F); // full red
+            ppu.write_register(0x2100, 0x0F);
+            tick_to_row0_column(&mut ppu, column);
+            ppu.write_register(0x2100, 0x80);
+            render_full_frame(&mut ppu);
+
+            let rgb = ppu.screen_snapshot_rgb();
+            let split = usize::from(column);
+            for x in 0..=split {
+                assert_eq!(
+                    row0_pixel(&rgb, x),
+                    [255, 0, 0],
+                    "write after column {column}: column {x} was drawn before it"
+                );
+            }
+            for x in split + 1..256 {
+                assert_eq!(
+                    row0_pixel(&rgb, x),
+                    [0, 0, 0],
+                    "write after column {column}: column {x} is drawn in forced blank"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn brightness_written_mid_line_applies_to_the_rest_of_that_line() {
+        let mut ppu = Ppu::new();
+        set_backdrop(&mut ppu, 0x001F); // full red
+        ppu.write_register(0x2100, 0x0F);
+        tick_to_row0_column(&mut ppu, 100);
+        ppu.write_register(0x2100, 0x07);
+        render_full_frame(&mut ppu);
+
+        let rgb = ppu.screen_snapshot_rgb();
+        assert_eq!(row0_pixel(&rgb, 100), [255, 0, 0], "drawn at brightness 15");
+        // 31 * 7 / 15 = 14, expanded to (14 << 3) | (14 >> 2) = 115.
+        assert_eq!(row0_pixel(&rgb, 101), [115, 0, 0], "drawn at brightness 7");
+        assert_eq!(row0_pixel(&rgb, 255), [115, 0, 0], "drawn at brightness 7");
+    }
+
     #[test]
     fn inidisp_changed_mid_frame_only_affects_later_scanlines() {
         let mut ppu = Ppu::new();
