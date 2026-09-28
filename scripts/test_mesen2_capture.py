@@ -58,7 +58,12 @@ end
 # (rom, NESER flags, Mesen2 flags, frames), each frame one where the content differs
 # from both neighbouring frames.
 NES_FLAGS = ["--nes.DisableFrameSkipping=true", "--nes.RamPowerOnState=AllZeros"]
-SNES_FLAGS = ["--snes.disableFrameSkipping=true", "--snes.RamPowerOnState=AllZeros"]
+SNES_FLAGS = [
+    "--snes.disableFrameSkipping=true",
+    "--snes.RamPowerOnState=AllZeros",
+    "--snes.port1.type=SnesController",
+    "--snes.port2.type=SnesController",
+]
 CASES = [
     (
         # Alternates two images every frame, so it pins the parity of the frame; no NES
@@ -128,6 +133,22 @@ class TestMesen2CaptureFrameAlignment(unittest.TestCase):
                     self.assertEqual(diffs[frame], 0, f"differing pixels by NESER frame: {diffs}")
                     self.assertNotEqual(diffs[frame - 1], 0, f"frame must animate: {diffs}")
                     self.assertNotEqual(diffs[frame + 1], 0, f"frame must animate: {diffs}")
+
+
+class TestMesen2SnesFlags(unittest.TestCase):
+    """The SNES reference flags plug in the controllers NESER plugs in by default (nr-0an).
+
+    Mesen2's testRunner otherwise takes the ports from the user's ``settings.json``, where
+    port 2 may be empty. Super Bomberman 3 reads which pads are connected and plays its
+    attract demo differently for an empty port 2, so a comparison that leaves the ports to
+    the settings file differs by a lag frame at frame 3000 with no emulation difference.
+    NESER's defaults are a standard pad in each port (``SnesConfig::default``, pinned by
+    ``controller_ports_default_to_standard``).
+    """
+
+    def test_both_ports_hold_a_standard_controller(self) -> None:
+        self.assertIn("--snes.port1.type=SnesController", SNES_FLAGS)
+        self.assertIn("--snes.port2.type=SnesController", SNES_FLAGS)
 
 
 # Mesen2 with "AllowIoOsAccess": false leaves the globals io and os nil (measured on 2.1.1,

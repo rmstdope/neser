@@ -87,7 +87,7 @@ Every hardware research skill in this repository uses the same three tiers. The 
    - Capture a Mesen2 screenshot at the same frame as NESER and pixel-diff programmatically; exact matches become the reference for NESER comparison.
    - If NESER and Mesen2 disagree and the divergence is suspected to be a Mesen2 quirk, **ask the user** how to proceed rather than approving either side unilaterally.
    - Screenshot settings for comparable captures:
-     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`
+     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true --snes.port1.type=SnesController --snes.port2.type=SnesController`
    - Mesen2 headless mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
    - **`--snes.disableFrameSkipping=true` is mandatory for animated content** (found in #2990):
      headless testRunner emulation runs >100 fps, engaging `_skipRender` (SnesPpu.cpp) which
@@ -110,6 +110,17 @@ Every hardware research skill in this repository uses the same three tiers. The 
      **The tell is a capture that changes between identical runs: capture twice before
      trusting any non-zero diff.** That check costs one extra run and distinguishes "the
      emulator is wrong" from "the reference is not a constant".
+   - **Plug in the same controllers on BOTH sides** (nr-0an). Mesen2's testRunner takes its
+     SNES ports from `settings.json`, and a local install may have port 2 empty, while
+     NESER has a standard pad in each port by default. Pass
+     `--snes.port1.type=SnesController --snes.port2.type=SnesController` to Mesen2, and pin
+     NESER's side with `--snes-controller-port1 standard --snes-controller-port2 standard`,
+     since a `neser.conf` port line (e.g. `multitap`) would otherwise apply. For a game NESER
+     recognises as a Mouse or Super Scope game, NESER picks that device itself; give Mesen2
+     the same type (`SnesMouse`, `SuperScope`) instead. Games that read which pads are
+     connected play differently otherwise: Super Bomberman 3's attract demo took a lag frame
+     on Mesen2 only, which looked like a CPU-timing drift until a trace showed a branch on
+     the game's "player 2 connected" byte going the other way.
    - **Before reading a picture-ROM's pixel diff as a timing signal, work out what the ROM
      actually displays.** Disassembling/reading `demo.asm` showed its NMI handler is a bare
      `RTI` (confirmable in the binary: `$40` at the handler's file offset), so two of its
@@ -357,8 +368,10 @@ When verifying SNES emulator accuracy:
   file sizes.
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
 - **Screenshot settings for comparable captures**:
-  - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true`
-    (the frame-skip switch is mandatory for animated content; see step 9 of the Instructions)
+  - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true
+    --snes.port1.type=SnesController --snes.port2.type=SnesController`
+    (the frame-skip switch is mandatory for animated content; see step 9 of the Instructions;
+    the port flags match NESER's default controllers, see "Plug in the same controllers")
   - Since the BG vertical-scroll display-line fix (issue #2945, PR #2981), NESER and
     Mesen2 frame-N captures align **byte-for-byte at zero row offset**. A previously
     documented "constant 1-scanline row offset vs NESER" was in fact a NESER BG bug,
