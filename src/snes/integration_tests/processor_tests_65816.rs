@@ -37,6 +37,16 @@ const CYCLE_EXACT_OPCODES: &[u8] = &[
     0x0E, // ASL abs
     0x1E, // ASL abs,X
     0x04, // TSB dp
+    // Calls, returns and indexed-indirect jumps -- each spends its internal cycles where the
+    // 65816 does, not trailing after its last bus access (nr-4lq).
+    0x20, // JSR abs
+    0xFC, // JSR (abs,X)
+    0x22, // JSL long
+    0x7C, // JMP (abs,X)
+    0x60, // RTS
+    0x6B, // RTL
+    0x40, // RTI
+    0x62, // PER
 ];
 
 /// Whether this vector's bus cycles should be compared one by one.
@@ -48,8 +58,8 @@ fn is_cycle_exact(opcode: u8) -> bool {
 /// 5A22. The bulk runner (`run_vectors_from_file`) skips exactly these names; feeding one of
 /// them to `run_vector_case` directly still reports the divergence.
 ///
-/// Both groups disagree with NESER about where a direct-page indirect pointer's HIGH byte is
-/// fetched in emulation mode:
+/// The first two groups disagree with NESER about where a direct-page indirect pointer's HIGH
+/// byte is fetched in emulation mode:
 ///
 /// * The 28 `a1 e` entries -- LDA (dp,X) with E=1, DL != 0 and the pointer straddling a page
 ///   boundary: the 5A22 wraps the +1 for the pointer high byte within that page (an
@@ -64,11 +74,22 @@ fn is_cycle_exact(opcode: u8) -> bool {
 ///   from 0000FE or 0000FF into the Stack area"), Bruce Clark's 65C816 tutorial section 5.11,
 ///   gilyon cputest.sfc test 03c4, and Mesen2.
 ///
+/// The third disagrees about where a push lands in emulation mode:
+///
+/// * The 43 `fc e` entries -- JSR (abs,X) with E=1 and S == $0100: the vector wraps the
+///   return address's low-byte push to $01FF within the stack page; the 5A22 writes $00FF and
+///   clamps only the final S, since JSR (abs,X) is a "new" 65816 instruction whose stack
+///   accesses are not confined to page 1. Evidence for leaving the page: gilyon cputest.sfc
+///   test 0277 (see `op_jsr_abs_x_ind`) and Mesen2 (`JSR_AbsIdxXInd` pushes with
+///   `PushWord(..., false)`, no page restriction). These vectors joined the tally when JSR
+///   (abs,X) became cycle-checked (nr-4lq).
+///
 /// The ProcessorTests corpus is generated from an emulator model, not captured from hardware,
 /// and has a history of exactly this class of emulation-mode wrap bug (upstream issue #1
 /// regenerated the [dp]/[dp],Y vectors; issues #3, #6 and #8 were still open at the pinned
-/// revision). Full-corpus tally: 28/10000 in a1.e.json and 1/10000 in d4.e.json diverge,
-/// while a1.n.json and d4.n.json are 0/10000. Documented as intentional in #3135.
+/// revision). Full-corpus tally: 28/10000 in a1.e.json, 1/10000 in d4.e.json and 43/10000 in
+/// fc.e.json diverge, while a1.n.json, d4.n.json and fc.n.json are 0/10000. Documented as
+/// intentional in #3135 and nr-4lq.
 const KNOWN_DIVERGENT_VECTORS: &[&str] = &[
     // LDA (dp,X), E=1, DL != 0: the vector carries the pointer high-byte fetch into the next
     // page where the 5A22 wraps within it.
@@ -103,6 +124,51 @@ const KNOWN_DIVERGENT_VECTORS: &[&str] = &[
     // PEI, E=1, DL == 0: the vector wraps the pointer high-byte fetch within the direct page
     // where the 5A22 carries into the next page.
     "d4 e 232",
+    // JSR (abs,X), E=1, S == $0100: the vector wraps the return address's low-byte push to
+    // $01FF where the 5A22 writes $00FF (nr-4lq).
+    "fc e 458",
+    "fc e 811",
+    "fc e 831",
+    "fc e 1155",
+    "fc e 1322",
+    "fc e 1600",
+    "fc e 1727",
+    "fc e 1755",
+    "fc e 1964",
+    "fc e 2289",
+    "fc e 2589",
+    "fc e 2857",
+    "fc e 2923",
+    "fc e 3001",
+    "fc e 3191",
+    "fc e 3213",
+    "fc e 3466",
+    "fc e 4265",
+    "fc e 4346",
+    "fc e 4648",
+    "fc e 4773",
+    "fc e 4904",
+    "fc e 6055",
+    "fc e 6139",
+    "fc e 6201",
+    "fc e 6351",
+    "fc e 6799",
+    "fc e 7003",
+    "fc e 7054",
+    "fc e 7122",
+    "fc e 7155",
+    "fc e 7314",
+    "fc e 8224",
+    "fc e 8255",
+    "fc e 8303",
+    "fc e 8371",
+    "fc e 8428",
+    "fc e 8926",
+    "fc e 8947",
+    "fc e 9030",
+    "fc e 9088",
+    "fc e 9145",
+    "fc e 9282",
 ];
 
 /// One CPU bus cycle as observed on the bus: either an internal (no-access) cycle, or a read
@@ -1258,12 +1324,13 @@ mod tests {
     #[test]
     fn known_divergent_vectors_all_diverge_when_full_vectors_available() {
         let full_root = Path::new(PROCESSOR_TESTS_FULL_ROOT);
-        if !full_root.join("a1.e.json").exists() || !full_root.join("d4.e.json").exists() {
+        let files = ["a1.e.json", "d4.e.json", "fc.e.json"];
+        if !files.iter().all(|file| full_root.join(file).exists()) {
             return;
         }
 
         let mut checked = 0;
-        for file in ["a1.e.json", "d4.e.json"] {
+        for file in files {
             let vectors = load_vectors_from_file(&full_root.join(file)).expect("load full vectors");
             for vector in &vectors {
                 if !KNOWN_DIVERGENT_VECTORS.contains(&vector.name.as_str()) {
@@ -1273,7 +1340,7 @@ mod tests {
                 let result = run_vector_case(vector);
                 assert!(
                     result.is_err(),
-                    "expected {} to diverge from the hardware-backed wrap rule, but it passed",
+                    "expected {} to diverge from the hardware-backed wrap or push rule, but it passed",
                     vector.name
                 );
             }

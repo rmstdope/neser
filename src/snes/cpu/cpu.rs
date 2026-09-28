@@ -4330,8 +4330,12 @@ impl<B: SnesBus> Cpu<B> {
         5
     }
 
+    /// JMP (abs,X), in the 65816's cycle order (Mesen2 `JMP_AbsIdxXInd`): opcode, AAL, AAH,
+    /// internal, then the pointer's two bytes -- the internal cycle indexes the pointer, so it
+    /// comes before the reads, not after them (nr-4lq).
     fn op_jmp_abs_x_ind(&mut self) -> u8 {
         let base = self.fetch_word();
+        self.tick_pre_access_internal_cycle();
         let ptr = base.wrapping_add(self.x);
         let bank_base = (self.pbr as u32) << 16;
         let lo = self.tick_read(bank_base | ptr as u32);
@@ -4361,23 +4365,35 @@ impl<B: SnesBus> Cpu<B> {
     // JSR / JSL — jump to subroutine (push return address - 1)
     // -------------------------------------------------------------------------
 
+    /// JSR absolute, in the 65816's cycle order (WDC datasheet, Mesen2 `AddrMode_AbsJmp();
+    /// Idle(); JSR()`): opcode, AAL, AAH, internal, push PCH, push PCL. Left to the generic
+    /// trailing tick, the internal cycle came last and shifted the cycle boundaries an HDMA
+    /// start aligns to, costing Batman Returns 8 master clocks against Mesen2 (nr-4lq).
     fn op_jsr_abs(&mut self) -> u8 {
         let target = self.fetch_word();
+        self.tick_pre_access_internal_cycle();
         let ret = self.pc.wrapping_sub(1);
         self.push16_bytes(ret);
         self.pc = target;
         6
     }
 
+    /// JSR (abs,X), in the 65816's cycle order (WDC datasheet, Mesen2 `JSR_AbsIdxXInd`):
+    /// opcode, AAL, push PCH, push PCL, AAH, internal, then the pointer's two bytes. The return
+    /// address is pushed between the operand's two bytes, so it is PC after AAL (nr-4lq).
     fn op_jsr_abs_x_ind(&mut self) -> u8 {
-        let base = self.fetch_word();
-        let ret = self.pc.wrapping_sub(1);
+        let lo = self.fetch_byte() as u16;
+        // PC now points at AAH, the last byte of the instruction: the return address.
+        let ret = self.pc;
         // Unlike plain JSR absolute, this form's return-address push uses a
         // natural (unclamped) intermediate stack address that may cross out
         // of page 1 in emulation mode, clamping only the final S. Verified
         // against the vendored snes-tests cputest ROM (test 0277) and
         // Mesen2.
         self.push16(ret);
+        let hi = self.fetch_byte() as u16;
+        let base = lo | hi << 8;
+        self.tick_pre_access_internal_cycle();
         let ptr = base.wrapping_add(self.x);
         let bank_base = (self.pbr as u32) << 16;
         let lo = self.tick_read(bank_base | ptr as u32);
@@ -4386,20 +4402,31 @@ impl<B: SnesBus> Cpu<B> {
         8
     }
 
+    /// JSL long, in the 65816's cycle order (WDC datasheet, Mesen2 `SnesCpu::JSL`): opcode,
+    /// AAL, AAH, push PBR, internal, AAB, push PCH, push PCL. The bank byte is fetched only
+    /// after PBR is pushed, and the call ends on the PCL write rather than on the internal
+    /// cycle. That last cycle is what an NMI edge rising at the end of the call is measured
+    /// against: ending on the internal cycle took the NMI one instruction early and pushed
+    /// Batman Returns' RNG out of step with Mesen2 (nr-4lq).
     fn op_jsl_abs_long(&mut self) -> u8 {
-        let addr = self.fetch_addr24();
-        let ret = self.pc.wrapping_sub(1);
+        let target = self.fetch_word();
         if self.e {
             self.push8_linear_e(self.pbr);
+        } else {
+            self.push8(self.pbr);
+        }
+        self.tick_pre_access_internal_cycle();
+        let bank = self.fetch_byte();
+        let ret = self.pc.wrapping_sub(1);
+        if self.e {
             self.push8_linear_e((ret >> 8) as u8);
             self.push8_linear_e(ret as u8);
             self.s = 0x0100 | (self.s & 0x00FF);
         } else {
-            self.push8(self.pbr);
             self.push16_bytes(ret);
         }
-        self.pbr = (addr >> 16) as u8;
-        self.pc = addr as u16;
+        self.pbr = bank;
+        self.pc = target;
         8
     }
 
@@ -4407,13 +4434,24 @@ impl<B: SnesBus> Cpu<B> {
     // RTS / RTL / RTI — return from subroutine / interrupt
     // -------------------------------------------------------------------------
 
+    /// RTS, in the 65816's cycle order (WDC datasheet, Mesen2 `SnesCpu::RTS`): opcode, two
+    /// internal cycles, the PCL and PCH pulls, and a final internal cycle (left to the
+    /// generic trailing tick) -- not all three internal cycles after the pulls (nr-4lq).
     fn op_rts(&mut self) -> u8 {
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         let addr = self.pull16_bytes();
         self.pc = addr.wrapping_add(1);
         6
     }
 
+    /// RTL, in the 65816's cycle order (WDC datasheet, Mesen2 `SnesCpu::RTL`): opcode, two
+    /// internal cycles, then the PCL, PCH and PBR pulls. Leaving the internal cycles to the
+    /// generic trailing tick ended RTL on an internal cycle, so an NMI edge rising in its last
+    /// cycle was taken one instruction early (nr-4lq, as for JSL).
     fn op_rtl(&mut self) -> u8 {
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         let (addr, bank) = if self.e {
             let s1 = self.s.wrapping_add(1);
             let lo = self.read8(s1 as u32) as u16;
@@ -4431,7 +4469,13 @@ impl<B: SnesBus> Cpu<B> {
         6
     }
 
+    /// RTI, in the 65816's cycle order (WDC datasheet, Mesen2 `SnesCpu::RTI`): opcode, two
+    /// internal cycles, then the P, PCL, PCH (and native-mode PBR) pulls. Trailing internal
+    /// cycles moved the cycle boundaries an HDMA start aligns to, and Batman Returns' IRQ
+    /// handler returned 8 master clocks off Mesen2 (nr-4lq).
     fn op_rti(&mut self) -> u8 {
+        self.tick_pre_access_internal_cycle();
+        self.tick_pre_access_internal_cycle();
         let old_x = self.x_flag();
         let p = self.pull8();
         self.p = p;
@@ -4800,8 +4844,11 @@ impl<B: SnesBus> Cpu<B> {
         6
     }
 
+    /// PER, in the 65816's cycle order (Mesen2 `AddrMode_RelLng`): opcode, the two offset
+    /// bytes, an internal cycle for the addition, then the two pushes (nr-4lq).
     fn op_per(&mut self) -> u8 {
         let offset = self.fetch_word() as i16;
+        self.tick_pre_access_internal_cycle();
         let ea = self.pc.wrapping_add(offset as u16);
         self.push16(ea);
         6
