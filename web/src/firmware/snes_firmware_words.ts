@@ -27,6 +27,15 @@ export function setSnesFirmwareChips(json: string): void {
     SNES_FIRMWARE_CHIPS.splice(0, SNES_FIRMWARE_CHIPS.length, ...parsed);
 }
 
+/** Installs Rust-owned metadata after WASM initialization, then refreshes dependent controls. */
+export async function initializeSnesFirmwareChips(
+    metadataJson: () => string,
+    refresh: () => Promise<void>
+): Promise<void> {
+    setSnesFirmwareChips(metadataJson());
+    await refresh();
+}
+
 export function chipByKey(key: string): SnesFirmwareChip | undefined {
     return SNES_FIRMWARE_CHIPS.find((chip) => chip.key === key);
 }

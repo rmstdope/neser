@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
     SIDEBAR_TITLE,
     SNES_FIRMWARE_CHIPS,
@@ -7,6 +7,7 @@ import {
     dialogText,
     dialogTitle,
     formatFileSize,
+    initializeSnesFirmwareChips,
     notGenuineDetail,
     notStartedMessage,
     notStartedStatus,
@@ -41,6 +42,16 @@ describe("SNES firmware chips", () => {
             ["dsp4", "DSP-4", "dsp4.rom"]
         ]);
         expect(chipByKey("dsp9")).toBeUndefined();
+    });
+
+    it("loads the Rust WASM metadata before refreshing dependent controls", async () => {
+        const refresh = vi.fn().mockResolvedValue(undefined);
+        await initializeSnesFirmwareChips(
+            () => JSON.stringify([{ key: "dsp5", label: "DSP-5", file: "dsp5.rom" }]),
+            refresh
+        );
+        expect(SNES_FIRMWARE_CHIPS).toEqual([{ key: "dsp5", label: "DSP-5", file: "dsp5.rom" }]);
+        expect(refresh).toHaveBeenCalledOnce();
     });
 });
 

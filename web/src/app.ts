@@ -17,7 +17,7 @@ import {
     notStartedMessage,
     notStartedStatus,
     romDisplayName,
-    setSnesFirmwareChips
+    initializeSnesFirmwareChips
 } from "./firmware/snes_firmware_words";
 import { loadRawButtonLayoutsFromDb, mapStandardGamepadState, selectGamepads } from "./input/gamepad";
 
@@ -239,9 +239,9 @@ function createWasmUrl() {
 function ensureWasmInitialized() {
     if (!wasmInitPromise) {
         wasmInitPromise = init({ module_or_path: createWasmUrl() }).then((result) => {
-            setSnesFirmwareChips(snes_firmware_chips_json());
-            void snesFirmwareSidebar.refresh();
-            return result;
+            return initializeSnesFirmwareChips(snes_firmware_chips_json, () => snesFirmwareSidebar.refresh()).then(
+                () => result
+            );
         });
     }
     return wasmInitPromise;
