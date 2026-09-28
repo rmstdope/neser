@@ -168,6 +168,7 @@ use super::unlicensed::mapper125::Mapper125;
 use super::unlicensed::mapper126::Mapper126;
 use super::unlicensed::mapper128::Mapper128;
 use super::unlicensed::mapper134::Mapper134;
+use super::unlicensed::mapper142::Mapper142;
 use super::unlicensed::mapper156::Mapper156;
 use super::unlicensed::mapper162::Mapper162;
 use super::unlicensed::mapper163::Mapper163;
@@ -1078,7 +1079,7 @@ mapper_registry! {
     139 => Sachen8259::new,
     140 => JalecoJf11Mapper::new,
     141 => Sachen8259::new,
-    142 => Mapper56::new,
+    142 => Mapper142::new,
     143 => Mapper143::new,
     144 => ColorDreamsMapper::new,
     145 => Mapper145::new,
