@@ -219,11 +219,15 @@ impl Ppu {
     ///
     /// Forced blank PAUSES the evaluation cursor: OAM scanning stops and the pending entries
     /// are deferred to the dots after blank releases (entries past the window end are lost).
-    /// Mesen2 models the same cursor hold (`_oamEvaluationIndex` only advances on processed
-    /// entries); ares skips blanked entries instead -- the paused model was chosen because it
-    /// preserves the approved `inidisp_enable_display_mid_frame` behavior (see #2999).
+    /// Mesen2 consumes one deferred entry through its stale OAM latch on resume; ares skips
+    /// blanked entries instead. NESER follows Mesen2, the screenshot reference.
     fn obj_eval_step(&mut self, forced_blank: bool) {
         if forced_blank {
+            self.obj_pipeline.eval_stalled_by_forced_blank = true;
+            return;
+        }
+        if std::mem::take(&mut self.obj_pipeline.eval_stalled_by_forced_blank) {
+            self.obj_pipeline.eval_cursor += 1;
             return;
         }
         let cursor = self.obj_pipeline.eval_cursor;
@@ -505,6 +509,9 @@ pub(super) struct ObjPipeline {
     item_count: u8,
     /// Next OAM scan offset (0..=128) within the evaluation window.
     eval_cursor: u8,
+    /// A forced-blank evaluation slot occurred; Mesen2 drops the next resumed entry through
+    /// its stale OAM latch.
+    eval_stalled_by_forced_blank: bool,
     /// First-OBJ index (priority rotation) latched at the start of the evaluation window.
     first_sprite: u8,
     /// Scheduled dot for raising STAT77 range over (33rd in-range OBJ's OAM index x 2).
@@ -533,6 +540,7 @@ impl Default for ObjPipeline {
             items: [0; 32],
             item_count: 0,
             eval_cursor: 0,
+            eval_stalled_by_forced_blank: false,
             first_sprite: 0,
             range_over_dot: None,
             fetch_remaining: 0,
@@ -552,6 +560,7 @@ impl ObjPipeline {
     fn begin_eval(&mut self, first_sprite: u8) {
         self.item_count = 0;
         self.eval_cursor = 0;
+        self.eval_stalled_by_forced_blank = false;
         self.first_sprite = first_sprite;
         self.range_over_dot = None;
     }
@@ -1361,6 +1370,49 @@ mod tests {
             stat77(&mut ppu) & 0x40,
             0x40,
             "not cleared during forced blank"
+        );
+    }
+
+    #[test]
+    fn forced_blank_drops_the_first_obj_evaluation_slot_after_resuming() {
+        let mut ppu = Ppu::new();
+        ppu.write_register(0x2101, 0x00); // 8x8
+        park_all_offscreen(&mut ppu);
+        for (index, color) in [(0, 1), (1, 2), (2, 3)] {
+            set_obj_tile_solid(&mut ppu, (index * 16) as u16, color);
+            set_cgram(&mut ppu, 128 + color, 0x1000 * color as u16);
+            set_obj(
+                &mut ppu,
+                index,
+                (index * 16) as u16,
+                0,
+                index as u8,
+                0,
+                false,
+            );
+        }
+
+        ppu.write_register(0x2100, 0x0F);
+        tick_dots(&mut ppu, 2); // scanline 0, dot 2: evaluate OBJ 0
+        ppu.write_register(0x2100, 0x80);
+        tick_dots(&mut ppu, 3); // forced blank covers the evaluation slot at dot 4
+        ppu.write_register(0x2100, 0x0F);
+        present_line(&mut ppu, 0);
+
+        assert_eq!(
+            obj_color_at(&ppu, 0, 0),
+            Some(0x1000),
+            "OBJ 0 precedes blank"
+        );
+        assert_eq!(
+            obj_color_at(&ppu, 16, 0),
+            None,
+            "the stale OAM latch drops OBJ 1 in the first resumed evaluation slot"
+        );
+        assert_eq!(
+            obj_color_at(&ppu, 32, 0),
+            Some(0x3000),
+            "evaluation continues with OBJ 2 after the dropped slot"
         );
     }
 
