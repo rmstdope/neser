@@ -77,6 +77,24 @@ pub trait SnesBus {
     /// `DmaController::sync_end_pad`, #3050). Buses that don't model DMA ignore it.
     fn set_cpu_speed(&mut self, _speed: u8) {}
 
+    /// Master clocks one CPU memory access to `addr` takes. The default is the S-CPU's
+    /// region speed ([`mem_access_cycles`](crate::snes::cpu::mem_speed::mem_access_cycles)); the SA-1
+    /// bus overrides it and the three hooks below (nr-7v3).
+    fn access_clocks(&self, addr: u32, fast_rom: bool) -> u8 {
+        crate::snes::cpu::mem_speed::mem_access_cycles(addr, fast_rom)
+    }
+
+    /// A jump or return has just loaded PC with `target`. No cost on the S-CPU.
+    fn end_jump(&mut self, _target: u32) {}
+
+    /// A relative branch has just been taken to `target`. No cost on the S-CPU.
+    fn take_branch(&mut self, _target: u32) {}
+
+    /// Master clocks one CPU-internal (idle) cycle takes: 6 on the S-CPU.
+    fn internal_cycle_clocks(&self) -> u8 {
+        6
+    }
+
     /// The cumulative master-clock count, used only to stamp trace lines so a NESER bus
     /// trace can be diffed clock-for-clock against a reference emulator (#3050). Buses
     /// without a clock source report 0.

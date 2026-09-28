@@ -14,8 +14,8 @@ use crate::snes::input::InputPorts;
 use crate::snes::obc1;
 use crate::snes::ppu::{DRAM_REFRESH_STOLEN_CLOCKS, Ppu, SnesVideoRegion};
 use crate::snes::sa1::{
-    self, Sa1Arithmetic, Sa1ControlRegisters, Sa1Core, Sa1IRam, Sa1MemoryControl,
-    decode_mirror_offset,
+    self, Sa1Arithmetic, Sa1ControlRegisters, Sa1Core, Sa1IRam, Sa1MemoryControl, SnesBusActivity,
+    SnesCartAccess, decode_mirror_offset,
 };
 use crate::snes::sdd1::Sdd1;
 use crate::snes::upd77c25::{Upd77c25, Upd77c25Firmware};
@@ -110,6 +110,9 @@ pub struct SnesSystemBus {
     sa1_memory_control: Option<Rc<RefCell<Sa1MemoryControl>>>,
     /// The second 65816 CPU core for SA-1. `None` for non-SA-1 cartridges.
     sa1_core: Option<Sa1Core>,
+    /// The S-CPU's current cartridge access, shared with the SA-1 bus so it can wait on a
+    /// conflict. `None` for non-SA-1 cartridges.
+    sa1_snes_access: Option<Rc<Cell<SnesBusActivity>>>,
     /// The Capcom CX4 coprocessor, mapped at `$00-$3F/$80-$BF:$6000-$7FFF`. `None` for
     /// cartridges without one.
     cx4: Option<Cx4>,
@@ -259,6 +262,7 @@ impl SnesSystemBus {
             sa1_registers,
             sa1_iram,
             sa1_memory_control,
+            sa1_snes_access: sa1_core.as_ref().map(Sa1Core::snes_access),
             sa1_core,
             cx4,
             obc1,
@@ -721,7 +725,31 @@ impl SnesSystemBus {
         }
     }
 
+    /// Record which SA-1 cartridge memory the S-CPU (or its DMA) is touching, for the SA-1's
+    /// bus-conflict waits. A no-op on other cartridges.
+    fn note_sa1_snes_access(&self, addr: u32) {
+        let Some(cell) = &self.sa1_snes_access else {
+            return;
+        };
+        let access = if Self::is_dma_a_bus_mmio(addr) {
+            SnesCartAccess::Other
+        } else if self.sa1_rom_index(addr).is_some() {
+            SnesCartAccess::Rom
+        } else if self.sa1_bwram_index(addr).is_some() {
+            SnesCartAccess::BwRam
+        } else if decode_mirror_offset(addr).is_some() {
+            SnesCartAccess::IRam
+        } else {
+            SnesCartAccess::Other
+        };
+        cell.set(SnesBusActivity {
+            access,
+            fast_cycle: self.cpu_speed == 6,
+        });
+    }
+
     fn dma_read_a_bus_impl(&self, addr: u32, open_bus: u8) -> u8 {
+        self.note_sa1_snes_access(addr);
         if Self::is_dma_a_bus_mmio(addr) {
             return open_bus;
         }
@@ -843,6 +871,7 @@ impl SnesSystemBus {
     }
 
     fn dma_write_a_bus_impl(&mut self, addr: u32, value: u8) {
+        self.note_sa1_snes_access(addr);
         if Self::is_dma_a_bus_mmio(addr) {
             return;
         }
@@ -1196,6 +1225,7 @@ impl SnesSystemBus {
             sa1_iram: _,           // captured by capture_sa1_state
             sa1_memory_control: _, // captured by capture_sa1_state
             sa1_core: _,           // captured by capture_sa1_state
+            sa1_snes_access: _,    // transient: rewritten by the next S-CPU access
             ref cx4,
             obc1: _, // transient: cartridge board; the OBC1 keeps its registers in sram
             ref gsu,
@@ -1918,6 +1948,7 @@ impl DmaABus for SnesSystemBus {
 
 impl SnesBus for SnesSystemBus {
     fn read(&self, addr: u32) -> u8 {
+        self.note_sa1_snes_access(addr);
         if let Some(value) = self.read_mmio(addr) {
             self.mdr.set(value);
             return value;
@@ -2016,6 +2047,7 @@ impl SnesBus for SnesSystemBus {
     }
 
     fn write(&mut self, addr: u32, value: u8) {
+        self.note_sa1_snes_access(addr);
         if self.write_mmio(addr, value) {
             return;
         }
@@ -2133,6 +2165,12 @@ impl SnesBus for SnesSystemBus {
 
     fn set_cpu_speed(&mut self, speed: u8) {
         self.cpu_speed = speed;
+        if let Some(cell) = &self.sa1_snes_access {
+            cell.set(SnesBusActivity {
+                fast_cycle: speed == 6,
+                ..cell.get()
+            });
+        }
     }
 
     fn master_clock(&self) -> u64 {
@@ -5421,6 +5459,58 @@ mod tests {
         bus.write(0x00_2228, 0x00); // protect only the first 256 bytes
         bus.write(0x00_6100, 0x42); // offset $100, outside the protected region
         assert_eq!(bus.read(0x00_6100), 0x42);
+    }
+
+    /// The SA-1 waits when the S-CPU's last access was on the memory it wants (Mesen2
+    /// `Sa1Cpu::IsAccessConflict` over `SnesMemoryManager::GetMemoryTypeBusA`), and waits
+    /// longer on I-RAM during a 6-clock S-CPU cycle, so every S-CPU access must report which
+    /// cartridge memory it touched and every cycle its speed.
+    #[test]
+    fn snes_cpu_accesses_tell_the_sa1_which_cartridge_memory_is_busy() {
+        let mut bus = SnesSystemBus::new(sa1_test_cart_with_bwram());
+        let activity = bus.sa1_snes_access.clone().expect("SA-1 cartridge");
+        let cases = [
+            (0x00_8000, SnesCartAccess::Rom),
+            (0x00_3000, SnesCartAccess::IRam),
+            (0x00_6000, SnesCartAccess::BwRam),
+            (0x40_0000, SnesCartAccess::BwRam),
+            (0x7E_0000, SnesCartAccess::Other),
+            (0x00_2300, SnesCartAccess::Other),
+            (0x00_4210, SnesCartAccess::Other),
+        ];
+        for (addr, access) in cases {
+            bus.read(addr);
+            assert_eq!(activity.get().access, access, "S-CPU read of ${addr:06X}");
+        }
+        bus.write(0x00_3000, 0x00);
+        assert_eq!(
+            activity.get().access,
+            SnesCartAccess::IRam,
+            "S-CPU write to I-RAM"
+        );
+        bus.dma_read_a_bus(0x40_7C40, 0);
+        assert_eq!(
+            activity.get().access,
+            SnesCartAccess::BwRam,
+            "DMA read of BW-RAM"
+        );
+        bus.dma_write_a_bus(0x00_8000, 0);
+        assert_eq!(
+            activity.get().access,
+            SnesCartAccess::Rom,
+            "DMA write toward ROM"
+        );
+        bus.write(0x00_3000, 0x00);
+
+        bus.set_cpu_speed(6);
+        assert!(activity.get().fast_cycle, "a 6-clock cycle");
+        bus.set_cpu_speed(8);
+        assert!(!activity.get().fast_cycle, "an 8-clock cycle");
+        assert_eq!(
+            activity.get().access,
+            SnesCartAccess::IRam,
+            "speed leaves the memory alone"
+        );
     }
 
     #[test]

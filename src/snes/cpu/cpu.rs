@@ -5,7 +5,6 @@ use crate::platform::save_state::{SaveStateError, Stateful};
 use crate::snes::bus::SnesBus;
 use crate::snes::bus::SnesSystemBus;
 use crate::snes::console::save_state::{SnesCpuState, SnesSaveState, SnesSaveStateError};
-use crate::snes::cpu::mem_speed::mem_access_cycles;
 use crate::snes::ppu::SnesVideoRegion;
 use crate::trace_cpu;
 
@@ -1271,19 +1270,20 @@ impl<B: SnesBus> Cpu<B> {
     /// one-cycle lock (#3074) is per-cycle rather than per-instruction, so every read is
     /// treated alike and that distinction is gone.
     fn tick_read(&mut self, addr: u32) -> u8 {
-        let cycles = mem_access_cycles(addr, self.fast_rom);
+        let cycles = self.bus.access_clocks(addr, self.fast_rom);
         // Mesen2 `SnesCpu::Read`: SetCpuSpeed for the upcoming access happens BEFORE
         // ProcessCpuCycle, so a DMA that runs at the start of this cycle ends on a whole
         // cycle of *this* access's speed (#3050).
         self.bus.set_cpu_speed(cycles);
         self.begin_cpu_cycle();
-        for _ in 0..cycles - 4 {
+        let sample_to_end = cycles.min(4);
+        for _ in 0..cycles - sample_to_end {
             self.bus.tick();
         }
         self.memory_bus_cycles += 1;
         self.trace_bus_cycle(format_args!("read  ${addr:06X}"));
         let value = self.bus.read(addr);
-        for _ in 0..4 {
+        for _ in 0..sample_to_end {
             self.bus.tick();
         }
         self.end_of_cycle_interrupt_poll();
@@ -1293,7 +1293,7 @@ impl<B: SnesBus> Cpu<B> {
     /// Advance the master clock N cycles for `addr`, then write one byte.
     /// Also intercepts MEMSEL ($420D) writes to update the fast_rom flag.
     fn tick_write(&mut self, addr: u32, value: u8) {
-        let cycles = mem_access_cycles(addr, self.fast_rom);
+        let cycles = self.bus.access_clocks(addr, self.fast_rom);
         // See `tick_read`: the speed is published before the cycle hook runs any DMA.
         self.bus.set_cpu_speed(cycles);
         self.begin_cpu_cycle();
@@ -3583,10 +3583,23 @@ impl<B: SnesBus> Cpu<B> {
             self.pc = self.pc.wrapping_add(offset as u16);
             // +1 cycle for taken; +1 more in emulation mode if page crossed
             let page_cross = (old_pc ^ self.pc) & 0xFF00 != 0;
+            self.take_branch();
             if self.e && page_cross { 4 } else { 3 }
         } else {
             2
         }
+    }
+
+    /// A jump or return has just loaded PC (Mesen2 `IdleEndJump`, a no-op on the S-CPU).
+    fn end_jump(&mut self) {
+        let target = ((self.pbr as u32) << 16) | self.pc as u32;
+        self.bus.end_jump(target);
+    }
+
+    /// A branch has just been taken (Mesen2 `IdleTakeBranch`, a no-op on the S-CPU).
+    fn take_branch(&mut self) {
+        let target = ((self.pbr as u32) << 16) | self.pc as u32;
+        self.bus.take_branch(target);
     }
 
     fn op_bcc(&mut self) -> u8 {
@@ -3628,6 +3641,7 @@ impl<B: SnesBus> Cpu<B> {
     fn op_brl(&mut self) -> u8 {
         let offset = self.fetch_word() as i16;
         self.pc = self.pc.wrapping_add(offset as u16);
+        self.take_branch();
         4
     }
 }
@@ -3906,10 +3920,11 @@ impl<B: SnesBus> Cpu<B> {
 
     fn tick_internal_cycle(&mut self) {
         // Mesen2 `SnesCpu::Idle` forces the CPU speed to 6 for the idle cycle.
-        self.bus.set_cpu_speed(6);
+        let clocks = self.bus.internal_cycle_clocks();
+        self.bus.set_cpu_speed(clocks);
         self.begin_cpu_cycle();
         self.trace_bus_cycle(format_args!("internal"));
-        for _ in 0..6u8 {
+        for _ in 0..clocks {
             self.bus.tick();
         }
         self.end_of_cycle_interrupt_poll();
@@ -4319,6 +4334,7 @@ impl<B: SnesBus> Cpu<B> {
     fn op_jmp_abs(&mut self) -> u8 {
         let addr = self.fetch_word();
         self.pc = addr;
+        self.end_jump();
         3
     }
 
@@ -4327,6 +4343,7 @@ impl<B: SnesBus> Cpu<B> {
         let lo = self.tick_read(ptr_addr);
         let hi = self.tick_read((ptr_addr + 1) & 0xFFFF);
         self.pc = lo as u16 | (hi as u16) << 8;
+        self.end_jump();
         5
     }
 
@@ -4341,6 +4358,7 @@ impl<B: SnesBus> Cpu<B> {
         let lo = self.tick_read(bank_base | ptr as u32);
         let hi = self.tick_read(bank_base | ptr.wrapping_add(1) as u32);
         self.pc = lo as u16 | (hi as u16) << 8;
+        self.end_jump();
         6
     }
 
@@ -4348,6 +4366,7 @@ impl<B: SnesBus> Cpu<B> {
         let addr = self.fetch_addr24();
         self.pbr = (addr >> 16) as u8;
         self.pc = addr as u16;
+        self.end_jump();
         4
     }
 
@@ -4358,6 +4377,7 @@ impl<B: SnesBus> Cpu<B> {
         let hi = self.tick_read((ptr_addr + 2) & 0xFFFF);
         self.pc = lo as u16 | (mid as u16) << 8;
         self.pbr = hi;
+        self.end_jump();
         6
     }
 
@@ -4375,6 +4395,7 @@ impl<B: SnesBus> Cpu<B> {
         let ret = self.pc.wrapping_sub(1);
         self.push16_bytes(ret);
         self.pc = target;
+        self.end_jump();
         6
     }
 
@@ -4399,6 +4420,7 @@ impl<B: SnesBus> Cpu<B> {
         let lo = self.tick_read(bank_base | ptr as u32);
         let hi = self.tick_read(bank_base | ptr.wrapping_add(1) as u32);
         self.pc = lo as u16 | (hi as u16) << 8;
+        self.end_jump();
         8
     }
 
@@ -4427,6 +4449,7 @@ impl<B: SnesBus> Cpu<B> {
         }
         self.pbr = bank;
         self.pc = target;
+        self.end_jump();
         8
     }
 
@@ -4442,6 +4465,7 @@ impl<B: SnesBus> Cpu<B> {
         self.tick_pre_access_internal_cycle();
         let addr = self.pull16_bytes();
         self.pc = addr.wrapping_add(1);
+        self.end_jump();
         6
     }
 
@@ -4466,6 +4490,7 @@ impl<B: SnesBus> Cpu<B> {
         };
         self.pc = addr.wrapping_add(1);
         self.pbr = bank;
+        self.end_jump();
         6
     }
 
@@ -4491,6 +4516,7 @@ impl<B: SnesBus> Cpu<B> {
         if !self.e {
             self.pbr = self.pull8();
         }
+        self.end_jump();
         6 + (!self.e) as u8
     }
 
