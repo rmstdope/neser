@@ -946,7 +946,7 @@ mod tests {
     );
 
     // ================================================================
-    // Mapper 7 (AxROM), Submapper 0 (Bus Conflicts)
+    // Mapper 7 (AxROM), Submapper 0 (No Bus Conflicts)
     // ================================================================
 
     setup_rom_test!(
@@ -956,6 +956,10 @@ mod tests {
     setup_rom_test!(
         test_mv_m007_0_nametable,
         "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.0_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m007_0_bus_conflicts,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.0_bus_conflicts.nes"
     );
     setup_rom_test!(
         test_mv_m007_0_combined,
@@ -975,8 +979,33 @@ mod tests {
         "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.1_nametable.nes"
     );
     setup_rom_test!(
+        test_mv_m007_1_bus_conflicts,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.1_bus_conflicts.nes"
+    );
+    setup_rom_test!(
         test_mv_m007_1_combined,
         "roms/nes/automated_tests/mapper_verification/bin/m007.1.nes"
+    );
+
+    // ================================================================
+    // Mapper 7, Submapper 2 (AND-type Bus Conflicts)
+    // ================================================================
+
+    setup_rom_test!(
+        test_mv_m007_2_prg_banking,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.2_prg_banking.nes"
+    );
+    setup_rom_test!(
+        test_mv_m007_2_nametable,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.2_nametable.nes"
+    );
+    setup_rom_test!(
+        test_mv_m007_2_bus_conflicts,
+        "roms/nes/automated_tests/mapper_verification/bin/rom_singles/m007.2_bus_conflicts.nes"
+    );
+    setup_rom_test!(
+        test_mv_m007_2_combined,
+        "roms/nes/automated_tests/mapper_verification/bin/m007.2.nes"
     );
 
     // ================================================================

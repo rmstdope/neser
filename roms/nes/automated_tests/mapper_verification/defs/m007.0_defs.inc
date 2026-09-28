@@ -1,12 +1,7 @@
-; m007.0_defs.inc — AxROM (Mapper 7, Submapper 0) — Bus Conflicts
+; m007.0_defs.inc — AxROM (Mapper 7, Submapper 0) — No Bus Conflicts
 ;
-; Features:
-;   - PRG banking: 32KB switchable
-;   - No CHR banking (8KB CHR-RAM)
-;   - Nametable: single-screen A or B (bit 4)
-;   - No PRG-RAM
-;   - No IRQ
-;   - Bus conflicts (AMROM/AOROM)
+; NESdev specifies that the default iNES behavior for mapper 7 must not
+; emulate bus conflicts. The bus_conflicts aspect proves an unmasked write.
 
 .define MAPPER_NUM 7
 .define SUBMAPPER_NUM 0
@@ -23,7 +18,7 @@ CHR_RAM_SHIFT = 7        ; 8KB CHR-RAM
 .define HAS_IRQ 0
 .define HAS_PRG_RAM 0
 .define HAS_PRG_RAM_PROTECT 0
-.define HAS_BUS_CONFLICTS 1
+.define HAS_BUS_CONFLICTS 0
 .define MAX_MIRRORING_MODES 2       ; Single-screen A/B only
 
 ; Bank sizes
@@ -41,18 +36,14 @@ CHR_RAM_SHIFT = 7        ; 8KB CHR-RAM
 ; Register macros
 ; ============================================================
 
-; Select 32KB PRG bank. Bus conflicts apply.
-; The bank_table must contain bytes matching the bank+nametable value.
+; Select 32KB PRG bank. No bus conflicts apply.
 .macro select_prg_bank slot, bank
     lda #bank
-    sta bank_table + bank   ; Bus-conflict-safe address
+    sta $8000
 .endmacro
 
 ; Set nametable: 0=screen A, 1=screen B
 ; Must also re-specify current PRG bank (bit 4 and bits 0-2 share a register)
-; Bus conflict note: writes target $8000 which is in the $FF fill area
-; ($8000-$BFFF is unused fill in bank 0; CODE starts at $C000)
-; So effective = written AND $FF = written. Safe as long as fillval=$FF.
 .macro set_mirroring mode
     .if mode = 0
         ; Single-screen A
