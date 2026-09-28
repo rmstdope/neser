@@ -543,9 +543,9 @@ impl Ppu {
             self.vblank_suppressed_for_frame = true;
         }
 
-        // NMI suppression quirk: reading $2002 shortly after VBlank starts can prevent
-        // the VBlank NMI edge from being observed.
-        if scanline == 241 && (pixel == 2 || pixel == 3) {
+        // NMI suppression quirk: reading $2002 on the VBlank NMI latch dot can prevent
+        // the edge from being observed. The race ends before dot 3.
+        if scanline == 241 && pixel == 2 {
             self.status.clear_nmi();
         }
 
@@ -1910,6 +1910,21 @@ mod tests {
         // Second read (same dot in this unit test) should observe that the flag was cleared.
         let second = ppu.get_status();
         assert_eq!(second & 0x80, 0);
+    }
+
+    #[test]
+    fn test_status_read_on_vblank_dot_3_leaves_nmi_pending() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_control(0x80);
+
+        // VBlank begins at dot 1 and the NMI edge is latched at dot 2.
+        ppu.run_ppu_cycles(241 * 341 + 3);
+        assert_eq!(ppu.scanline(), 241);
+        assert_eq!(ppu.pixel(), 3);
+
+        // The status-read race window ends at dot 2, so this read must not cancel the NMI.
+        ppu.get_status();
+        assert!(ppu.poll_nmi());
     }
 
     #[test]
