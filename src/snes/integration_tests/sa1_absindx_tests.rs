@@ -56,16 +56,16 @@ fn sa1_version_code_test_matches_approved_register_dump() {
     //
     // nr-7v3 (the SA-1 runs at 10.74 MHz, two master clocks per cycle, with Mesen2's
     // BW-RAM and bus-conflict waits, where it had run at one clock per cycle) is the same
-    // shape again, measured against an `origin/main` capture: 60 px, all inside the two
-    // glyph cells at rows 95-102 / x 224-239, the SA-1 column's `$2302 HCRL`, which moves
-    // from $51 to $CA. The slower SA-1 reaches its latch later in the line; every other
+    // shape again, measured against an `origin/main` capture (1af57c3d): 51 px, all inside the
+    // two glyph cells at rows 95-102 / x 224-239, the SA-1 column's `$2302 HCRL`, which moves
+    // from $51 to $D9. The slower SA-1 reaches its latch later in the line; every other
     // register value is identical.
     assert_rom_screen_crc(
         ROOT,
         "SA1VersionCodeTest.sfc",
         "sa1_absindx_tests",
         150,
-        0xABA8_967A,
+        0xC7D1_3DAC,
         RunConfig::new(400_000_000, 0),
     );
 }
