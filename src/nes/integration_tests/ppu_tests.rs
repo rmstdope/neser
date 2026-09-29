@@ -165,16 +165,19 @@ mod tests {
     // so we can just do CRC checks on the screen buffer for regression testing.
     // Re-pinned in nr-wm5 when emphasis stopped brightening: with --nes-palette mesen the
     // set of colours on screen equals Mesen2's capture exactly (402 in full_palette).
+    // Re-pinned in nr-m6o when the $2007 v increment moved one PPU cycle later: frame 20
+    // of both ROMs now differs from Mesen2's capture in 383 pixels, all in columns 0-2
+    // (2975 before).
     setup_rom_crc_test!(
         test_full_palette,
         "roms/nes/automated_tests/full_palette/full_palette.nes",
-        [(20, 2906271879)]
+        [(20, 854186034)]
     );
 
     setup_rom_crc_test!(
         test_full_palette_smooth,
         "roms/nes/automated_tests/full_palette/full_palette_smooth.nes",
-        [(20, 3281662806)]
+        [(20, 3493986253)]
     );
 
     setup_rom_crc_test!(
@@ -185,12 +188,14 @@ mod tests {
             // to get a good variety of colors in the test coverage. NESER's own output,
             // re-pinned for Mesen2's power-on alignment in nr-f6o: 2-4% of pixels differ
             // from Mesen2's captures, against up to 92% from frame 600 on before.
-            (60 * 5, 3263342480),
-            (60 * 10, 3627033367),
-            (60 * 15, 4276079309),
-            (60 * 20, 3392642034),
-            (60 * 25, 3357611192),
-            (60 * 30, 2419539841),
+            // Re-pinned in nr-m6o when the $2007 v increment moved one PPU cycle later:
+            // every checkpoint is now identical to Mesen2's capture (0 px).
+            (60 * 5, 1135679342),
+            (60 * 10, 2254900374),
+            (60 * 15, 3074628557),
+            (60 * 20, 4075553558),
+            (60 * 25, 2039007568),
+            (60 * 30, 3558543859),
         ]
     );
 

@@ -636,7 +636,11 @@ fn tick_pixel_output(ppu: &mut Ppu) {
 /// The second write to $2006 does NOT update v immediately on real hardware.
 /// Instead, t is copied to v after a 3 PPU cycle delay (based on Visual NES
 /// findings, ref Mesen2 NesPpu.cpp `_updateVramAddrDelay`).
+///
+/// The v increment after a $2007 read or write lands here too, at the end of
+/// the first PPU cycle after the access (ref Mesen2 `_needVideoRamIncrement`).
 fn tick_delayed_updates(ppu: &mut Ppu) {
+    ppu.apply_pending_vram_increment();
     if ppu.update_vram_addr_delay > 0 {
         ppu.update_vram_addr_delay -= 1;
         if ppu.update_vram_addr_delay == 0 {
