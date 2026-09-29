@@ -342,39 +342,26 @@ fn tick_background(ppu: &mut Ppu) {
         }
     }
 
-    // Copy horizontal and vertical bits during pre-render scanline
-    if is_rendering_enabled && is_prerender {
-        if pixel == HORIZONTAL_BITS_COPY_PIXEL {
-            // Copy horizontal bits from t to v at pixel 257
-            trace_ppu!(3; "prerender hcopy y={} x={} t={:04X} v_before={:04X}",
-                scanline,
-                pixel,
-                ppu.registers.t(),
-                ppu.registers.v(),
-            );
-            ppu.registers.copy_horizontal_bits();
-            trace_ppu!(3; "prerender hcopy y={} x={} t={:04X} v_after={:04X}",
-                scanline,
-                pixel,
-                ppu.registers.t(),
-                ppu.registers.v(),
-            );
-        } else if (VERTICAL_BITS_COPY_START..=VERTICAL_BITS_COPY_END).contains(&pixel) {
-            // Copy vertical bits from t to v during pixels 280-304
-            trace_ppu!(3; "vcopy y={} x={} t={:04X} v_before={:04X}",
-                scanline,
-                pixel,
-                ppu.registers.t(),
-                ppu.registers.v(),
-            );
-            ppu.registers.copy_vertical_bits();
-            trace_ppu!(3; "vcopy y={} x={} t={:04X} v_after={:04X}",
-                scanline,
-                pixel,
-                ppu.registers.t(),
-                ppu.registers.v(),
-            );
-        }
+    // Copy vertical bits during the pre-render scanline. The horizontal copy at 257 is in the
+    // delayed block above; the vertical copy stays on the live flag, as in Mesen2.
+    if is_rendering_enabled
+        && is_prerender
+        && (VERTICAL_BITS_COPY_START..=VERTICAL_BITS_COPY_END).contains(&pixel)
+    {
+        // Copy vertical bits from t to v during pixels 280-304
+        trace_ppu!(3; "vcopy y={} x={} t={:04X} v_before={:04X}",
+            scanline,
+            pixel,
+            ppu.registers.t(),
+            ppu.registers.v(),
+        );
+        ppu.registers.copy_vertical_bits();
+        trace_ppu!(3; "vcopy y={} x={} t={:04X} v_after={:04X}",
+            scanline,
+            pixel,
+            ppu.registers.t(),
+            ppu.registers.v(),
+        );
     }
 }
 

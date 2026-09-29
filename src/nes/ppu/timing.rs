@@ -98,6 +98,7 @@ impl Timing {
         self.frame_count = 0;
         self.rendering_enabled_d1 = false;
         self.rendering_enabled_d2 = false;
+        self.delayed_rendering_enabled = false;
     }
 
     fn rendering_enabled_for_odd_frame_skip(&mut self, rendering_enabled: bool) -> bool {
@@ -185,6 +186,7 @@ impl Timing {
         // Note: rendering_enabled delays will be recalculated during emulation
         self.rendering_enabled_d1 = false;
         self.rendering_enabled_d2 = false;
+        self.delayed_rendering_enabled = false;
     }
 
     /// Rendering enabled as the scroll logic sees it during the current tick: a $2001 write

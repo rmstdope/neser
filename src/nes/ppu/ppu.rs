@@ -1411,6 +1411,47 @@ mod tests {
     }
 
     #[test]
+    fn test_rendering_enable_at_dot_327_skips_increment_at_329_but_not_at_337() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        run_to_dot(&mut ppu, 107, 327);
+        ppu.registers.set_v(0x0000);
+
+        ppu.write_mask(0x08);
+        run_to_dot(&mut ppu, 107, 336);
+        assert_eq!(ppu.registers.v(), 0x0000);
+
+        run_to_dot(&mut ppu, 107, 337);
+        assert_eq!(ppu.registers.v(), 0x0001);
+    }
+
+    #[test]
+    fn test_rendering_disable_at_dot_255_still_increments_fine_y_at_256() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_mask(0x08);
+        run_to_dot(&mut ppu, 107, 255);
+        ppu.registers.set_v(0x0000);
+
+        ppu.write_mask(0x00);
+        run_to_dot(&mut ppu, 107, 256);
+
+        assert_eq!(ppu.registers.v(), 0x1000);
+    }
+
+    #[test]
+    fn test_rendering_enable_at_prerender_dot_256_skips_horizontal_copy_at_257() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        let prerender = ppu.timing.region().prerender_scanline;
+        run_to_dot(&mut ppu, prerender, 256);
+        ppu.registers.set_v(0x0000);
+        ppu.write_scroll(0xF8, false);
+
+        ppu.write_mask(0x08);
+        run_to_dot(&mut ppu, prerender, 257);
+
+        assert_eq!(ppu.registers.v() & 0x041F, 0x0000);
+    }
+
+    #[test]
     fn test_mapper_ppu_scanline_is_called_on_scanline_boundaries() {
         let calls: Rc<RefCell<Vec<(u16, bool)>>> = Rc::new(RefCell::new(Vec::new()));
 
