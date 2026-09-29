@@ -643,8 +643,13 @@ impl Ppu {
                 // (MMC5 extended attribute mode should NOT apply here)
                 Self::notify_chr_fetch_is_ppudata(&self.cartridge);
                 let buffered = self.registers.data_buffer();
-                self.registers
-                    .set_data_buffer(self.memory.read_chr(addr, &self.cartridge));
+                let value = if self.is_rendering() {
+                    self.memory
+                        .read_chr_without_address_change(addr, &self.cartridge)
+                } else {
+                    self.memory.read_chr(addr, &self.cartridge)
+                };
+                self.registers.set_data_buffer(value);
                 buffered
             }
             0x2000..=0x3EFF => {
@@ -681,7 +686,9 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        self.prime_a12_and_notify_mapper(old_addr, new_addr);
+        if !self.is_rendering() {
+            self.prime_a12_and_notify_mapper(old_addr, new_addr);
+        }
 
         // Update I/O bus with value read
         // For palette reads (addr 0x3F00-0x3FFF), only refresh bits 5-0
@@ -701,7 +708,12 @@ impl Ppu {
         match addr {
             0x0000..=0x1FFF => {
                 // CHR memory - routes through mapper for ROM/RAM handling
-                self.memory.write_chr(addr, value, &self.cartridge);
+                if self.is_rendering() {
+                    self.memory
+                        .write_chr_without_address_change(addr, value, &self.cartridge);
+                } else {
+                    self.memory.write_chr(addr, value, &self.cartridge);
+                }
             }
             0x2000..=0x3EFF => {
                 self.memory
@@ -723,7 +735,9 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        self.prime_a12_and_notify_mapper(old_addr, new_addr);
+        if !self.is_rendering() {
+            self.prime_a12_and_notify_mapper(old_addr, new_addr);
+        }
     }
 
     /// Set the cartridge reference for dynamic CHR ROM/RAM access
@@ -841,6 +855,13 @@ impl Ppu {
     #[cfg(test)]
     pub fn should_generate_nmi(&self) -> bool {
         self.registers.should_generate_nmi()
+    }
+
+    /// Whether the PPU is rendering: rendering enabled on the pre-render line or a visible
+    /// line. While it is, the PPU address bus carries the rendering fetches, so PPUADDR and
+    /// PPUDATA accesses never put `v` on it (nr-6gs).
+    pub(crate) fn is_rendering(&self) -> bool {
+        self.is_on_rendering_scanline() && self.registers.is_rendering_enabled()
     }
 
     /// Check if PPUDATA access should trigger the rendering glitch
@@ -1831,6 +1852,72 @@ mod tests {
         ppu.write_data(0x12);
         let expected_write_calls = expected_calls(0x2000, 0x2001);
         assert_eq!(*calls.borrow(), expected_write_calls);
+    }
+
+    /// A PPU mid-way through a visible scanline with rendering on, whose cartridge records
+    /// every address the PPU puts on its bus.
+    fn rendering_ppu_with_bus_spy() -> (Ppu, Rc<RefCell<Vec<u16>>>) {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
+                calls: calls.clone(),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_mask(0x18);
+        // Scanline 10, dot 40: visible, rendering, clear of the $2006 update glitch dots.
+        ppu.run_ppu_cycles(10 * 341 + 40);
+        assert!(ppu.is_rendering());
+        calls.borrow_mut().clear();
+        (ppu, calls)
+    }
+
+    // nr-6gs: Burai Fighter's status-bar IRQ handler writes $2006 and reads $2007 while
+    // sprites are still rendering. During rendering the PPU address bus carries the rendering
+    // fetches, not v (Mesen2 NesPpu.cpp, citing forums.nesdev.org/viewtopic.php?p=132145), so
+    // an MMC3 watching A12 must not see v. NESER drove v onto the bus, clocked the MMC3 three
+    // extra times and raised the second IRQ 3 lines early, clipping the status bar text.
+    #[test]
+    fn test_ppuaddr_write_during_rendering_does_not_drive_v_onto_the_bus() {
+        let (mut ppu, calls) = rendering_ppu_with_bus_spy();
+
+        ppu.write_address(0x13, false);
+        ppu.write_address(0x30, false);
+        ppu.run_ppu_cycles(6); // past the 3-dot v=t delay
+
+        assert_eq!(ppu.registers.v(), 0x1330);
+        assert!(
+            !calls.borrow().contains(&0x1330),
+            "v reached the bus during rendering: {:04X?}",
+            calls.borrow()
+        );
+    }
+
+    #[test]
+    fn test_ppudata_access_during_rendering_does_not_drive_v_onto_the_bus() {
+        for write in [false, true] {
+            let (mut ppu, calls) = rendering_ppu_with_bus_spy();
+            let mut state = ppu.debug_state();
+            state.registers.v = 0x1330;
+            ppu.set_debug_state(state);
+
+            if write {
+                ppu.write_data(0x55);
+            } else {
+                ppu.read_data();
+            }
+
+            let after = ppu.registers.v();
+            let seen = calls.borrow();
+            assert!(
+                !seen.contains(&0x1330) && !seen.contains(&(after & 0x3FFF)),
+                "v reached the bus during a $2007 {} while rendering: {:04X?}",
+                if write { "write" } else { "read" },
+                seen
+            );
+        }
     }
 
     #[test]

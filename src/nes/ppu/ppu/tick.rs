@@ -643,8 +643,11 @@ fn tick_delayed_updates(ppu: &mut Ppu) {
             ppu.registers.set_v(new_v);
 
             // Notify mapper of the delayed address change exactly once
-            // (this also handles MMC3 A12 tracking).
-            ppu.prime_a12_and_notify_mapper(old_v, new_v);
+            // (this also handles MMC3 A12 tracking). While rendering, the bus carries the
+            // rendering fetches, not v, so the mapper sees nothing (nr-6gs).
+            if !ppu.is_rendering() {
+                ppu.prime_a12_and_notify_mapper(old_v, new_v);
+            }
 
             trace_ppu!(3; "delayed v=t applied v={:04X} y={} x={}",
                 new_v,

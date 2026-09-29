@@ -103,6 +103,31 @@ impl Memory {
         }
     }
 
+    /// Read CHR without putting `addr` on the PPU address bus, for a PPUDATA read while
+    /// rendering drives the bus (nr-6gs). No `ppu_address_changed` side effect.
+    pub fn read_chr_without_address_change(
+        &self,
+        addr: u16,
+        cartridge: &Option<Rc<RefCell<Cartridge>>>,
+    ) -> u8 {
+        self.read_chr_for_debugger(addr, cartridge)
+    }
+
+    /// Write CHR without putting `addr` on the PPU address bus, for a PPUDATA write while
+    /// rendering drives the bus (nr-6gs). No `ppu_address_changed` side effect.
+    pub fn write_chr_without_address_change(
+        &mut self,
+        addr: u16,
+        value: u8,
+        cartridge: &Option<Rc<RefCell<Cartridge>>>,
+    ) {
+        if let Some(cart) = cartridge {
+            cart.borrow_mut()
+                .mapper_mut()
+                .write_chr(addr & 0x1FFF, value);
+        }
+    }
+
     /// Read CHR for debugger purposes — no `ppu_address_changed` side effect.
     /// Returns 0 if no cartridge is loaded.
     pub fn read_chr_for_debugger(
