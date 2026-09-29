@@ -3366,9 +3366,10 @@ mod tests {
     const WHITE: [u8; 3] = [255, 255, 255];
     const BLACK: [u8; 3] = [0, 0, 0];
 
-    /// NESER has **no BG tile pre-fetch stage**: `bg_pixel` indexes `self.vram` at the
-    /// dot being rendered, so a VRAM write landing mid-scanline is visible to every dot
-    /// after it on that same line. Mesen2 instead pre-fetches tilemap and CHR into
+    /// NESER has **no BG tile pre-fetch stage** for VRAM or BGnHOFS: `bg_pixel` indexes
+    /// `self.vram` at the dot being rendered, so a VRAM write landing mid-scanline is
+    /// visible to every dot after it on that same line. (BGnVOFS alone is sampled per
+    /// fetched tile column, `Ppu::bg_vofs_fetched`, nr-kis.) Mesen2 instead pre-fetches tilemap and CHR into
     /// `_layerData` in chunks bounded by H=263 (`SnesPpu::FetchTileData`), and skips
     /// fetching altogether while forced blank is set -- so there, the same write reaches
     /// a tile only if it precedes that tile's fetch.
@@ -3482,6 +3483,59 @@ mod tests {
                 "write at column {column}: the next line must use the new scroll throughout"
             );
         }
+    }
+
+    /// Top Gear's own case: BG2 in mode 1, whose tilemap read is slot 1 of the 8-dot
+    /// pattern, with a fine horizontal scroll moving which column a pixel is drawn from,
+    /// and a second byte that lands after the line's last fetch (dot 263).
+    #[test]
+    fn a_mid_line_bg2_vofs_write_in_mode1_follows_slot_1_and_the_fine_hscroll() {
+        let render_with_vofs_write_at = |column: u16| {
+            let mut ppu = Ppu::new();
+            set_cgram(&mut ppu, 0, 0x0000);
+            set_cgram(&mut ppu, 1, 0x7FFF);
+            fill_4bpp_tile(&mut ppu, 0, 1, 1);
+            set_bg_map_base(&mut ppu, 1, 0x400);
+            for col in 0..32usize {
+                set_vram_word(&mut ppu, 0x400 + col, 1);
+            }
+            ppu.write_register(0x2105, 0x01); // Mode 1
+            ppu.write_register(0x212C, 0x02); // TM: BG2
+            ppu.write_register(0x210F, 0x05); // BG2HOFS = 5: fine scroll 5
+            ppu.write_register(0x210F, 0x00);
+            ppu.write_register(0x2100, 0x0F);
+            tick_to_column(&mut ppu, column);
+            ppu.write_register(0x2110, 0x80); // BG2VOFS = $0080: map row 16, blank
+            ppu.write_register(0x2110, 0x00);
+            render_lines(&mut ppu, 1);
+            ppu.screen_snapshot_rgb()
+        };
+
+        // Column 228 = dot 250: BG2's column 31 was read at dot 249 and column 32 is
+        // read at 257. Pixel x is drawn from column (x + 5) >> 3, so 0..=250 keep the old
+        // scroll and 251.. take the new one. Without the fine scroll the split would be
+        // at 256 (no pixel), and with BG1's slot it would be at 243.
+        let rgb = render_with_vofs_write_at(228);
+        assert!(
+            (0..251).all(|x| pixel(&rgb, x, 0) == WHITE),
+            "pixels 0..251 are drawn from columns fetched before the write"
+        );
+        assert!(
+            (251..256).all(|x| pixel(&rgb, x, 0) == BLACK),
+            "pixels 251.. are drawn from column 32, fetched after the write"
+        );
+
+        // Column 250 = dot 272, after the last fetch at dot 263: nothing on this line
+        // changes, and the next line takes the new scroll everywhere.
+        let rgb = render_with_vofs_write_at(250);
+        assert!(
+            (0..256).all(|x| pixel(&rgb, x, 0) == WHITE),
+            "a write after the line's last fetch leaves the whole line unchanged"
+        );
+        assert!(
+            (0..256).all(|x| pixel(&rgb, x, 1) == BLACK),
+            "the next line uses the new scroll throughout"
+        );
     }
 
     #[test]
