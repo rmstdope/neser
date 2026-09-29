@@ -65,7 +65,7 @@ import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { getKeyboardControllerTarget } from "./input/input_routing";
-import { gbaKeyboardButtonForEvent } from "./input/keyboard_mapping";
+import { applyVsCoinKey, gbaKeyboardButtonForEvent } from "./input/keyboard_mapping";
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
@@ -3064,6 +3064,11 @@ async function handleKeyDown(event: KeyboardEvent) {
         return;
     }
 
+    if (nes && applyVsCoinKey(nes, event, true)) {
+        event.preventDefault();
+        return;
+    }
+
     const key = event.key.toLowerCase();
     const targets = getKeyboardControllerTarget(
         connectedGamepads.length,
@@ -3098,6 +3103,11 @@ function handleKeyUp(event: KeyboardEvent) {
     }
 
     if (handleSuperScopeKey(event, false)) {
+        return;
+    }
+
+    if (nes && applyVsCoinKey(nes, event, false)) {
+        event.preventDefault();
         return;
     }
 

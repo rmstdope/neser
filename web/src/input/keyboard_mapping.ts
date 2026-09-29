@@ -57,3 +57,23 @@ export function snesKeyboardButtonForEvent(event: Pick<KeyboardEvent, "key" | "c
             return null;
     }
 }
+
+/**
+ * Key 6 inserts a Vs. System coin into slot 1, as on desktop. A press inserts one coin and
+ * the core times the coin pulse, so key repeats and the release insert nothing: a coin line
+ * held ten frames or more reads as a jammed coin to Vs. Duck Hunt. Returns true when the
+ * key was the coin key.
+ */
+export function applyVsCoinKey(
+    nes: { insert_vs_coin(slot: number): void },
+    event: Pick<KeyboardEvent, "key" | "repeat">,
+    pressed: boolean
+): boolean {
+    if (event.key !== "6") {
+        return false;
+    }
+    if (pressed && !event.repeat) {
+        nes.insert_vs_coin(0);
+    }
+    return true;
+}
