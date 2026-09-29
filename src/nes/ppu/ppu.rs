@@ -715,8 +715,10 @@ impl Ppu {
                 self.memory
                     .write_nametable_mapped(addr, value, &self.cartridge);
             }
-            // Palette RAM answers only to a $3Fxx address on the PPU bus, and while rendering
-            // that bus carries the rendering fetches, never v (nr-sjt).
+            // While rendering, the write lands at whatever address the fetches put on the bus.
+            // For CHR and nametables above, NESER approximates that with v; palette RAM answers
+            // only to a $3Fxx bus address, which the fetches never produce, so a palette write
+            // cannot land at all (nr-sjt).
             0x3F00..=0x3FFF if !self.is_actively_rendering() => {
                 self.memory.write_palette(addr, value);
             }
@@ -877,8 +879,10 @@ impl Ppu {
     /// Check if PPU is actively rendering (rendering enabled + on rendering scanline).
     ///
     /// While it is, the PPU address bus carries the rendering fetches, so PPUADDR and
-    /// PPUDATA accesses do not tell the mapper about `v` (nr-6gs). The access itself still
-    /// uses `v`; Mesen2 uses the current fetch address instead, which NESER does not model.
+    /// PPUDATA accesses do not tell the mapper about `v` (nr-6gs). A CHR or nametable access
+    /// itself still uses `v`, an approximation (Mesen2 uses the current fetch address); a
+    /// PPUDATA write aimed at palette RAM is dropped, since the fetches never put `$3Fxx` on
+    /// the bus (nr-sjt).
     pub(crate) fn is_actively_rendering(&self) -> bool {
         self.registers.is_rendering_enabled() && self.is_on_rendering_scanline()
     }
