@@ -122,7 +122,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 | 80 | Taito X1-005 |  | x | x |  | 8 | 8 | 1 |
 | 81 | Mapper 81 |  | x |  |  | 0 | 16 | 8 |
 | 82 | Mapper 82 |  | x | x |  | 8 | 8 | 1 |
-| 83 | Mapper 83 | x | x | x |  | 8 | 8 | 1 |
+| 83 | Mapper 83 | x | x | x |  | \*\*\* | 8 | 1 |
 | 84 | NTDEC 2722 (Super Mario Bros. 2 Japanese) | x |  |  |  | 8 | 8 | 8 |
 | 85 | Konami VRC7 | x | x | x | x | 0 | 8 | 1 |
 | 86 | Mapper 86 |  | x |  | x | 0 | 32 | 8 |
@@ -187,6 +187,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 
 - **\*** Mapper 34 `has_chr_banking` is dynamic — true for NINA-001 sub-variant, false for BNROM.
 - **\*\*** Mapper 68 `max_prg_ram_kb` is dynamic — depends on the cartridge header's PRG-RAM bank count.
+- **\*\*\*** Mapper 83 `max_prg_ram_kb` is dynamic — 32 for submapper 2 (32 KiB PRG-NVRAM, Dragon Ball Party), 0 otherwise.
 - VRC2/VRC4 (mappers 21–25) share one implementation. VRC2a (mapper 22) lacks an IRQ counter; VRC4 variants have one.
 - VRC6 mappers 24 and 26 differ only in address line swapping; capabilities are identical.
 
