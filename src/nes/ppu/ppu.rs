@@ -429,7 +429,7 @@ impl Ppu {
         // the VBlank NMI edge (blargg ppu_vbl_nmi 08).
         let is_disabling_nmi_at_vblank_nmi_latch_dot = nmi_was_enabled
             && !nmi_is_enabled
-            && self.timing.scanline() == 241
+            && self.timing.scanline() == self.timing.region().vblank_start_scanline
             && self.timing.pixel() == 2;
         if is_disabling_nmi_at_vblank_nmi_latch_dot {
             self.status.clear_nmi();
@@ -527,6 +527,8 @@ impl Ppu {
     pub fn get_status(&mut self) -> u8 {
         let scanline = self.timing.scanline();
         let pixel = self.timing.pixel();
+        // Scanline 241 on NTSC and PAL, 291 on a Dendy.
+        let vblank_start = self.timing.region().vblank_start_scanline;
 
         trace_ppu!(3; "ppustatus read y={} x={} status={:02X} w={} t={:04X} v={:04X}",
             scanline,
@@ -539,13 +541,13 @@ impl Ppu {
 
         // VBlank suppression quirk: if $2002 is read right as VBlank is being set,
         // the flag can be suppressed for the frame.
-        if scanline == 241 && (pixel == 0 || pixel == 1) {
+        if scanline == vblank_start && (pixel == 0 || pixel == 1) {
             self.vblank_suppressed_for_frame = true;
         }
 
         // NMI suppression quirk: reading $2002 on the VBlank NMI latch dot can prevent
         // the edge from being observed. The race ends before dot 3.
-        if scanline == 241 && pixel == 2 {
+        if scanline == vblank_start && pixel == 2 {
             self.status.clear_nmi();
         }
 
@@ -1866,6 +1868,61 @@ mod tests {
         // With suppression, the VBlank flag should still be clear.
         let status_after = ppu.get_status();
         assert_eq!(status_after & 0x80, 0);
+    }
+
+    /// PPU dots from power-on to dot 0 of the region's first VBlank scanline.
+    fn dots_to_vblank_start_scanline(timing_mode: TimingMode) -> u64 {
+        u64::from(timing_mode.region().vblank_start_scanline) * 341
+    }
+
+    /// nr-e1e: the $2002 races around VBlank start happen on the scanline VBlank starts on,
+    /// which is 291 on a Dendy, not 241. There, a read one dot before the flag is set
+    /// suppresses it for the frame, as it does on NTSC and PAL.
+    #[test]
+    fn test_status_read_at_vblank_set_time_suppresses_vblank_flag_in_every_region() {
+        for timing_mode in [TimingMode::Ntsc, TimingMode::Pal, TimingMode::Dendy] {
+            let mut ppu = Ppu::new_for_testing(timing_mode);
+            ppu.run_ppu_cycles(dots_to_vblank_start_scanline(timing_mode));
+
+            assert_eq!(ppu.get_status() & 0x80, 0, "{timing_mode:?}: dot 0");
+            ppu.run_ppu_cycles(1);
+
+            assert_eq!(
+                ppu.get_status() & 0x80,
+                0,
+                "{timing_mode:?}: the read on dot 0 suppresses the flag"
+            );
+        }
+    }
+
+    /// nr-e1e: a $2002 read on the dot after VBlank is set cancels that VBlank's NMI, on
+    /// the region's own VBlank scanline.
+    #[test]
+    fn test_status_read_on_vblank_dot_2_cancels_the_nmi_in_every_region() {
+        for timing_mode in [TimingMode::Ntsc, TimingMode::Pal, TimingMode::Dendy] {
+            let mut ppu = Ppu::new_for_testing(timing_mode);
+            ppu.write_control(0x80);
+            ppu.run_ppu_cycles(dots_to_vblank_start_scanline(timing_mode) + 2);
+
+            ppu.get_status();
+
+            assert!(!ppu.poll_nmi(), "{timing_mode:?}");
+        }
+    }
+
+    /// nr-e1e: clearing PPUCTRL's NMI bit on dot 2 of VBlank drops the NMI edge (blargg
+    /// ppu_vbl_nmi 08), on the region's own VBlank scanline.
+    #[test]
+    fn test_disabling_nmi_on_vblank_dot_2_cancels_the_nmi_in_every_region() {
+        for timing_mode in [TimingMode::Ntsc, TimingMode::Pal, TimingMode::Dendy] {
+            let mut ppu = Ppu::new_for_testing(timing_mode);
+            ppu.write_control(0x80);
+            ppu.run_ppu_cycles(dots_to_vblank_start_scanline(timing_mode) + 2);
+
+            ppu.write_control(0x00);
+
+            assert!(!ppu.poll_nmi(), "{timing_mode:?}");
+        }
     }
 
     #[test]
