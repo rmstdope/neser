@@ -464,9 +464,10 @@ impl Nes {
         // (`NesCpu::Reset`) where NESER's reset runs 7, and its master clock starts a cycle
         // in. The 7 cycles stay, since the CPU cycle count and the APU's phase after reset
         // are what blargg's timing ROMs pin; the PPU instead gets the missing cycle's dots
-        // on top of the lead that puts every CPU read and write on Mesen2's dot. With a
-        // 1-dot lead, games polling $2002 for their first vblanks drifted a frame from
-        // Mesen2 (nr-f6o on NTSC, nr-e1e on PAL and Dendy).
+        // on top of the lead that puts every CPU read and write on Mesen2's dot (on PAL,
+        // within a fraction of a dot; see `RegionParams::power_on_ppu_lead`). With a 1-dot
+        // lead, games polling $2002 for their first vblanks drifted a frame from Mesen2
+        // (nr-f6o on NTSC, nr-e1e on PAL and Dendy).
         let lead = self.ppu.borrow().timing().region().power_on_ppu_lead;
         self.ppu.borrow_mut().run_ppu_cycles(lead);
     }
