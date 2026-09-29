@@ -4,7 +4,7 @@
 //! shared across all eight `BGnHOFS`/`BGnVOFS` writes. The 10-bit scroll value is rebuilt on each
 //! write per the fullsnes formula.
 
-use super::{CGRAM_SIZE, Ppu, VRAM_SIZE};
+use super::{BG_FETCH_COLUMNS, BG_FETCH_LAST_DOT, CGRAM_SIZE, Ppu, VISIBLE_LINE_START, VRAM_SIZE};
 
 /// A front-to-back priority slot in the Background Priority Chart: either a BG layer at a given
 /// tile-priority, or an OBJ priority level (0-3).
@@ -63,10 +63,61 @@ impl Ppu {
 
     /// Handle a write to `BGnVOFS` (vertical scroll, write-twice via the shared BG_old latch):
     /// `vofs = (data << 8) | bg_old`.
+    ///
+    /// The new value reaches only the tile columns of this line whose tilemap entry has not
+    /// been fetched yet ([`Ppu::first_unfetched_bg_column`]); the rest were fetched with the
+    /// old scroll and keep it until the next line (Mesen2 `GetTilemapData` stores `VScroll`
+    /// with the column it fetches).
     pub(super) fn write_bg_vofs(&mut self, bg: usize, value: u8) {
         let prev = self.bg_old as u16;
         self.bg_vofs[bg] = ((value as u16) << 8) | prev;
         self.bg_old = value;
+        let first = self.first_unfetched_bg_column(bg);
+        let vofs = self.bg_vofs[bg];
+        self.bg_vofs_fetched[bg][first..].fill(vofs);
+    }
+
+    /// Start a line's BG fetch: every tile column is fetched with the scroll in force now.
+    pub(super) fn refresh_bg_vofs_fetched(&mut self) {
+        for bg in 0..4 {
+            self.bg_vofs_fetched[bg] = [self.bg_vofs[bg]; BG_FETCH_COLUMNS];
+        }
+    }
+
+    /// The first tile column of layer `bg` whose tilemap entry is still to be fetched on
+    /// this line, or [`BG_FETCH_COLUMNS`] when the line's fetch is over.
+    ///
+    /// Column `k` is read at dot `8k + slot`, where the slot is the layer's place in its
+    /// mode's 8-dot fetch pattern (Mesen2 `SnesPpu::FetchTileData`). Outside the drawn
+    /// lines nothing is being rendered, so every column takes the new value at once.
+    fn first_unfetched_bg_column(&self, bg: usize) -> usize {
+        let line = self.position.scanline;
+        if line < VISIBLE_LINE_START || line >= self.vblank_start_line() {
+            return 0;
+        }
+        let dot = self.position.dot;
+        if dot > BG_FETCH_LAST_DOT {
+            return BG_FETCH_COLUMNS;
+        }
+        let slot: u16 = match (self.bg_mode, bg) {
+            (0, _) => 3 - bg as u16,
+            (1, 0..=2) => 2 - bg as u16,
+            (2..=6, 0..=1) => 1 - bg as u16,
+            // A layer the mode does not fetch is never drawn, so any slot will do.
+            _ => 0,
+        };
+        if dot < slot {
+            return 0;
+        }
+        (usize::from((dot - slot) / 8) + 1).min(BG_FETCH_COLUMNS)
+    }
+
+    /// Layer `bg`'s vertical scroll for native pixel `x`, as its tile column was fetched.
+    /// The column is chosen with the live fine horizontal scroll, as Mesen2's
+    /// `RenderTilemap` does (`lookupIndex = (x + (HScroll & 7)) >> 3`).
+    fn fetched_bg_vofs(&self, bg: usize, x: u16) -> u16 {
+        let column = usize::from((x + (self.bg_hofs[bg] & 7)) >> 3);
+        self.bg_vofs_fetched[bg][column.min(BG_FETCH_COLUMNS - 1)]
     }
 
     /// Resolve the front-most main- and sub-screen pixels at visible screen `(x, y)`.
@@ -714,7 +765,7 @@ impl Ppu {
                 real_y_chr = real_y_chr.wrapping_sub(m).wrapping_sub(field);
             }
         }
-        let vscroll = self.bg_vofs[bg] & 0x03FF;
+        let vscroll = self.fetched_bg_vofs(bg, hx >> 1) & 0x03FF;
         let mut voffset_map = real_y_map.wrapping_add(vscroll) & 0x03FF;
         let mut voffset_chr = real_y_chr.wrapping_add(vscroll) & 0x03FF;
 
@@ -748,11 +799,12 @@ impl Ppu {
 
     /// The layer's vertical scroll with the mosaic block-hold subtraction applied
     /// (fullsnes: "subtract the vertical index from the vertical scroll register").
-    fn bg_vscroll(&self, bg: usize) -> u16 {
+    fn bg_vscroll(&self, bg: usize, x: u16) -> u16 {
+        let vofs = self.fetched_bg_vofs(bg, x);
         if self.mosaic_bg_enabled(bg) {
-            self.bg_vofs[bg].wrapping_sub(self.mosaic_vcount as u16)
+            vofs.wrapping_sub(self.mosaic_vcount as u16)
         } else {
-            self.bg_vofs[bg]
+            vofs
         }
     }
 
@@ -761,7 +813,7 @@ impl Ppu {
     /// to BG1/BG2. Algorithm follows bsnes (non-hires; Mode 5/6 hi-res output is #2766).
     fn effective_offsets(&self, bg: usize, x: u16, y: u16) -> (u16, u16) {
         let hscroll = self.bg_hofs[bg] & 0x03FF;
-        let vscroll = self.bg_vscroll(bg) & 0x03FF;
+        let vscroll = self.bg_vscroll(bg, x) & 0x03FF;
         // Framebuffer row `y` shows display line `y + 1` (line 0 is never rendered), and the BG
         // fetch adds BGnVOFS to the raw display line (ares fetchNameTable: vcounter() + vscroll;
         // Mesen2: realY = _scanline). Same convention as Mode 7's screen_y (mode7.rs).
@@ -3379,6 +3431,55 @@ mod tests {
                 split[boundary + 1..].iter().all(|&px| px == BLACK),
                 "write at {column}: columns rendered after it already see the new VRAM \
                  contents -- NESER samples VRAM per dot, with no fetch stage in between"
+            );
+        }
+    }
+
+    /// BGnVOFS is sampled when a tile column's tilemap entry is fetched, not when its
+    /// pixels are drawn (Mesen2 `GetTilemapData` stores `VScroll` with the column).
+    ///
+    /// The PPU fetches tile column `k` of a line during dots `8k..8k+7` (BG1's tilemap
+    /// read in mode 0 is at `8k+3`, `SnesPpu::FetchTileData`) and draws pixel `x` at dot
+    /// `x + 22`, so a column is fetched 15-22 dots before its first pixel is drawn. A
+    /// vertical scroll written mid-line therefore reaches only the columns fetched after
+    /// it. Top Gear writes BG2VOFS a byte at a time near the end of line 31 of its
+    /// split-screen race; drawing with the half-written value put a stripe of wrong
+    /// colours under the speed readout that Mesen2 does not show (nr-kis).
+    #[test]
+    fn a_mid_line_vofs_write_reaches_only_the_tile_columns_fetched_after_it() {
+        let render_with_vofs_write_at = |column: u16| {
+            let mut ppu = Ppu::new();
+            setup_white_bg1(&mut ppu);
+            tick_to_column(&mut ppu, column);
+            // VOFS = $0080 moves display line 1 to map row 16, which is all char 0
+            // (transparent, so the black backdrop shows).
+            ppu.write_register(0x210E, 0x80);
+            ppu.write_register(0x210E, 0x00);
+            render_lines(&mut ppu, 1);
+            ppu.screen_snapshot_rgb()
+        };
+
+        // Write at column 228 = dot 250. Column 30's tilemap read is at dot 243 and
+        // column 31's at 251, so pixels 0..=247 keep the old scroll and 248.. take the
+        // new one. A second split point shows the boundary follows the write: column
+        // 100 = dot 122, after column 14's read (115) and before column 15's (123).
+        for (column, first_new) in [(228u16, 248usize), (100, 120)] {
+            let rgb = render_with_vofs_write_at(column);
+            let row0: Vec<_> = (0..256).map(|x| pixel(&rgb, x, 0)).collect();
+            assert!(
+                row0[..first_new].iter().all(|&px| px == WHITE),
+                "write at column {column}: pixels 0..{first_new} belong to tile columns \
+                 fetched before the write and must keep the old scroll (white)"
+            );
+            assert!(
+                row0[first_new..].iter().all(|&px| px == BLACK),
+                "write at column {column}: pixels {first_new}.. belong to tile columns \
+                 fetched after the write and must use the new scroll (black)"
+            );
+            // The next line fetches every column afresh with the new value.
+            assert!(
+                (0..256).all(|x| pixel(&rgb, x, 1) == BLACK),
+                "write at column {column}: the next line must use the new scroll throughout"
             );
         }
     }
