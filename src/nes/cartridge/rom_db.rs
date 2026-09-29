@@ -283,8 +283,11 @@ impl RomDb {
 
     /// Return the default Zapper controller port for a ROM CRC.
     ///
-    /// Returns 2 for ZAPPER_4017 and TWO_ZAPPERS, 1 for ZAPPER_4016 and the Vs. Zapper
-    /// (Vs. Duck Hunt reads its gun from $4016, as Mesen2 wires it: nr-046), otherwise 0.
+    /// Returns 2 for ZAPPER_4017 and TWO_ZAPPERS, 1 for ZAPPER_4016 and the Vs. Zapper,
+    /// otherwise 0. The NESdev Zapper page gives the Vs. Zapper's serial report but not its
+    /// port; Vs. Duck Hunt reads that report from $4016 and cannot be started ("aim and fire")
+    /// with the gun on $4017. Mesen2, the implementation reference, wires it the same way
+    /// (nr-046).
     pub fn default_zapper_on_port(&self, crc32: u32) -> u8 {
         match self
             .get_by_crc(crc32)

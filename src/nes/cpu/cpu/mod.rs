@@ -95,6 +95,12 @@ pub struct Cpu {
     ///
     /// This is used to model edge-case timing where certain instructions (notably taken
     /// non-page-crossing branches) ignore interrupts during their final clock.
+    ///
+    /// NMI is delayed here as well as IRQ, as the NESdev "CPU interrupts" page describes for
+    /// all interrupts. Mesen2 delays only IRQ, so games that wait for NMI in a branch loop
+    /// can drift from Mesen2 captures (Vs. Duck Hunt from frame ~950). The navigator chose
+    /// to keep the specification's behaviour in nr-046; Zap Ruder's X-tracking test also
+    /// depends on it.
     skip_interrupt_latch_this_cycle: bool,
 
     // DMC DMA state machine
