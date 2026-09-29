@@ -546,6 +546,67 @@ mod tests {
         }
     }
 
+    // --- Submapper 2 PRG-NVRAM (N-C88-1603, Dragon Ball Party) ---
+
+    /// Submapper 2 board as the real Dragon Ball Z 4-in-1 dump presents it: an iNES 1.0
+    /// header that says nothing about PRG-RAM, with the submapper supplied by the ROM database.
+    fn make_submapper2_mapper() -> Mapper83 {
+        Mapper83::new(
+            MapperContext::new_for_test(
+                83,
+                banked_data(8 * 1024, PRG_BANKS),
+                banked_data(1024, CHR_BANKS),
+                NametableLayout::Vertical,
+            )
+            .with_submapper(2)
+            .with_unspecified_prg_ram_size(),
+        )
+    }
+
+    /// NESdev INES Mapper 083: on 83.2 "the circuit board hardware around the ASIC forces
+    /// CPU $6000-$7FFF to PRG-RAM". Games 1-3 of Dragon Ball Z 4-in-1 need it to boot.
+    #[test]
+    fn submapper2_prg_ram_at_6000_is_readable_and_writable_on_the_cpu_bus() {
+        let mut mapper = make_submapper2_mapper();
+        mapper.write_prg(0x6000, 0x5A);
+        mapper.write_prg(0x7FFF, 0xA5);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0xFF), 0x5A);
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, 0xFF), 0xA5);
+    }
+
+    /// NESdev INES Mapper 083: 83.2 PRG Base bits 7..6 are PRG-RAM A14..A13, selecting one
+    /// 8 KiB window of 32 KiB PRG-NVRAM. The DBZ $B000/$B0FF aliases write the same register.
+    #[test]
+    fn submapper2_prg_ram_bank_is_selected_by_prg_base_bits_7_6() {
+        for select in [0x8000, 0xB000, 0xB0FF] {
+            let mut mapper = make_submapper2_mapper();
+            for bank in 0..4u8 {
+                mapper.write_prg(select, bank << 6);
+                mapper.write_prg(0x6123, 0x10 + bank);
+            }
+            for bank in 0..4u8 {
+                mapper.write_prg(select, bank << 6);
+                assert_eq!(
+                    mapper.read_prg_open_bus(0x6123, 0xFF),
+                    0x10 + bank,
+                    "PRG-RAM bank {bank} selected through ${select:04X} must hold its own byte"
+                );
+            }
+        }
+    }
+
+    /// PRG Base bits 7..6 select PRG-RAM only; the 32 KiB PRG-ROM bank ignores them.
+    #[test]
+    fn submapper2_prg_ram_bank_bits_do_not_change_prg_rom_bank() {
+        let mut mapper = make_submapper2_mapper();
+        mapper.write_prg(0xB000, 0xC0 | 0x03);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            6,
+            "32KB bank 3 starts at 8KB bank 6"
+        );
+    }
+
     // --- CHR 1KB mode banking ---
 
     #[test]
