@@ -21,3 +21,30 @@ headlessly that the game gets from power-on into play before fixing the named in
 
 ## Seen before
 No.
+
+# nr-use — a desktop-only key fix failed verification on the web shell
+
+## What happened
+The second pass made 6 insert a coin on desktop, and verification then ran on desktop and web.
+Desktop passed. On web, pressing 6 did nothing, because the web shell had never bound a Vs. coin
+key. Its key tables stop at Select/Start and 9/0, and `WasmNes` exposed no coin insert. The
+acceptance said "On desktop", so the second pass never looked at `web/src/app.ts`.
+
+## Why
+The two shells have separate key tables: `src/frontends/native/keyboard/controller_mapping.rs`
+and `keyToButtonController1/2` in `web/src/app.ts`. The core also reaches the page only through
+`#[wasm_bindgen]` methods on `WasmNes`. A core input API added for desktop does not reach web
+unless someone exports and binds it there. The Vs. service button (`-`) is still desktop-only.
+
+## Cost
+A third failed verification and a third bugfix pass.
+
+## Prevent by
+When a bead changes what a key or input does, grep `web/src/app.ts` and `src/frontends/web/wasm.rs`
+for the binding as well as the native mapping. Say in the PR body whether web is covered, even
+when the acceptance names only desktop. A host `#[test]` inside `wasm.rs` cannot call `load_rom`:
+it reports to the page and aborts with "function not implemented on non-wasm32 targets". Insert
+the cartridge through `web.core_mut()` and step frames with `run_until_frame_ready` instead.
+
+## Seen before
+The pass above: the first two passes each fixed only the input the report named.
