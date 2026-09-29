@@ -383,6 +383,7 @@ impl Ppu {
         self.sprites.reset(soft_reset, ram_init_mode);
         self.prev_a12 = false;
         self.recent_pixels = [None, None];
+        self.vram_increment_pending = false;
     }
 
     pub fn io_bus(&self) -> u8 {
@@ -1104,6 +1105,8 @@ impl Ppu {
 
     /// Restore PPU state from a save-state.
     fn restore_state_inner(&mut self, state: &PpuState) {
+        // A restored v replaces whatever a pending $2007 increment was meant for.
+        self.vram_increment_pending = false;
         // Restore timing
         self.timing.restore_state(
             state.timing.scanline,
