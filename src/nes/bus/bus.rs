@@ -23,6 +23,10 @@ use std::cell::{Cell, RefCell};
 use std::io;
 use std::ops::RangeInclusive;
 
+/// Frames a VS System coin slot's line stays asserted after a coin is inserted,
+/// as Mesen2's `VsInputButtons::InsertCoinFrameCount`.
+pub const VS_COIN_PULSE_FRAMES: u8 = 4;
+
 /// Wrapper for controller state to support serialization.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ControllerStateWrapper {
@@ -98,6 +102,7 @@ pub struct Bus {
     expansion_zapper: Rc<RefCell<Zapper>>,              // Famicom expansion Zapper controller
     expansion_power_pad: Rc<RefCell<PowerPad>>,         // Famicom expansion Power Pad controller
     vs_arcade_input: Rc<Cell<u8>>,                      // VS System coin/service input state
+    vs_coin_frames_left: Cell<[u8; 2]>, // Frames each coin slot's line stays asserted
     vs_hardware_type: Option<crate::nes::cartridge::VsHardwareType>, // VS System hardware type from cartridge
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
@@ -163,6 +168,7 @@ impl Bus {
             expansion_zapper,
             expansion_power_pad,
             vs_arcade_input,
+            vs_coin_frames_left: Cell::new([0, 0]),
             vs_hardware_type: None,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
@@ -713,18 +719,43 @@ impl Bus {
         }
     }
 
-    /// Set VS System coin insert state for a specific slot (0 or 1).
-    pub fn set_vs_coin_insert(&self, slot: u8, pressed: bool) {
-        let bit = if slot == 0 {
+    /// Insert a coin into VS System coin slot 0 or 1.
+    ///
+    /// The slot's coin line is asserted now and stays asserted for
+    /// [`VS_COIN_PULSE_FRAMES`] frames, however long the key is held: games take a
+    /// line held much longer for a jammed coin and credit nothing (Vs. Duck Hunt
+    /// ignores ten frames or more). Mesen2 pulses the line for the same four frames.
+    pub fn insert_vs_coin(&self, slot: u8) {
+        let index = usize::from(slot.min(1));
+        let mut frames_left = self.vs_coin_frames_left.get();
+        frames_left[index] = VS_COIN_PULSE_FRAMES;
+        self.vs_coin_frames_left.set(frames_left);
+        self.vs_arcade_input
+            .set(self.vs_arcade_input.get() | Self::vs_coin_bit(index));
+    }
+
+    /// Count one finished frame against every coin pulse, dropping each slot's coin
+    /// line once its pulse has run out.
+    pub fn end_vs_coin_frame(&self) {
+        let mut frames_left = self.vs_coin_frames_left.get();
+        for (index, left) in frames_left.iter_mut().enumerate() {
+            if *left == 0 {
+                continue;
+            }
+            *left -= 1;
+            if *left == 0 {
+                self.vs_arcade_input
+                    .set(self.vs_arcade_input.get() & !Self::vs_coin_bit(index));
+            }
+        }
+        self.vs_coin_frames_left.set(frames_left);
+    }
+
+    fn vs_coin_bit(index: usize) -> u8 {
+        if index == 0 {
             VS_INPUT_COIN_SLOT1
         } else {
             VS_INPUT_COIN_SLOT2
-        };
-        let current = self.vs_arcade_input.get();
-        if pressed {
-            self.vs_arcade_input.set(current | bit);
-        } else {
-            self.vs_arcade_input.set(current & !bit);
         }
     }
 
