@@ -519,6 +519,7 @@ impl Nes {
 
         if self.ppu.borrow_mut().poll_frame_complete() {
             self.ready_to_render = true;
+            self.bus.borrow().end_vs_coin_frame();
         }
 
         let cycles_after = self.cpu.get_total_cycles();
@@ -676,9 +677,9 @@ impl Nes {
             .set_expansion_power_pad_button(button, pressed)
     }
 
-    /// Set VS System coin insert state for a specific slot (0 or 1).
-    pub fn set_vs_coin_insert(&self, slot: u8, pressed: bool) {
-        self.bus.borrow().set_vs_coin_insert(slot, pressed);
+    /// Insert a coin into VS System coin slot 0 or 1 (see [`Bus::insert_vs_coin`]).
+    pub fn insert_vs_coin(&self, slot: u8) {
+        self.bus.borrow().insert_vs_coin(slot);
     }
 
     /// Set VS System service button state.
@@ -1582,6 +1583,49 @@ mod tests {
         }
         assert_eq!(frames, 3, "the PPU finishes frames while the CPU is jammed");
         assert!(nes.cpu.is_halted(), "the CPU stays jammed until reset");
+    }
+
+    /// A Vs. System console running the minimal ROM with the header's Vs. bit set.
+    fn vs_system_nes() -> Nes {
+        let mut rom = create_minimal_rom();
+        rom[7] |= 0x01; // Flags 7: Vs. UniSystem
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(load_test_cartridge(&rom));
+        nes.reset(true);
+        assert_eq!(
+            nes.app_context.borrow().config().nes.expansion_port,
+            crate::nes::console::ExpansionPort::VsSystem,
+            "precondition: the Vs. header bit selects the Vs. System inputs"
+        );
+        nes
+    }
+
+    /// Runs `frames` frames and counts those in which $4016 reported coin slot 1 (bit 5).
+    fn frames_with_coin_slot1(nes: &mut Nes, frames: usize) -> usize {
+        let mut with_coin = 0;
+        for _ in 0..frames {
+            if nes.bus.borrow_mut().read(0x4016, false) & 0x20 != 0 {
+                with_coin += 1;
+            }
+            while !nes.is_ready_to_render() {
+                nes.run_cpu_tick();
+            }
+            nes.clear_ready_to_render();
+        }
+        with_coin
+    }
+
+    /// Vs. Duck Hunt (nr-use) credits a coin only when the coin line is asserted for a
+    /// few frames: held for ten or more it reads as a jammed coin and is ignored. So, as in
+    /// Mesen2 (`VsInputButtons::InsertCoinFrameCount`), inserting a coin asserts the line
+    /// for four frames and then drops it by itself.
+    #[test]
+    fn test_vs_coin_insert_asserts_the_coin_line_for_four_frames() {
+        let mut nes = vs_system_nes();
+        nes.insert_vs_coin(0);
+        assert_eq!(frames_with_coin_slot1(&mut nes, 30), 4);
     }
 
     #[test]

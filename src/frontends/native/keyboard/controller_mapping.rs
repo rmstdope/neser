@@ -153,7 +153,12 @@ pub(super) fn handle_controller_key(
         KeyCode::KeyP => btn_p2(nes, Button::B, pressed, ports),
 
         // ── VS System: coin insert / service button ──────────────────────
-        KeyCode::Digit6 => nes.set_vs_coin_insert(0, pressed),
+        // A press inserts one coin; the core times the coin pulse, so the release is moot.
+        KeyCode::Digit6 => {
+            if pressed {
+                nes.insert_vs_coin(0);
+            }
+        }
         KeyCode::Minus => nes.set_vs_service_button(pressed),
 
         _ => {}
@@ -268,6 +273,71 @@ mod tests {
         assert_eq!(super::snes_key_to_button_id(KeyCode::KeyY), Some(10)); // X
         assert_eq!(super::snes_key_to_button_id(KeyCode::KeyG), Some(11)); // Y
         assert_eq!(super::snes_key_to_button_id(KeyCode::F1), None);
+    }
+
+    // ── VS System coin key ────────────────────────────────────────────────────
+
+    /// A VS System console with a NOP cartridge, so that frames run.
+    fn make_vs_console() -> crate::platform::emulator::Console {
+        use crate::nes::console::{Config, ExpansionPort, Nes, NesConfig};
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config {
+                nes: NesConfig {
+                    expansion_port: ExpansionPort::VsSystem,
+                    ..Default::default()
+                },
+                ..Config::default()
+            },
+        ));
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        prg_rom[0x7FFD] = 0x80; // reset vector $8000
+        nes.insert_cartridge(crate::nes::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::nes::cartridge::NametableLayout::Horizontal,
+        ));
+        nes.reset(true);
+        crate::platform::emulator::Console::Nes(Box::new(nes))
+    }
+
+    /// Runs `frames` frames and counts those in which $4016 reported coin slot 1 (bit 5).
+    fn frames_with_coin_slot1(
+        console: &mut crate::platform::emulator::Console,
+        frames: usize,
+    ) -> usize {
+        let nes = console.as_nes_mut().expect("NES console");
+        let mut with_coin = 0;
+        for _ in 0..frames {
+            if nes.bus().borrow_mut().read(0x4016, false) & 0x20 != 0 {
+                with_coin += 1;
+            }
+            while !nes.is_ready_to_render() {
+                nes.run_cpu_tick();
+            }
+            nes.clear_ready_to_render();
+        }
+        with_coin
+    }
+
+    /// nr-use: a person holds the coin key (6) for many frames, and Vs. Duck Hunt reads a
+    /// coin line held ten frames or more as a jammed coin. Holding 6 must still insert
+    /// exactly one coin: a four-frame pulse, as Mesen2 gives.
+    #[test]
+    fn test_holding_6_pulses_the_vs_coin_line_for_four_frames() {
+        let mut console = make_vs_console();
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::Digit6, &mut state, None);
+        assert_eq!(frames_with_coin_slot1(&mut console, 30), 4);
+    }
+
+    /// A tap of 6 released before the next frame still inserts a coin.
+    #[test]
+    fn test_tapping_6_pulses_the_vs_coin_line_for_four_frames() {
+        let mut console = make_vs_console();
+        let mut state = make_state();
+        handle_key_pressed(&mut console, KeyCode::Digit6, &mut state, None);
+        handle_key_released(&mut console, KeyCode::Digit6, 0, false);
+        assert_eq!(frames_with_coin_slot1(&mut console, 30), 4);
     }
 
     // ── Player 1 standard button mapping ──────────────────────────────────────
