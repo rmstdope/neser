@@ -1,6 +1,7 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
+    applyVsCoinKey,
     gbaKeyboardButtonForEvent,
     snesKeyboardButtonForEvent
 } from "./keyboard_mapping";
@@ -57,4 +58,35 @@ it("maps SNES keyboard system and d-pad buttons", () => {
 it("ignores unmapped keys for SNES keyboard mapping", () => {
     expect(snesKeyboardButtonForEvent(event("f", "KeyF"))).toBeNull();
     expect(snesKeyboardButtonForEvent(event(" ", "Space"))).toBeNull();
+});
+
+describe("Vs. System coin key (nr-use)", () => {
+    function coinTarget() {
+        const slots: number[] = [];
+        return { slots, insert_vs_coin: (slot: number) => { slots.push(slot); } };
+    }
+
+    function key(k: string, repeat = false): Pick<KeyboardEvent, "key" | "repeat"> {
+        return { key: k, repeat };
+    }
+
+    it("inserts one coin into slot 1 when 6 is pressed, as on desktop", () => {
+        const nes = coinTarget();
+        expect(applyVsCoinKey(nes, key("6"), true)).toBe(true);
+        expect(nes.slots).toEqual([0]);
+    });
+
+    it("inserts no further coin while 6 is held and repeats, nor on release", () => {
+        const nes = coinTarget();
+        applyVsCoinKey(nes, key("6"), true);
+        expect(applyVsCoinKey(nes, key("6", true), true)).toBe(true);
+        expect(applyVsCoinKey(nes, key("6"), false)).toBe(true);
+        expect(nes.slots).toEqual([0]);
+    });
+
+    it("leaves every other key alone", () => {
+        const nes = coinTarget();
+        expect(applyVsCoinKey(nes, key("5"), true)).toBe(false);
+        expect(nes.slots).toEqual([]);
+    });
 });

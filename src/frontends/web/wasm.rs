@@ -470,6 +470,13 @@ impl WasmNes {
         }
     }
 
+    /// Insert a coin into VS System coin slot 0 or 1: the coin line pulses for four
+    /// frames however long the key is held (see `Bus::insert_vs_coin`).
+    #[wasm_bindgen]
+    pub fn insert_vs_coin(&mut self, slot: u8) {
+        self.web.core().insert_vs_coin(slot);
+    }
+
     /// Set SNES button state for a controller.
     ///
     /// # Arguments
@@ -1118,5 +1125,33 @@ mod tests {
             .nes
             .expansion_port = crate::nes::console::ExpansionPort::Playchoice10;
         assert_eq!(wasm.get_expansion_port(), "playchoice10");
+    }
+
+    /// nr-use, failed on web: Vs. Duck Hunt needs a coin, and key 6 inserts one on desktop.
+    /// The web shell reaches the core only through `WasmNes`, so it must offer the same
+    /// coin insert: one call pulses coin slot 1 ($4016 bit 5) for four frames, as Mesen2.
+    #[test]
+    fn test_insert_vs_coin_pulses_the_coin_line_for_four_frames() {
+        let mut rom = vec![0u8; 16 + 16384 + 8192];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1; // 1 * 16KB PRG
+        rom[5] = 1; // 1 * 8KB CHR
+        rom[7] = 0x01; // Flags 7: Vs. UniSystem
+        // `load_rom` reports to the page and cannot run on the host, so insert directly.
+        let mut wasm = WasmNes::new();
+        let cart = Cartridge::load_from_file(&rom, "vs.nes", None).expect("the Vs. ROM loads");
+        wasm.web.core_mut().insert_cartridge(cart);
+        wasm.web.core_mut().reset(true);
+        assert_eq!(wasm.get_expansion_port(), "vs-system", "precondition");
+
+        wasm.insert_vs_coin(0);
+        let mut frames_with_coin = 0;
+        for _ in 0..30 {
+            if wasm.web.core().bus().borrow_mut().read(0x4016, false) & 0x20 != 0 {
+                frames_with_coin += 1;
+            }
+            wasm.run_until_frame_ready(); // what `render_frame` runs per frame
+        }
+        assert_eq!(frames_with_coin, 4);
     }
 }
