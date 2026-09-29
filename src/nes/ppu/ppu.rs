@@ -1372,6 +1372,44 @@ mod tests {
         assert_eq!(ppu.screen_buffer().get_pixel(0, 0), expected);
     }
 
+    /// Tick the PPU until the dot just processed is (`scanline`, `pixel`).
+    fn run_to_dot(ppu: &mut Ppu, scanline: u16, pixel: u16) {
+        while !(ppu.timing.scanline() == scanline && ppu.timing.pixel() == pixel) {
+            ppu.tick();
+        }
+    }
+
+    // "Toggling rendering takes effect approximately 3-4 dots after the write" (NESdev wiki,
+    // PPU registers, PPUMASK). Micro Machines disables rendering at dot 327 of scanline 107
+    // with v=$3F0F, then writes $2007: the scroll increment at the end of the line still
+    // runs, so v is $3F10 and the byte lands on the backdrop colour (nr-nwy; Mesen2
+    // `_prevRenderingEnabled` lags the write by two dots the same way).
+    #[test]
+    fn test_rendering_disable_at_dot_327_still_increments_coarse_x_at_end_of_line() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_mask(0x08);
+        run_to_dot(&mut ppu, 107, 327);
+        ppu.registers.set_v(0x3F0F);
+
+        ppu.write_mask(0x00);
+        run_to_dot(&mut ppu, 107, 340);
+
+        assert_eq!(ppu.registers.v(), 0x3F10);
+    }
+
+    #[test]
+    fn test_rendering_disable_well_before_end_of_line_stops_coarse_x_increment() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_mask(0x08);
+        run_to_dot(&mut ppu, 107, 320);
+        ppu.registers.set_v(0x3F0F);
+
+        ppu.write_mask(0x00);
+        run_to_dot(&mut ppu, 107, 340);
+
+        assert_eq!(ppu.registers.v(), 0x3F0F);
+    }
+
     #[test]
     fn test_mapper_ppu_scanline_is_called_on_scanline_boundaries() {
         let calls: Rc<RefCell<Vec<(u16, bool)>>> = Rc::new(RefCell::new(Vec::new()));

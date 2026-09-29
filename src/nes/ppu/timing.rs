@@ -69,6 +69,10 @@ pub struct Timing {
     rendering_enabled_d1: bool,
     /// Rendering-enabled state delayed by 2 PPU ticks.
     rendering_enabled_d2: bool,
+    /// The $2001 rendering-enabled state two ticks before the current one, as the odd-frame
+    /// skip and the v-register scroll updates see it. Recomputed at the start of every tick
+    /// from `rendering_enabled_d2`, so it is not part of the save state.
+    delayed_rendering_enabled: bool,
 }
 
 impl Timing {
@@ -82,6 +86,7 @@ impl Timing {
             frame_count: 0,
             rendering_enabled_d1: false,
             rendering_enabled_d2: false,
+            delayed_rendering_enabled: false,
         }
     }
 
@@ -97,6 +102,7 @@ impl Timing {
 
     fn rendering_enabled_for_odd_frame_skip(&mut self, rendering_enabled: bool) -> bool {
         let rendering_enabled_for_odd_skip = self.rendering_enabled_d2;
+        self.delayed_rendering_enabled = rendering_enabled_for_odd_skip;
         self.rendering_enabled_d2 = self.rendering_enabled_d1;
         self.rendering_enabled_d1 = rendering_enabled;
         rendering_enabled_for_odd_skip
@@ -179,6 +185,13 @@ impl Timing {
         // Note: rendering_enabled delays will be recalculated during emulation
         self.rendering_enabled_d1 = false;
         self.rendering_enabled_d2 = false;
+    }
+
+    /// Rendering enabled as the scroll logic sees it during the current tick: a $2001 write
+    /// reaches the v-register updates only on the third tick after it ("Toggling rendering
+    /// takes effect approximately 3-4 dots after the write", NESdev wiki, PPU registers).
+    pub fn delayed_rendering_enabled(&self) -> bool {
+        self.delayed_rendering_enabled
     }
 
     pub fn rendering_enabled_delays(&self) -> (bool, bool) {

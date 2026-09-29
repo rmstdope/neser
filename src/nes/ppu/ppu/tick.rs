@@ -193,9 +193,16 @@ fn tick_background(ppu: &mut Ppu) {
     let pixel = ppu.timing.pixel();
     let prerender = ppu.timing.region().prerender_scanline;
     let is_rendering_enabled = ppu.registers.is_rendering_enabled();
+    // The v-register scroll updates see a $2001 toggle only a few dots after the write
+    // (nr-nwy): Micro Machines disables rendering at dot 327 and relies on the end-of-line
+    // coarse X increment still running.
+    let is_scroll_enabled = ppu.timing.delayed_rendering_enabled();
     let is_visible_scanline = scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
     let is_prerender = scanline == prerender;
     let is_rendering_scanline = is_visible_scanline || is_prerender;
+    let is_shift_reload_pixel = pixel % 8 == 1
+        && pixel > FIRST_VISIBLE_PIXEL
+        && (pixel <= HORIZONTAL_BITS_COPY_PIXEL || pixel >= BG_PREFETCH_SHIFT_START);
 
     // Background rendering pipeline during rendering cycles
     // Fetches happen during pixels 1-256 (visible) and 321-336 (pre-fetch for next scanline)
@@ -265,13 +272,18 @@ fn tick_background(ppu: &mut Ppu) {
         // In our pixel numbering (pixel 1 = cycle 1), this is pixels 9, 17, 25, ..., 257
         // Also pre-fetch loads at pixels 329, 337 (cycles 329, 337)
         // Note: pixel 321 is % 8 == 1 but should NOT load (fetch not complete yet)
-        if pixel % 8 == 1
-            && pixel > FIRST_VISIBLE_PIXEL
-            && (pixel <= HORIZONTAL_BITS_COPY_PIXEL || pixel >= BG_PREFETCH_SHIFT_START)
-        {
+        if is_shift_reload_pixel {
             ppu.background.load_shift_registers(ppu.registers.v());
-            ppu.registers.increment_coarse_x();
         }
+    }
+
+    // Each reload is followed by the coarse X increment, on the delayed rendering flag.
+    if is_scroll_enabled && is_rendering_scanline && is_shift_reload_pixel {
+        ppu.registers.increment_coarse_x();
+    }
+
+    if is_rendering_enabled && is_rendering_scanline {
+        let cartridge = &ppu.cartridge;
 
         // During pre-fetch, shift happens during cycles 329-336 (8 shifts total)
         // Pixels 321-328: fetch first tile (no shifts)
@@ -292,7 +304,10 @@ fn tick_background(ppu: &mut Ppu) {
                 ppu.memory.read_nametable_mapped(addr, cartridge)
             });
         }
+    }
 
+    // Fine Y increment and horizontal copy, on the delayed rendering flag.
+    if is_scroll_enabled && is_rendering_scanline {
         // Handle scroll register updates during visible pixels
         if pixel == FINE_Y_INCREMENT_PIXEL {
             // Increment fine Y at end of visible scanline
