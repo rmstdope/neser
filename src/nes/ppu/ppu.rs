@@ -715,7 +715,9 @@ impl Ppu {
                 self.memory
                     .write_nametable_mapped(addr, value, &self.cartridge);
             }
-            0x3F00..=0x3FFF => {
+            // Palette RAM answers only to a $3Fxx address on the PPU bus, and while rendering
+            // that bus carries the rendering fetches, never v (nr-sjt).
+            0x3F00..=0x3FFF if !self.is_actively_rendering() => {
                 self.memory.write_palette(addr, value);
             }
             _ => {}
@@ -1953,6 +1955,43 @@ mod tests {
         ppu.set_debug_state(state);
         ppu.write_data(0x55);
         assert_eq!(*chr_writes.borrow(), vec![(0x1330, 0x55)]);
+    }
+
+    // nr-sjt: Capcom 30-in-1 turns rendering on at dot 69 of the pre-render line, then points
+    // v at $3F00 and uploads its palette through $2007. During rendering a $2007 write goes to
+    // "an unpredictable address in VRAM" (NESdev, PPU registers: PPUDATA), the one on the bus,
+    // which carries the rendering fetches; palette RAM answers only to a $3Fxx bus address
+    // (Mesen2 NesPpu.cpp writes palette RAM from _ppuBusAddress, never from v). NESER wrote
+    // the palette at v, so the menu showed where Mesen2 keeps the power-on grey.
+    #[test]
+    fn test_ppudata_write_during_rendering_does_not_reach_palette_ram() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_mask(0x18);
+        ppu.run_ppu_cycles(261 * 341 + 117); // pre-render line, dot 117
+        assert!(ppu.is_actively_rendering());
+        let before = ppu.memory.read_palette(0x3F01);
+
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x3F01;
+        ppu.set_debug_state(state);
+        ppu.write_data(0x21);
+
+        assert_eq!(ppu.memory.read_palette(0x3F01), before);
+    }
+
+    #[test]
+    fn test_ppudata_write_in_vblank_reaches_palette_ram() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_mask(0x18);
+        ppu.run_ppu_cycles(245 * 341 + 117);
+        assert!(!ppu.is_actively_rendering());
+
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x3F01;
+        ppu.set_debug_state(state);
+        ppu.write_data(0x21);
+
+        assert_eq!(ppu.memory.read_palette(0x3F01), 0x21);
     }
 
     #[test]
