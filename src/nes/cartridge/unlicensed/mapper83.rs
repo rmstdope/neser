@@ -1,7 +1,8 @@
 //! Mapper 083 – Caltron 6-in-1 / bootleg multicart
 //!
 //! Specifications:
-//! - Fallback: Mesen2 `Mapper83.h` (NesDev unavailable)
+//! - NESdev: <https://www.nesdev.org/wiki/INES_Mapper_083> (submapper 2 PRG-NVRAM)
+//! - Fallback: Mesen2 `Mapper83.h`
 //!
 //! Known Limitations:
 //! - DIP switches are not emulated: the CPU reads $5000 as open bus with D1..D0
@@ -21,6 +22,8 @@ use crate::nes::cartridge::mapper::{Mapper, MapperCapabilities};
 /// - CHR: Up to 2048 KiB; 8 × 1 KiB switchable slots ($0000–$1FFF)
 /// - Mirroring: Programmable (V/H/1A/1B) via $8100 bits[1:0]
 /// - IRQ: 16-bit CPU-cycle down-counter; fires on reach-0, auto-disables.
+/// - PRG-RAM: submapper 2 (N-C88-1603, Dragon Ball Party) only: 32 KiB PRG-NVRAM always at
+///   $6000–$7FFF, 8 KiB window selected by bank-register bits[7:6] (NESdev).
 ///
 /// PRG layout (8KB mode):
 /// ```text
@@ -99,18 +102,31 @@ impl Mapper83 {
     const BANK_GROUP_MASK: u8 = 0x30; // bank bits [5:4] used for CHR ext and PRG group
     const PRG_BANK_MASK: u8 = 0x3F; // bank bits [5:0] for 32KB base bank
     const PRG_LAST_GROUP_MASK: u8 = 0x0F; // last bank within a 32KB group
+    const PRG_RAM_BANK_SHIFT: u8 = 6; // submapper 2: bank bits [7:6] = PRG-RAM A14..A13
+    const PRG_RAM_WINDOW_SIZE: usize = 0x2000; // 8 KiB at $6000-$7FFF
+    /// Submapper 2 (N-C88-1603) carries 32 KiB of PRG-NVRAM.
+    const SUBMAPPER_2_PRG_RAM_BANKS_8K: u8 = 4;
     const IRQ_COUNTER_RESET: u16 = 0xFFFF;
     const SNAPSHOT_SIZE: usize = 22; // 7 header + 11 regs + 4 ex_regs
 
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        // Only the 83.2 board wires RAM to $6000-$7FFF; the others have none.
+        let prg_ram_banks_8k = if ctx.submapper == 2 {
+            Self::SUBMAPPER_2_PRG_RAM_BANKS_8K
+        } else {
+            0
+        };
         let capabilities = MapperCapabilities {
             has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
+            max_prg_ram_kb: prg_ram_banks_8k as usize * 8,
             ..Default::default()
         };
+        let mut ctx = ctx;
+        ctx.set_board_prg_ram(prg_ram_banks_8k);
         let mut base = BaseMapper::new(&ctx, capabilities);
         base.configure_prg_banking(Self::PRG_PAGE_SIZE);
         base.configure_chr_banking(Self::CHR_PAGE_SIZE);
@@ -184,6 +200,12 @@ impl Mapper83 {
         }
     }
 
+    /// Byte offset into PRG-RAM for a CPU address in $6000–$7FFF (submapper 2).
+    fn prg_ram_offset(&self, addr: u16) -> usize {
+        let bank = (self.bank >> Self::PRG_RAM_BANK_SHIFT) as usize;
+        bank * Self::PRG_RAM_WINDOW_SIZE + (addr as usize - 0x6000)
+    }
+
     fn update_state(&mut self) {
         self.apply_mirroring();
         self.apply_chr_banking();
@@ -207,6 +229,9 @@ impl Mapper for Mapper83 {
                 0x00
             }
             0x5100..=0x5103 => self.ex_regs[(addr & 0x03) as usize],
+            0x6000..=0x7FFF if self.base.has_prg_ram() => {
+                self.base.read_prg_ram_at_offset(self.prg_ram_offset(addr))
+            }
             0x8000..=0xFFFF => self.base.read_prg_rom(addr),
             _ => 0,
         }
@@ -230,6 +255,10 @@ impl Mapper for Mapper83 {
         match addr {
             0x5100..=0x5103 => {
                 self.ex_regs[(addr & 0x03) as usize] = value;
+            }
+            0x6000..=0x7FFF if self.base.has_prg_ram() => {
+                let offset = self.prg_ram_offset(addr);
+                self.base.write_prg_ram_at_offset(offset, value);
             }
             0x8000 => {
                 self.is_2k_bank = true;
@@ -542,6 +571,91 @@ mod tests {
                 mapper.read_chr(0x0000),
                 3,
                 "DBZ PRG alias ${alias:04X} must retain 1KB CHR banking"
+            );
+        }
+    }
+
+    // --- Submapper 2 PRG-NVRAM (N-C88-1603, Dragon Ball Party) ---
+
+    /// Submapper 2 board as the real Dragon Ball Z 4-in-1 dump presents it: an iNES 1.0
+    /// header that says nothing about PRG-RAM, with the submapper supplied by the ROM database.
+    fn make_submapper2_mapper() -> Mapper83 {
+        Mapper83::new(
+            MapperContext::new_for_test(
+                83,
+                banked_data(8 * 1024, PRG_BANKS),
+                banked_data(1024, CHR_BANKS),
+                NametableLayout::Vertical,
+            )
+            .with_submapper(2)
+            .with_unspecified_prg_ram_size(),
+        )
+    }
+
+    /// NESdev INES Mapper 083: on 83.2 "the circuit board hardware around the ASIC forces
+    /// CPU $6000-$7FFF to PRG-RAM". Games 1-3 of Dragon Ball Z 4-in-1 need it to boot.
+    #[test]
+    fn submapper2_prg_ram_at_6000_is_readable_and_writable_on_the_cpu_bus() {
+        let mut mapper = make_submapper2_mapper();
+        mapper.write_prg(0x6000, 0x5A);
+        mapper.write_prg(0x7FFF, 0xA5);
+        assert_eq!(mapper.read_prg_open_bus(0x6000, 0xFF), 0x5A);
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, 0xFF), 0xA5);
+    }
+
+    /// NESdev INES Mapper 083: 83.2 PRG Base bits 7..6 are PRG-RAM A14..A13, selecting one
+    /// 8 KiB window of 32 KiB PRG-NVRAM. The DBZ $B000/$B0FF aliases write the same register.
+    #[test]
+    fn submapper2_prg_ram_bank_is_selected_by_prg_base_bits_7_6() {
+        for select in [0x8000, 0xB000, 0xB0FF] {
+            let mut mapper = make_submapper2_mapper();
+            for bank in 0..4u8 {
+                mapper.write_prg(select, bank << 6);
+                mapper.write_prg(0x6123, 0x10 + bank);
+            }
+            for bank in 0..4u8 {
+                mapper.write_prg(select, bank << 6);
+                assert_eq!(
+                    mapper.read_prg_open_bus(0x6123, 0xFF),
+                    0x10 + bank,
+                    "PRG-RAM bank {bank} selected through ${select:04X} must hold its own byte"
+                );
+            }
+        }
+    }
+
+    /// PRG Base bits 7..6 select PRG-RAM only; the 32 KiB PRG-ROM bank ignores them.
+    #[test]
+    fn submapper2_prg_ram_bank_bits_do_not_change_prg_rom_bank() {
+        let mut mapper = make_submapper2_mapper();
+        mapper.write_prg(0xB000, 0xC0 | 0x03);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            6,
+            "32KB bank 3 starts at 8KB bank 6"
+        );
+    }
+
+    /// Only the 83.2 board wires RAM to $6000-$7FFF: every other submapper leaves it unmapped
+    /// even when an NES 2.0 header declares PRG-RAM.
+    #[test]
+    fn non_submapper2_boards_have_no_prg_ram_even_if_header_declares_it() {
+        for submapper in [0u8, 1, 3] {
+            let mut mapper = Mapper83::new(
+                MapperContext::new_for_test(
+                    83,
+                    banked_data(8 * 1024, PRG_BANKS),
+                    banked_data(1024, CHR_BANKS),
+                    NametableLayout::Vertical,
+                )
+                .with_submapper(submapper)
+                .with_prg_ram_banks(1),
+            );
+            mapper.write_prg(0x6000, 0x5A);
+            assert_eq!(
+                mapper.read_prg_open_bus(0x6000, 0xAB),
+                0xAB,
+                "submapper {submapper} must leave $6000 as open bus"
             );
         }
     }
