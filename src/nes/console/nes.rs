@@ -1763,17 +1763,65 @@ mod tests {
     /// Power on with zero RAM, run `vblank_poll_rom(nops)` until just after the first
     /// vblank has begun, and return the flag the program stores once its loop exits.
     fn first_vblank_seen(nops: usize) -> u8 {
+        // The first vblank starts at CPU cycle 27393; the loop takes 9 cycles a turn.
+        first_vblank_seen_on(crate::nes::console::HardwareModel::NesNtsc, nops, 27_450)
+    }
+
+    /// `first_vblank_seen` on `model`, running until CPU cycle `until`, just after that
+    /// region's first vblank has begun.
+    fn first_vblank_seen_on(
+        model: crate::nes::console::HardwareModel,
+        nops: usize,
+        until: u64,
+    ) -> u8 {
         let mut config = Config::default();
         config.frontend.ram_init_mode = crate::nes::console::RamInitMode::Zero;
+        config.nes.hardware_model = model;
         let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             config,
         ));
         nes.load_rom(&vblank_poll_rom(nops), "test.nes").unwrap();
-        // The first vblank starts at CPU cycle 27393; the loop takes 9 cycles a turn.
-        while nes.cpu_ref().get_total_cycles() < 27_450 {
+        assert_eq!(
+            nes.ppu.borrow().timing().region(),
+            model.timing_mode().region(),
+            "the console runs as {model:?}"
+        );
+        while nes.cpu_ref().get_total_cycles() < until {
             nes.run_cpu_tick();
         }
         nes.bus.borrow_mut().read(0x0300, false)
+    }
+
+    /// nr-e1e: PAL and Dendy games (Caveman Ninja, Knights of the Zodiac, Super Contra 7)
+    /// ran a frame apart from Mesen2 because NESER's PAL and Dendy power-on put the PPU
+    /// only 1 dot ahead of the CPU. The expected vblank at each padding is Mesen2 2.1.1's,
+    /// from the same program with a PAL NES 2.0 header: on PAL the poll sees the first
+    /// vblank at every padding from 0 to 15 NOPs.
+    #[test]
+    fn pal_power_on_lets_a_vblank_poll_see_the_vblank_mesen2_sees() {
+        // PAL's first vblank starts at CPU cycle 25682.
+        let seen: Vec<u8> = (0..16)
+            .map(|nops| {
+                first_vblank_seen_on(crate::nes::console::HardwareModel::NesPal, nops, 25_720)
+            })
+            .collect();
+        assert_eq!(seen, vec![1; 16], "first vblank seen, by NOP padding 0..15");
+    }
+
+    /// nr-e1e: as above on a Dendy, where Mesen2's poll lands on the suppressing dot 0 of
+    /// scanline 291 with 6 and with 15 NOPs of padding, and so misses the first vblank.
+    #[test]
+    fn dendy_power_on_lets_a_vblank_poll_see_the_vblank_mesen2_sees() {
+        // Dendy's first vblank starts at CPU cycle 33077.
+        let seen: Vec<u8> = (0..16)
+            .map(|nops| {
+                first_vblank_seen_on(crate::nes::console::HardwareModel::Dendy, nops, 33_110)
+            })
+            .collect();
+        let mut mesen2 = vec![1; 16];
+        mesen2[6] = 0;
+        mesen2[15] = 0;
+        assert_eq!(seen, mesen2, "first vblank seen, by NOP padding 0..15");
     }
 
     /// nr-f6o: Excitebike, Kung Fu and 62 other games ran one frame behind or ahead of

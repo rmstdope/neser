@@ -1868,6 +1868,61 @@ mod tests {
         assert_eq!(status_after & 0x80, 0);
     }
 
+    /// PPU dots from power-on to dot 0 of the region's first VBlank scanline.
+    fn dots_to_vblank_start_scanline(timing_mode: TimingMode) -> u64 {
+        u64::from(timing_mode.region().vblank_start_scanline) * 341
+    }
+
+    /// nr-e1e: the $2002 races around VBlank start happen on the scanline VBlank starts on,
+    /// which is 291 on a Dendy, not 241. There, a read one dot before the flag is set
+    /// suppresses it for the frame, as it does on NTSC and PAL.
+    #[test]
+    fn test_status_read_at_vblank_set_time_suppresses_vblank_flag_in_every_region() {
+        for timing_mode in [TimingMode::Ntsc, TimingMode::Pal, TimingMode::Dendy] {
+            let mut ppu = Ppu::new_for_testing(timing_mode);
+            ppu.run_ppu_cycles(dots_to_vblank_start_scanline(timing_mode));
+
+            assert_eq!(ppu.get_status() & 0x80, 0, "{timing_mode:?}: dot 0");
+            ppu.run_ppu_cycles(1);
+
+            assert_eq!(
+                ppu.get_status() & 0x80,
+                0,
+                "{timing_mode:?}: the read on dot 0 suppresses the flag"
+            );
+        }
+    }
+
+    /// nr-e1e: a $2002 read on the dot after VBlank is set cancels that VBlank's NMI, on
+    /// the region's own VBlank scanline.
+    #[test]
+    fn test_status_read_on_vblank_dot_2_cancels_the_nmi_in_every_region() {
+        for timing_mode in [TimingMode::Ntsc, TimingMode::Pal, TimingMode::Dendy] {
+            let mut ppu = Ppu::new_for_testing(timing_mode);
+            ppu.write_control(0x80);
+            ppu.run_ppu_cycles(dots_to_vblank_start_scanline(timing_mode) + 2);
+
+            ppu.get_status();
+
+            assert!(!ppu.poll_nmi(), "{timing_mode:?}");
+        }
+    }
+
+    /// nr-e1e: clearing PPUCTRL's NMI bit on dot 2 of VBlank drops the NMI edge (blargg
+    /// ppu_vbl_nmi 08), on the region's own VBlank scanline.
+    #[test]
+    fn test_disabling_nmi_on_vblank_dot_2_cancels_the_nmi_in_every_region() {
+        for timing_mode in [TimingMode::Ntsc, TimingMode::Pal, TimingMode::Dendy] {
+            let mut ppu = Ppu::new_for_testing(timing_mode);
+            ppu.write_control(0x80);
+            ppu.run_ppu_cycles(dots_to_vblank_start_scanline(timing_mode) + 2);
+
+            ppu.write_control(0x00);
+
+            assert!(!ppu.poll_nmi(), "{timing_mode:?}");
+        }
+    }
+
     #[test]
     fn test_vblank_suppression_still_marks_frame_complete() {
         // When $2002 is read just before VBlank (suppressing the VBlank flag),
