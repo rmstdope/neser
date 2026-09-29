@@ -283,16 +283,18 @@ impl RomDb {
 
     /// Return the default Zapper controller port for a ROM CRC.
     ///
-    /// Returns 2 when the ROM DB entry exists and expansion type is ZAPPER_4017,
-    /// otherwise returns 0.
+    /// Returns 2 for ZAPPER_4017 and TWO_ZAPPERS, 1 for ZAPPER_4016 and the Vs. Zapper,
+    /// otherwise 0. The NESdev Zapper page gives the Vs. Zapper's serial report but not its
+    /// port; Vs. Duck Hunt reads that report from $4016 and cannot be started ("aim and fire")
+    /// with the gun on $4017. Mesen2, the implementation reference, wires it the same way
+    /// (nr-046).
     pub fn default_zapper_on_port(&self, crc32: u32) -> u8 {
         match self
             .get_by_crc(crc32)
             .and_then(|entry| entry.expansion_type)
         {
-            Some(ExpansionType::Zapper4017) => 2,
-            Some(ExpansionType::VsZapper | ExpansionType::TwoZappers) => 2,
-            Some(ExpansionType::Zapper4016) => 1,
+            Some(ExpansionType::Zapper4017 | ExpansionType::TwoZappers) => 2,
+            Some(ExpansionType::VsZapper | ExpansionType::Zapper4016) => 1,
             _ => 0,
         }
     }
@@ -633,7 +635,7 @@ mod tests {
         let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,7\n";
         let db = RomDb::from_csv_content(csv);
 
-        assert_eq!(db.default_zapper_on_port(0x24598791), 2);
+        assert_eq!(db.default_zapper_on_port(0x24598791), 1);
     }
 
     #[test]

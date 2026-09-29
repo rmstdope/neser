@@ -2886,6 +2886,30 @@ mod tests {
     }
 
     #[test]
+    fn vs_duck_hunt_reports_its_zapper_on_4016() {
+        // Vs. Duck Hunt (ABE1A0C2) is listed with the Vs. Zapper (NES 2.0 expansion $07). The
+        // game collects the gun's report from $4016, as Mesen2 wires it (nr-046); on $4017 its
+        // attract demo drifts from Mesen2's because the input bytes it stores differ.
+        let mut rom = create_minimal_nrom_rom();
+        rom[7] |= 0x01; // iNES flags 7: Vs. UniSystem, as the real image's header says
+        let mut cartridge = load_test_cartridge(&rom);
+        cartridge.set_crc32_for_test(0xABE1_A0C2);
+        let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        nes.insert_cartridge(cartridge);
+
+        nes.bus.borrow_mut().write_for_testing(0x4016, 1);
+        nes.bus.borrow_mut().write_for_testing(0x4016, 0);
+        let report: Vec<u8> = (0..8)
+            .map(|_| nes.bus.borrow_mut().read(0x4016, false) & 0x01)
+            .collect();
+
+        // NESdev Zapper, Vs. System: 0, 0, 0, 0, 1, 0, light sense, trigger (no light, no pull).
+        assert_eq!(report, vec![0, 0, 0, 0, 1, 0, 0, 0]);
+    }
+
+    #[test]
     fn test_insert_cartridge_keeps_explicit_port2_when_zapper_detected() {
         let rom_data = create_minimal_nrom_rom();
         let mut cartridge = load_test_cartridge(&rom_data);
