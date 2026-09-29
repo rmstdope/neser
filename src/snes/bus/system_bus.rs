@@ -974,9 +974,9 @@ impl SnesSystemBus {
             base_clock,
             self.cpu_speed,
             // Standalone: this path is only reached from the CPU cycle hook, i.e. with no
-            // general-purpose transfer holding the bus, so the sync pads are paid. The nested
-            // case goes through `DmaController::run_nested_hdma` instead.
-            true,
+            // general-purpose transfer holding the bus. The nested case goes through
+            // `DmaController::run_nested_hdma` instead.
+            self.standalone_hdma_needs_sync(),
         );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
@@ -996,10 +996,18 @@ impl SnesSystemBus {
             base_clock,
             self.cpu_speed,
             // Standalone; see `hdma_init`.
-            true,
+            self.standalone_hdma_needs_sync(),
         );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
+    }
+
+    /// Whether an HDMA running outside a general-purpose transfer pays the SyncStartDma and
+    /// SyncEndDma pads: Mesen2's `needSync = !HasActiveDmaChannel()`. A `$420B` write arms its
+    /// channels' `DmaActive` at once, so an HDMA that runs in the start-delay window between
+    /// that write and the burst skips both pads, exactly as a nested one does (nr-4cl).
+    fn standalone_hdma_needs_sync(&self) -> bool {
+        self.pending_gpdma.is_none()
     }
 
     /// Run an armed `pending_hdma` slot (kind 0 = frame init, 1 = line transfer).
@@ -4003,6 +4011,42 @@ mod tests {
         );
         bus.gpdma_cycle_hook();
         assert_eq!(bus.read(0x7E0200), 0x5A, "runs at the second cycle entry");
+    }
+
+    #[test]
+    fn hdma_line_between_the_mdmaen_write_and_the_burst_skips_the_sync_pads() {
+        // nr-4cl: Mesen2 arms a channel's `DmaActive` on the `$420B` write itself, so an HDMA
+        // line that falls due in the start-delay window sees `needSync = !HasActiveDmaChannel()`
+        // false and pays neither SyncStartDma nor SyncEndDma -- only its 8-clock overhead
+        // (`ProcessHdmaChannels`). TMNT Tournament Fighters writes `$420B` on the very clock
+        // of the dot-276 trigger; the four extra pad clocks put its H-counter poll one
+        // iteration off Mesen2 and the attract demo's RNG diverged from there.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+        // HDMA channel 1 whose table ends at once: every line then charges only the
+        // envelope, which is what this test measures.
+        write_hdma_channel(&mut bus, 1, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x00);
+        bus.write(0x00420C, 0x02);
+        tick_until_master_clock(&mut bus, 1000); // frame init runs via the bus fallback
+        bus.gpdma_cycle_hook(); // a CPU now owns the cycle boundaries
+
+        tick_until_master_clock(&mut bus, 1104); // the scanline-0 line trigger arms
+        bus.write(0x704000, 0x5A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x704000, 1);
+        bus.write(0x00420B, 0x01);
+
+        bus.gpdma_cycle_hook(); // consumes the start delay of both
+        let before = bus.ppu.borrow().total_master_clocks();
+        bus.gpdma_cycle_hook(); // HDMA has priority and runs first
+        assert_eq!(
+            bus.ppu.borrow().total_master_clocks() - before,
+            8,
+            "an HDMA line in front of an armed GPDMA charges only its overhead"
+        );
+        assert_eq!(bus.read(0x7E0200), 0x00, "the burst has not started yet");
+        bus.gpdma_cycle_hook();
+        assert_eq!(bus.read(0x7E0200), 0x5A, "the burst runs at the next cycle");
     }
 
     /// Arms a one-byte GPDMA from cartridge SRAM `$704000` to WMDATA;
