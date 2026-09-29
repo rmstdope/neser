@@ -1278,6 +1278,8 @@ impl Ppu {
         self.vblank_suppressed_for_frame = state.vblank_suppressed_for_frame;
         self.vblank_for_nmi = state.vblank_for_nmi;
         self.prev_a12 = state.prev_a12;
+        // A replaced v replaces whatever a pending $2007 increment was meant for.
+        self.vram_increment_pending = false;
     }
 }
 
