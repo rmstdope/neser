@@ -49,6 +49,11 @@ pub(super) const OVERSCAN_CROP_TOP: usize = 7;
 pub(super) const VISIBLE_DOT_START: u16 = 22;
 /// First visible scanline (active display is lines 1..=224).
 pub(super) const VISIBLE_LINE_START: u16 = 1;
+/// Tile columns a BG fetches per line: 32 on screen plus one for the fine horizontal
+/// scroll (Mesen2 `FetchTileData` runs to H=263, column `263 >> 3 = 32`).
+pub(super) const BG_FETCH_COLUMNS: usize = 33;
+/// Last dot of a line at which BG tile data is fetched (Mesen2 `RenderScanline`).
+pub(super) const BG_FETCH_LAST_DOT: u16 = 263;
 
 /// PPU1 (5C77) version number reported in STAT77 ($213E).
 pub(super) const PPU1_VERSION: u8 = 1;
@@ -423,6 +428,11 @@ pub struct Ppu {
     bg_hofs: [u16; 4],
     /// Per-BG vertical scroll (10-bit), built via the shared BG_old write-twice latch.
     bg_vofs: [u16; 4],
+    /// `bg_vofs` as each tile column of the current line was fetched with it: the renderer
+    /// reads a column's vertical scroll from here, so a mid-line write reaches only the
+    /// columns fetched after it ([`Ppu::write_bg_vofs`]). Refreshed from `bg_vofs` at every
+    /// line start; derived, so not part of save states.
+    bg_vofs_fetched: [[u16; BG_FETCH_COLUMNS]; 4],
     /// Shared write-twice latch (BG_old) for the BGnHOFS/BGnVOFS registers.
     bg_old: u8,
     /// The last byte written to any BGnHOFS register, whose bits 0-2 become the next HOFS
@@ -591,6 +601,7 @@ impl Ppu {
             bg_char_base: [0; 4],
             bg_hofs: [0; 4],
             bg_vofs: [0; 4],
+            bg_vofs_fetched: [[0; BG_FETCH_COLUMNS]; 4],
             bg_old: 0,
             bg_old_hofs: 0,
             tm: 0,
