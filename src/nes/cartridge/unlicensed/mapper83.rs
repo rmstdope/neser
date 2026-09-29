@@ -636,6 +636,30 @@ mod tests {
         );
     }
 
+    /// Only the 83.2 board wires RAM to $6000-$7FFF: every other submapper leaves it unmapped
+    /// even when an NES 2.0 header declares PRG-RAM.
+    #[test]
+    fn non_submapper2_boards_have_no_prg_ram_even_if_header_declares_it() {
+        for submapper in [0u8, 1, 3] {
+            let mut mapper = Mapper83::new(
+                MapperContext::new_for_test(
+                    83,
+                    banked_data(8 * 1024, PRG_BANKS),
+                    banked_data(1024, CHR_BANKS),
+                    NametableLayout::Vertical,
+                )
+                .with_submapper(submapper)
+                .with_prg_ram_banks(1),
+            );
+            mapper.write_prg(0x6000, 0x5A);
+            assert_eq!(
+                mapper.read_prg_open_bus(0x6000, 0xAB),
+                0xAB,
+                "submapper {submapper} must leave $6000 as open bus"
+            );
+        }
+    }
+
     // --- CHR 1KB mode banking ---
 
     #[test]
