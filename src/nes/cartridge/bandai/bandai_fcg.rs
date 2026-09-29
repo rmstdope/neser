@@ -24,6 +24,10 @@
 //! - **EEPROM not implemented**: 24C02 EEPROM (register $800D) used for save data
 //!   in some games (Dragon Ball Z II/III, SD Gundam Gaiden) is not supported
 //! - Games requiring EEPROM cannot save progress
+//! - Reads of $6000 return PRG-RAM, so an EEPROM ACK poll always sees bit 4 clear. This is
+//!   why the English translation of Dragon Ball Z: Kyoushuu! Saiya-jin boots here and hangs
+//!   in Mesen2: its header says mapper 16, but the game speaks the 24C01 protocol of mapper
+//!   159, and a real 24C02 would NAK it. Adding the 24C02 will make that dump hang (nr-sjt).
 use crate::trace_mapper;
 
 use crate::nes::cartridge::BaseMapper;
