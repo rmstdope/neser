@@ -429,7 +429,7 @@ impl Ppu {
         // the VBlank NMI edge (blargg ppu_vbl_nmi 08).
         let is_disabling_nmi_at_vblank_nmi_latch_dot = nmi_was_enabled
             && !nmi_is_enabled
-            && self.timing.scanline() == 241
+            && self.timing.scanline() == self.timing.region().vblank_start_scanline
             && self.timing.pixel() == 2;
         if is_disabling_nmi_at_vblank_nmi_latch_dot {
             self.status.clear_nmi();
@@ -527,6 +527,8 @@ impl Ppu {
     pub fn get_status(&mut self) -> u8 {
         let scanline = self.timing.scanline();
         let pixel = self.timing.pixel();
+        // Scanline 241 on NTSC and PAL, 291 on a Dendy.
+        let vblank_start = self.timing.region().vblank_start_scanline;
 
         trace_ppu!(3; "ppustatus read y={} x={} status={:02X} w={} t={:04X} v={:04X}",
             scanline,
@@ -539,13 +541,13 @@ impl Ppu {
 
         // VBlank suppression quirk: if $2002 is read right as VBlank is being set,
         // the flag can be suppressed for the frame.
-        if scanline == 241 && (pixel == 0 || pixel == 1) {
+        if scanline == vblank_start && (pixel == 0 || pixel == 1) {
             self.vblank_suppressed_for_frame = true;
         }
 
         // NMI suppression quirk: reading $2002 on the VBlank NMI latch dot can prevent
         // the edge from being observed. The race ends before dot 3.
-        if scanline == 241 && pixel == 2 {
+        if scanline == vblank_start && pixel == 2 {
             self.status.clear_nmi();
         }
 

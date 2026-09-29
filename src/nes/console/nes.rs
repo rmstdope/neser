@@ -456,16 +456,17 @@ impl Nes {
         self.ready_to_render = false;
         self.recent_cpu_trace.clear();
 
-        // The PPU leads the CPU after any reset, soft or hard; on NTSC by 5 dots. The PPU
-        // restarts its timing on both, and NESER has always re-applied the same lead on
-        // each. How the CPU and PPU line up at power-on is left open by the specification (it varies between consoles),
-        // so NESER takes Mesen2's: its CPU runs 8 cycles before the first opcode
+        // The PPU leads the CPU after any reset, soft or hard, by the region's
+        // `power_on_ppu_lead` (5 dots on NTSC and Dendy, 6 on PAL). The PPU restarts its
+        // timing on both, and NESER has always re-applied the same lead on each. How the CPU
+        // and PPU line up at power-on is left open by the specification (it varies between
+        // consoles), so NESER takes Mesen2's: its CPU runs 8 cycles before the first opcode
         // (`NesCpu::Reset`) where NESER's reset runs 7, and its master clock starts a cycle
         // in. The 7 cycles stay, since the CPU cycle count and the APU's phase after reset
-        // are what blargg's timing ROMs pin; the PPU instead gets the missing cycle's 3 dots
-        // on top of the 2-dot lead that puts every CPU read and write on Mesen2's dot. With
-        // a 1-dot lead, games polling $2002 for their first vblanks drifted a frame from
-        // Mesen2 (nr-f6o).
+        // are what blargg's timing ROMs pin; the PPU instead gets the missing cycle's dots
+        // on top of the lead that puts every CPU read and write on Mesen2's dot. With a
+        // 1-dot lead, games polling $2002 for their first vblanks drifted a frame from
+        // Mesen2 (nr-f6o on NTSC, nr-e1e on PAL and Dendy).
         let lead = self.ppu.borrow().timing().region().power_on_ppu_lead;
         self.ppu.borrow_mut().run_ppu_cycles(lead);
     }

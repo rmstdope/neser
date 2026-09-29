@@ -30,8 +30,11 @@ pub struct RegionParams {
     /// Master-clock ticks consumed before the bus access within one CPU cycle.
     pub bus_start_clock: u64,
     /// PPU dots the PPU leads the CPU by after a reset. The specification leaves the
-    /// power-on CPU/PPU phase open (it varies between consoles). NTSC takes Mesen2's
-    /// (nr-f6o); PAL and Dendy keep the 1-dot lead they were tuned with.
+    /// power-on CPU/PPU phase open (it varies between consoles), so each region takes the
+    /// lead that puts CPU reads on Mesen2's dots: NTSC 5 (nr-f6o), PAL 6 and Dendy 5
+    /// (nr-e1e). On PAL, whose CPU cycle is 3.2 dots, a 6-dot lead also keeps blargg's
+    /// nmi_sync demo_pal inside the range its readme gives for any console after reset;
+    /// Mesen2's own PAL phase is a fraction of a dot away and falls outside it.
     pub power_on_ppu_lead: u64,
     pub scanlines_per_frame: u16,
     pub prerender_scanline: u16,
@@ -105,7 +108,7 @@ pub static PAL: RegionParams = RegionParams {
     cpu_divider: 16,
     ppu_divider: 5,
     bus_start_clock: 8,
-    power_on_ppu_lead: 1,
+    power_on_ppu_lead: 6,
     scanlines_per_frame: 312,
     prerender_scanline: 311,
     vblank_start_scanline: 241,
@@ -130,7 +133,7 @@ pub static DENDY: RegionParams = RegionParams {
     cpu_divider: 15,
     ppu_divider: 5,
     bus_start_clock: 7,
-    power_on_ppu_lead: 1,
+    power_on_ppu_lead: 5,
     scanlines_per_frame: 312,
     prerender_scanline: 311,
     vblank_start_scanline: 291,
