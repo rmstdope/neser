@@ -1491,6 +1491,7 @@ mod tests {
         run_to_dot(&mut ppu, prerender, 257);
 
         assert_eq!(ppu.registers.v() & 0x041F, 0x0000);
+    }
 
     /// A $2007 write during forced blank moves v on one PPU cycle late: the pixel
     /// drawn in the cycle right after the write still shows the colour at the address
