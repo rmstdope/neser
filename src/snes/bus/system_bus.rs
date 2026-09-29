@@ -982,10 +982,10 @@ impl SnesSystemBus {
         self.dma = dma;
     }
 
-    /// Run the per-scanline HDMA transfer. The full hardware envelope
-    /// (SyncStartDma pad, per-slot bus advance, direct B-bus writes at their
-    /// true clocks, SyncEndDma pad) runs live via `dma_tick`, so the returned
-    /// tick total must not be added to `self.ticks` again.
+    /// Run the per-scanline HDMA transfer. The hardware envelope (SyncStartDma pad, per-slot
+    /// bus advance, direct B-bus writes at their true clocks, SyncEndDma pad) runs live via
+    /// `dma_tick`, so the returned tick total must not be added to `self.ticks` again. The two
+    /// pads are paid only when [`Self::standalone_hdma_needs_sync`] says so.
     pub fn hdma_do_line(&mut self) {
         let base_clock = self.ppu.borrow().total_master_clocks();
         let mut dma = std::mem::take(&mut self.dma);
@@ -1003,9 +1003,11 @@ impl SnesSystemBus {
     }
 
     /// Whether an HDMA running outside a general-purpose transfer pays the SyncStartDma and
-    /// SyncEndDma pads: Mesen2's `needSync = !HasActiveDmaChannel()`. A `$420B` write arms its
-    /// channels' `DmaActive` at once, so an HDMA that runs in the start-delay window between
-    /// that write and the burst skips both pads, exactly as a nested one does (nr-4cl).
+    /// SyncEndDma pads: Mesen2's `needSync = !HasActiveDmaChannel()`. Mesen2 arms `DmaActive`
+    /// on the `$420B` write, so an HDMA that runs in the start-delay window between that write
+    /// and the burst skips both pads, exactly as a nested one does (nr-4cl). Here an armed
+    /// `pending_gpdma` stands in for that flag, for this decision only: the channel
+    /// cancellation such an HDMA also performs in Mesen2 is not modelled (nr-3qn).
     fn standalone_hdma_needs_sync(&self) -> bool {
         self.pending_gpdma.is_none()
     }
@@ -4043,6 +4045,37 @@ mod tests {
             bus.ppu.borrow().total_master_clocks() - before,
             8,
             "an HDMA line in front of an armed GPDMA charges only its overhead"
+        );
+        assert_eq!(bus.read(0x7E0200), 0x00, "the burst has not started yet");
+        bus.gpdma_cycle_hook();
+        assert_eq!(bus.read(0x7E0200), 0x5A, "the burst runs at the next cycle");
+    }
+
+    #[test]
+    fn hdma_frame_init_between_the_mdmaen_write_and_the_burst_skips_the_sync_pads() {
+        // nr-4cl, the frame-init half: Mesen2's `InitHdmaChannels` takes the same
+        // `needSync = !HasActiveDmaChannel()` decision as the line transfer.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+        // One enabled channel whose table ends at once: the init reads one byte.
+        write_hdma_channel(&mut bus, 1, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x00);
+        bus.write(0x00420C, 0x02);
+        bus.gpdma_cycle_hook(); // a CPU owns the cycle boundaries; nothing is pending yet
+        while bus.pending_hdma.is_none() {
+            bus.tick(); // up to the scanline-0 frame-init trigger
+        }
+        bus.write(0x704000, 0x5A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x704000, 1);
+        bus.write(0x00420B, 0x01);
+
+        bus.gpdma_cycle_hook(); // consumes the start delay of both
+        let before = bus.ppu.borrow().total_master_clocks();
+        bus.gpdma_cycle_hook(); // the frame init runs first
+        assert_eq!(
+            bus.ppu.borrow().total_master_clocks() - before,
+            8 + 8,
+            "overhead plus one table read, and no sync pads, in front of an armed GPDMA"
         );
         assert_eq!(bus.read(0x7E0200), 0x00, "the burst has not started yet");
         bus.gpdma_cycle_hook();
