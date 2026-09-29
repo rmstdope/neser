@@ -160,6 +160,14 @@ pub struct Ppu {
     update_vram_addr_delay: u8,
     /// The pending VRAM address value when a delayed v=t update is active.
     pending_vram_addr: u16,
+    /// A $2007 read or write has happened and its v increment is still due: the
+    /// increment lands one PPU cycle later, after that cycle's pixel is drawn, so a
+    /// forced-blank pixel drawn right after the access still shows the colour at the
+    /// old address (ref Mesen2 NesPpu.cpp `_needVideoRamIncrement`). Not saved in
+    /// save states: the CPU cycle that makes the access always runs at least one more
+    /// PPU cycle after it on NTSC, PAL and Dendy, so it is never pending between
+    /// instructions.
+    vram_increment_pending: bool,
 }
 
 impl Ppu {
@@ -318,6 +326,7 @@ impl Ppu {
             system_palette: NesPalette::default(),
             update_vram_addr_delay: 0,
             pending_vram_addr: 0,
+            vram_increment_pending: false,
         }
     }
 
@@ -327,14 +336,16 @@ impl Ppu {
         Self::new(tv_system, crate::nes::console::RamInitMode::Zero)
     }
 
-    /// Flush any pending delayed VRAM address update.
+    /// Flush any pending delayed VRAM address update: a $2006 v=t copy or a
+    /// $2007 v increment.
     ///
     /// In real hardware, consecutive CPU writes are separated by at least 3 PPU
-    /// cycles (one CPU cycle), so a $2006 delay always completes before the
-    /// next register access. Unit tests that call write methods directly without
-    /// ticking the PPU need to call this to mimic that elapsed time.
+    /// cycles (one CPU cycle), so both delays complete before the next register
+    /// access. Unit tests that call write methods directly without ticking the PPU
+    /// and then inspect v need to call this to mimic that elapsed time.
     #[cfg(test)]
     pub fn flush_pending_vram_addr(&mut self) {
+        self.apply_pending_vram_increment();
         if self.update_vram_addr_delay > 0 {
             let old_v = self.registers.v();
             self.registers.set_v(self.pending_vram_addr);
@@ -595,6 +606,7 @@ impl Ppu {
 
     /// Write to address register ($2006)
     pub fn write_address(&mut self, value: u8, is_dummy_write: bool) {
+        self.apply_pending_vram_increment();
         trace_ppu!(3; "ppuaddr write value={:02X} w_before={} t_before={:04X} v_before={:04X}",
             value,
             self.registers.w(),
@@ -631,6 +643,7 @@ impl Ppu {
 
     /// Read from data register ($2007)
     pub fn read_data(&mut self) -> u8 {
+        self.apply_pending_vram_increment();
         let addr = self.registers.v();
         let result = match addr {
             0x0000..=0x1FFF => {
@@ -672,19 +685,7 @@ impl Ppu {
             _ => self.registers.data_buffer(),
         };
 
-        // Use rendering glitch during active rendering
-        let old_addr = self.registers.v();
-        if self.should_use_rendering_glitch() {
-            self.registers.inc_address_with_rendering_glitch();
-        } else {
-            self.registers.increment_vram_address();
-        }
-
-        // Notify mapper of address change after increment (for MMC3 A12 detection)
-        let new_addr = self.registers.v();
-        if !self.is_actively_rendering() {
-            self.prime_a12_and_notify_mapper(old_addr, new_addr);
-        }
+        self.vram_increment_pending = true;
 
         // Update I/O bus with value read
         // For palette reads (addr 0x3F00-0x3FFF), only refresh bits 5-0
@@ -699,6 +700,7 @@ impl Ppu {
 
     /// Write to data register ($2007)
     pub fn write_data(&mut self, value: u8) {
+        self.apply_pending_vram_increment();
         self.registers.set_io_bus(value); // Update I/O bus
         let addr = self.registers.v();
         match addr {
@@ -724,6 +726,21 @@ impl Ppu {
             }
             _ => {}
         }
+
+        self.vram_increment_pending = true;
+    }
+
+    /// Apply the v increment still due from the last $2007 access, if any.
+    ///
+    /// Runs at the end of the PPU cycle after the access. A register access that
+    /// uses v calls it first too: on hardware the next CPU access is at least three
+    /// PPU cycles later, so the increment has always landed by then, and unit tests
+    /// that access registers without ticking the PPU rely on the same order.
+    pub(super) fn apply_pending_vram_increment(&mut self) {
+        if !self.vram_increment_pending {
+            return;
+        }
+        self.vram_increment_pending = false;
 
         // Use rendering glitch during active rendering
         let old_addr = self.registers.v();
@@ -1469,6 +1486,45 @@ mod tests {
         run_to_dot(&mut ppu, prerender, 257);
 
         assert_eq!(ppu.registers.v() & 0x041F, 0x0000);
+
+    /// A $2007 write during forced blank moves v on one PPU cycle late: the pixel
+    /// drawn in the cycle right after the write still shows the colour at the address
+    /// written, and only the pixel after that shows the next palette entry (nr-m6o).
+    /// Super Aladdin writes its palettes mid-frame with rendering off, and Mesen2
+    /// (NesPpu.cpp `_needVideoRamIncrement`) draws each colour change one pixel later
+    /// than an immediate increment would.
+    #[test]
+    fn test_ppudata_write_during_forced_blank_moves_backdrop_override_one_dot_late() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_mask(0x00);
+
+        // $3F01 = $16 (red) and $3F02 = $2A (green), then point v back at $3F01.
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x01, false);
+        ppu.write_data(0x16);
+        ppu.write_data(0x2A);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x01, false);
+
+        // Stop after dot 100 of scanline 10 has been drawn (pixel x=99).
+        while !(ppu.scanline() == 10 && ppu.pixel() == 100) {
+            ppu.run_ppu_cycles(1);
+        }
+
+        // Rewrite $3F01 with $12 (blue); v moves on to $3F02.
+        ppu.write_data(0x12);
+        ppu.run_ppu_cycles(2); // draws x=100 (dot 101) and x=101 (dot 102)
+
+        assert_eq!(
+            ppu.screen_buffer().get_pixel(100, 10),
+            Nes::lookup_system_palette(0x12),
+            "the dot right after the write still shows $3F01"
+        );
+        assert_eq!(
+            ppu.screen_buffer().get_pixel(101, 10),
+            Nes::lookup_system_palette(0x2A),
+            "the next dot shows $3F02"
+        );
     }
 
     #[test]
@@ -1928,6 +1984,7 @@ mod tests {
         state.registers.v = 0x2000;
         ppu.set_debug_state(state);
         ppu.read_data();
+        ppu.flush_pending_vram_addr(); // the increment lands one PPU cycle later
         let expected_read_calls = expected_calls(0x2000, 0x2001);
         assert_eq!(*calls.borrow(), expected_read_calls);
 
@@ -1936,6 +1993,7 @@ mod tests {
         state.registers.v = 0x2000;
         ppu.set_debug_state(state);
         ppu.write_data(0x12);
+        ppu.flush_pending_vram_addr(); // the increment lands one PPU cycle later
         let expected_write_calls = expected_calls(0x2000, 0x2001);
         assert_eq!(*calls.borrow(), expected_write_calls);
     }
@@ -2326,6 +2384,7 @@ mod tests {
         ppu.write_address(0x00, false);
         ppu.flush_pending_vram_addr(); // In hardware, ≥3 PPU cycles elapse before next write
         ppu.write_data(0x12);
+        ppu.flush_pending_vram_addr(); // the increment lands one PPU cycle later
 
         assert_eq!(ppu.v_register(), 0x3001);
     }
@@ -2338,6 +2397,7 @@ mod tests {
         ppu.write_address(0x20, false);
         ppu.write_address(0x00, false);
         ppu.write_data(0x12);
+        ppu.flush_pending_vram_addr(); // the increment lands one PPU cycle later
 
         assert_eq!(ppu.v_register(), 0x2001);
     }
