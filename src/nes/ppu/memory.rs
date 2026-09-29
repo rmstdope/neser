@@ -103,8 +103,9 @@ impl Memory {
         }
     }
 
-    /// Read CHR without putting `addr` on the PPU address bus, for a PPUDATA read while
-    /// rendering drives the bus (nr-6gs). No `ppu_address_changed` side effect.
+    /// Read CHR without telling the mapper `addr` is on the PPU address bus: a PPUDATA read
+    /// while rendering, when the bus carries the rendering fetches (nr-6gs). No
+    /// `ppu_address_changed` side effect.
     pub fn read_chr_without_address_change(
         &self,
         addr: u16,
@@ -113,8 +114,9 @@ impl Memory {
         self.read_chr_for_debugger(addr, cartridge)
     }
 
-    /// Write CHR without putting `addr` on the PPU address bus, for a PPUDATA write while
-    /// rendering drives the bus (nr-6gs). No `ppu_address_changed` side effect.
+    /// Write CHR without telling the mapper `addr` is on the PPU address bus: a PPUDATA
+    /// write while rendering, when the bus carries the rendering fetches (nr-6gs). No
+    /// `ppu_address_changed` side effect.
     pub fn write_chr_without_address_change(
         &mut self,
         addr: u16,

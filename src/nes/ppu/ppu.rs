@@ -615,13 +615,7 @@ impl Ppu {
             // During rendering scanlines the v=t update is delayed by 3 PPU
             // cycles (based on Visual NES findings, ref Mesen2 NesPpu.cpp).
             // Outside rendering, it takes effect immediately.
-            let scanline = self.timing.scanline();
-            let prerender = self.timing.region().prerender_scanline;
-            let is_rendering_scanline = scanline
-                < crate::nes::ppu::timing::LAST_VISIBLE_SCANLINE_PLUS_ONE
-                || scanline == prerender;
-
-            if is_rendering_scanline && self.registers.is_rendering_enabled() {
+            if self.is_actively_rendering() {
                 // Undo the immediate v=t; the tick loop will apply it after the delay.
                 self.registers.set_v(old_v);
                 self.update_vram_addr_delay = 3;
@@ -643,7 +637,7 @@ impl Ppu {
                 // (MMC5 extended attribute mode should NOT apply here)
                 Self::notify_chr_fetch_is_ppudata(&self.cartridge);
                 let buffered = self.registers.data_buffer();
-                let value = if self.is_rendering() {
+                let value = if self.is_actively_rendering() {
                     self.memory
                         .read_chr_without_address_change(addr, &self.cartridge)
                 } else {
@@ -686,7 +680,7 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if !self.is_rendering() {
+        if !self.is_actively_rendering() {
             self.prime_a12_and_notify_mapper(old_addr, new_addr);
         }
 
@@ -708,7 +702,7 @@ impl Ppu {
         match addr {
             0x0000..=0x1FFF => {
                 // CHR memory - routes through mapper for ROM/RAM handling
-                if self.is_rendering() {
+                if self.is_actively_rendering() {
                     self.memory
                         .write_chr_without_address_change(addr, value, &self.cartridge);
                 } else {
@@ -735,7 +729,7 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if !self.is_rendering() {
+        if !self.is_actively_rendering() {
             self.prime_a12_and_notify_mapper(old_addr, new_addr);
         }
     }
@@ -857,15 +851,10 @@ impl Ppu {
         self.registers.should_generate_nmi()
     }
 
-    /// Whether the PPU is rendering: rendering enabled on the pre-render line or a visible
-    /// line. While it is, the PPU address bus carries the rendering fetches, so PPUADDR and
-    /// PPUDATA accesses never put `v` on it (nr-6gs).
-    pub(crate) fn is_rendering(&self) -> bool {
-        self.is_on_rendering_scanline() && self.registers.is_rendering_enabled()
-    }
-
     /// Check if PPUDATA access should trigger the rendering glitch
-    /// Returns true if rendering is enabled and we're on a visible scanline
+    /// Returns true if rendering is enabled and we're on a visible scanline.
+    /// Unlike `is_actively_rendering`, this leaves out the pre-render line, where Mesen2
+    /// and the NESdev wiki also apply the glitch; a pre-existing difference.
     fn should_use_rendering_glitch(&self) -> bool {
         let scanline = self.timing.scanline();
         let is_visible_scanline = scanline < 240;
@@ -881,8 +870,12 @@ impl Ppu {
         is_visible_scanline || is_prerender
     }
 
-    /// Check if PPU is actively rendering (rendering enabled + on rendering scanline)
-    fn is_actively_rendering(&self) -> bool {
+    /// Check if PPU is actively rendering (rendering enabled + on rendering scanline).
+    ///
+    /// While it is, the PPU address bus carries the rendering fetches, so PPUADDR and
+    /// PPUDATA accesses do not tell the mapper about `v` (nr-6gs). The access itself still
+    /// uses `v`; Mesen2 uses the current fetch address instead, which NESER does not model.
+    pub(crate) fn is_actively_rendering(&self) -> bool {
         self.registers.is_rendering_enabled() && self.is_on_rendering_scanline()
     }
 
@@ -1691,6 +1684,7 @@ mod tests {
     struct A12PrimingSpyMapper {
         base: crate::nes::cartridge::BaseMapper,
         calls: Rc<RefCell<Vec<u16>>>,
+        chr_writes: Rc<RefCell<Vec<(u16, u8)>>>,
     }
 
     impl crate::nes::cartridge::Mapper for A12PrimingSpyMapper {
@@ -1708,11 +1702,15 @@ mod tests {
 
         fn write_prg(&mut self, _addr: u16, _value: u8) {}
 
-        fn read_chr(&mut self, _addr: u16) -> u8 {
-            0
+        fn read_chr(&mut self, addr: u16) -> u8 {
+            // Only PPUDATA tests read this back; rendering sees all-zero patterns except for
+            // tile rows whose address low byte is non-zero, which no test depends on.
+            if addr >= 0x1000 { addr as u8 } else { 0 }
         }
 
-        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+        fn write_chr(&mut self, addr: u16, value: u8) {
+            self.chr_writes.borrow_mut().push((addr, value));
+        }
 
         fn ppu_address_changed(&mut self, addr: u16) {
             self.calls.borrow_mut().push(addr);
@@ -1819,6 +1817,7 @@ mod tests {
             A12PrimingSpyMapper {
                 base: create_test_base_mapper(),
                 calls: calls.clone(),
+                chr_writes: Rc::new(RefCell::new(Vec::new())),
             },
         ))));
 
@@ -1862,6 +1861,7 @@ mod tests {
             A12PrimingSpyMapper {
                 base: create_test_base_mapper(),
                 calls: calls.clone(),
+                chr_writes: Rc::new(RefCell::new(Vec::new())),
             },
         ))));
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
@@ -1869,7 +1869,7 @@ mod tests {
         ppu.write_mask(0x18);
         // Scanline 10, dot 40: visible, rendering, clear of the $2006 update glitch dots.
         ppu.run_ppu_cycles(10 * 341 + 40);
-        assert!(ppu.is_rendering());
+        assert!(ppu.is_actively_rendering());
         calls.borrow_mut().clear();
         (ppu, calls)
     }
@@ -1918,6 +1918,65 @@ mod tests {
                 seen
             );
         }
+    }
+
+    #[test]
+    fn test_ppudata_access_during_rendering_still_reaches_chr_at_v() {
+        let chr_writes = Rc::new(RefCell::new(Vec::new()));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
+                calls: Rc::new(RefCell::new(Vec::new())),
+                chr_writes: chr_writes.clone(),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_mask(0x18);
+        ppu.run_ppu_cycles(10 * 341 + 40);
+        assert!(ppu.is_actively_rendering());
+
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x1330;
+        ppu.set_debug_state(state);
+        ppu.read_data();
+        assert_eq!(
+            ppu.registers.data_buffer(),
+            0x30,
+            "read buffer filled from v"
+        );
+
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x1330;
+        ppu.set_debug_state(state);
+        ppu.write_data(0x55);
+        assert_eq!(*chr_writes.borrow(), vec![(0x1330, 0x55)]);
+    }
+
+    #[test]
+    fn test_delayed_ppuaddr_update_landing_in_vblank_reaches_the_bus() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
+                calls: calls.clone(),
+                chr_writes: Rc::new(RefCell::new(Vec::new())),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_mask(0x18);
+        // Line 239, dot 339: the write is delayed, and the delay runs out on line 240.
+        ppu.run_ppu_cycles(239 * 341 + 339);
+        assert!(ppu.is_actively_rendering());
+
+        ppu.write_address(0x13, false);
+        ppu.write_address(0x30, false);
+        ppu.run_ppu_cycles(6);
+
+        assert!(!ppu.is_actively_rendering());
+        assert_eq!(ppu.registers.v(), 0x1330);
+        assert_eq!(calls.borrow().last(), Some(&0x1330));
     }
 
     #[test]
