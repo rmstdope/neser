@@ -18,6 +18,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CRATES_IO_MAX_UPLOAD = 10 * 1024 * 1024
 INCLUDE_RE = re.compile(r"include_(?:str|bytes)!\(\s*\"([^\"]+)\"\s*\)")
+# Every file-embedding macro call. One INCLUDE_RE cannot read (a raw string, concat!, a plain
+# include!) fails the test instead of passing silently; the OUT_DIR file build.rs writes is the
+# one known exception, since it is generated at build time rather than packaged.
+ANY_INCLUDE_RE = re.compile(r"\binclude(?:_str|_bytes)?!\s*\(")
+GENERATED_INCLUDE = 'include!(concat!(env!("OUT_DIR")'
 
 
 def cargo(*args: str, target_dir: Path) -> str:
@@ -58,6 +63,17 @@ class CratePackageTest(unittest.TestCase):
                 if path not in self.listed:
                     missing.append(f"{rs.relative_to(ROOT)} -> {path}")
         self.assertEqual(missing, [])
+
+    def test_every_embed_in_the_source_is_one_the_check_can_read(self) -> None:
+        unreadable = []
+        for rs in sorted((ROOT / "src").rglob("*.rs")):
+            text = rs.read_text(encoding="utf-8")
+            for m in ANY_INCLUDE_RE.finditer(text):
+                rest = text[m.start() :]
+                if not INCLUDE_RE.match(rest) and not rest.startswith(GENERATED_INCLUDE):
+                    line = text.count("\n", 0, m.start()) + 1
+                    unreadable.append(f"{rs.relative_to(ROOT)}:{line}")
+        self.assertEqual(unreadable, [], "embed this file with a plain string literal path")
 
     def test_package_carries_the_build_script_and_default_shader(self) -> None:
         for path in ("build.rs", "src/gba/bios/bios.bin", "shaders/stock.slangp", "shaders/stock.slang"):
