@@ -73,6 +73,10 @@ jobs:
               - '.cerebro/cerebro'
               # scripts/test_build_rs_rerun.py compiles and runs build.rs.
               - 'build.rs'
+              # scripts/test_crate_package.py packages the crate from the manifest's include list.
+              # A src-only PR that embeds a file outside that list is not caught here but by the
+              # release workflow's ci job, which runs this job before publishing (nr-d2l review).
+              - 'Cargo.toml'
               - '.github/workflows/ci.yml'
             shader_assets:
               # Release packaging only ships shader files reachable from the

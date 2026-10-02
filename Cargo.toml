@@ -5,21 +5,21 @@ edition = "2024"
 description = "NESER - Nintendo Emulation Systems Engine (Rust). Desktop and WebAssembly frontends."
 license = "MIT"
 repository = "https://github.com/rmstdope/neser"
-exclude = [
-    "roms/",
-    "docs/",
-    ".github/",
-    ".githooks/",
-    ".vscode/",
-    "target/",
-    "dist/",
-    "node_modules/",
-    "pkg/",
-    "test-results/",
-    "vendor/",
-    "package.json",
-    "package-lock.json",
-    "playwright.config.ts",
+# What `cargo publish` uploads: only what building the crate reads, plus its docs. crates.io refuses
+# uploads over 10 MiB, and an exclude list let scripts/, web/ and the agent files ride along until
+# v1.3.0's publish was refused at 10.8 MiB (nr-d2l). scripts/test_crate_package.py checks the size
+# and that every include_str!/include_bytes! target is still here.
+include = [
+    "/src/",
+    "/build.rs",
+    "/assets/fonts/",
+    "/shaders/",
+    "/gamecontrollerdb.txt",
+    "/neser.conf.example",
+    "/README*.md",
+    "/LICENSE",
+    "/Cargo.toml",
+    "/Cargo.lock",
 ]
 
 [lib]
