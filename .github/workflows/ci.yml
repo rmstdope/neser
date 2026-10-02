@@ -73,6 +73,8 @@ jobs:
               - '.cerebro/cerebro'
               # scripts/test_build_rs_rerun.py compiles and runs build.rs.
               - 'build.rs'
+              # scripts/test_crate_package.py packages the crate from the manifest's include list.
+              - 'Cargo.toml'
               - '.github/workflows/ci.yml'
             shader_assets:
               # Release packaging only ships shader files reachable from the

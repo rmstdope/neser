@@ -22,7 +22,7 @@ INCLUDE_RE = re.compile(r"include_(?:str|bytes)!\(\s*\"([^\"]+)\"\s*\)")
 
 def cargo(*args: str, target_dir: Path) -> str:
     return subprocess.run(
-        ["cargo", *args, "--allow-dirty", "--offline"],
+        ["cargo", *args, "--allow-dirty"],
         cwd=ROOT,
         env=dict(os.environ, CARGO_TARGET_DIR=str(target_dir)),
         check=True,
