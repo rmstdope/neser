@@ -1,23 +1,29 @@
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CPU trace warning</title>
-<style>:root{--bg:#f6f6f4;--fg:#1d1d1b;--term:#1e1f22;--tfg:#d8d8d2;--dim:#8a8a84;--hl:#f2c94c;--warn:#ff9e64}
-body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px;max-width:960px;margin:auto}
-h1{font-size:20px} h2{font-size:15px;margin-top:28px} .note{color:#555}
+<style>:root{--bg:#f6f6f4;--fg:#1d1d1b;--term:#1e1f22;--tfg:#d8d8d2;--dim:#8a8a84;--hl:#f2c94c;--warn:#ff9e64;--note:#555}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#151514;--fg:#e8e8e2;--note:#aaa}}
+:root[data-theme="dark"]{--bg:#151514;--fg:#e8e8e2;--note:#aaa}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;padding:24px 16px;max-width:960px;margin:auto}
+h1{font-size:20px} h2{font-size:15px;margin-top:28px} .note{color:var(--note)}
 pre{background:var(--term);color:var(--tfg);padding:14px 16px;border-radius:8px;overflow-x:auto;font:13px/1.45 ui-monospace,Menlo,monospace}
-.hl{color:var(--hl)} .w{color:var(--warn)} .d{color:var(--dim)}</style></head><body><h1>CPU trace in a release build — help line and warning</h1><p class='note'>Shown once, at start-up, on the error stream, and only in a release build. It names whichever spelling you typed (<code>--trace</code> or <code>--trace-cpu</code>). In a debug build, or without the flag, nothing new appears.</p>
+.hl{color:var(--hl)} .w{color:var(--warn)} .d{color:var(--dim)}</style></head><body><h1>CPU trace in a release build — help line and NES-only warning</h1>
+<p class="note">Same help line as A. The warning appears only when the game being run is an NES game. Super Nintendo, Game Boy and Game Boy Color runs, whose instruction lines do print in a release build, get no warning.</p>
 <h2>neser --help (same text in every build)</h2><pre><span class="d">$ neser --help</span>
 ...
 Trace and Debugging:
-<span class="hl">  --trace             Enable CPU trace output (instructions only in debug builds)</span>
-<span class="hl">  --trace-cpu         Enable CPU trace output (instructions only in debug builds)</span>
-  --debugger-alpha    Debugger window opacity: 0.1 (transparent) to 1.0 (opaque, default: 0.7)
-  ...</pre>
-<h2>Release build, headless run</h2><pre><span class="d">$ target/release/neser --headless --trace-cpu --output out.png game.nes</span>
-<span class="w">warning: --trace-cpu: this release build prints CPU interrupts only; build without --release for instruction lines</span>
-[CPU] NMI ...
+<span class="hl">  --trace             Enable CPU trace output (NES instructions only in debug builds)</span>
+<span class="hl">  --trace-cpu         Enable CPU trace output (NES instructions only in debug builds)</span>
+  ...</pre><h2>Release build, NES game, headless</h2><pre><span class="d">$ target/release/neser --headless --trace-cpu --output out.png game.nes</span>
+<span class="w">warning: --trace-cpu: this release build prints no NES instruction lines; build without --release for them</span>
 [CPU] NMI ...</pre>
-<h2>Release build, windowed, typed as --trace</h2><pre><span class="d">$ target/release/neser --trace game.nes</span>
-<span class="w">warning: --trace: this release build prints CPU interrupts only; build without --release for instruction lines</span>
+<h2>Release build, Super Nintendo game — no warning</h2><pre><span class="d">$ target/release/neser --headless --trace-cpu=2 --output out.png game.sfc</span>
+00:8000 SEI ...
+  [read] 00:8000 ...</pre>
+<h2>Release build, windowed, no game on the command line — then an NES game opened from the menu</h2><pre><span class="d">$ target/release/neser --trace</span>
+<span class="d">(window opens; nothing printed yet)</span>
+<span class="d">(game.nes chosen from the menu)</span>
+<span class="w">warning: --trace: this release build prints no NES instruction lines; build without --release for them</span>
 [CPU] NMI ...</pre>
-<h2>Debug build — no warning</h2><pre><span class="d">$ target/debug/neser --headless --trace-cpu --output out.png game.nes</span>
+<p class="note">Started without a game: the warning appears once, as the first NES game of the run starts, before any trace line.</p>
+<h2>Debug build, NES game — no warning</h2><pre><span class="d">$ target/debug/neser --headless --trace-cpu --output out.png game.nes</span>
 C000  78        SEI ...
 [CPU] NMI ...</pre></body></html>
