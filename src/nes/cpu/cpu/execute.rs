@@ -289,16 +289,19 @@ impl Cpu {
                 // 5. Push PCL to stack
                 // 6. Fetch high byte of address
 
+                // `operand` holds only the low target byte; PC points at the high one,
+                // the last byte of the JSR, which is the return address pushed.
+                // The high byte is read after the pushes, so a JSR whose operand sits
+                // where the return address is pushed jumps to the pushed byte, and a
+                // DMC DMA can halt the CPU on that final read (nr-8px).
+
                 // Dummy read from stack pointer for cycle 3
                 self.dummy_read(0x0100 | (self.sp as u16));
 
-                // Push return address (PC - 1) to stack
-                // PC is already pointing to the next instruction, so PC - 1 is the last byte of JSR
-                let return_addr = self.pc.wrapping_sub(1);
-                self.push_word(return_addr);
+                self.push_word(self.pc);
 
-                // Set PC to target address
-                self.pc = operand;
+                let high = self.read(self.pc);
+                self.pc = (u16::from(high) << 8) | operand;
             }
             Mnemonic::AND => {
                 let value = self.get_operand_value(op, operand);
@@ -808,6 +811,10 @@ impl Cpu {
                 self.dummy_read(base as u16);
                 base.wrapping_add(self.y) as u16
             }
+
+            // JSR fetches only the low target byte here: it reads the high byte last,
+            // after pushing the return address (see `Mnemonic::JSR` in `execute`).
+            AddrMode::ABS if op.mnemonic == Mnemonic::JSR => self.read_byte_from_pc() as u16,
 
             // Absolute - return 16-bit address
             AddrMode::ABS => self.read_word_from_pc(),

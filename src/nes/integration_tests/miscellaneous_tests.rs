@@ -1456,16 +1456,21 @@ mod tests {
         );
     }
 
+    // The counts are Mesen2's: its frame 900 of both ROMs matched NESER's at 0 px
+    // (zero RAM, 2026-10-04, nr-8px). A DMC fetch that halts a $4016 read deletes
+    // a bit (NESdev "DMA", Register conflicts), so the DMC's timing decides which
+    // reads conflict. NESER had pinned 0/1000 for both, its own output, while it
+    // gave the pad no extra clock.
     setup_rom_console_test!(
         test_read_joy3_count_errors,
         "roms/nes/automated_tests/read_joy3/count_errors.nes",
-        "CONFLICTS: 0/1000-"
+        "CONFLICTS: 67/1000-"
     );
 
     setup_rom_console_test!(
         test_read_joy3_count_errors_fast,
         "roms/nes/automated_tests/read_joy3/count_errors_fast.nes",
-        "ERRORS: 0/1000"
+        "ERRORS: 15/1000"
     );
 
     setup_rom_console_test!(

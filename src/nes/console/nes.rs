@@ -442,10 +442,8 @@ impl Nes {
         self.bus.borrow_mut().reset(soft_reset, ram_init_mode);
         self.cpu_mut().reset(soft_reset);
 
-        // Reinitialize DMC timer phase after CPU reset. The CPU reset runs 7
-        // internal cycles that clock the APU (including the DMC timer). On real
-        // hardware the timer effectively starts from its full period value once
-        // user code begins executing, so we restore it to the correct phase.
+        // Set the DMC timer phase the program starts with: Mesen2's, whose reset
+        // sequence clocks the timer for 8 cycles (see `reinit_timer_after_reset`).
         self.apu.borrow_mut().dmc_mut().reinit_timer_after_reset();
 
         if !soft_reset {
@@ -2366,7 +2364,7 @@ mod tests {
     #[test]
     fn test_dmc_dma_stalls_cpu_on_sample_fetch() {
         // DMC DMA reads should stall the CPU (RDY low) for 1-4 cycles.
-        // After set_enabled, there is a transfer_start_delay of 2-3 cycles
+        // After set_enabled, there is a transfer_start_delay of 3-4 cycles
         // before the DMA request becomes visible. Run enough ticks for the
         // delay to expire and the stall to occur.
         let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(

@@ -178,13 +178,18 @@ impl Cpu {
                 apu.dmc_mut().dma_address()
             };
 
-            let is_controller_read = matches!(read_address, 0x4016 | 0x4017);
             let single_byte_dmc_fetch = self.dmc_pending_single_byte_fetch();
             let skip_first_input_clock = dmc_dma_address
                 .map(|address| Self::should_skip_first_input_clock(read_address, address))
                 .unwrap_or(false);
-            let use_dummy_halt_read =
-                is_controller_read && (!single_byte_dmc_fetch || skip_first_input_clock);
+            // The halted $4016 read and the resumed one are separate contiguous reads,
+            // so the pad sees one extra clock and the game loses a bit (NESdev "DMA",
+            // Register conflicts; Mesen2 the same, nr-8px). The $4017 model is unchanged.
+            let use_dummy_halt_read = match read_address {
+                0x4016 => skip_first_input_clock,
+                0x4017 => skip_first_input_clock || !single_byte_dmc_fetch,
+                _ => false,
+            };
 
             // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
             let halted_read_value = self

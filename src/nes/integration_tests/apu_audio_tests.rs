@@ -715,12 +715,10 @@ mod tests {
     ///
     /// The DMC continues processing buffered bits even after the output is forced to 0x32.
     ///
-    /// Expected alternations: 70. With the hardware-accurate DMC timer
-    /// initialization (timer starts at full period, not zero), the output unit
-    /// does not fire during the 7 CPU reset cycles. This shifts the output-unit
-    /// phase relative to the ROM's instruction sequence, resulting in 70
-    /// alternations instead of 64 (which was calibrated against the incorrect
-    /// timer=0 behavior where the output unit fired immediately during reset).
+    /// Expected alternations: 71. The count is a heuristic over resampled audio and
+    /// depends on the DMC timer phase relative to the ROM's instructions: it was 64
+    /// with the timer at zero after reset, 70 with it at the full period, and is 71
+    /// with Mesen2's phase, clocked through the 8 reset cycles (nr-8px).
     fn check_four_by_two_dmc_bytes_processed(nes: &mut Nes) -> bool {
         let mut samples = Vec::new();
         while nes.sample_ready() {
@@ -728,7 +726,7 @@ mod tests {
             samples.push(sample);
         }
         let alternations = max_alternating_small_steps(&samples);
-        assert_eq!(alternations, 70);
+        assert_eq!(alternations, 71);
 
         true
     }
