@@ -967,16 +967,18 @@ impl SnesSystemBus {
         // `self.ticks` one clock at a time), so the returned tick total must
         // not be added again here.
         let base_clock = self.ppu.borrow().total_master_clocks();
+        // Standalone: this path is only reached from the CPU cycle hook, i.e. with no
+        // general-purpose transfer holding the bus. The nested case goes through
+        // `DmaController::run_nested_hdma` instead. Read from the controller taken out
+        // above, not `self.dma`, which is a placeholder for the duration of the call.
+        let need_sync = Self::standalone_hdma_needs_sync(&dma);
         let (_consumed_ticks, dma_open_bus) = dma.hdma_init(
             self.hdmaen,
             self,
             self.mdr.get(),
             base_clock,
             self.cpu_speed,
-            // Standalone: this path is only reached from the CPU cycle hook, i.e. with no
-            // general-purpose transfer holding the bus. The nested case goes through
-            // `DmaController::run_nested_hdma` instead.
-            self.standalone_hdma_needs_sync(),
+            need_sync,
         );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
@@ -989,27 +991,27 @@ impl SnesSystemBus {
     pub fn hdma_do_line(&mut self) {
         let base_clock = self.ppu.borrow().total_master_clocks();
         let mut dma = std::mem::take(&mut self.dma);
+        // Standalone; see `hdma_init`.
+        let need_sync = Self::standalone_hdma_needs_sync(&dma);
         let (_consumed_ticks, dma_open_bus) = dma.hdma_do_line(
             self.hdmaen,
             self,
             self.mdr.get(),
             base_clock,
             self.cpu_speed,
-            // Standalone; see `hdma_init`.
-            self.standalone_hdma_needs_sync(),
+            need_sync,
         );
         self.mdr.set(dma_open_bus);
         self.dma = dma;
     }
 
     /// Whether an HDMA running outside a general-purpose transfer pays the SyncStartDma and
-    /// SyncEndDma pads: Mesen2's `needSync = !HasActiveDmaChannel()`. Mesen2 arms `DmaActive`
-    /// on the `$420B` write, so an HDMA that runs in the start-delay window between that write
-    /// and the burst skips both pads, exactly as a nested one does (nr-4cl). Here an armed
-    /// `pending_gpdma` stands in for that flag, for this decision only: the channel
-    /// cancellation such an HDMA also performs in Mesen2 is not modelled (nr-3qn).
-    fn standalone_hdma_needs_sync(&self) -> bool {
-        self.pending_gpdma.is_none()
+    /// SyncEndDma pads: Mesen2's `needSync = !HasActiveDmaChannel()`. Channels are armed on
+    /// the `$420B` write, so an HDMA that runs in the start-delay window between that write
+    /// and the burst skips both pads, exactly as a nested one does (nr-4cl) -- unless an
+    /// earlier HDMA already cancelled every armed channel (nr-3qn).
+    fn standalone_hdma_needs_sync(dma: &DmaController) -> bool {
+        !dma.has_active_dma_channel()
     }
 
     /// Run an armed `pending_hdma` slot (kind 0 = frame init, 1 = line transfer).
@@ -1391,6 +1393,13 @@ impl SnesSystemBus {
         self.memsel = memsel & 0x01;
         self.hdmaen = hdmaen;
         self.dma.restore_state(dma)?;
+        // A state saved before the armed mask was (nr-3qn): arm the pending burst with its
+        // whole MDMAEN, which is what the build that saved it would have transferred.
+        if dma.dma_active_mask.is_none()
+            && let Some((_, mdmaen, _)) = pending_gpdma
+        {
+            self.dma.arm_dma(mdmaen);
+        }
         self.mdr.set(mdr);
         self.ticks.set(ticks);
         self.sram.borrow_mut().copy_from_slice(sram);
@@ -1723,6 +1732,10 @@ impl SnesSystemBus {
                 // begins at the START of the second cycle after the write --
                 // see gpdma_cycle_hook.
                 if value != 0 {
+                    // ...but the channels are armed now (Mesen2 sets `DmaActive` here), so an
+                    // HDMA in the start-delay window both skips its sync pads and cancels any
+                    // of them it shares a channel with (nr-4cl, nr-3qn).
+                    self.dma.arm_dma(value);
                     let fallback = self.ppu.borrow().total_master_clocks() + 8;
                     self.pending_gpdma = Some((2, value, fallback));
                 }
