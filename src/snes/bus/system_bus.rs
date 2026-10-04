@@ -57,6 +57,10 @@ pub struct SnesSystemBus {
     memsel: u8,
     hdmaen: u8,
     dma: DmaController,
+    /// The controller's HDMA channels whose table has not ended this frame, as last reported
+    /// through [`DmaABus::hdma_active_mask_changed`]. `check_hdma_triggers` reads this copy
+    /// because the trigger can fire while a transfer has `self.dma` taken (nr-63g).
+    hdma_active_mask: u8,
     /// A `$420B` write armed a general-purpose DMA: `(cycles_until_start,
     /// mdmaen, fallback_clock)`. The CPU's cycle hook decrements the countdown
     /// and runs the transfer at the start of the second CPU cycle after the
@@ -250,6 +254,7 @@ impl SnesSystemBus {
             memsel: 0,
             hdmaen: 0,
             dma: DmaController::new(),
+            hdma_active_mask: 0,
             pending_gpdma: None,
             pending_hdma: None,
             cpu_speed: 8,
@@ -1018,17 +1023,22 @@ impl SnesSystemBus {
     /// Runs an armed HDMA slot and reports whether it actually transferred anything, which
     /// is what the CPU turns into its one-cycle interrupt lock.
     ///
-    /// With HDMAEN == 0 both `hdma_init` and `hdma_do_line` return immediately having charged
-    /// no clocks, and Mesen2 reports that as no lock -- `InitHdmaChannels` and
-    /// `ProcessHdmaChannels` both `return false` when `!_state.HdmaChannels`. The frame-init
-    /// slot is armed unconditionally (as in Mesen2's `BeginHdmaInit`), so without this check
-    /// every ROM would take one spurious lock cycle per frame (#3074).
+    /// With HDMAEN == 0 `hdma_init` returns immediately having charged no clocks, and so does
+    /// `hdma_do_line` once no enabled channel is still active; Mesen2 reports both as no lock --
+    /// `InitHdmaChannels` returns false when `!_state.HdmaChannels`, `ProcessHdmaChannels`
+    /// when `!GetActiveHdmaChannels()` (nr-63g). The frame-init slot is armed unconditionally
+    /// (as in Mesen2's `BeginHdmaInit`), so without this check every ROM would take one
+    /// spurious lock cycle per frame (#3074).
     fn run_pending_hdma(&mut self, kind: u8) -> bool {
         // Sampled BEFORE the run, and the run happens either way: `hdma_init` resets the
         // channel bookkeeping (active mask, per-channel line counters) and only THEN returns
         // early on HDMAEN == 0, exactly as Mesen2's `InitHdmaChannels` does. Skipping the
         // call to avoid the lock would drop that reset and desynchronise HDMA state.
-        let did_work = self.hdmaen != 0;
+        let did_work = if kind == HDMA_KIND_INIT {
+            self.hdmaen != 0
+        } else {
+            self.dma.active_hdma_channels(self.hdmaen) != 0
+        };
         if kind == HDMA_KIND_INIT {
             self.hdma_init();
         } else {
@@ -1083,12 +1093,13 @@ impl SnesSystemBus {
             let fallback = self.ppu.borrow().total_master_clocks() + 16;
             self.pending_hdma = Some((2, HDMA_KIND_INIT, fallback));
         }
-        // The per-line transfer is only ARMED when HDMAEN is non-zero at the
-        // trigger clock (Mesen2 `BeginHdmaTransfer`). A ROM that enables a
+        // The per-line transfer is only ARMED when an enabled channel's table has not
+        // ended at the trigger clock (Mesen2 `BeginHdmaTransfer` tests
+        // `GetActiveHdmaChannels()`, not HDMAEN alone; nr-63g). A ROM that enables a
         // channel mid-scanline -- after the trigger but before the armed run
         // -- must therefore wait for the NEXT scanline, even though the run
         // itself reads the by-then-updated HDMAEN.
-        if transfer_due && self.hdmaen != 0 {
+        if transfer_due && (self.hdmaen & self.hdma_active_mask) != 0 {
             let fallback = self.ppu.borrow().total_master_clocks() + 16;
             self.pending_hdma = Some((2, HDMA_KIND_LINE, fallback));
         }
@@ -1224,6 +1235,7 @@ impl SnesSystemBus {
             memsel,
             hdmaen,
             ref dma,
+            hdma_active_mask: _, // derived: a copy of the controller's mask, restored from it
             pending_gpdma,
             pending_hdma,
             cpu_speed: _,           // intra-cycle: the CPU writes it before every cycle
@@ -1393,6 +1405,7 @@ impl SnesSystemBus {
         self.memsel = memsel & 0x01;
         self.hdmaen = hdmaen;
         self.dma.restore_state(dma)?;
+        self.hdma_active_mask = dma.hdma_active_mask;
         // A state saved before the armed mask was (nr-3qn): arm the pending burst with its
         // whole MDMAEN, which is what the build that saved it would have transferred.
         if dma.dma_active_mask.is_none()
@@ -1922,6 +1935,10 @@ impl DmaABus for SnesSystemBus {
     ///
     /// HDMAEN is read HERE and not at the trigger, matching `ProcessHdmaChannels`, so a
     /// channel disabled between the two is not transferred.
+    fn hdma_active_mask_changed(&mut self, mask: u8) {
+        self.hdma_active_mask = mask;
+    }
+
     fn take_due_hdma(&mut self) -> Option<(u8, u8)> {
         let (countdown, kind, fallback) = self.pending_hdma?;
         if countdown > 1 {
@@ -4381,6 +4398,88 @@ mod tests {
         assert!(
             !locked_with_no_channels,
             "an HDMA slot that transfers nothing must not lock interrupt recognition"
+        );
+    }
+
+    /// Latch CPU ownership of the cycle boundaries (so the clock fallback stands down), then
+    /// tick to scanline 0's frame-init trigger and run the armed init from the cycle hook, as
+    /// the CPU would.
+    fn run_frame_hdma_init_from_the_cycle_hook(bus: &mut SnesSystemBus) {
+        bus.gpdma_cycle_hook();
+        while bus.pending_hdma.is_none() {
+            bus.tick();
+        }
+        assert_eq!(
+            bus.pending_hdma.map(|(_, kind, _)| kind),
+            Some(HDMA_KIND_INIT)
+        );
+        bus.gpdma_cycle_hook();
+        bus.gpdma_cycle_hook();
+        assert_eq!(bus.pending_hdma, None, "the frame init has run");
+    }
+
+    /// nr-63g: Mesen2 arms the per-line HDMA only when `GetActiveHdmaChannels()` --
+    /// `HdmaChannels & ~_stoppedHdmaChannels` -- is non-zero (`BeginHdmaTransfer`), not on
+    /// HDMAEN alone. A frame whose enabled channels have all read their `$00` terminator
+    /// arms nothing, so no line costs the CPU an HDMA burst or an interrupt-lock cycle.
+    #[test]
+    fn an_hdma_line_is_not_armed_when_every_enabled_channel_has_ended() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        bus.write(0x705000, 0x00); // the table ends at once: the frame init reads the terminator
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x705000, 0);
+        bus.write(0x00420C, 0x01); // HDMAEN non-zero
+        run_frame_hdma_init_from_the_cycle_hook(&mut bus);
+
+        tick_until_master_clock(&mut bus, u64::from(HDMA_TRANSFER_POSITION) + 4);
+        assert_eq!(
+            bus.pending_hdma, None,
+            "with every enabled channel ended, the dot-276 trigger arms no HDMA line"
+        );
+        let before = bus.ppu.borrow().total_master_clocks();
+        assert!(!bus.gpdma_cycle_hook(), "no HDMA delay cycle and no lock");
+        assert!(!bus.gpdma_cycle_hook(), "no HDMA run and no lock");
+        assert_eq!(
+            bus.ppu.borrow().total_master_clocks(),
+            before,
+            "the scanline is charged no HDMA clocks"
+        );
+    }
+
+    /// nr-63g: `ProcessHdmaChannels` re-reads the active set when the armed line runs and
+    /// returns false -- no overhead, no `IrqLock` -- when it is empty. Here the line is armed
+    /// by a live channel 0, then HDMAEN is narrowed to channel 1, whose table has ended, before
+    /// the run.
+    #[test]
+    fn an_armed_hdma_line_whose_remaining_channels_have_ended_charges_nothing_and_does_not_lock() {
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        bus.write(0x705000, 0x01); // channel 0: one line
+        bus.write(0x705001, 0x3C);
+        bus.write(0x705002, 0x00);
+        bus.write(0x705100, 0x00); // channel 1: ended at the frame init
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x705000, 0);
+        write_dma_channel(&mut bus, 1, 0x00, 0x80, 0x705100, 0);
+        bus.write(0x00420C, 0x03);
+        run_frame_hdma_init_from_the_cycle_hook(&mut bus);
+
+        tick_until_master_clock(&mut bus, u64::from(HDMA_TRANSFER_POSITION) + 4);
+        assert!(
+            bus.pending_hdma.is_some(),
+            "channel 0 is live, so the line is armed"
+        );
+        bus.write(0x00420C, 0x02); // only the ended channel stays enabled
+        assert!(
+            !bus.gpdma_cycle_hook(),
+            "the start-delay cycle runs nothing"
+        );
+        let before = bus.ppu.borrow().total_master_clocks();
+        assert!(
+            !bus.gpdma_cycle_hook(),
+            "a run with no active channel takes no interrupt lock, as in Mesen2"
+        );
+        assert_eq!(
+            bus.ppu.borrow().total_master_clocks(),
+            before,
+            "and charges no HDMA overhead"
         );
     }
 

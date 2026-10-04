@@ -65,6 +65,16 @@ pub trait DmaABus {
     fn take_due_hdma(&mut self) -> Option<(u8, u8)> {
         None
     }
+
+    /// The controller's set of HDMA channels whose table has not ended this frame (the
+    /// complement of Mesen2's `_stoppedHdmaChannels`) has just changed to `mask`.
+    ///
+    /// The bus arms the per-line HDMA at the dot-276 trigger only when an enabled channel is
+    /// in this set (Mesen2 `BeginHdmaTransfer` tests `GetActiveHdmaChannels()`; nr-63g). That
+    /// trigger can fire while a transfer holds the controller, so the bus cannot read the set
+    /// from the controller and keeps the copy reported here instead. Default no-op for test
+    /// doubles.
+    fn hdma_active_mask_changed(&mut self, _mask: u8) {}
 }
 
 /// [`DmaABus::take_due_hdma`] kind: the once-per-frame HDMA reload (Mesen2 `InitHdmaChannels`).
@@ -351,6 +361,7 @@ impl DmaController {
         // process, while active_mask only tracks termination (#2943).
         self.hdma_active_mask = 0xFF;
         self.hdma_do_transfer = [false; 8];
+        abus.hdma_active_mask_changed(self.hdma_active_mask);
 
         if hdmaen == 0 {
             return (0, seed_open_bus);
@@ -433,6 +444,7 @@ impl DmaController {
             ticks += pad_end;
         }
 
+        abus.hdma_active_mask_changed(self.hdma_active_mask);
         (ticks, open_bus)
     }
 
@@ -447,7 +459,9 @@ impl DmaController {
         cpu_speed: u8,
         need_sync: bool,
     ) -> (u64, u8) {
-        if hdmaen == 0 {
+        // Mesen2 `ProcessHdmaChannels`: `if(!GetActiveHdmaChannels()) return false;` -- no
+        // sync pads, no overhead, once every enabled channel's table has ended (nr-63g).
+        if self.active_hdma_channels(hdmaen) == 0 {
             return (0, seed_open_bus);
         }
 
@@ -565,7 +579,14 @@ impl DmaController {
             counter += pad_end;
         }
 
+        abus.hdma_active_mask_changed(self.hdma_active_mask);
         (counter, open_bus)
+    }
+
+    /// The HDMA channels that are enabled and whose table has not ended this frame: Mesen2
+    /// `GetActiveHdmaChannels()`, `HdmaChannels & ~_stoppedHdmaChannels`.
+    pub fn active_hdma_channels(&self, hdmaen: u8) -> u8 {
+        hdmaen & self.hdma_active_mask
     }
 
     /// True when `channel` is the highest-numbered still-active enabled HDMA
@@ -966,6 +987,30 @@ mod tests {
         // reads (16) + pad_end 8.
         assert_eq!(counter, 72, "charged total");
         assert_eq!(bus.clock - start, 72, "bus advanced in lockstep");
+    }
+
+    /// nr-63g: Mesen2 `ProcessHdmaChannels` returns before `SyncStartDma` and the 8-clock
+    /// overhead when `GetActiveHdmaChannels()` is zero, so a line whose enabled channels have
+    /// all ended costs nothing -- whether it runs standalone or nested in a GPDMA burst.
+    #[test]
+    fn hdma_do_line_charges_nothing_when_every_enabled_channel_has_ended() {
+        let mut dma = DmaController::new();
+        let mut bus = RecordingBus::new(1112);
+        write_hdma_channel(&mut dma, 0, 0x00, 0x22, 0x3000);
+        bus.a_bus[0x3000] = 0x00; // terminator at the frame init
+        let init_clock = bus.clock;
+        dma.hdma_init(0x01, &mut bus, 0, init_clock, 8, true);
+
+        for need_sync in [true, false] {
+            let start = bus.clock;
+            let (counter, _) = dma.hdma_do_line(0x01, &mut bus, 0, start, 8, need_sync);
+            assert_eq!(counter, 0, "charged total (need_sync = {need_sync})");
+            assert_eq!(
+                bus.clock, start,
+                "bus not advanced (need_sync = {need_sync})"
+            );
+        }
+        assert!(bus.b_bus_writes.is_empty());
     }
 
     /// Mesen2 `SyncEndDma` rounds the charged transfer up to a whole *current* CPU cycle:
