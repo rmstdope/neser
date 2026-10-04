@@ -2167,6 +2167,37 @@ mod tests {
         assert_eq!(calls.borrow().last(), Some(&0x1330));
     }
 
+    // nr-3jh: Rad Racer writes $2006 mid-scanline so that the delayed v=t update lands at the
+    // end of dot 233, between the two dots of a nametable fetch. The fetch puts its address
+    // on the bus in its first dot (NESdev PPU rendering: each access takes two dots; Mesen2
+    // NesPpu.cpp LoadTileInfo reads at dots 8n+1), so it still fetches the old tile. NESER
+    // took the address from v in the second dot and fetched the new tile one fetch early.
+    #[test]
+    fn test_nametable_fetch_takes_its_address_in_its_first_dot() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        // With t = 0, line 0 reaches coarse X 29 at dot 233 and fetches $201D there.
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x1D, false);
+        ppu.write_data(0xAA);
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x10, false);
+        ppu.write_data(0xBB);
+        ppu.write_address(0x00, false);
+        ppu.write_address(0x00, false);
+        ppu.write_mask(0x08);
+        while !(ppu.timing.scanline() == 0 && ppu.timing.pixel() == 230) {
+            ppu.run_ppu_cycles(1);
+        }
+
+        // Delayed by three dots: v becomes $2010 at the end of dot 233.
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x10, false);
+        ppu.run_ppu_cycles(4); // dots 231-234: the whole nametable fetch
+
+        assert_eq!(ppu.registers.v(), 0x2010);
+        assert_eq!(ppu.debug_state().background.nametable_latch, 0xAA);
+    }
+
     #[test]
     fn test_ppu_vblank() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
