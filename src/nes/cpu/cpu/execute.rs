@@ -202,6 +202,7 @@ impl Cpu {
                     self.nmi_pending = false;
                     self.push_byte(flags);
                     self.p |= FLAG_INTERRUPT;
+                    self.nmis_taken += 1;
                     self.pc = self.read_u16(NMI_VECTOR);
                 } else {
                     self.push_byte(flags);

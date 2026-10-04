@@ -47,6 +47,11 @@ impl Cpu {
         self.total_cycles
     }
 
+    /// How many NMIs the CPU has entered (loaded the NMI vector) since power-on.
+    pub fn nmis_taken(&self) -> u64 {
+        self.nmis_taken
+    }
+
     /// Returns the address of the most recent non-dummy CPU write during the last instruction,
     /// or `None` if no write occurred.
     pub fn last_cpu_write_addr(&self) -> Option<u16> {

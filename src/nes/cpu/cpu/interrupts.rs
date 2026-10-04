@@ -68,6 +68,7 @@ impl Cpu {
         if nmi_hijack {
             self.nmi_pending = false;
             self.interrupt_stack.push(InterruptKind::Nmi);
+            self.nmis_taken += 1;
             self.pc = self.read_u16(NMI_VECTOR);
         } else {
             // IRQ has been serviced; clear any forced IRQ. Hardware IRQ remains asserted
@@ -137,6 +138,7 @@ impl Cpu {
         self.pc = (hi << 8) | lo;
 
         self.interrupt_stack.push(InterruptKind::Nmi);
+        self.nmis_taken += 1;
 
         // Set Interrupt Disable flag
         self.p |= FLAG_INTERRUPT;

@@ -14400,3 +14400,38 @@ fn mapper_capability_flags_irq_true_for_mmc3() {
 
     assert!(cpu.test_mapper_has_irq(), "MMC3 must report IRQ capability");
 }
+
+#[test]
+fn test_nmis_taken_counts_each_nmi_entry_and_not_other_instructions() {
+    // nr-ggx: the timing-trace tool marks an NMI entry by this counter rising.
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(
+        TimingMode::Ntsc,
+        Rc::clone(&memory),
+        Rc::clone(&ppu),
+        Rc::clone(&apu),
+    );
+    let mut prg_rom = vec![0; 0x4000];
+    prg_rom[0x3FFA] = 0x00; // NMI vector -> $9000
+    prg_rom[0x3FFB] = 0x90;
+    prg_rom[0x3FFC] = 0x00; // reset vector -> $8000
+    prg_rom[0x3FFD] = 0x80;
+    prg_rom[0x0000] = 0xEA; // NOP at $8000
+    prg_rom[0x0001] = 0xEA; // NOP at $8001
+    prg_rom[0x1000] = 0x40; // RTI at $9000
+    let chr_rom = vec![0; 0x2000];
+    let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
+    cpu.bus.borrow_mut().map_cartridge(cartridge);
+    cpu.reset(true);
+    assert_eq!(cpu.nmis_taken(), 0);
+
+    ppu.borrow_mut().write_control(0x80);
+    ppu.borrow_mut().run_ppu_cycles(241 * 341 + 1);
+    cpu.execute(); // NOP, then the NMI entry
+    assert_eq!(cpu.pc, 0x9000);
+    assert_eq!(cpu.nmis_taken(), 1);
+
+    cpu.execute(); // RTI
+    cpu.execute(); // NOP at $8001
+    assert_eq!(cpu.nmis_taken(), 1, "no further NMI was taken");
+}
