@@ -224,6 +224,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // A release build compiles the NES instruction trace out; say so before any trace line.
+    if let Some(warning) =
+        neser::platform::debugging::release_cpu_trace_warning(&args, cfg!(debug_assertions))
+    {
+        eprintln!("{warning}");
+    }
+
     // Initialize global tracing state (only active in debug builds)
     let tracing_config = app_context.borrow().config().frontend.tracing;
     neser::platform::debugging::init_tracing(tracing_config);

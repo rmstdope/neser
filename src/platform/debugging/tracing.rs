@@ -366,9 +366,101 @@ impl Tracing {
     }
 }
 
+/// The start-up warning for a CPU trace asked for on the command line of a build whose
+/// NES instruction trace is compiled out (a release build), or `None`.
+///
+/// Only the command line counts, so tracing enabled any other way never warns. The
+/// warning names the first CPU-trace spelling typed, without any `=N` level.
+pub fn release_cpu_trace_warning(args: &[String], debug_build: bool) -> Option<String> {
+    if debug_build {
+        return None;
+    }
+    let mut from_args = Tracing::default();
+    from_args.apply_args(args);
+    if from_args.cpu == 0 {
+        return None;
+    }
+    let flag = args.iter().find_map(|arg| match arg.as_str() {
+        "--trace" => Some("--trace"),
+        "--trace-cpu" => Some("--trace-cpu"),
+        other if other.starts_with("--trace-cpu=") => Some("--trace-cpu"),
+        _ => None,
+    })?;
+    Some(format!(
+        "warning: {flag}: this release build prints CPU interrupts only; build without --release for instruction lines"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("neser")
+            .chain(list.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    fn warning_for(flag: &str) -> String {
+        format!(
+            "warning: {flag}: this release build prints CPU interrupts only; build without --release for instruction lines"
+        )
+    }
+
+    #[test]
+    fn release_warning_names_trace_cpu() {
+        let warning = release_cpu_trace_warning(&args(&["--headless", "--trace-cpu"]), false);
+        assert_eq!(warning, Some(warning_for("--trace-cpu")));
+    }
+
+    #[test]
+    fn release_warning_names_trace() {
+        let warning = release_cpu_trace_warning(&args(&["--trace", "game.nes"]), false);
+        assert_eq!(warning, Some(warning_for("--trace")));
+    }
+
+    #[test]
+    fn release_warning_names_first_spelling_once() {
+        let warning = release_cpu_trace_warning(&args(&["--trace", "--trace-cpu"]), false);
+        assert_eq!(warning, Some(warning_for("--trace")));
+        let warning = release_cpu_trace_warning(&args(&["--trace-cpu", "--trace"]), false);
+        assert_eq!(warning, Some(warning_for("--trace-cpu")));
+        let warning = release_cpu_trace_warning(&args(&["--trace", "--trace"]), false).unwrap();
+        assert!(!warning.contains('\n'));
+    }
+
+    #[test]
+    fn release_warning_strips_level_value() {
+        let warning = release_cpu_trace_warning(&args(&["--trace-cpu=2"]), false);
+        assert_eq!(warning, Some(warning_for("--trace-cpu")));
+    }
+
+    #[test]
+    fn no_warning_in_debug_build() {
+        assert_eq!(release_cpu_trace_warning(&args(&["--trace"]), true), None);
+        assert_eq!(
+            release_cpu_trace_warning(&args(&["--trace-cpu"]), true),
+            None
+        );
+    }
+
+    #[test]
+    fn no_warning_without_cpu_trace_flag() {
+        assert_eq!(release_cpu_trace_warning(&args(&["game.nes"]), false), None);
+        let others = args(&["--trace-ppu", "--trace-nestest", "--gba-trace-cpu=1"]);
+        assert_eq!(release_cpu_trace_warning(&others, false), None);
+    }
+
+    #[test]
+    fn no_warning_when_cpu_level_is_zero() {
+        assert_eq!(
+            release_cpu_trace_warning(&args(&["--trace-cpu=0"]), false),
+            None
+        );
+        let off_again = args(&["--trace-cpu", "--trace-cpu=0"]);
+        assert_eq!(release_cpu_trace_warning(&off_again, false), None);
+    }
 
     fn parse_tracing(args: &[String]) -> Tracing {
         let mut tracing = Tracing::default();
