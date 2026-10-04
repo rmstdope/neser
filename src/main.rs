@@ -167,6 +167,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let app_context = Rc::new(RefCell::new(AppContext::new_with_config(parsed_config)));
+    // A release build compiles the NES instruction trace out; the first NES game says so.
+    app_context.borrow_mut().set_nes_trace_warning(
+        neser::platform::debugging::release_nes_trace_warning(&args, cfg!(debug_assertions)),
+    );
 
     // Handle --tui: launch the interactive TUI ROM browser and exit.
     // Must be checked before refresh_startup_cartridge_catalog so the catalog
