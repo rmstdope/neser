@@ -1,253 +1,166 @@
 //! Keyboard-to-controller button mapping for the native frontend.
 //!
-//! Maps winit `KeyCode`s to NES/SNES/Power Pad/GB/GBA button presses and
-//! releases. `handle_controller_key` routes NES/SNES/Power Pad keys to the
-//! configured ports; the `*_key_to_button_id` functions map keys for the
-//! single-joypad consoles (GB, GBA, SNES).
+//! Every binding lives in [`crate::platform::key_bindings`], the table the web shell reads
+//! too; this module only turns a winit [`KeyCode`] into that table's [`Key`] and hands the
+//! rows to the console. `handle_controller_key` routes NES keys to the configured ports;
+//! [`pad_button_id`] gives the button of the single-joypad consoles (GB, GBA, SNES).
 
-use crate::nes::input::{Button, PowerPadButton, SnesButton};
-use crate::platform::emulator::Console;
+use crate::nes::input::button_from_id as nes_button;
+use crate::platform::emulator::{Console, SystemType};
+use crate::platform::key_bindings::{Input, Key, KeyBinding, Player, Shell, bindings_for};
 use winit::keyboard::KeyCode;
 
-/// Maps a key code to a Game Boy button ID (0=A,1=B,2=Select,3=Start,4=Up,5=Down,6=Left,7=Right).
-///
-/// Uses the same physical-position layout as the NES P1 keys so that
-/// players feel at home: WASD for D-pad, T=A, R=B, 4=Select, 5=Start.
-/// Arrow keys are also mapped to the D-pad for convenience.
-pub(super) fn gameboy_key_to_button_id(key_code: KeyCode) -> Option<u8> {
-    use Button::{A, B, Down, Left, Right, Select, Start, Up};
-    match key_code {
-        KeyCode::KeyT => Some(A as u8),
-        KeyCode::KeyR => Some(B as u8),
-        KeyCode::Digit4 => Some(Select as u8),
-        KeyCode::Digit5 => Some(Start as u8),
-        KeyCode::KeyW | KeyCode::ArrowUp => Some(Up as u8),
-        KeyCode::KeyS | KeyCode::ArrowDown => Some(Down as u8),
-        KeyCode::KeyA | KeyCode::ArrowLeft => Some(Left as u8),
-        KeyCode::KeyD | KeyCode::ArrowRight => Some(Right as u8),
+/// The winit name of every key the table can bind: a name mapping, never a binding.
+pub(super) const WINIT_KEYS: &[(KeyCode, Key)] = &[
+    (KeyCode::Digit0, Key::Digit0),
+    (KeyCode::Digit1, Key::Digit1),
+    (KeyCode::Digit2, Key::Digit2),
+    (KeyCode::Digit3, Key::Digit3),
+    (KeyCode::Digit4, Key::Digit4),
+    (KeyCode::Digit5, Key::Digit5),
+    (KeyCode::Digit6, Key::Digit6),
+    (KeyCode::Digit7, Key::Digit7),
+    (KeyCode::Digit8, Key::Digit8),
+    (KeyCode::Digit9, Key::Digit9),
+    (KeyCode::KeyA, Key::KeyA),
+    (KeyCode::KeyB, Key::KeyB),
+    (KeyCode::KeyC, Key::KeyC),
+    (KeyCode::KeyD, Key::KeyD),
+    (KeyCode::KeyE, Key::KeyE),
+    (KeyCode::KeyF, Key::KeyF),
+    (KeyCode::KeyG, Key::KeyG),
+    (KeyCode::KeyI, Key::KeyI),
+    (KeyCode::KeyJ, Key::KeyJ),
+    (KeyCode::KeyK, Key::KeyK),
+    (KeyCode::KeyL, Key::KeyL),
+    (KeyCode::KeyM, Key::KeyM),
+    (KeyCode::KeyO, Key::KeyO),
+    (KeyCode::KeyP, Key::KeyP),
+    (KeyCode::KeyQ, Key::KeyQ),
+    (KeyCode::KeyR, Key::KeyR),
+    (KeyCode::KeyS, Key::KeyS),
+    (KeyCode::KeyT, Key::KeyT),
+    (KeyCode::KeyU, Key::KeyU),
+    (KeyCode::KeyV, Key::KeyV),
+    (KeyCode::KeyW, Key::KeyW),
+    (KeyCode::KeyX, Key::KeyX),
+    (KeyCode::KeyY, Key::KeyY),
+    (KeyCode::KeyZ, Key::KeyZ),
+    (KeyCode::Minus, Key::Minus),
+    (KeyCode::Comma, Key::Comma),
+    (KeyCode::Period, Key::Period),
+    (KeyCode::ArrowUp, Key::ArrowUp),
+    (KeyCode::ArrowDown, Key::ArrowDown),
+    (KeyCode::ArrowLeft, Key::ArrowLeft),
+    (KeyCode::ArrowRight, Key::ArrowRight),
+];
+
+/// The table's name for a winit key, if the table can bind it.
+fn key_from_winit(key_code: KeyCode) -> Option<Key> {
+    WINIT_KEYS
+        .iter()
+        .find(|&&(code, _)| code == key_code)
+        .map(|&(_, key)| key)
+}
+
+/// The winit key for one of the table's keys.
+#[cfg(test)]
+pub(super) fn winit_key(key: Key) -> KeyCode {
+    WINIT_KEYS
+        .iter()
+        .find(|&&(_, k)| k == key)
+        .map(|&(code, _)| code)
+        .expect("every Key has a winit KeyCode")
+}
+
+/// The desktop rows for `key_code` on `console`, in the order they are tried.
+pub(super) fn desktop_rows(
+    console: SystemType,
+    key_code: KeyCode,
+) -> impl Iterator<Item = &'static KeyBinding> {
+    key_from_winit(key_code)
+        .into_iter()
+        .flat_map(move |key| bindings_for(Shell::Desktop, console, key))
+}
+
+/// The platform button id `key_code` presses on the single joypad of `console` (GB, GBA,
+/// SNES), if any.
+pub(super) fn pad_button_id(console: SystemType, key_code: KeyCode) -> Option<u8> {
+    desktop_rows(console, key_code).find_map(|b| match b.input {
+        Input::Pad(Player::One, button) => Some(button.id()),
         _ => None,
-    }
-}
-
-/// Maps a key code to a GBA button ID.
-///
-/// Extends the Game Boy/NES-style keyboard layout with Q=L and E=R,
-/// matching the native NES/SNES shoulder-button positions.
-pub(super) fn gba_key_to_button_id(key_code: KeyCode) -> Option<u8> {
-    match key_code {
-        KeyCode::KeyQ => Some(8), // L
-        KeyCode::KeyE => Some(9), // R
-        _ => gameboy_key_to_button_id(key_code),
-    }
-}
-
-/// Maps a key code to a SNES button ID.
-///
-/// Extends the Game Boy/NES-style keyboard layout with the SNES face and
-/// shoulder buttons. Button IDs follow the platform convention plus the
-/// SNES-only `X`/`Y` (see [`crate::snes::input::button_from_id`]):
-/// `0=A, 1=B, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right, 8=L, 9=R,
-/// 10=X, 11=Y`.
-pub(super) fn snes_key_to_button_id(key_code: KeyCode) -> Option<u8> {
-    match key_code {
-        KeyCode::KeyQ => Some(8),  // L
-        KeyCode::KeyE => Some(9),  // R
-        KeyCode::KeyY => Some(10), // X
-        KeyCode::KeyG => Some(11), // Y
-        _ => gameboy_key_to_button_id(key_code),
-    }
+    })
 }
 
 // ── Controller key mapping ────────────────────────────────────────────────────
 
-/// Maps a [`KeyCode`] to NES/SNES/Power Pad button presses or releases.
+/// Applies the NES rows bound to a [`KeyCode`]: presses or releases its NES, SNES or
+/// Power Pad buttons, or the Vs. System coin and service inputs.
 ///
 /// `ports` is the set of NES ports keyboard input should be routed to,
-/// determined by [`keyboard_target_ports`].  P1 keys (WASD etc.) are sent to the
-/// first port in `ports` (`ports.first()`); P2-specific keys (IJKL etc.) are sent
-/// to the second port in `ports` (`ports.get(1)`), if present.
+/// determined by [`super::keyboard_target_ports`]. Player 1 keys (WASD etc.) are sent to the
+/// first port in `ports`; player 2 keys (IJKL etc.) to the second, if present.
 pub(super) fn handle_controller_key(
     console: &mut Console,
     key_code: KeyCode,
     pressed: bool,
     ports: &[u8],
 ) {
+    apply_nes_rows(
+        console,
+        desktop_rows(SystemType::Nes, key_code),
+        pressed,
+        ports,
+    );
+}
+
+/// Tries `rows` in order and stops at the first one the plugged device accepts.
+pub(super) fn apply_nes_rows<'a>(
+    console: &mut Console,
+    rows: impl IntoIterator<Item = &'a KeyBinding>,
+    pressed: bool,
+    ports: &[u8],
+) {
     let Some(nes) = console.as_nes_mut() else {
         return;
     };
-    match key_code {
-        // ── Player 1: 1/2/3 → Power Pad buttons ──────────────────────────
-        KeyCode::Digit1 => pp_p1(nes, PowerPadButton::One, pressed, ports),
-        KeyCode::Digit2 => pp_p1(nes, PowerPadButton::Two, pressed, ports),
-        KeyCode::Digit3 => pp_p1(nes, PowerPadButton::Three, pressed, ports),
-
-        // ── Player 1: QWEASD (D-pad / SNES L/R / Power Pad) ──────────────
-        KeyCode::KeyQ => pp_or_snes_p1(nes, PowerPadButton::Four, SnesButton::L, pressed, ports),
-        KeyCode::KeyW => pp_or_btn_or_snes_p1(
-            nes,
-            PowerPadButton::Five,
-            Button::Up,
-            SnesButton::Up,
-            pressed,
-            ports,
-        ),
-        KeyCode::KeyE => pp_or_snes_p1(nes, PowerPadButton::Six, SnesButton::R, pressed, ports),
-        KeyCode::KeyA => pp_or_btn_or_snes_p1(
-            nes,
-            PowerPadButton::Seven,
-            Button::Left,
-            SnesButton::Left,
-            pressed,
-            ports,
-        ),
-        KeyCode::KeyS => pp_or_btn_or_snes_p1(
-            nes,
-            PowerPadButton::Eight,
-            Button::Down,
-            SnesButton::Down,
-            pressed,
-            ports,
-        ),
-        KeyCode::KeyD => pp_or_btn_or_snes_p1(
-            nes,
-            PowerPadButton::Nine,
-            Button::Right,
-            SnesButton::Right,
-            pressed,
-            ports,
-        ),
-
-        // ── Player 1: ZXC → Power Pad ────────────────────────────────────
-        KeyCode::KeyZ => pp_p1(nes, PowerPadButton::Ten, pressed, ports),
-        KeyCode::KeyX => pp_p1(nes, PowerPadButton::Eleven, pressed, ports),
-        KeyCode::KeyC => pp_p1(nes, PowerPadButton::Twelve, pressed, ports),
-
-        // ── Player 1: T/R = A/B (joypad or SNES Y/X) ─────────────────────
-        KeyCode::KeyT => btn_or_snes_p1(nes, Button::A, SnesButton::Y, pressed, ports),
-        KeyCode::KeyR => btn_or_snes_p1(nes, Button::B, SnesButton::X, pressed, ports),
-
-        // ── Player 1: F/G = SNES B/A only ────────────────────────────────
-        KeyCode::KeyF => snes_p1(nes, SnesButton::B, pressed, ports),
-        KeyCode::KeyG => snes_p1(nes, SnesButton::A, pressed, ports),
-
-        // ── Player 1: 4/5 = Select/Start ─────────────────────────────────
-        KeyCode::Digit4 => btn_or_snes_p1(nes, Button::Select, SnesButton::Select, pressed, ports),
-        KeyCode::Digit5 => btn_or_snes_p1(nes, Button::Start, SnesButton::Start, pressed, ports),
-
-        // ── Player 2: 7/8 → Power Pad; 9 = PP3/Select; 0 = Start ─────────
-        KeyCode::Digit7 => pp_p2(nes, PowerPadButton::One, pressed, ports),
-        KeyCode::Digit8 => pp_p2(nes, PowerPadButton::Two, pressed, ports),
-        KeyCode::Digit9 => pp_or_btn_p2(nes, PowerPadButton::Three, Button::Select, pressed, ports),
-        KeyCode::Digit0 => btn_p2(nes, Button::Start, pressed, ports),
-
-        // ── Player 2: UIOJKL M,. = D-pad / Power Pad ─────────────────────
-        KeyCode::KeyU => pp_p2(nes, PowerPadButton::Four, pressed, ports),
-        KeyCode::KeyI => pp_or_btn_p2(nes, PowerPadButton::Five, Button::Up, pressed, ports),
-        KeyCode::KeyO => pp_or_btn_p2(nes, PowerPadButton::Six, Button::A, pressed, ports),
-        KeyCode::KeyJ => pp_or_btn_p2(nes, PowerPadButton::Seven, Button::Left, pressed, ports),
-        KeyCode::KeyK => pp_or_btn_p2(nes, PowerPadButton::Eight, Button::Down, pressed, ports),
-        KeyCode::KeyL => pp_or_btn_p2(nes, PowerPadButton::Nine, Button::Right, pressed, ports),
-        KeyCode::KeyM => pp_p2(nes, PowerPadButton::Ten, pressed, ports),
-        KeyCode::Comma => pp_p2(nes, PowerPadButton::Eleven, pressed, ports),
-        KeyCode::Period => pp_p2(nes, PowerPadButton::Twelve, pressed, ports),
-        KeyCode::KeyP => btn_p2(nes, Button::B, pressed, ports),
-
-        // ── VS System: coin insert / service button ──────────────────────
-        // A press inserts one coin; the core times the coin pulse, so the release is moot.
-        KeyCode::Digit6 => {
-            if pressed {
-                nes.insert_vs_coin(0);
+    let port_of = |player| match player {
+        Player::One => ports.first().copied(),
+        Player::Two => ports.get(1).copied(),
+    };
+    for row in rows {
+        let accepted = match row.input {
+            Input::PowerPad(player, button) => {
+                let Some(port) = port_of(player) else { return };
+                nes.set_power_pad_button(port, button, pressed)
             }
+            Input::SnesPadOnNes(player, button) => {
+                let Some(port) = port_of(player) else { return };
+                nes.set_snes_button(port, button.on_nes_snes_pad(), pressed)
+            }
+            Input::Pad(player, button) => {
+                let Some(port) = port_of(player) else { return };
+                if let Some(button) = nes_button(button.id()) {
+                    nes.set_button(port, button, pressed);
+                }
+                true
+            }
+            // A press inserts one coin; the core times the coin pulse, so the release is moot.
+            Input::VsCoin => {
+                if pressed {
+                    nes.insert_vs_coin(0);
+                }
+                true
+            }
+            Input::VsService => {
+                nes.set_vs_service_button(pressed);
+                true
+            }
+            Input::SuperScopeTurbo | Input::SuperScopePause => false,
+        };
+        if accepted {
+            return;
         }
-        KeyCode::Minus => nes.set_vs_service_button(pressed),
-
-        _ => {}
-    }
-}
-
-// ── Player-1 button helpers (route to the primary keyboard port) ───────────────────────────────────────
-
-fn pp_p1(nes: &mut crate::nes::console::Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
-    if let Some(&port) = ports.first() {
-        nes.set_power_pad_button(port, pp, pressed);
-    }
-}
-
-fn snes_p1(nes: &mut crate::nes::console::Nes, snes: SnesButton, pressed: bool, ports: &[u8]) {
-    if let Some(&port) = ports.first() {
-        nes.set_snes_button(port, snes, pressed);
-    }
-}
-
-fn btn_or_snes_p1(
-    nes: &mut crate::nes::console::Nes,
-    btn: Button,
-    snes: SnesButton,
-    pressed: bool,
-    ports: &[u8],
-) {
-    if let Some(&port) = ports.first()
-        && !nes.set_snes_button(port, snes, pressed)
-    {
-        nes.set_button(port, btn, pressed);
-    }
-}
-
-fn pp_or_snes_p1(
-    nes: &mut crate::nes::console::Nes,
-    pp: PowerPadButton,
-    snes: SnesButton,
-    pressed: bool,
-    ports: &[u8],
-) {
-    if let Some(&port) = ports.first()
-        && !nes.set_power_pad_button(port, pp, pressed)
-    {
-        nes.set_snes_button(port, snes, pressed);
-    }
-}
-
-fn pp_or_btn_or_snes_p1(
-    nes: &mut crate::nes::console::Nes,
-    pp: PowerPadButton,
-    btn: Button,
-    snes: SnesButton,
-    pressed: bool,
-    ports: &[u8],
-) {
-    if let Some(&port) = ports.first()
-        && !nes.set_power_pad_button(port, pp, pressed)
-        && !nes.set_snes_button(port, snes, pressed)
-    {
-        nes.set_button(port, btn, pressed);
-    }
-}
-
-// ── Player-2-only button helpers ─────────────────────────────────────────────
-
-fn btn_p2(nes: &mut crate::nes::console::Nes, btn: Button, pressed: bool, ports: &[u8]) {
-    if let Some(&port) = ports.get(1) {
-        nes.set_button(port, btn, pressed);
-    }
-}
-
-fn pp_p2(nes: &mut crate::nes::console::Nes, pp: PowerPadButton, pressed: bool, ports: &[u8]) {
-    if let Some(&port) = ports.get(1) {
-        nes.set_power_pad_button(port, pp, pressed);
-    }
-}
-
-fn pp_or_btn_p2(
-    nes: &mut crate::nes::console::Nes,
-    pp: PowerPadButton,
-    btn: Button,
-    pressed: bool,
-    ports: &[u8],
-) {
-    if let Some(&port) = ports.get(1)
-        && !nes.set_power_pad_button(port, pp, pressed)
-    {
-        nes.set_button(port, btn, pressed);
     }
 }
 
@@ -263,16 +176,79 @@ mod tests {
     #[test]
     fn snes_key_mapping_covers_face_and_shoulder_buttons() {
         // Base GB-style keys still map.
-        assert_eq!(super::snes_key_to_button_id(KeyCode::KeyT), Some(0)); // A
-        assert_eq!(super::snes_key_to_button_id(KeyCode::KeyR), Some(1)); // B
-        assert_eq!(super::snes_key_to_button_id(KeyCode::Digit4), Some(2)); // Select
-        assert_eq!(super::snes_key_to_button_id(KeyCode::Digit5), Some(3)); // Start
+        let snes = |key| super::pad_button_id(crate::platform::emulator::SystemType::Snes, key);
+        assert_eq!(snes(KeyCode::KeyT), Some(0)); // A
+        assert_eq!(snes(KeyCode::KeyR), Some(1)); // B
+        assert_eq!(snes(KeyCode::Digit4), Some(2)); // Select
+        assert_eq!(snes(KeyCode::Digit5), Some(3)); // Start
         // SNES additions.
-        assert_eq!(super::snes_key_to_button_id(KeyCode::KeyQ), Some(8)); // L
-        assert_eq!(super::snes_key_to_button_id(KeyCode::KeyE), Some(9)); // R
-        assert_eq!(super::snes_key_to_button_id(KeyCode::KeyY), Some(10)); // X
-        assert_eq!(super::snes_key_to_button_id(KeyCode::KeyG), Some(11)); // Y
-        assert_eq!(super::snes_key_to_button_id(KeyCode::F1), None);
+        assert_eq!(snes(KeyCode::KeyQ), Some(8)); // L
+        assert_eq!(snes(KeyCode::KeyE), Some(9)); // R
+        assert_eq!(snes(KeyCode::KeyY), Some(10)); // X
+        assert_eq!(snes(KeyCode::KeyG), Some(11)); // Y
+        assert_eq!(snes(KeyCode::F1), None);
+    }
+
+    // ── The shared key table (nr-tlf) ─────────────────────────────────────────
+
+    use crate::nes::input::PowerPadButton;
+    use crate::platform::emulator::SystemType;
+    use crate::platform::key_bindings::{
+        Input, Key, KeyBinding, PadButton, Player, Shell, Shells, bindings_of,
+    };
+
+    fn row(key: Key, input: Input) -> KeyBinding {
+        KeyBinding {
+            console: SystemType::Nes,
+            key,
+            input,
+            shells: Shells::Both,
+        }
+    }
+
+    /// The NES dispatch does what the rows say, whatever key they hang off: a Power Pad row
+    /// a joypad rejects falls through to the next row.
+    #[test]
+    fn nes_keys_follow_the_rows_they_are_given() {
+        let rows = [
+            row(Key::KeyZ, Input::PowerPad(Player::Two, PowerPadButton::One)),
+            row(Key::KeyZ, Input::Pad(Player::Two, PadButton::Start)),
+        ];
+        let mut console = make_nes_console();
+        super::apply_nes_rows(&mut console, &rows, true, &[1, 2]);
+        assert_ne!(console.get_joypad_button_states(2) & BIT_START, 0);
+        assert_eq!(console.get_joypad_button_states(1), 0);
+    }
+
+    /// Every key the table binds is one the desktop can receive.
+    #[test]
+    fn every_table_key_has_a_winit_key() {
+        for b in crate::platform::key_bindings::KEY_BINDINGS {
+            assert!(
+                super::WINIT_KEYS.iter().any(|&(_, key)| key == b.key),
+                "{:?} has no winit KeyCode",
+                b.key
+            );
+        }
+    }
+
+    /// Every desktop NES joypad row presses its button on its player's port.
+    #[test]
+    fn every_desktop_nes_pad_row_presses_its_button() {
+        for b in bindings_of(Shell::Desktop).filter(|b| b.console == SystemType::Nes) {
+            let Input::Pad(player, button) = b.input else {
+                continue;
+            };
+            let mut console = make_nes_console();
+            let mut state = make_state();
+            handle_key_pressed(&mut console, super::winit_key(b.key), &mut state, None);
+            let port = if player == Player::One { 1 } else { 2 };
+            assert_ne!(
+                console.get_joypad_button_states(port) & (1 << button.id()),
+                0,
+                "{b:?}"
+            );
+        }
     }
 
     // ── VS System coin key ────────────────────────────────────────────────────

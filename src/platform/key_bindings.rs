@@ -11,7 +11,7 @@
 //! port, then the joypad; a Super Scope before the SNES pad's Select/Start). Which port a
 //! [`Player`] is, and gamepad, Four Score, Zapper and Mouse routing, stay with each shell.
 
-use crate::nes::input::PowerPadButton;
+use crate::nes::input::{PowerPadButton, SnesButton as NesSnesButton};
 use crate::platform::emulator::SystemType;
 
 /// A key, named as the W3C `KeyboardEvent.code` (and winit's `KeyCode`) names it.
@@ -144,6 +144,25 @@ impl PadButton {
             PadButton::R => 9,
             PadButton::X => 10,
             PadButton::Y => 11,
+        }
+    }
+
+    /// The button of an SNES controller in an NES port, whose discriminant is also the id
+    /// the wasm binding `WasmNes::set_snes_button` takes.
+    pub const fn on_nes_snes_pad(self) -> NesSnesButton {
+        match self {
+            PadButton::A => NesSnesButton::A,
+            PadButton::B => NesSnesButton::B,
+            PadButton::Select => NesSnesButton::Select,
+            PadButton::Start => NesSnesButton::Start,
+            PadButton::Up => NesSnesButton::Up,
+            PadButton::Down => NesSnesButton::Down,
+            PadButton::Left => NesSnesButton::Left,
+            PadButton::Right => NesSnesButton::Right,
+            PadButton::L => NesSnesButton::L,
+            PadButton::R => NesSnesButton::R,
+            PadButton::X => NesSnesButton::X,
+            PadButton::Y => NesSnesButton::Y,
         }
     }
 }
