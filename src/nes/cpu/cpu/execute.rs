@@ -99,6 +99,7 @@ impl Cpu {
         }
 
         self.last_cpu_write_addr = None;
+        self.instructions_executed += 1;
 
         // The CPU's IRQ inhibit flag (I) has a one-instruction delay behavior for
         // CLI/SEI and (conditionally) PLP. We model that using `delayed_i_flag`:
@@ -202,6 +203,7 @@ impl Cpu {
                     self.nmi_pending = false;
                     self.push_byte(flags);
                     self.p |= FLAG_INTERRUPT;
+                    self.nmis_taken += 1;
                     self.pc = self.read_u16(NMI_VECTOR);
                 } else {
                     self.push_byte(flags);

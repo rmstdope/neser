@@ -1230,6 +1230,24 @@ impl Nes {
     }
 }
 
+impl crate::platform::timing_trace::TimingProbe for Nes {
+    fn trace_pc(&self) -> u32 {
+        self.cpu.pc() as u32
+    }
+
+    fn trace_clock(&self) -> u64 {
+        self.cpu.get_total_cycles()
+    }
+
+    fn nmis_taken(&self) -> u64 {
+        self.cpu.nmis_taken()
+    }
+
+    fn instructions_executed(&self) -> u64 {
+        self.cpu.instructions_executed()
+    }
+}
+
 impl Emulator for Nes {
     fn system_type(&self) -> SystemType {
         SystemType::Nes

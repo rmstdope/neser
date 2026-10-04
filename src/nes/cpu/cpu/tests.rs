@@ -14415,3 +14415,88 @@ fn mapper_capability_flags_irq_true_for_mmc3() {
 
     assert!(cpu.test_mapper_has_irq(), "MMC3 must report IRQ capability");
 }
+
+#[test]
+fn test_nmis_taken_counts_each_nmi_entry_and_not_other_instructions() {
+    // nr-ggx: the timing-trace tool marks an NMI entry by this counter rising.
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(
+        TimingMode::Ntsc,
+        Rc::clone(&memory),
+        Rc::clone(&ppu),
+        Rc::clone(&apu),
+    );
+    let mut prg_rom = vec![0; 0x4000];
+    prg_rom[0x3FFA] = 0x00; // NMI vector -> $9000
+    prg_rom[0x3FFB] = 0x90;
+    prg_rom[0x3FFC] = 0x00; // reset vector -> $8000
+    prg_rom[0x3FFD] = 0x80;
+    prg_rom[0x0000] = 0xEA; // NOP at $8000
+    prg_rom[0x0001] = 0xEA; // NOP at $8001
+    prg_rom[0x1000] = 0x40; // RTI at $9000
+    let chr_rom = vec![0; 0x2000];
+    let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
+    cpu.bus.borrow_mut().map_cartridge(cartridge);
+    cpu.reset(true);
+    assert_eq!(cpu.nmis_taken(), 0);
+
+    ppu.borrow_mut().write_control(0x80);
+    ppu.borrow_mut().run_ppu_cycles(241 * 341 + 1);
+    cpu.execute(); // NOP, then the NMI entry
+    assert_eq!(cpu.pc, 0x9000);
+    assert_eq!(cpu.nmis_taken(), 1);
+
+    cpu.execute(); // RTI
+    cpu.execute(); // NOP at $8001
+    assert_eq!(cpu.nmis_taken(), 1, "no further NMI was taken");
+    assert_eq!(
+        cpu.instructions_executed(),
+        3,
+        "NOP, RTI, NOP; the NMI entry is not an instruction"
+    );
+}
+
+#[test]
+fn test_instructions_executed_does_not_count_a_jammed_cpu() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    cpu.halted = true;
+    cpu.execute();
+    assert_eq!(cpu.instructions_executed(), 0);
+}
+
+/// A CPU at $8000 whose NMI vector points at $9000 and IRQ/BRK vector at $A000.
+fn cpu_with_nmi_and_irq_vectors(code: &[u8]) -> Cpu {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    let mut prg_rom = vec![0xEA; 0x4000];
+    prg_rom[..code.len()].copy_from_slice(code);
+    prg_rom[0x3FFA] = 0x00; // NMI -> $9000
+    prg_rom[0x3FFB] = 0x90;
+    prg_rom[0x3FFC] = 0x00; // reset -> $8000
+    prg_rom[0x3FFD] = 0x80;
+    prg_rom[0x3FFE] = 0x00; // IRQ/BRK -> $A000
+    prg_rom[0x3FFF] = 0xA0;
+    let cartridge = Cartridge::from_parts(prg_rom, vec![0; 0x2000], NametableLayout::Horizontal);
+    cpu.bus.borrow_mut().map_cartridge(cartridge);
+    cpu.reset(true);
+    cpu
+}
+
+#[test]
+fn test_nmis_taken_counts_an_nmi_that_hijacks_brk() {
+    let mut cpu = cpu_with_nmi_and_irq_vectors(&[0x00, 0x00]); // BRK
+    cpu.nmi_pending = true;
+    cpu.execute();
+    assert_eq!(cpu.pc, 0x9000, "the NMI took over BRK's vectoring");
+    assert_eq!(cpu.nmis_taken(), 1);
+}
+
+#[test]
+fn test_nmis_taken_counts_an_nmi_that_hijacks_irq_entry() {
+    let mut cpu = cpu_with_nmi_and_irq_vectors(&[]);
+    cpu.nmi_pending = true;
+    cpu.service_irq_or_nmi_sequence();
+    assert_eq!(cpu.pc, 0x9000, "the NMI took over the interrupt sequence");
+    assert_eq!(cpu.nmis_taken(), 1);
+}

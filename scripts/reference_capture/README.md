@@ -116,6 +116,120 @@ gate builds none). It leaves `AllowIoOsAccess` alone. The same module's
 simulates the setting being off with a shim that sets `io` and `os` to nil, and needs Mesen2
 but no NESER build.
 
+## Tracing against Mesen2 (NES and SNES)
+
+For a game that drifts from Mesen2, compare *when* things happen before comparing
+pictures. A picture shows only what the game has drawn, and RAM can differ long before
+that reaches the screen (nr-046). Two traces do it, each written by both emulators in the
+same format and compared by `scripts/diff_timing_traces.py` (nr-ggx):
+
+- **NMI clock log**: one line per NMI entry, `nmi=<n> pc=<handler> clk=<clock>`. A
+  CPU-timing drift moves the next NMI entry, so this one line per frame finds the frame in
+  seconds. The same answer took over an hour with a per-instruction trace (nr-4lq).
+- **Exec trace**: one line per instruction, `pc=<address> clk=<clock>`, between two NMI
+  entries: the frame the NMI log pointed at.
+
+The clock on each line is the clock *before the instruction's opcode fetch*: CPU cycles
+on the NES, master clocks on the SNES, Mesen2's `masterClock` on both. NESER needs no
+patching. `timing_trace` reads the PC, the clock and two trace counters the cores keep
+(NMIs taken, instructions executed).
+
+```bash
+cargo build --release --features native --bin timing_trace
+ROM=<rom>; T="$PWD/trace"; mkdir -p "$T"
+MESEN=/Applications/Mesen.app/Contents/MacOS/Mesen
+FLAGS="--nes.RamPowerOnState=AllZeros"   # SNES: the four --snes.* flags from "Mesen2" above
+
+# 1. The first NMI entry whose clock differs.
+target/release/timing_trace nmi "$ROM" --nmis 3600 --out "$T/neser_nmi.txt"
+TRACE_NMIS=3600 TRACE_OUT="$T/mesen_nmi.txt" \
+  $MESEN --testRunner --enableStdout --timeout=300 $FLAGS "$ROM" \
+  scripts/reference_capture/mesen2_nmi_clock.lua
+python -m scripts.diff_timing_traces "$T/neser_nmi.txt" "$T/mesen_nmi.txt"
+# -> first divergence at line K: clock offset 6 -> 18   (line K is NMI entry K)
+
+# 2. Every instruction from entry K-1 up to entry K: the instruction that drifted.
+target/release/timing_trace exec "$ROM" --from-nmi <K-1> --to-nmi <K> --out "$T/neser_exec.txt"
+TRACE_FROM_NMI=<K-1> TRACE_TO_NMI=<K> TRACE_OUT="$T/mesen_exec.txt" \
+  $MESEN --testRunner --enableStdout --timeout=300 $FLAGS "$ROM" \
+  scripts/reference_capture/mesen2_exec_trace.lua
+python -m scripts.diff_timing_traces "$T/neser_exec.txt" "$T/mesen_exec.txt"
+```
+
+`--from-nmi 0` traces from power-on. `TRACE_OUT` must be absolute, and the scripts need
+`"AllowIoOsAccess": true` as `mesen2_capture.lua` does. `timing_trace` reads no
+`neser.conf`: it runs with default settings and zero-filled RAM, which is what the Mesen2
+flags pin. A per-instruction Mesen2 trace runs at roughly 250k SNES master clocks a
+second, about a second and a half per SNES frame, so keep the exec window to the frames
+the NMI log points at.
+
+**Reading the diff.** Only a *change* in the clock offset means anything. By default the
+first line's offset is the baseline, so a drift that happened before a trace's first line
+is invisible: before NMI 1 for an NMI log, before entry K for `exec --from-nmi K`. Pass
+`--baseline` when you know the expected offset. It is 0 on the NES, where NESER's CPU cycle
+count and Mesen2's `masterClock` start together. On the SNES it is the offset of an
+`exec --from-nmi 0` trace, 0 on every ROM traced so far. A trace whose first line is
+already off that baseline has drifted earlier, so look before it.
+
+One known SNES difference: on `undisbeliever-ppu-window/window-precalculated-single.sfc`,
+the instructions match at offset 0 from power-on, but every NMI entry is 6 master clocks
+later in NESER than in Mesen2 (2026-10-04, nr-7pk). Its NMI log diffs clean with the
+default baseline and stops at line 1 with `--baseline 0`.
+
+In an exec trace, an offset that leaves the baseline for a single line and comes straight
+back is listed as a *stamp difference*, never a divergence. A stall that falls on an
+instruction boundary is charged to the instruction before it by one emulator and to the
+one after it by the other, and the totals still agree. Three cases are known:
+
+- NES OAM DMA after a `$4014` write: Mesen2 stamps the next instruction before the
+  513/514-cycle stall, NESER after it.
+- SNES DRAM refresh (40 master clocks) at the start of an opcode fetch.
+- An SNES WAI woken with the interrupt masked: NESER runs the two wake cycles and the next
+  instruction in one step, so it stamps that instruction 2 CPU cycles early.
+
+In an NMI log every line is a frame, so a single late entry there *is* a divergence.
+
+**Mesen2 Lua behaviours** (Mesen2 2.1.1), each one paid for by a bead:
+
+- `emu.addMemoryCallback(cb, type, lo, hi, emu.cpuType.snes)` never fires. The same call
+  without the `cpuType` argument does (nr-dh7).
+- A memory callback on `$2100-$21FF` sees bank `$00` only. Writes through bank `$80`
+  (FastROM) or with DBR=`$81` are missing, which looks like NESER writes Mesen2 never made
+  (nr-dh7).
+- `read` callbacks never fire on PPU registers (`$2137-$213F`, with or without the bank or
+  `cpuType`/`memType`). Sample the register in an `exec` callback on the instruction after the
+  load instead, by reading `cpu.a` (nr-4cl).
+- An `exec` callback fires once per instruction, at the opcode fetch, with the full 24-bit
+  address on the SNES. `emu.getState().masterClock` inside it is the clock before that
+  fetch, the point `timing_trace` samples (nr-4cl, nr-ggx).
+- `emu.eventType.nmi` fires when the NMI is raised, a few cycles before the CPU enters the
+  handler, so the scripts use it only to arm an `exec` callback on the handler, which they
+  read from the vector with `emu.read`. `emu.read` is a debugger read with no side effects.
+  A CPU read of `$FFFA` is watched by some mappers (MMC5).
+- `endFrame`, `startFrame` and NESER's ready-to-render point all sit at different places in
+  the frame. `endFrame` and `is_ready_to_render()` fall on opposite sides of the writes at
+  the start of SNES scanline 225 (nr-dh7), and WRAM dumps taken at each emulator's own frame
+  event showed a one-frame lag that was not there (nr-4lq). Compare by NMI entry or by clock,
+  never per frame event.
+- The NMI entry is the only synchronous sampling point when a game spins an RNG in its idle
+  loop: any mid-frame RAM sample differs between the emulators (nr-046).
+- `emu.getState()` builds the whole console state on every call, so calling it per
+  instruction is slow. Find the frame with the NMI log first (nr-4lq).
+- `emu.getState()`'s APU fields are stale mid-frame: Mesen2 runs the APU lazily, catching up
+  only at register accesses, the frame end or an IRQ. Time an APU event with a memory
+  callback on the event itself (a `read` callback on the DMC sample range gives each fetch's
+  `cpu.cycleCount`), never with a state snapshot (nr-6gs).
+- `emu.stop()` is not immediate. Callbacks keep firing for a while after it, so a script
+  that stops after its last line must ignore them (nr-ggx).
+- Two `--testRunner` runs at once make one exit 0 with no output. Run them one at a time.
+
+The check that both halves agree is `NESER_MESEN2_TRACE_TEST=1 python -m unittest
+scripts.test_mesen2_traces`. It is opt-in like `test_mesen2_capture` and needs Mesen2 and a
+release `timing_trace`. It diffs the NMI log and two exec windows of
+`nmi_sync/demo_ntsc.nes` and `window-precalculated-single.sfc` and expects no divergence,
+and it checks that both scripts stop at once, naming the setting, when Lua file access is
+off.
+
 ## SameBoy (GB and CGB)
 
 The SameBoy.app cask has no command-line mode. Its repository ships a headless

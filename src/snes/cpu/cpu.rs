@@ -90,6 +90,14 @@ pub struct Cpu<B: SnesBus> {
     /// E=0: native mode (full 65816)
     e: bool,
 
+    /// NMIs dispatched since power-on. A trace aid (nr-ggx), not machine state: it is left
+    /// out of save states.
+    nmis_taken: u64,
+
+    /// Instructions executed since power-on; interrupt dispatches and WAI/STP waits do not
+    /// count. A trace aid (nr-ggx), not machine state.
+    instructions_executed: u64,
+
     /// Accumulated extra cycles for the current instruction (DP/M/X/page-cross penalties).
     /// Reset at the start of each `step()` call.
     extra_cycles: u8,
@@ -251,6 +259,8 @@ impl<B: SnesBus> Cpu<B> {
             pc: 0,
             p: FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT, // M=1, X=1, I=1
             e: true,                                                 // Start in emulation mode
+            nmis_taken: 0,
+            instructions_executed: 0,
             extra_cycles: 0,
             dma_locked_this_cycle: false,
             last_page_crossed: false,
@@ -369,6 +379,17 @@ impl<B: SnesBus> Cpu<B> {
         }
     }
 
+    /// How many NMIs the CPU has dispatched (loaded the NMI vector) since power-on.
+    pub fn nmis_taken(&self) -> u64 {
+        self.nmis_taken
+    }
+
+    /// How many instructions the CPU has executed since power-on (interrupt dispatches and
+    /// WAI/STP waits excluded).
+    pub fn instructions_executed(&self) -> u64 {
+        self.instructions_executed
+    }
+
     /// Read program counter.
     pub fn read_pc(&self) -> u16 {
         self.pc
@@ -420,7 +441,9 @@ impl<B: SnesBus> Cpu<B> {
             read_write_mask: _, // intra-instruction: reset at the start of every step()
             dma_locked_this_cycle: _, // intra-cycle: written before it is read every cycle
             irq_i_shadow,
-            bus: _, // captured separately by capture_save_state
+            nmis_taken: _,            // a trace aid, not machine state (nr-ggx)
+            instructions_executed: _, // likewise
+            bus: _,                   // captured separately by capture_save_state
         } = self;
         SnesCpuState {
             a,
@@ -887,6 +910,7 @@ impl<B: SnesBus> Cpu<B> {
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let i_before = self.flag_i();
+        self.instructions_executed += 1;
         let opcode = self.fetch_byte();
         if cpu_trace_level() >= 1 && trace_clock_in_window(self.bus.master_clock()) {
             let operands = self.exec_trace_operands(opcode);
@@ -4649,6 +4673,7 @@ impl<B: SnesBus> Cpu<B> {
     }
 
     fn dispatch_nmi(&mut self) -> u8 {
+        self.nmis_taken += 1;
         let cycles = self.dispatch_hw_interrupt(0x00FFEA, 0x00FFFA);
         if crate::platform::debugging::cpu_trace_level() >= 1 {
             trace_cpu!(1; "NMI -> PC={:02X}:{:04X}", self.pbr, self.pc);
@@ -12305,6 +12330,29 @@ mod interrupt_dispatch_tests {
         assert_eq!(
             cpu.pc, 0x9000,
             "the edge, now pending from the previous step(), dispatches NMI"
+        );
+    }
+
+    #[test]
+    fn dispatch_nmi_increments_nmis_taken() {
+        // nr-ggx: the timing-trace tool marks an NMI entry by this counter rising.
+        let mut cpu = Cpu::new(PollNmiBus::new());
+        cpu.pc = 0x8000;
+        cpu.s = 0x01FF;
+        cpu.bus.load(0x008000, &[0xEA, 0xEA]);
+        cpu.bus.load(0x00FFFA, &[0x00, 0x90]);
+        cpu.bus.nmi_once = true;
+        assert_eq!(cpu.nmis_taken(), 0);
+
+        cpu.step(); // NOP; the edge is polled
+        assert_eq!(cpu.nmis_taken(), 0, "a polled edge is not yet an entry");
+        cpu.step(); // NMI dispatch
+        assert_eq!(cpu.pc, 0x9000);
+        assert_eq!(cpu.nmis_taken(), 1);
+        assert_eq!(
+            cpu.instructions_executed(),
+            1,
+            "the NOP only: a dispatch step executes no instruction"
         );
     }
 
