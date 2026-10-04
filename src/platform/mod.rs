@@ -18,6 +18,7 @@ pub mod save_state;
 pub mod shaders;
 #[cfg(test)]
 pub mod test_roms;
+pub mod timing_trace;
 
 #[cfg(feature = "native")]
 pub mod audio;

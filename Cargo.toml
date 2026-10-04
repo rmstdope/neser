@@ -123,6 +123,11 @@ path = "src/bin/gba_frame_bench.rs"
 required-features = ["native"]
 
 [[bin]]
+name = "timing_trace"
+path = "src/bin/timing_trace.rs"
+required-features = ["native"]
+
+[[bin]]
 name = "gamepad_test"
 path = "src/bin/gamepad_test.rs"
 required-features = ["native"]

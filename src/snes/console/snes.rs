@@ -350,6 +350,31 @@ impl Snes {
     }
 }
 
+/// With no game loaded every reading is 0, and `run_tick` does nothing, so a trace of an
+/// empty console stalls into the trace's own hang guard.
+impl crate::platform::timing_trace::TimingProbe for Snes {
+    fn trace_pc(&self) -> u32 {
+        self.cpu.as_ref().map_or(0, |cpu| {
+            (u32::from(cpu.read_pbr()) << 16) | u32::from(cpu.read_pc())
+        })
+    }
+
+    fn trace_clock(&self) -> u64 {
+        use crate::snes::bus::SnesBus as _;
+        self.cpu.as_ref().map_or(0, |cpu| cpu.bus().master_clock())
+    }
+
+    fn nmis_taken(&self) -> u64 {
+        self.cpu.as_ref().map_or(0, |cpu| cpu.nmis_taken())
+    }
+
+    fn instructions_executed(&self) -> u64 {
+        self.cpu
+            .as_ref()
+            .map_or(0, |cpu| cpu.instructions_executed())
+    }
+}
+
 impl Emulator for Snes {
     fn system_type(&self) -> SystemType {
         SystemType::Snes
