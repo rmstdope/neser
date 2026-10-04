@@ -97,11 +97,12 @@ pub struct DmaController {
     hdma_do_transfer: [bool; 8],
     /// Which general-purpose channels are still armed, i.e. Mesen2's per-channel `DmaActive`.
     ///
-    /// Live only for the duration of a `start_dma` call, which seeds it from MDMAEN. An HDMA
-    /// running nested inside that transfer clears the bits of every HDMA-enabled channel
-    /// (Mesen2 `ProcessHdmaChannels`/`InitHdmaChannels` do `ch.DmaActive = false`), which
-    /// aborts a general-purpose transfer in flight on the same channel. Not serialised: no
-    /// save state can be taken mid-transfer.
+    /// Set by the `$420B` write ([`Self::arm_dma`]), not when the burst starts, and cleared
+    /// channel by channel as `start_dma` runs each one. Any HDMA in between -- in the
+    /// start-delay window or nested inside the transfer -- clears the bits of every
+    /// HDMA-enabled channel (Mesen2 `ProcessHdmaChannels`/`InitHdmaChannels` do
+    /// `ch.DmaActive = false`), which cancels or aborts a general-purpose transfer on the same
+    /// channel (nr-3qn). Saved, since a state can be taken in the start-delay window.
     dma_active_mask: u8,
 }
 
@@ -146,12 +147,13 @@ impl DmaController {
             ref regs,
             hdma_active_mask,
             ref hdma_do_transfer,
-            dma_active_mask: _, // intra-transfer: no save state is taken mid-transfer
+            dma_active_mask,
         } = self;
         SnesDmaState {
             regs: regs.to_vec(),
             hdma_active_mask,
             hdma_do_transfer: hdma_do_transfer.to_vec(),
+            dma_active_mask: Some(dma_active_mask),
         }
     }
 
@@ -161,6 +163,7 @@ impl DmaController {
             ref regs,
             hdma_active_mask,
             ref hdma_do_transfer,
+            dma_active_mask,
         } = state;
         if regs.len() != DMA_REG_BYTES {
             return Err(format!(
@@ -175,7 +178,21 @@ impl DmaController {
         self.regs.copy_from_slice(regs);
         self.hdma_active_mask = hdma_active_mask;
         self.hdma_do_transfer.copy_from_slice(hdma_do_transfer);
+        // An older state has no mask; the bus re-arms it from its pending burst.
+        self.dma_active_mask = dma_active_mask.unwrap_or(0);
         Ok(())
+    }
+
+    /// The `$420B` write: arm every channel set in `mdmaen` (Mesen2 sets `DmaActive` on each,
+    /// leaving the others as they are). The burst itself starts later, in `start_dma`.
+    pub fn arm_dma(&mut self, mdmaen: u8) {
+        self.dma_active_mask |= mdmaen;
+    }
+
+    /// Mesen2 `HasActiveDmaChannel`: whether any general-purpose channel is armed. An HDMA
+    /// pays the SyncStartDma/SyncEndDma pads only when none is (`needSync`).
+    pub fn has_active_dma_channel(&self) -> bool {
+        self.dma_active_mask != 0
     }
 
     /// Mesen2 `SnesDmaController::SyncEndDma`: after the transfer, "wait 2-8 master cycles
@@ -227,9 +244,9 @@ impl DmaController {
         abus.dma_tick(8);
         let mut open_bus = seed_open_bus;
 
-        // Mesen2 arms `DmaActive` on the `$420B` write itself; a nested HDMA can disarm a
-        // channel before or during its transfer.
-        self.dma_active_mask = mdmaen;
+        // The channels were armed at the `$420B` write (`arm_dma`), and an HDMA in the
+        // start-delay window may already have disarmed some or all of them; the envelope
+        // above is paid regardless, as Mesen2's `_dmaPending` branch does (nr-3qn).
 
         // Mesen2 `ProcessPendingTransfers` re-enters itself here, before any channel runs.
         self.run_nested_hdma(abus, &mut open_bus, &mut clocks, cpu_speed);
@@ -286,7 +303,11 @@ impl DmaController {
     /// Mesen2 re-enters `ProcessPendingTransfers` from inside `RunDma` (after the start
     /// overhead, after each channel's overhead, and after every byte), and both HDMA entry
     /// points then see `needSync = !HasActiveDmaChannel()` -- false, because `$420B` armed the
-    /// channels. So the nested run pays neither sync pad and its clocks fold into the same
+    /// channels. (Not modelled: a burst whose channels were ALL cancelled in the start-delay
+    /// window reaches its first nested check with none armed, where Mesen2 would pay the
+    /// pads. That needs a second HDMA due within the burst's opening clocks right after one
+    /// ran in the window, which the frame-init and per-line triggers never produce; nr-3qn.)
+    /// So the nested run pays neither sync pad and its clocks fold into the same
     /// counter the outer `SyncEndDma` rounds. ares is identical in shape: `CPU::dmaEdge`
     /// guards both `step()` pads with `if(!dmaEnable())`.
     fn run_nested_hdma<B: DmaABus>(
@@ -449,13 +470,14 @@ impl DmaController {
             if (hdmaen & (1 << channel)) == 0 {
                 continue;
             }
-            // Mesen2 `ProcessHdmaChannels`: `ch.DmaActive = false` for every HDMA-enabled
-            // channel, before the finished check. Aborts a general-purpose transfer running
-            // on that channel (only reachable when nested).
-            self.dma_active_mask &= !(1 << channel);
             if (self.hdma_active_mask & (1 << channel)) == 0 {
                 continue;
             }
+            // Mesen2 `ProcessHdmaChannels`: `ch.DmaActive = false` for every still-active HDMA
+            // channel, AFTER the `IsHdmaChannelActive` skip -- a channel whose table has ended
+            // keeps its general-purpose transfer. Cancels (in the `$420B` start-delay window)
+            // or aborts (nested) a general-purpose transfer on that channel (nr-3qn).
+            self.dma_active_mask &= !(1 << channel);
             if self.hdma_do_transfer[channel as usize] {
                 counter += self.run_hdma_transfer_unit(channel, abus, &mut open_bus);
             }
@@ -1052,6 +1074,7 @@ mod tests {
             dma.write_register(0x4304, 0x00);
             dma.write_register(0x4305, 0x04);
             dma.write_register(0x4306, 0x00);
+            dma.arm_dma(0x01); // the `$420B` write
             let (counter, _) = dma.start_dma(0x01, &mut bus, 0, 0, cpu_speed);
             assert_eq!(bus.clock, counter, "bus advanced in lockstep");
             counter
@@ -1102,6 +1125,7 @@ mod tests {
             dma.write_register(0x4304, 0x00);
             dma.write_register(0x4305, (bytes & 0xFF) as u8);
             dma.write_register(0x4306, (bytes >> 8) as u8);
+            dma.arm_dma(0x01); // the `$420B` write
             let (counter, _) = dma.start_dma(0x01, &mut bus, 0, 0, 6);
             assert_eq!(bus.clock, counter, "bus advanced in lockstep");
             counter
@@ -1132,6 +1156,7 @@ mod tests {
             dma.write_register(0x4304, 0x00);
             dma.write_register(0x4305, (bytes & 0xFF) as u8);
             dma.write_register(0x4306, (bytes >> 8) as u8);
+            dma.arm_dma(0x01); // the `$420B` write
             dma.start_dma(0x01, &mut bus, 0, 0, 8).0
         };
         for bytes in [4u16, 256, 260] {
@@ -1184,6 +1209,7 @@ mod tests {
         bus.schedule_hdma(3, HDMA_KIND_LINE, 0x02);
         bus.b_bus_writes.clear();
         let start = bus.clock;
+        dma.arm_dma(0x01); // the `$420B` write
         let (ticks, _) = dma.start_dma(0x01, &mut bus, 0, start, 6);
 
         assert_eq!(
@@ -1203,15 +1229,16 @@ mod tests {
         assert_eq!(bus.clock - start, 84, "bus advanced in lockstep");
     }
 
-    /// Mesen2's `ProcessHdmaChannels` clears `DmaActive` on **every** HDMA-enabled channel
-    /// (`SnesDmaController.cpp:255`), so an HDMA firing mid-transfer aborts a general-purpose
-    /// transfer running on that same channel: `RunDma`'s `while(TransferSize > 0 &&
-    /// channel.DmaActive)` terminates immediately, leaving `$43x5` non-zero and `$43x2`
-    /// wherever it had reached. #3127.
+    /// Mesen2's `ProcessHdmaChannels` clears `DmaActive` on every **still-active** HDMA
+    /// channel, after its `IsHdmaChannelActive` skip (`SnesDmaController.cpp:274`), so an HDMA
+    /// firing mid-transfer aborts a general-purpose transfer running on that same channel:
+    /// `RunDma`'s `while(TransferSize > 0 && channel.DmaActive)` terminates immediately,
+    /// leaving `$43x5` non-zero and `$43x2` wherever it had reached. #3127. A channel whose
+    /// table has ended keeps its transfer (nr-3qn).
     ///
-    /// Honest boundary: deleting the `dma_active_mask` clear in `hdma_do_line` turns **only
-    /// this test** red -- no ROM in the suite arms a channel for HDMA and general-purpose DMA
-    /// at once. So this pins the reference's rule, not an observed ROM behaviour, and nobody
+    /// Honest boundary: deleting the `dma_active_mask` clear in `hdma_do_line` turns only
+    /// this test and the nr-3qn start-delay unit tests in `system_bus.rs` red -- no ROM in the
+    /// suite arms a channel for HDMA and general-purpose DMA at once. So this pins the reference's rule, not an observed ROM behaviour, and nobody
     /// should read a green suite as evidence that hardware was consulted here.
     #[test]
     fn an_hdma_enabled_channel_aborts_its_own_running_general_purpose_transfer() {
@@ -1239,6 +1266,7 @@ mod tests {
         bus.schedule_hdma(3, HDMA_KIND_LINE, 0x01);
         bus.b_bus_writes.clear();
         let start = bus.clock;
+        dma.arm_dma(0x01); // the `$420B` write
         let (ticks, _) = dma.start_dma(0x01, &mut bus, 0, start, 6);
 
         assert_eq!(
@@ -1291,6 +1319,7 @@ mod tests {
         dma.write_register(0x4305, 0x04);
         dma.write_register(0x4306, 0x00);
 
+        dma.arm_dma(0x01); // the `$420B` write
         dma.start_dma(0x01, &mut bus, 0, 0, 8);
 
         assert_eq!(
@@ -1333,6 +1362,7 @@ mod tests {
         dma.write_register(0x4304, ((a_addr >> 16) & 0xFF) as u8);
         dma.write_register(0x4305, (count & 0xFF) as u8);
         dma.write_register(0x4306, (count >> 8) as u8);
+        dma.arm_dma(0x01); // the `$420B` write
         let (charged, _) = dma.start_dma(0x01, bus, 0, 0, 8);
         (dma, charged)
     }
@@ -1458,6 +1488,7 @@ mod tests {
         dma.write_register(0x4315, 0x01);
         dma.write_register(0x4316, 0x00); // byte-count high powers up as $FF
 
+        dma.arm_dma(0x03); // the `$420B` write
         let (_charged, open_bus) = dma.start_dma(0x03, &mut bus, 0, 0, 8);
 
         // byuu's test_dmavalid notes the byte a refused B->A slot deposits is
