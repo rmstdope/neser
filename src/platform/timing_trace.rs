@@ -14,7 +14,9 @@
 //! `mesen2_exec_trace.lua`. Both sides stamp an instruction with the clock *before its
 //! opcode fetch*, which is what a Mesen2 `exec` callback reports (nr-4cl). The clock is the
 //! CPU cycle count on the NES and the master clock on the SNES, Mesen2's `masterClock` on
-//! each. A sample is written only when the tick that follows it executes an instruction: a
+//! each. One known exception: an SNES WAI woken with the interrupt masked runs its two wake
+//! cycles and the next instruction in one tick, so that instruction is stamped 2 CPU cycles
+//! before its fetch (a one-line stamp difference in the diff). A sample is written only when the tick that follows it executes an instruction: a
 //! tick that only dispatches an interrupt, waits in WAI, or runs OAM DMA leaves the PC on an
 //! instruction Mesen2 has not reached yet.
 
@@ -26,10 +28,11 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-/// Ticks allowed between two lines before the trace is declared stuck: a ROM that never
-/// enables NMI would otherwise spin forever in an NMI-clock run. One NTSC SNES frame is
-/// a few tens of thousands of ticks, so this is several hundred frames.
-const MAX_TICKS_BETWEEN_LINES: u64 = 10_000_000;
+/// Ticks allowed between two NMI entries before the trace is declared stuck: a ROM that never
+/// enables NMI would otherwise spin forever. The tick-hungriest case is an SNES CPU idling in
+/// WAI, one tick per 6-master-clock cycle, about 60,000 ticks a frame, so this is about
+/// 1,700 frames (half a minute of NTSC play): longer than any load with NMI off.
+const MAX_TICKS_BETWEEN_NMIS: u64 = 100_000_000;
 
 /// What a console exposes so its timing can be traced against Mesen2.
 pub trait TimingProbe {
@@ -198,7 +201,7 @@ pub(crate) fn trace<S: TraceStepper + ?Sized>(
         if done {
             return Ok(());
         }
-        if ticks_since_entry >= MAX_TICKS_BETWEEN_LINES {
+        if ticks_since_entry >= MAX_TICKS_BETWEEN_NMIS {
             return Err(stall_message(target, nmis));
         }
 
@@ -224,7 +227,7 @@ pub(crate) fn trace<S: TraceStepper + ?Sized>(
 
 fn stall_message(wanted: u64, seen: u64) -> String {
     format!(
-        "no NMI entry within {MAX_TICKS_BETWEEN_LINES} ticks; the trace wanted entry {wanted} and saw {seen}"
+        "no NMI entry within {MAX_TICKS_BETWEEN_NMIS} ticks; the trace wanted entry {wanted} and saw {seen}"
     )
 }
 
@@ -355,7 +358,7 @@ mod tests {
                 }
             )
             .unwrap_err(),
-            "no NMI entry within 10000000 ticks; the trace wanted entry 5 and saw 1"
+            "no NMI entry within 100000000 ticks; the trace wanted entry 5 and saw 1"
         );
     }
 
@@ -404,7 +407,7 @@ mod tests {
         let points = vec![at(0x8000, 7, 0)];
         assert_eq!(
             run(points, TraceMode::NmiClock { nmis: 1 }).unwrap_err(),
-            "no NMI entry within 10000000 ticks; the trace wanted entry 1 and saw 0"
+            "no NMI entry within 100000000 ticks; the trace wanted entry 1 and saw 0"
         );
     }
 
@@ -542,9 +545,11 @@ mod tests {
 
     #[test]
     fn a_real_snes_rom_logs_its_nmi_entries_six_clocks_after_mesen2s() {
-        // Mesen2 2.1.1 wrote clk=2451178, 2808542 and 3165908 for these entries (2026-10-04):
-        // a constant 6 master clocks, where each emulator starts its clock, which the diff
-        // takes as its baseline. A change in that offset is a timing change to look at.
+        // Mesen2 2.1.1 wrote clk=2451178, 2808542 and 3165908 for these entries (2026-10-04).
+        // Not a clock-origin difference: from power-on to the first entry both exec traces
+        // match at offset 0. NESER enters each NMI 6 master clocks (one fast cycle) later
+        // than Mesen2; the offset does not accumulate, so something resynchronises them each frame. Pinned so a
+        // change shows; whether NESER or Mesen2 is right is nr-7pk.
         assert_eq!(
             nmi_log(
                 "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/window-precalculated-single.sfc",

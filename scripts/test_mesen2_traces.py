@@ -69,9 +69,9 @@ def neser_trace(args: list[str], tmp: Path) -> list[str]:
 @unittest.skipUnless(MESEN2.is_file() and shutil.which("pgrep"), "Mesen2 binary not found")
 @unittest.skipUnless(TIMING_TRACE.is_file(), "release timing_trace not found (see docstring)")
 class TestMesen2TracesLineUpWithNeser(unittest.TestCase):
-    def assert_match(self, neser: list[str], mesen2: list[str]) -> None:
+    def assert_match(self, neser: list[str], mesen2: list[str], baseline: int | None) -> None:
         a, b = parse_lines(neser), parse_lines(mesen2)
-        result = diff_traces(a, b)
+        result = diff_traces(a, b, baseline)
         self.assertIsNone(result.divergence, format_report(a, b, result, context=5))
 
     def test_nmi_clock_logs_match(self) -> None:
@@ -80,7 +80,9 @@ class TestMesen2TracesLineUpWithNeser(unittest.TestCase):
                 rom = REPO / rom_path
                 mesen2 = mesen2_trace("mesen2_nmi_clock.lua", rom, flags, {"TRACE_NMIS": "120"}, Path(tmp))
                 self.assertEqual(len(mesen2), 120)
-                self.assert_match(neser_trace(["nmi", str(rom), "--nmis", "120"], Path(tmp)), mesen2)
+                # The NES clocks start together; the SNES NMI entries sit 6 clocks off (nr-7pk).
+                baseline = 0 if rom_path == NES_ROM else None
+                self.assert_match(neser_trace(["nmi", str(rom), "--nmis", "120"], Path(tmp)), mesen2, baseline)
 
     def test_exec_traces_match_from_power_on_and_from_an_nmi(self) -> None:
         for rom_path, flags in ROMS:
@@ -93,7 +95,8 @@ class TestMesen2TracesLineUpWithNeser(unittest.TestCase):
                     env = {"TRACE_FROM_NMI": str(start)}
                     mesen2 = mesen2_trace("mesen2_exec_trace.lua", rom, flags, env, Path(tmp))
                     neser = neser_trace(["exec", str(rom), "--from-nmi", str(start)], Path(tmp))
-                    self.assert_match(neser, mesen2)
+                    baseline = 0 if rom_path == NES_ROM or start == 0 else None
+                    self.assert_match(neser, mesen2, baseline)
 
 
 @unittest.skipUnless(os.environ.get("NESER_MESEN2_TRACE_TEST") == "1", "opt-in, see docstring")

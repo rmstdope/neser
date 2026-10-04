@@ -14449,3 +14449,39 @@ fn test_instructions_executed_does_not_count_a_jammed_cpu() {
     cpu.execute();
     assert_eq!(cpu.instructions_executed(), 0);
 }
+
+/// A CPU at $8000 whose NMI vector points at $9000 and IRQ/BRK vector at $A000.
+fn cpu_with_nmi_and_irq_vectors(code: &[u8]) -> Cpu {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    let mut prg_rom = vec![0xEA; 0x4000];
+    prg_rom[..code.len()].copy_from_slice(code);
+    prg_rom[0x3FFA] = 0x00; // NMI -> $9000
+    prg_rom[0x3FFB] = 0x90;
+    prg_rom[0x3FFC] = 0x00; // reset -> $8000
+    prg_rom[0x3FFD] = 0x80;
+    prg_rom[0x3FFE] = 0x00; // IRQ/BRK -> $A000
+    prg_rom[0x3FFF] = 0xA0;
+    let cartridge = Cartridge::from_parts(prg_rom, vec![0; 0x2000], NametableLayout::Horizontal);
+    cpu.bus.borrow_mut().map_cartridge(cartridge);
+    cpu.reset(true);
+    cpu
+}
+
+#[test]
+fn test_nmis_taken_counts_an_nmi_that_hijacks_brk() {
+    let mut cpu = cpu_with_nmi_and_irq_vectors(&[0x00, 0x00]); // BRK
+    cpu.nmi_pending = true;
+    cpu.execute();
+    assert_eq!(cpu.pc, 0x9000, "the NMI took over BRK's vectoring");
+    assert_eq!(cpu.nmis_taken(), 1);
+}
+
+#[test]
+fn test_nmis_taken_counts_an_nmi_that_hijacks_irq_entry() {
+    let mut cpu = cpu_with_nmi_and_irq_vectors(&[]);
+    cpu.nmi_pending = true;
+    cpu.service_irq_or_nmi_sequence();
+    assert_eq!(cpu.pc, 0x9000, "the NMI took over the interrupt sequence");
+    assert_eq!(cpu.nmis_taken(), 1);
+}

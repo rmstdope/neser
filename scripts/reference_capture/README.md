@@ -163,17 +163,31 @@ flags pin. A per-instruction Mesen2 trace runs at roughly 250k SNES master clock
 second, about a second and a half per SNES frame, so keep the exec window to the frames
 the NMI log points at.
 
-**Reading the diff.** Each emulator starts its clock at its own point, so the first line's
-clock offset is the baseline, and only a change in it means anything. On
-`undisbeliever-ppu-window/window-precalculated-single.sfc` the instructions match at offset
-0 from power-on, and every NMI entry is 6 master clocks later in NESER than in Mesen2
-(2026-10-04): the baseline of that ROM's NMI log is 6. An offset that leaves the baseline
-for a single line and comes straight back is listed as a *stamp difference*, never a
-divergence. A stall that falls on an instruction boundary is charged to the instruction
-before it by one emulator and to the one after it by the other, and the totals still agree.
-Two cases have been seen. On the NES, OAM DMA after a `$4014` write: Mesen2 stamps the next
-instruction before the 513/514-cycle stall, NESER after it. On the SNES, DRAM refresh
-(40 master clocks) at the start of an opcode fetch.
+**Reading the diff.** Only a *change* in the clock offset means anything. By default the
+first line's offset is the baseline, so a drift that happened before a trace's first line
+is invisible: before NMI 1 for an NMI log, before entry K for `exec --from-nmi K`. Pass
+`--baseline` when you know the expected offset. It is 0 on the NES, where NESER's CPU cycle
+count and Mesen2's `masterClock` start together. On the SNES it is the offset of an
+`exec --from-nmi 0` trace, 0 on every ROM traced so far. A trace whose first line is
+already off that baseline has drifted earlier, so look before it.
+
+One known SNES difference: on `undisbeliever-ppu-window/window-precalculated-single.sfc`,
+the instructions match at offset 0 from power-on, but every NMI entry is 6 master clocks
+later in NESER than in Mesen2 (2026-10-04, nr-7pk). Its NMI log diffs clean with the
+default baseline and stops at line 1 with `--baseline 0`.
+
+In an exec trace, an offset that leaves the baseline for a single line and comes straight
+back is listed as a *stamp difference*, never a divergence. A stall that falls on an
+instruction boundary is charged to the instruction before it by one emulator and to the
+one after it by the other, and the totals still agree. Three cases are known:
+
+- NES OAM DMA after a `$4014` write: Mesen2 stamps the next instruction before the
+  513/514-cycle stall, NESER after it.
+- SNES DRAM refresh (40 master clocks) at the start of an opcode fetch.
+- An SNES WAI woken with the interrupt masked: NESER runs the two wake cycles and the next
+  instruction in one step, so it stamps that instruction 2 CPU cycles early.
+
+In an NMI log every line is a frame, so a single late entry there *is* a divergence.
 
 **Mesen2 Lua behaviours** (Mesen2 2.1.1), each one paid for by a bead:
 

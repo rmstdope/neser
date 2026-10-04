@@ -75,6 +75,22 @@ class DiffTracesTest(unittest.TestCase):
         self.assertEqual(result.divergence, 1)
         self.assertEqual(result.reason, "the second trace ends here")
 
+    def test_a_one_line_excursion_in_an_nmi_log_is_a_divergence(self):
+        # One NMI log line is a whole frame: an entry late in one frame and on time in the
+        # next is the kind of NMI-latency bug the log exists to find (review finding 4).
+        result = diff_traces(
+            [Line(0x9000, 100, 1), Line(0x9000, 212, 2), Line(0x9000, 300, 3)],
+            [Line(0x9000, 100, 1), Line(0x9000, 200, 2), Line(0x9000, 300, 3)],
+        )
+        self.assertEqual(result.divergence, 1)
+        self.assertEqual(result.stamp_differences, [])
+
+    def test_a_baseline_given_up_front_is_used_instead_of_the_first_line(self):
+        # A drift before a trace's first line would otherwise become its baseline.
+        result = diff_traces(trace((0x8000, 6), (0x8003, 20)), trace((0x8000, 0), (0x8003, 14)), baseline=0)
+        self.assertEqual(result.divergence, 0)
+        self.assertEqual(result.reason, "clock offset 0 -> 6")
+
     def test_nmi_numbers_are_compared_like_pcs(self):
         result = diff_traces(
             [Line(0x9000, 100, 1), Line(0x9000, 200, 2)],
@@ -85,14 +101,14 @@ class DiffTracesTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    def run_main(self, first: str, second: str) -> tuple[int, str]:
+    def run_main(self, first: str, second: str, *extra: str) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as directory:
             a, b = Path(directory, "neser.txt"), Path(directory, "mesen.txt")
             a.write_text(first)
             b.write_text(second)
             out = io.StringIO()
             with redirect_stdout(out), redirect_stderr(out):
-                code = main([str(a), str(b), "--context", "1"])
+                code = main([str(a), str(b), "--context", "1", *extra])
         return code, out.getvalue()
 
     def test_a_match_exits_0_and_says_so(self):
@@ -117,6 +133,18 @@ class MainTest(unittest.TestCase):
         code, report = self.run_main("Loaded rom\n", "pc=008000 clk=0\n")
         self.assertEqual(code, 2)
         self.assertIn("has no trace lines", report)
+
+    def test_baseline_option_is_passed_through(self):
+        code, report = self.run_main("pc=008000 clk=6\n", "pc=008000 clk=0\n", "--baseline", "0")
+        self.assertEqual(code, 1)
+        self.assertIn("first divergence at line 1: clock offset 0 -> 6", report)
+
+    def test_a_missing_file_exits_2_not_1(self):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = main(["/nonexistent/neser.txt", "/nonexistent/mesen.txt"])
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read /nonexistent/neser.txt", out.getvalue())
 
 
 if __name__ == "__main__":
