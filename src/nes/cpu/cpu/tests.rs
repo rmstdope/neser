@@ -14550,7 +14550,8 @@ fn test_taken_branch_without_page_cross_delays_nmi_like_a_two_cycle_instruction(
     // instruction.
     //
     // Mesen2 applies this to IRQ only (NesCpu.h BranchRelative), so it takes that NMI
-    // straight after the branch. The navigator chose the specification (nr-3wg): this is
+    // straight after the branch. The navigator chose the specification (nr-046, again in
+    // nr-3wg): this is
     // why Tekken 2's attract-mode fight differs from Mesen2's from frame 1307.
     const BEQ_TAKEN_SAME_PAGE: &[u8] = &[0xF0, 0x00];
     const NOP: &[u8] = &[0xEA];
