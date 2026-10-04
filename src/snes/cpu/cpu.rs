@@ -94,6 +94,10 @@ pub struct Cpu<B: SnesBus> {
     /// out of save states.
     nmis_taken: u64,
 
+    /// Instructions executed since power-on; interrupt dispatches and WAI/STP waits do not
+    /// count. A trace aid (nr-ggx), not machine state.
+    instructions_executed: u64,
+
     /// Accumulated extra cycles for the current instruction (DP/M/X/page-cross penalties).
     /// Reset at the start of each `step()` call.
     extra_cycles: u8,
@@ -256,6 +260,7 @@ impl<B: SnesBus> Cpu<B> {
             p: FLAG_ACCUM_WIDTH | FLAG_INDEX_WIDTH | FLAG_INTERRUPT, // M=1, X=1, I=1
             e: true,                                                 // Start in emulation mode
             nmis_taken: 0,
+            instructions_executed: 0,
             extra_cycles: 0,
             dma_locked_this_cycle: false,
             last_page_crossed: false,
@@ -379,6 +384,12 @@ impl<B: SnesBus> Cpu<B> {
         self.nmis_taken
     }
 
+    /// How many instructions the CPU has executed since power-on (interrupt dispatches and
+    /// WAI/STP waits excluded).
+    pub fn instructions_executed(&self) -> u64 {
+        self.instructions_executed
+    }
+
     /// Read program counter.
     pub fn read_pc(&self) -> u16 {
         self.pc
@@ -430,8 +441,9 @@ impl<B: SnesBus> Cpu<B> {
             read_write_mask: _, // intra-instruction: reset at the start of every step()
             dma_locked_this_cycle: _, // intra-cycle: written before it is read every cycle
             irq_i_shadow,
-            nmis_taken: _, // a trace aid, not machine state (nr-ggx)
-            bus: _,        // captured separately by capture_save_state
+            nmis_taken: _,            // a trace aid, not machine state (nr-ggx)
+            instructions_executed: _, // likewise
+            bus: _,                   // captured separately by capture_save_state
         } = self;
         SnesCpuState {
             a,
@@ -898,6 +910,7 @@ impl<B: SnesBus> Cpu<B> {
 
         let pc_before = ((self.pbr as u32) << 16) | self.pc as u32;
         let i_before = self.flag_i();
+        self.instructions_executed += 1;
         let opcode = self.fetch_byte();
         if cpu_trace_level() >= 1 && trace_clock_in_window(self.bus.master_clock()) {
             let operands = self.exec_trace_operands(opcode);
@@ -12336,6 +12349,11 @@ mod interrupt_dispatch_tests {
         cpu.step(); // NMI dispatch
         assert_eq!(cpu.pc, 0x9000);
         assert_eq!(cpu.nmis_taken(), 1);
+        assert_eq!(
+            cpu.instructions_executed(),
+            1,
+            "the NOP only: a dispatch step executes no instruction"
+        );
     }
 
     #[test]

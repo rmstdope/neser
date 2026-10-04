@@ -71,6 +71,9 @@ pub struct Cpu {
     /// NMIs the CPU has entered since power-on. A trace aid (nr-ggx), not machine state:
     /// it is left out of save states.
     nmis_taken: u64,
+    /// Instructions executed since power-on; interrupt entries, DMA and a jammed CPU's
+    /// cycles do not count. A trace aid (nr-ggx), not machine state.
+    instructions_executed: u64,
     /// Delayed I flag value for IRQ polling
     /// When Some(value), use this value instead of the actual I flag for IRQ polling
     /// This implements the 1-instruction delay for CLI/PLP
@@ -202,6 +205,7 @@ impl Cpu {
             halted: false,
             total_cycles: 0,
             nmis_taken: 0,
+            instructions_executed: 0,
             delayed_i_flag: None,
             nmi_pending: false,
             prev_need_nmi: false,

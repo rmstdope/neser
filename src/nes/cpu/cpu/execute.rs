@@ -99,6 +99,7 @@ impl Cpu {
         }
 
         self.last_cpu_write_addr = None;
+        self.instructions_executed += 1;
 
         // The CPU's IRQ inhibit flag (I) has a one-instruction delay behavior for
         // CLI/SEI and (conditionally) PLP. We model that using `delayed_i_flag`:

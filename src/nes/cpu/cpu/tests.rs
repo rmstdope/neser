@@ -14434,4 +14434,18 @@ fn test_nmis_taken_counts_each_nmi_entry_and_not_other_instructions() {
     cpu.execute(); // RTI
     cpu.execute(); // NOP at $8001
     assert_eq!(cpu.nmis_taken(), 1, "no further NMI was taken");
+    assert_eq!(
+        cpu.instructions_executed(),
+        3,
+        "NOP, RTI, NOP; the NMI entry is not an instruction"
+    );
+}
+
+#[test]
+fn test_instructions_executed_does_not_count_a_jammed_cpu() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    cpu.halted = true;
+    cpu.execute();
+    assert_eq!(cpu.instructions_executed(), 0);
 }
