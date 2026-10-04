@@ -14500,3 +14500,82 @@ fn test_nmis_taken_counts_an_nmi_that_hijacks_irq_entry() {
     assert_eq!(cpu.pc, 0x9000, "the NMI took over the interrupt sequence");
     assert_eq!(cpu.nmis_taken(), 1);
 }
+
+/// Whether the vblank NMI is serviced right after one instruction, when the PPU is
+/// `dots_before_vblank` dots short of setting the vblank flag as the instruction starts.
+fn nmi_taken_after_one_instruction(
+    program: &[u8],
+    zero_flag: bool,
+    dots_before_vblank: u32,
+) -> bool {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(
+        TimingMode::Ntsc,
+        Rc::clone(&memory),
+        Rc::clone(&ppu),
+        Rc::clone(&apu),
+    );
+    let mut prg_rom = vec![0xEA; 0x4000];
+    prg_rom[0x3FFA] = 0x00; // NMI vector -> $9000
+    prg_rom[0x3FFB] = 0x90;
+    prg_rom[0x3FFC] = 0x00; // reset vector -> $8000
+    prg_rom[0x3FFD] = 0x80;
+    prg_rom[..program.len()].copy_from_slice(program);
+    let cartridge = Cartridge::from_parts(prg_rom, vec![0; 0x2000], NametableLayout::Horizontal);
+    cpu.bus.borrow_mut().map_cartridge(cartridge);
+    cpu.reset(true);
+    if zero_flag {
+        cpu.p |= FLAG_ZERO;
+    } else {
+        cpu.p &= !FLAG_ZERO;
+    }
+
+    ppu.borrow_mut().write_control(0x80);
+    // The vblank flag (and with it the NMI line) is set at scanline 241, dot 1.
+    let (scanline, dot) = (ppu.borrow().scanline() as u32, ppu.borrow().pixel() as u32);
+    let now = scanline * 341 + dot;
+    ppu.borrow_mut()
+        .run_ppu_cycles(u64::from(241 * 341 + 1 - now - dots_before_vblank));
+
+    cpu.execute();
+    cpu.pc == 0x9000
+}
+
+#[test]
+fn test_taken_branch_without_page_cross_delays_nmi_like_a_two_cycle_instruction() {
+    // NESdev, CPU interrupts, "Branch instructions and interrupts": interrupts are polled
+    // before the second cycle of a branch, "but not before the third CPU cycle on a taken
+    // branch" that stays on its page. So a taken BEQ polls exactly where a two-cycle NOP
+    // does, and an NMI that first appears during its second cycle waits one more
+    // instruction.
+    //
+    // Mesen2 applies this to IRQ only (NesCpu.h BranchRelative), so it takes that NMI
+    // straight after the branch. The navigator chose the specification (nr-046, again in
+    // nr-3wg): this is why Tekken 2's attract-mode fight differs from Mesen2's from frame 1307.
+    const BEQ_TAKEN_SAME_PAGE: &[u8] = &[0xF0, 0x00];
+    const NOP: &[u8] = &[0xEA];
+    const LDA_ZP: &[u8] = &[0xA5, 0x00]; // three cycles, polls before its third
+
+    let mut nmi_arrives_in_second_cycle = false;
+    for dots in 0..=30 {
+        let after_nop = nmi_taken_after_one_instruction(NOP, true, dots);
+        let after_branch = nmi_taken_after_one_instruction(BEQ_TAKEN_SAME_PAGE, true, dots);
+        let after_branch_not_taken =
+            nmi_taken_after_one_instruction(BEQ_TAKEN_SAME_PAGE, false, dots);
+        let after_lda = nmi_taken_after_one_instruction(LDA_ZP, true, dots);
+        assert_eq!(
+            after_branch_not_taken, after_nop,
+            "vblank {dots} dots ahead: a branch not taken is a two-cycle instruction"
+        );
+        assert_eq!(
+            after_branch, after_nop,
+            "vblank {dots} dots ahead: a taken same-page branch must poll NMI where a \
+             two-cycle instruction does (NOP: {after_nop}, BEQ: {after_branch})"
+        );
+        nmi_arrives_in_second_cycle |= after_lda && !after_nop;
+    }
+    assert!(
+        nmi_arrives_in_second_cycle,
+        "the sweep must include an NMI that first appears in the second cycle"
+    );
+}
