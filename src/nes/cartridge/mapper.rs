@@ -662,6 +662,14 @@ pub trait Mapper {
         }
     }
 
+    /// Notify mapper that the PPU put a nametable address ($2000-$2FFF) on its bus.
+    ///
+    /// The PPU reports CHR fetches through `ppu_address_changed`; this reports the
+    /// nametable and attribute fetches in between, including the two garbage nametable
+    /// fetches of each sprite slot, so a mapper counting every PPU A12 rise sees A12 fall
+    /// between sprite pattern fetches. Default implementation is a no-op.
+    fn ppu_nametable_address(&mut self, _addr: u16) {}
+
     /// Set the current PPU CHR fetch kind.
     ///
     /// Some mappers (e.g., MMC5) need to distinguish between background and sprite CHR fetches.

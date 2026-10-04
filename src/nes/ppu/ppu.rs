@@ -1830,6 +1830,79 @@ mod tests {
         }
     }
 
+    /// Records every address the PPU reports to the mapper, CHR and nametable alike, in order.
+    struct BusAddressSpyMapper {
+        base: crate::nes::cartridge::BaseMapper,
+        addresses: Rc<RefCell<Vec<u16>>>,
+    }
+
+    impl crate::nes::cartridge::Mapper for BusAddressSpyMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
+            &mut self.base
+        }
+
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn read_chr(&mut self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, addr: u16) {
+            self.addresses.borrow_mut().push(addr);
+        }
+
+        fn ppu_nametable_address(&mut self, addr: u16) {
+            self.addresses.borrow_mut().push(addr);
+        }
+
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
+        }
+    }
+
+    /// nr-55b: each sprite slot fetches two garbage nametable bytes before its pattern
+    /// bytes, so with background at $0000 and sprites at $1000 the mapper sees A12 rise
+    /// once per slot, eight times per line (NESdev wiki, PPU rendering, cycles 257-320).
+    #[test]
+    fn test_mapper_sees_eight_a12_rises_per_line_with_sprites_at_1000() {
+        let addresses: Rc<RefCell<Vec<u16>>> = Rc::new(RefCell::new(Vec::new()));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            BusAddressSpyMapper {
+                base: create_test_base_mapper(),
+                addresses: addresses.clone(),
+            },
+        ))));
+
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_control(0x08); // background $0000, sprites $1000
+        while ppu.scanline() != 10 {
+            ppu.run_ppu_cycles(1);
+        }
+        ppu.write_mask(0x18);
+        ppu.run_ppu_cycles(341); // all of line 10
+
+        let addresses = addresses.borrow();
+        let rises = addresses
+            .windows(2)
+            .filter(|w| w[0] & 0x1000 == 0 && w[1] & 0x1000 != 0)
+            .count();
+        assert_eq!(rises, 8, "one A12 rise per sprite slot");
+        let nametable_fetches = addresses.iter().filter(|&&a| a >= 0x2000).count();
+        // 32 tiles x (NT + AT) + 2 prefetch tiles x 2 + 2 dummy NT + 8 slots x 2 garbage NT.
+        assert_eq!(nametable_fetches, 64 + 4 + 2 + 16);
+    }
+
     struct A12PrimingSpyMapper {
         base: crate::nes::cartridge::BaseMapper,
         calls: Rc<RefCell<Vec<u16>>>,
