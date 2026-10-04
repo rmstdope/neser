@@ -3,7 +3,7 @@
 use crate::nes::bus::ControllerStateWrapper;
 use crate::nes::console::SaveState;
 use crate::nes::input::ArkanoidState;
-use crate::wasm::{WasmNes, gamepad_init_toast_message, rom_extension_table};
+use crate::wasm::{WasmNes, gamepad_init_toast_message, key_binding_table, rom_extension_table};
 use crate::wasm_gb::WasmGb;
 use crate::wasm_gba::WasmGba;
 use crate::wasm_snes::WasmSnes;
@@ -217,6 +217,39 @@ fn rom_extension_table_pairs_each_extension_with_its_console() {
     ]
     .map(|(ext, console)| (ext.to_string(), console.to_string()));
     assert_eq!(pairs, expected);
+}
+
+/// The page receives every web row of the shared key table, field for field.
+#[wasm_bindgen_test]
+fn key_binding_table_has_exactly_the_web_rows() {
+    let field =
+        |row: &wasm_bindgen::JsValue, name: &str| js_sys::Reflect::get(row, &name.into()).unwrap();
+    let rows: Vec<(String, String, String, u8, u8)> = key_binding_table()
+        .iter()
+        .map(|row| {
+            (
+                field(&row, "key").as_string().unwrap(),
+                field(&row, "console").as_string().unwrap(),
+                field(&row, "input").as_string().unwrap(),
+                field(&row, "player").as_f64().unwrap() as u8,
+                field(&row, "button").as_f64().unwrap() as u8,
+            )
+        })
+        .collect();
+    let expected: Vec<_> = crate::wasm::web_key_binding_rows()
+        .into_iter()
+        .map(|r| {
+            (
+                r.key.to_string(),
+                r.console.to_string(),
+                r.input.to_string(),
+                r.player,
+                r.button,
+            )
+        })
+        .collect();
+    assert!(!rows.is_empty());
+    assert_eq!(rows, expected);
 }
 
 #[wasm_bindgen_test]
