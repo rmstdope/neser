@@ -77,12 +77,12 @@ pub(crate) const PLATFORM_CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--trace",
-        help: Some("Enable CPU trace output"),
+        help: Some("Enable CPU trace output (NES instructions only in debug builds)"),
         has_value: false,
     },
     CliFlag {
         flag: "--trace-cpu",
-        help: Some("Enable CPU trace output"),
+        help: Some("Enable CPU trace output (NES instructions only in debug builds)"),
         has_value: false,
     },
     CliFlag {
@@ -866,6 +866,21 @@ mod tests {
         let sound_section = help.find("\nSound:").unwrap();
         let sound_flag = help.find("--audio").unwrap();
         assert!(sound_section < sound_flag);
+    }
+
+    #[test]
+    fn trace_flags_help_says_nes_instructions_need_a_debug_build() {
+        let help = help_text();
+        for flag in ["--trace ", "--trace-cpu "] {
+            let line = help
+                .lines()
+                .find(|line| line.trim_start().starts_with(flag))
+                .unwrap_or_else(|| panic!("{flag} missing from help"));
+            assert!(
+                line.ends_with("Enable CPU trace output (NES instructions only in debug builds)"),
+                "{line}"
+            );
+        }
     }
 
     #[test]

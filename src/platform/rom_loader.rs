@@ -139,6 +139,12 @@ fn build_nes_console(
         .config_mut()
         .apply_rom_timing_mode(cartridge.rom_timing_mode());
 
+    // The game will start: a release build's CPU trace warning goes out now, before any of
+    // its trace lines, and only for the run's first NES game (nr-alq).
+    if let Some(warning) = app_context.borrow_mut().take_nes_trace_warning() {
+        eprintln!("{warning}");
+    }
+
     let mut console = Console::new_nes(app_context.clone());
     console
         .as_nes_mut()
@@ -375,6 +381,60 @@ mod tests {
     #[test]
     fn detect_system_type_no_extension_falls_back_to_nes() {
         assert_eq!(detect_system_type("noext"), SystemType::Nes);
+    }
+
+    // --- the release-build NES trace warning (nr-alq) ---
+
+    fn context_with_trace_warning() -> SharedAppContext {
+        let context = make_app_context();
+        context
+            .borrow_mut()
+            .set_nes_trace_warning(Some("warning: pending".to_string()));
+        context
+    }
+
+    #[test]
+    fn nes_load_consumes_pending_trace_warning() {
+        let dir = TempDir::new().expect("create temp dir");
+        let rom_path = write_rom(&dir, "nes", &minimal_nes_rom(false));
+        let context = context_with_trace_warning();
+
+        load_console(&context, &rom_path).expect("NES ROM should load");
+
+        assert_eq!(context.borrow_mut().take_nes_trace_warning(), None);
+    }
+
+    #[test]
+    fn snes_gb_gba_loads_leave_trace_warning_pending() {
+        let dir = TempDir::new().expect("create temp dir");
+        let context = context_with_trace_warning();
+        for (extension, rom) in [
+            ("sfc", minimal_snes_rom()),
+            ("gb", minimal_gb_rom()),
+            ("gba", minimal_gba_rom()),
+        ] {
+            let rom_path = write_rom(&dir, extension, &rom);
+            load_console(&context, &rom_path).expect("ROM should load");
+            assert!(
+                context.borrow().nes_trace_warning_pending(),
+                "{extension} consumed the NES warning"
+            );
+        }
+
+        let rom_path = write_rom(&dir, "nes", &minimal_nes_rom(false));
+        load_console(&context, &rom_path).expect("NES ROM should load");
+        assert!(!context.borrow().nes_trace_warning_pending());
+    }
+
+    #[test]
+    fn failed_nes_load_leaves_trace_warning_pending() {
+        let dir = TempDir::new().expect("create temp dir");
+        let rom_path = write_rom(&dir, "nes", b"not an iNES image");
+        let context = context_with_trace_warning();
+
+        assert!(load_console(&context, &rom_path).is_err());
+
+        assert!(context.borrow().nes_trace_warning_pending());
     }
 
     // --- load_console ---

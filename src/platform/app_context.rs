@@ -17,6 +17,8 @@ pub trait IntoSharedAppContext {
 pub struct AppContext {
     toast_manager: ToastManager,
     config: Config,
+    /// The release-build CPU trace warning, printed as the first NES game of the run starts.
+    nes_trace_warning: Option<String>,
 }
 
 impl Default for AppContext {
@@ -24,6 +26,7 @@ impl Default for AppContext {
         Self {
             toast_manager: ToastManager::new(),
             config: Config::default(),
+            nes_trace_warning: None,
         }
     }
 }
@@ -65,6 +68,22 @@ impl AppContext {
 
     pub fn config_mut(&mut self) -> &mut Config {
         &mut self.config
+    }
+
+    /// Holds `warning` until the first NES game of the run starts; `None` clears it.
+    pub fn set_nes_trace_warning(&mut self, warning: Option<String>) {
+        self.nes_trace_warning = warning;
+    }
+
+    /// The pending NES trace warning, which is then gone for the rest of the run.
+    pub fn take_nes_trace_warning(&mut self) -> Option<String> {
+        self.nes_trace_warning.take()
+    }
+
+    /// Whether a NES trace warning is still waiting for the first NES game.
+    #[cfg(test)]
+    pub(crate) fn nes_trace_warning_pending(&self) -> bool {
+        self.nes_trace_warning.is_some()
     }
 
     /// Queues a toast. It reads no clock: `Instant::now()` panics on wasm32-unknown-unknown,
@@ -141,6 +160,18 @@ impl ToastManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nes_trace_warning_is_taken_once() {
+        let mut context = AppContext::new();
+        assert_eq!(context.take_nes_trace_warning(), None);
+        context.set_nes_trace_warning(Some("warning: x".to_string()));
+        assert_eq!(
+            context.take_nes_trace_warning().as_deref(),
+            Some("warning: x")
+        );
+        assert_eq!(context.take_nes_trace_warning(), None);
+    }
 
     #[test]
     fn take_toasts_returns_queued_toasts_in_order_and_empties_the_queue() {
