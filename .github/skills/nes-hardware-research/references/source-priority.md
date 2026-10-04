@@ -45,10 +45,9 @@ specification authority, one or two implementation references, one screenshot re
    - The only emulator whose captures approve a NESER golden frame.
    - Binary: `/Applications/Mesen.app/Contents/MacOS/Mesen` (official release zip; no
      Homebrew cask). Verified recipe, scripts and the `AllowIoOsAccess` toggle:
-     `scripts/reference_capture/README.md`. In short:
-     `CAPTURE_FRAME=<n> CAPTURE_OUT=<abs.png> Mesen --testRunner --enableStdout --timeout=30
-     --Video.VideoFilter=None --Video.AspectRatio=NoStretching --nes.DisableFrameSkipping=true
-     --nes.RamPowerOnState=AllZeros <rom> scripts/reference_capture/mesen2_capture.lua`.
+     `scripts/reference_capture/README.md`. Compare with one command, which owns the flags
+     (frame skip off, zero RAM, a standard pad in both ports) and isolates battery saves per run:
+     `python -m scripts.reference_capture.compare_mesen2 <rom> --frames <n> --out-dir <dir>`.
    - Diff with `python -m scripts.diff_screenshots <neser> <mesen> --shift-search 1`.
 
 ## Reporting rules

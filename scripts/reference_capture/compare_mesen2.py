@@ -31,6 +31,7 @@ the capture script prints one ``ERROR:`` line, which this command passes on.
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -93,6 +94,12 @@ def mesen2_flags(system: str, no_game_database: bool) -> list[str]:
     return [*NES_MESEN2_FLAGS, NO_GAME_DATABASE_FLAG] if no_game_database else list(NES_MESEN2_FLAGS)
 
 
+def merge_flags(pinned: list[str], extra: list[str]) -> list[str]:
+    """``pinned`` with ``extra`` appended; an extra ``--key=value`` replaces the pinned flag with that key."""
+    keys = {flag.split("=", 1)[0] for flag in extra if "=" in flag}
+    return [*(flag for flag in pinned if flag.split("=", 1)[0] not in keys), *extra]
+
+
 def fresh_copy(rom: Path, directory: Path) -> Path:
     """Copy ``rom`` into ``directory`` under a name no other invocation uses."""
     copy = directory / f"{rom.stem}-{os.getpid()}-{time.time_ns()}{rom.suffix}"
@@ -133,10 +140,15 @@ def neser_cartridge_lines(output: str) -> list[str]:
     return [line for line in output.splitlines() if line.startswith(("Loaded rom with", "Hardware:"))]
 
 
+def testrunner_pattern(mesen2: Path) -> str:
+    """The ``pgrep -f`` pattern for any testRunner of this binary, however it was started."""
+    return f"{re.escape(mesen2.name)} --testRunner"
+
+
 def wait_for_other_mesen2(mesen2: Path) -> None:
     """A concurrent testRunner makes Mesen2 exit 0 with no output (snes-hardware-research)."""
     deadline = time.monotonic() + 300
-    pattern = f"{mesen2} --testRunner"
+    pattern = testrunner_pattern(mesen2)
     while subprocess.run(["pgrep", "-f", pattern], capture_output=True).returncode == 0:
         if time.monotonic() > deadline:
             raise TimeoutError(f"another {pattern} is still running")
@@ -147,6 +159,7 @@ def capture_mesen2(
     rom: Path, frame: int, out: Path, mesen2: Path, mesen2_home: Path, flags: list[str], work: Path
 ) -> str:
     """Run Mesen2 once on a fresh copy of ``rom``, saving frame ``frame`` to ``out``; return stdout."""
+    out.unlink(missing_ok=True)  # a rerun into the same --out-dir must not diff the last run's file
     copy = fresh_copy(rom, work)
     env = {**os.environ, "CAPTURE_FRAME": str(frame), "CAPTURE_OUT": str(out.resolve())}
     try:
@@ -165,6 +178,7 @@ def capture_mesen2(
 
 def capture_neser(rom: Path, frame: int, out: Path, neser: Path, flags: list[str], work: Path) -> str:
     """Run NESER once on a fresh copy of ``rom`` with an empty config; return its output."""
+    out.unlink(missing_ok=True)
     copy = fresh_copy(rom, work)
     config = work / f"empty-{copy.stem}.conf"
     config.write_text("")
@@ -183,7 +197,7 @@ def capture_neser(rom: Path, frame: int, out: Path, neser: Path, flags: list[str
 
 def compare(rom: Path, frames: list[int], out_dir: Path, args: argparse.Namespace) -> int:
     system = system_for(rom)
-    flags_m = [*mesen2_flags(system, args.no_game_database), *args.mesen2_arg]
+    flags_m = merge_flags(mesen2_flags(system, args.no_game_database), args.mesen2_arg)
     flags_n = [*NESER_FLAGS[system], *args.neser_arg]
     print(f"ROM: {rom}")
     print(f"Output: {out_dir}")
@@ -195,8 +209,9 @@ def compare(rom: Path, frames: list[int], out_dir: Path, args: argparse.Namespac
             try:
                 m_out = capture_mesen2(rom, frame, mesen2_png, args.mesen2_bin, args.mesen2_home, flags_m, work)
                 n_out = capture_neser(rom, frame, neser_png, args.neser_bin, flags_n, work)
-            except CaptureFailed as failure:
-                print(f"frame {frame}: {failure}")
+            except (CaptureFailed, OSError, subprocess.TimeoutExpired, TimeoutError) as failure:
+                # Exit 1 means "a frame differs"; a run that never captured must not read as one.
+                print(f"frame {frame}: capture failed: {failure}")
                 return 2
             if index == 0:
                 m_lines = mesen2_cartridge_lines(m_out) or ["(no cartridge lines printed)"]

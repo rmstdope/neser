@@ -568,8 +568,10 @@ directory and are never committed. To approve a new or changed golden:
 1. Run the test with `NESER_CAPTURE_SCREEN=1` to write a PNG per test under
    `target/snes_test_captures/<suite>/` (each suite's source file documents
    its specific recording steps).
-2. Capture the Mesen2 ground truth for the same ROM/frame (headless
-   `--testRunner` with a Lua screenshot script). Always pass
+2. Capture the Mesen2 ground truth for the same ROM/frame with
+   `python -m scripts.reference_capture.compare_mesen2 <rom.sfc> --frames <N>`
+   (see `scripts/reference_capture/README.md`), which passes every flag below
+   and this step's NESER side; the flags are listed here for why. It passes
    `--Video.VideoFilter=None --Video.AspectRatio=NoStretching
    --snes.disableFrameSkipping=true` — without the frame-skip switch
    Mesen2's testRunner renders only every other frame and screenshots of
@@ -579,8 +581,8 @@ directory and are never committed. To approve a new or changed golden:
    Mesen2 otherwise takes its controller ports from its own settings, which may
    leave port 2 empty, and games that check which pads are connected then play
    differently from NESER, which has a standard pad in each port (nr-0an).
-3. If the ROM can display uninitialised RAM, add
-   `--snes.RamPowerOnState=AllZeros` to the Mesen2 command line. Mesen2's SNES
+3. If the ROM can display uninitialised RAM, Mesen2 needs
+   `--snes.RamPowerOnState=AllZeros` (`compare_mesen2` passes it). Mesen2's SNES
    default is `RamState::Random`, and without the flag the ground truth is not
    even self-consistent: for `test_dmatiming/demo.smc` two default Mesen2
    captures differ from *each other* by 1.06%, which is what produced #3063's

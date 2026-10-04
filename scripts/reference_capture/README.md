@@ -99,7 +99,9 @@ The command owns the flags and removes the confounds earlier comparisons paid fo
   standard pad in each port (`--nes.portN.type=NesController`,
   `--snes.portN.type=SnesController`), and NESER runs with an empty `--config` file, so a
   `neser.conf` port or palette line cannot apply; NESER's defaults are the same pads. For a
-  Mouse or Super Scope game pass the Mesen2 type and NESER's port with `--mesen2-arg` and
+  Mouse or Super Scope game (NESER picks the device itself from
+  `src/snes/input/mouse_games.rs` and `super_scope_games.rs`) pass the Mesen2 type with
+  `--mesen2-arg`, which replaces the pinned flag with the same key, and NESER's port with
   `--neser-arg` (for example `--mesen2-arg=--snes.port2.type=SnesMouse --neser-arg=--snes-controller-port2
   --neser-arg=mouse`).
 - **Region** (nr-f6o). NESER's `Hardware:` line names the region it picked; NESER's ROM database

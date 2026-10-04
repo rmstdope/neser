@@ -23,11 +23,13 @@ from scripts.reference_capture.compare_mesen2 import (
     SNES_MESEN2_FLAGS,
     fresh_copy,
     main,
+    merge_flags,
     mesen2_cartridge_lines,
     mesen2_flags,
     neser_cartridge_lines,
     remove_mesen2_leftovers,
     system_for,
+    testrunner_pattern,
 )
 
 # Real Mesen2 2.1.1 --testRunner --enableStdout output, captured 2026-10-04.
@@ -95,6 +97,17 @@ class TestMesen2Flags(unittest.TestCase):
         self.assertIn("--nes.DisableGameDatabase=true", mesen2_flags("nes", no_game_database=True))
         self.assertNotIn("--nes.DisableGameDatabase=true", mesen2_flags("nes", no_game_database=False))
         self.assertEqual(mesen2_flags("snes", no_game_database=True), SNES_MESEN2_FLAGS)
+
+    def test_an_extra_flag_replaces_the_pinned_flag_with_its_key(self) -> None:
+        merged = merge_flags(SNES_MESEN2_FLAGS, ["--snes.port2.type=SnesMouse", "--snes.Overclock=1"])
+        self.assertIn("--snes.port2.type=SnesMouse", merged)
+        self.assertNotIn("--snes.port2.type=SnesController", merged)
+        self.assertIn("--snes.port1.type=SnesController", merged)
+        self.assertIn("--snes.Overclock=1", merged)
+
+    def test_concurrent_testrunner_is_matched_by_basename(self) -> None:
+        # Another session may start Mesen2 through PATH or a symlink (nr-ocx review).
+        self.assertEqual(testrunner_pattern(Path("/Applications/Mesen.app/Contents/MacOS/Mesen")), "Mesen --testRunner")
 
     def test_system_for_extension(self) -> None:
         self.assertEqual(system_for(Path("a/game.nes")), "nes")
@@ -317,6 +330,26 @@ class TestCompareMesen2EndToEnd(unittest.TestCase):
         code, out = self.run_main(env={"FAKE_LUA_ERROR": "1"})
         self.assertEqual(code, 2)
         self.assertIn("AllowIoOsAccess", out)
+
+    def test_failed_capture_into_a_reused_out_dir_is_not_a_match(self) -> None:
+        # A rerun must not diff the previous run's PNG (nr-ocx review).
+        self.assertEqual(self.run_main()[0], 0)
+        code, out = self.run_main(env={"FAKE_LUA_ERROR": "1"})
+        self.assertEqual(code, 2)
+        self.assertNotIn("differing pixels", out)
+
+    def test_missing_binary_is_a_capture_failure(self) -> None:
+        for flag in ("--mesen2-bin", "--neser-bin"):
+            with self.subTest(flag=flag):
+                code, out = self.run_main(flag, str(Path(self.tmp.name) / "nonexistent"))
+                self.assertEqual(code, 2)
+                self.assertNotIn("differing pixels", out)
+
+    def test_extra_mesen2_arg_replaces_a_pinned_port(self) -> None:
+        self.run_main("--mesen2-arg=--nes.port2.type=Zapper")
+        args = self.logged("mesen2")[0].split()[1:]
+        self.assertIn("--nes.port2.type=Zapper", args)
+        self.assertNotIn("--nes.port2.type=NesController", args)
 
 
 if __name__ == "__main__":

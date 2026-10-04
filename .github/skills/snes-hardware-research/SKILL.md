@@ -113,11 +113,13 @@ Every hardware research skill in this repository uses the same three tiers. The 
    - **Plug in the same controllers on BOTH sides** (nr-0an). Mesen2's testRunner takes its
      SNES ports from `settings.json`, and a local install may have port 2 empty, while
      NESER has a standard pad in each port by default. Pass
-     `--snes.port1.type=SnesController --snes.port2.type=SnesController` to Mesen2, and pin
-     NESER's side with `--snes-controller-port1 standard --snes-controller-port2 standard`,
-     since a `neser.conf` port line (e.g. `multitap`) would otherwise apply. For a game NESER
-     recognises as a Mouse or Super Scope game, NESER picks that device itself; give Mesen2
-     the same type (`SnesMouse`, `SuperScope`) instead. Games that read which pads are
+     `--snes.port1.type=SnesController --snes.port2.type=SnesController` to Mesen2, and keep
+     a `neser.conf` port line (e.g. `multitap`) from applying on NESER's side.
+     `python -m scripts.reference_capture.compare_mesen2` does both (it runs NESER with an
+     empty `--config`). For a game NESER recognises as a Mouse or Super Scope game, NESER
+     picks that device itself; give Mesen2 the same type instead with
+     `--mesen2-arg=--snes.port2.type=SnesMouse` (or `SuperScope`), which replaces the pinned
+     flag for that port. Games that read which pads are
      connected play differently otherwise: Super Bomberman 3's attract demo took a lag frame
      on Mesen2 only, which looked like a CPU-timing drift until a trace showed a branch on
      the game's "player 2 connected" byte going the other way. The lists are
