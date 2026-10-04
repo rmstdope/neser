@@ -16,9 +16,9 @@
 //! CPU cycle count on the NES and the master clock on the SNES, Mesen2's `masterClock` on
 //! each. One known exception: an SNES WAI woken with the interrupt masked runs its two wake
 //! cycles and the next instruction in one tick, so that instruction is stamped 2 CPU cycles
-//! before its fetch (a one-line stamp difference in the diff). A sample is written only when the tick that follows it executes an instruction: a
-//! tick that only dispatches an interrupt, waits in WAI, or runs OAM DMA leaves the PC on an
-//! instruction Mesen2 has not reached yet.
+//! before its fetch (a one-line stamp difference in the diff). A sample is written only when
+//! the tick that follows it executes an instruction: a tick that only dispatches an interrupt,
+//! waits in WAI, or runs OAM DMA leaves the PC on an instruction Mesen2 has not reached yet.
 
 use crate::platform::app_context::AppContext;
 use crate::platform::config::{Config, FrontendConfig, RamInitMode};
@@ -548,8 +548,8 @@ mod tests {
         // Mesen2 2.1.1 wrote clk=2451178, 2808542 and 3165908 for these entries (2026-10-04).
         // Not a clock-origin difference: from power-on to the first entry both exec traces
         // match at offset 0. NESER enters each NMI 6 master clocks (one fast cycle) later
-        // than Mesen2; the offset does not accumulate, so something resynchronises them each frame. Pinned so a
-        // change shows; whether NESER or Mesen2 is right is nr-7pk.
+        // than Mesen2; the offset does not accumulate, so something resynchronises them each
+        // frame. Pinned so a change shows; whether NESER or Mesen2 is right is nr-7pk.
         assert_eq!(
             nmi_log(
                 "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/window-precalculated-single.sfc",

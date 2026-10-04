@@ -2,8 +2,8 @@
 
 The traces come from `timing_trace` (NESER) and `scripts/reference_capture/mesen2_nmi_clock.lua`
 or `mesen2_exec_trace.lua` (Mesen2): one line per NMI entry (``nmi=<n> pc=<hex> clk=<dec>``) or
-per instruction (``pc=<hex> clk=<dec>``). Lines are compared by ordinal. Each emulator starts
-its clock at its own point, so the clock offset of the first pair is the baseline. The first
+per instruction (``pc=<hex> clk=<dec>``). Lines are compared by ordinal. The baseline is the
+expected clock offset: the first pair's by default, or ``--baseline``. The first
 divergence is the first line where the PC (or NMI number) differs, or where the offset leaves
 the baseline and stays off it.
 
