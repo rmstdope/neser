@@ -180,6 +180,11 @@ pub struct SnesDmaState {
     pub hdma_active_mask: u8,
     #[serde(default = "default_dma_channel_bools")]
     pub hdma_do_transfer: Vec<bool>,
+    /// General-purpose channels armed by `$420B` and not yet run or cancelled (Mesen2's
+    /// per-channel `DmaActive`); non-zero only between a `$420B` write and its burst.
+    /// `None` in states saved before nr-3qn, where the bus re-arms from `pending_gpdma`.
+    #[serde(default)]
+    pub dma_active_mask: Option<u8>,
 }
 
 /// SA-1 enhancement chip state: control/vector registers (`$2200-$220F`), I-RAM plus its two

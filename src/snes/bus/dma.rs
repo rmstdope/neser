@@ -146,12 +146,13 @@ impl DmaController {
             ref regs,
             hdma_active_mask,
             ref hdma_do_transfer,
-            dma_active_mask: _, // intra-transfer: no save state is taken mid-transfer
+            dma_active_mask,
         } = self;
         SnesDmaState {
             regs: regs.to_vec(),
             hdma_active_mask,
             hdma_do_transfer: hdma_do_transfer.to_vec(),
+            dma_active_mask: Some(dma_active_mask),
         }
     }
 
@@ -161,6 +162,7 @@ impl DmaController {
             ref regs,
             hdma_active_mask,
             ref hdma_do_transfer,
+            dma_active_mask: _,
         } = state;
         if regs.len() != DMA_REG_BYTES {
             return Err(format!(

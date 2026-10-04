@@ -4082,6 +4082,128 @@ mod tests {
         assert_eq!(bus.read(0x7E0200), 0x5A, "the burst runs at the next cycle");
     }
 
+    /// Master clocks Mesen2 charges a GPDMA burst in which no channel is still armed:
+    /// `SyncStartDma`'s pad to a multiple of 8, the 8-clock start overhead, and
+    /// `SyncEndDma`'s pad, which rounds the alignment counter (pad + 8) up to a whole CPU
+    /// cycle at `cpu_speed`. No per-channel overhead: `RunDma` returns at once for a channel
+    /// whose `DmaActive` is clear.
+    fn bare_gpdma_envelope(start_clock: u64, cpu_speed: u64) -> u64 {
+        let pad_start = 8 - (start_clock & 7);
+        let align = pad_start + 8;
+        align + (cpu_speed - align % cpu_speed)
+    }
+
+    #[test]
+    fn hdma_line_in_the_mdmaen_start_delay_cancels_its_own_channels_gpdma() {
+        // nr-3qn: Mesen2's `$420B` write arms `DmaActive`, and `ProcessHdmaChannels` clears it
+        // on every HDMA-enabled channel. A channel set in both `$420C` and `$420B` whose HDMA
+        // line runs in the start-delay window therefore transfers nothing when the burst
+        // starts -- though the burst still pays its start/end envelope.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+        // HDMA channel 0 whose table ends at once: its line charges only the overhead.
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x00);
+        bus.write(0x00420C, 0x01);
+        tick_until_master_clock(&mut bus, 1000); // frame init runs via the bus fallback
+        bus.gpdma_cycle_hook(); // a CPU now owns the cycle boundaries
+
+        tick_until_master_clock(&mut bus, 1104); // the scanline-0 line trigger arms
+        // The SAME channel as a one-byte GPDMA (A1T/DAS; the HDMA table pointer is $43x8/9).
+        bus.write(0x704000, 0x5A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x704000, 1);
+        bus.write(0x00420B, 0x01);
+
+        bus.gpdma_cycle_hook(); // consumes the start delay of both
+        bus.gpdma_cycle_hook(); // the HDMA line runs first, disarming channel 0
+        let before = bus.ppu.borrow().total_master_clocks();
+        bus.gpdma_cycle_hook(); // the burst
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x00,
+            "a channel disarmed by its own HDMA in the start delay must transfer nothing"
+        );
+        assert_eq!(bus.read(0x004305), 0x01, "its byte count is untouched");
+        assert_eq!(
+            bus.ppu.borrow().total_master_clocks() - before,
+            bare_gpdma_envelope(before, u64::from(bus.cpu_speed)),
+            "a burst with every channel cancelled still pays Mesen2's start/end envelope"
+        );
+    }
+
+    #[test]
+    fn hdma_frame_init_in_the_mdmaen_start_delay_cancels_its_own_channels_gpdma() {
+        // nr-3qn, the frame-init half: `InitHdmaChannels` clears `DmaActive` on every
+        // HDMA-enabled channel too.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x00);
+        bus.write(0x00420C, 0x01);
+        bus.gpdma_cycle_hook(); // a CPU owns the cycle boundaries; nothing is pending yet
+        while bus.pending_hdma.is_none() {
+            bus.tick(); // up to the scanline-0 frame-init trigger
+        }
+        bus.write(0x704000, 0x5A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x704000, 1);
+        bus.write(0x00420B, 0x01);
+
+        bus.gpdma_cycle_hook(); // consumes the start delay of both
+        bus.gpdma_cycle_hook(); // the frame init runs first, disarming channel 0
+        let before = bus.ppu.borrow().total_master_clocks();
+        bus.gpdma_cycle_hook(); // the burst
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x00,
+            "the cancelled channel transfers nothing"
+        );
+        assert_eq!(bus.read(0x004305), 0x01, "its byte count is untouched");
+        assert_eq!(
+            bus.ppu.borrow().total_master_clocks() - before,
+            bare_gpdma_envelope(before, u64::from(bus.cpu_speed)),
+            "a burst with every channel cancelled still pays Mesen2's start/end envelope"
+        );
+    }
+
+    #[test]
+    fn a_save_state_taken_in_the_mdmaen_start_delay_keeps_the_channel_armed() {
+        // nr-3qn: the channels are armed at the `$420B` write, so a state saved between the
+        // write and the burst must carry that, or the restored burst would transfer nothing.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        arm_one_byte_gpdma(&mut bus);
+        bus.gpdma_cycle_hook(); // the start delay
+        let saved = bus.capture_state();
+
+        let mut restored = SnesSystemBus::new(lorom_cart_with_sram());
+        restored.restore_state(&saved).expect("restore");
+        restored.gpdma_cycle_hook();
+        assert_eq!(
+            restored.read(0x7E0200),
+            0x5A,
+            "the restored burst still runs"
+        );
+    }
+
+    #[test]
+    fn a_save_state_from_before_the_armed_mask_was_saved_keeps_a_pending_burst_armed() {
+        // States written before nr-3qn carry `pending_gpdma` but no armed mask; the pending
+        // burst's MDMAEN is the mask it was armed with.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        arm_one_byte_gpdma(&mut bus);
+        bus.gpdma_cycle_hook(); // the start delay
+        let mut saved = bus.capture_state();
+        saved.dma.dma_active_mask = None;
+
+        let mut restored = SnesSystemBus::new(lorom_cart_with_sram());
+        restored.restore_state(&saved).expect("restore");
+        restored.gpdma_cycle_hook();
+        assert_eq!(
+            restored.read(0x7E0200),
+            0x5A,
+            "the restored burst still runs"
+        );
+    }
+
     /// Arms a one-byte GPDMA from cartridge SRAM `$704000` to WMDATA;
     /// `bus.read(0x7E0200)` becomes `0x5A` once it has actually run. Callers
     /// must build the bus with [`lorom_cart_with_sram`] -- a WRAM source would
