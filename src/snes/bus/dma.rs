@@ -303,7 +303,11 @@ impl DmaController {
     /// Mesen2 re-enters `ProcessPendingTransfers` from inside `RunDma` (after the start
     /// overhead, after each channel's overhead, and after every byte), and both HDMA entry
     /// points then see `needSync = !HasActiveDmaChannel()` -- false, because `$420B` armed the
-    /// channels. So the nested run pays neither sync pad and its clocks fold into the same
+    /// channels. (Not modelled: a burst whose channels were ALL cancelled in the start-delay
+    /// window reaches its first nested check with none armed, where Mesen2 would pay the
+    /// pads. That needs a second HDMA due within the burst's opening clocks right after one
+    /// ran in the window, which the frame-init and per-line triggers never produce; nr-3qn.)
+    /// So the nested run pays neither sync pad and its clocks fold into the same
     /// counter the outer `SyncEndDma` rounds. ares is identical in shape: `CPU::dmaEdge`
     /// guards both `step()` pads with `if(!dmaEnable())`.
     fn run_nested_hdma<B: DmaABus>(
@@ -466,13 +470,14 @@ impl DmaController {
             if (hdmaen & (1 << channel)) == 0 {
                 continue;
             }
-            // Mesen2 `ProcessHdmaChannels`: `ch.DmaActive = false` for every HDMA-enabled
-            // channel, before the finished check. Aborts a general-purpose transfer running
-            // on that channel (only reachable when nested).
-            self.dma_active_mask &= !(1 << channel);
             if (self.hdma_active_mask & (1 << channel)) == 0 {
                 continue;
             }
+            // Mesen2 `ProcessHdmaChannels`: `ch.DmaActive = false` for every still-active HDMA
+            // channel, AFTER the `IsHdmaChannelActive` skip -- a channel whose table has ended
+            // keeps its general-purpose transfer. Cancels (in the `$420B` start-delay window)
+            // or aborts (nested) a general-purpose transfer on that channel (nr-3qn).
+            self.dma_active_mask &= !(1 << channel);
             if self.hdma_do_transfer[channel as usize] {
                 counter += self.run_hdma_transfer_unit(channel, abus, &mut open_bus);
             }

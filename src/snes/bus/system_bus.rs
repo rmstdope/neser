@@ -4109,30 +4109,34 @@ mod tests {
     #[test]
     fn hdma_line_in_the_mdmaen_start_delay_cancels_its_own_channels_gpdma() {
         // nr-3qn: Mesen2's `$420B` write arms `DmaActive`, and `ProcessHdmaChannels` clears it
-        // on every HDMA-enabled channel. A channel set in both `$420C` and `$420B` whose HDMA
-        // line runs in the start-delay window therefore transfers nothing when the burst
+        // on every still-active HDMA channel. A channel set in both `$420C` and `$420B` whose
+        // HDMA line runs in the start-delay window therefore transfers nothing when the burst
         // starts -- though the burst still pays its start/end envelope.
         let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
         set_wmadd_200(&mut bus);
-        // HDMA channel 0 whose table ends at once: its line charges only the overhead.
+        // HDMA channel 0, live for one line: it writes 0x7A to WMDATA, then its table ends.
         write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
-        bus.write(0x703000, 0x00);
+        bus.write(0x703000, 0x01);
+        bus.write(0x703001, 0x7A);
+        bus.write(0x703002, 0x00);
         bus.write(0x00420C, 0x01);
         tick_until_master_clock(&mut bus, 1000); // frame init runs via the bus fallback
         bus.gpdma_cycle_hook(); // a CPU now owns the cycle boundaries
 
         tick_until_master_clock(&mut bus, 1104); // the scanline-0 line trigger arms
-        // The SAME channel as a one-byte GPDMA (A1T/DAS; the HDMA table pointer is $43x8/9).
+        // The SAME channel as a one-byte GPDMA of 0x5A to WMDATA. It shares BBAD with the
+        // HDMA; A1T/DAS are not read by a direct HDMA line (its table pointer is $43x8/9).
         bus.write(0x704000, 0x5A);
         write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x704000, 1);
         bus.write(0x00420B, 0x01);
 
         bus.gpdma_cycle_hook(); // consumes the start delay of both
         bus.gpdma_cycle_hook(); // the HDMA line runs first, disarming channel 0
+        assert_eq!(bus.read(0x7E0200), 0x7A, "the HDMA line ran");
         let before = bus.ppu.borrow().total_master_clocks();
         bus.gpdma_cycle_hook(); // the burst
         assert_eq!(
-            bus.read(0x7E0200),
+            bus.read(0x7E0201),
             0x00,
             "a channel disarmed by its own HDMA in the start delay must transfer nothing"
         );
@@ -4141,6 +4145,40 @@ mod tests {
             bus.ppu.borrow().total_master_clocks() - before,
             bare_gpdma_envelope(before, u64::from(bus.cpu_speed)),
             "a burst with every channel cancelled still pays Mesen2's start/end envelope"
+        );
+    }
+
+    #[test]
+    fn hdma_line_in_the_mdmaen_start_delay_spares_a_channel_whose_table_has_ended() {
+        // nr-3qn review: `ProcessHdmaChannels` skips a stopped channel (`IsHdmaChannelActive`)
+        // BEFORE `ch.DmaActive = false`, so only a still-live HDMA channel cancels its GPDMA.
+        // Channel 1 keeps the line running (Mesen2 arms no line with every channel stopped);
+        // channel 0 is enabled in `$420C` but its table ended at the frame init.
+        let mut bus = SnesSystemBus::new(lorom_cart_with_sram());
+        set_wmadd_200(&mut bus);
+        write_hdma_channel(&mut bus, 0, 0x00, 0x80, 0x703000);
+        bus.write(0x703000, 0x00);
+        // Channel 1 targets $2100 (INIDISP), out of the way of the WMDATA assertion.
+        write_hdma_channel(&mut bus, 1, 0x00, 0x00, 0x703100);
+        bus.write(0x703100, 0x81); // repeat mode, one line
+        bus.write(0x703101, 0x0F);
+        bus.write(0x703102, 0x00);
+        bus.write(0x00420C, 0x03);
+        tick_until_master_clock(&mut bus, 1000);
+        bus.gpdma_cycle_hook();
+
+        tick_until_master_clock(&mut bus, 1104);
+        bus.write(0x704000, 0x5A);
+        write_dma_channel(&mut bus, 0, 0x00, 0x80, 0x704000, 1);
+        bus.write(0x00420B, 0x01);
+
+        bus.gpdma_cycle_hook(); // the start delay
+        bus.gpdma_cycle_hook(); // the HDMA line
+        bus.gpdma_cycle_hook(); // the burst
+        assert_eq!(
+            bus.read(0x7E0200),
+            0x5A,
+            "a stopped HDMA channel's line must not cancel the GPDMA on that channel"
         );
     }
 
