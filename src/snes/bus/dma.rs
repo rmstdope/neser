@@ -1229,15 +1229,16 @@ mod tests {
         assert_eq!(bus.clock - start, 84, "bus advanced in lockstep");
     }
 
-    /// Mesen2's `ProcessHdmaChannels` clears `DmaActive` on **every** HDMA-enabled channel
-    /// (`SnesDmaController.cpp:255`), so an HDMA firing mid-transfer aborts a general-purpose
-    /// transfer running on that same channel: `RunDma`'s `while(TransferSize > 0 &&
-    /// channel.DmaActive)` terminates immediately, leaving `$43x5` non-zero and `$43x2`
-    /// wherever it had reached. #3127.
+    /// Mesen2's `ProcessHdmaChannels` clears `DmaActive` on every **still-active** HDMA
+    /// channel, after its `IsHdmaChannelActive` skip (`SnesDmaController.cpp:274`), so an HDMA
+    /// firing mid-transfer aborts a general-purpose transfer running on that same channel:
+    /// `RunDma`'s `while(TransferSize > 0 && channel.DmaActive)` terminates immediately,
+    /// leaving `$43x5` non-zero and `$43x2` wherever it had reached. #3127. A channel whose
+    /// table has ended keeps its transfer (nr-3qn).
     ///
-    /// Honest boundary: deleting the `dma_active_mask` clear in `hdma_do_line` turns **only
-    /// this test** red -- no ROM in the suite arms a channel for HDMA and general-purpose DMA
-    /// at once. So this pins the reference's rule, not an observed ROM behaviour, and nobody
+    /// Honest boundary: deleting the `dma_active_mask` clear in `hdma_do_line` turns only
+    /// this test and the nr-3qn start-delay unit tests in `system_bus.rs` red -- no ROM in the
+    /// suite arms a channel for HDMA and general-purpose DMA at once. So this pins the reference's rule, not an observed ROM behaviour, and nobody
     /// should read a green suite as evidence that hardware was consulted here.
     #[test]
     fn an_hdma_enabled_channel_aborts_its_own_running_general_purpose_transfer() {
