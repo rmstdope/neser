@@ -1,4 +1,13 @@
-//! Mapper 121 - JY Company MMC3 variant
+//! Mapper 121 - Kǎshèng A9711/A9713 MMC3 clone with protection registers
+//!
+//! Specification: <https://www.nesdev.org/wiki/INES_Mapper_121>.
+//!
+//! CHR A18: on the A9711 board with 512 KiB CHR-ROM (Street Fighter Zero 2 '97),
+//! CHR A18 is PPU A12, "regardless of what the MMC3 is set to do": the left
+//! pattern table reads the lower and the right pattern table the upper 256 KiB.
+//! Mesen2 and FCEUX instead tie the half to the MMC3's CHR inversion bit; the two
+//! agree whenever inversion is on, which is all that game uses (nr-0ry). The
+//! A9713 board's outer CHR bank (`$5180` bit 7) is not modelled.
 
 use crate::nes::cartridge::base_mapper::BaseMapper;
 use crate::nes::cartridge::mmc3::MMC3Mapper;
@@ -7,6 +16,8 @@ use crate::nes::cartridge::{Mapper, MapperCapabilities};
 pub struct Mapper121 {
     mmc3: MMC3Mapper,
     ex_regs: [u8; Self::EX_REGS_SIZE],
+    /// A9711 board with 512 KiB CHR-ROM: CHR A18 comes from PPU A12.
+    chr_a18_from_ppu_a12: bool,
 }
 
 impl Mapper121 {
@@ -17,9 +28,14 @@ impl Mapper121 {
     // flags (1) + mirroring (1) = 13 bytes. Used to distinguish legacy
     // MMC3-only snapshots from extended Mapper121 snapshots.
     const MMC3_MIN_SNAPSHOT_SIZE: usize = 13;
+    const KIB_256: usize = 256 * 1024;
 
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
+        // A9711 carries 256 KiB PRG-ROM; only it pairs that with 512 KiB CHR-ROM.
+        let chr_a18_from_ppu_a12 =
+            ctx.chr_rom.len() > Self::KIB_256 && ctx.prg_rom.len() <= Self::KIB_256;
         let mut mapper = Self {
+            chr_a18_from_ppu_a12,
             mmc3: MMC3Mapper::new_with_irq_mode(ctx.prg_rom, ctx.chr_rom, ctx.mirroring, false),
             ex_regs: [0; Self::EX_REGS_SIZE],
         };
@@ -88,6 +104,12 @@ impl Mapper121 {
 
         (self.mmc3.mapped_prg_bank(addr) & 0x1F) | outer
     }
+
+    /// 1 KiB CHR page on the A9711 512 KiB board: the MMC3 bank in the half PPU A12 selects.
+    fn a9711_chr_1k_bank(&self, addr: u16) -> usize {
+        let ppu_a12 = usize::from(addr & 0x1000 != 0);
+        (self.mmc3.mapped_chr_1k_bank(addr) & 0xFF) | (ppu_a12 << 8)
+    }
 }
 
 impl Mapper for Mapper121 {
@@ -151,7 +173,8 @@ impl Mapper for Mapper121 {
     }
 
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
-        if (0x5000..=0x5FFF).contains(&addr) {
+        if (0x5000..=0x5FFF).contains(&addr) || addr >= 0x8000 {
+            // $8000-$FFFF must go through the protection PRG banking too.
             self.read_prg(addr)
         } else {
             self.mmc3.read_prg_open_bus(addr, open_bus)
@@ -159,7 +182,11 @@ impl Mapper for Mapper121 {
     }
 
     fn read_chr(&mut self, addr: u16) -> u8 {
-        self.mmc3.read_chr(addr)
+        if !self.chr_a18_from_ppu_a12 {
+            return self.mmc3.read_chr(addr);
+        }
+        let bank = self.a9711_chr_1k_bank(addr);
+        self.mmc3.read_chr_1k_at(bank, (addr as usize) & 0x3FF)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
@@ -212,7 +239,7 @@ mod tests {
     use super::Mapper121;
     use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::nes::cartridge::test_helpers::banked_data;
+    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
 
     const MAPPER_ID: u16 = 121;
     const PRG_BANKS_8K: usize = 48;
@@ -318,6 +345,57 @@ mod tests {
         mapper.write_prg(0xA001, 0xC0);
         mapper.write_prg(0x6000, 0x44);
         assert_eq!(mapper.read_prg(0x6000), 0x82);
+    }
+
+    /// The CPU bus reads cartridge space through `read_prg_open_bus`, so the
+    /// protection banks selected via $8003/$8001 must be visible there, not only
+    /// through `read_prg`. The writes are the ones Street Fighter Zero 2 '97 makes
+    /// at power-on before jumping to $C000 (nr-0ry).
+    #[test]
+    fn mapper_121_cpu_bus_reads_see_protection_prg_banks() {
+        let mut mapper = make_mapper();
+
+        mapper.write_prg(0x8003, 0x28); // index $28: $C000 bank, latched
+        mapper.write_prg(0x8001, 0x3A); // reversed: $17
+        mapper.write_prg(0x8003, 0x26); // index $26: $E000 bank, latched
+        mapper.write_prg(0x8001, 0x3E); // reversed: $1F
+
+        // Outer bank bit ($5180 bit 7, set at power-on) adds $20; 48 banks wrap.
+        let c000_bank = ((0x17 | 0x20) % PRG_BANKS_8K) as u8;
+        let e000_bank = ((0x1F | 0x20) % PRG_BANKS_8K) as u8;
+        assert_eq!(mapper.read_prg_open_bus(0xC000, 0xFF), c000_bank);
+        assert_eq!(mapper.read_prg_open_bus(0xE000, 0xFF), e000_bank);
+    }
+
+    /// A9711 board with 512 KiB CHR-ROM (Street Fighter Zero 2 '97): CHR A18 is
+    /// PPU A12, so the left pattern table reads the lower and the right pattern
+    /// table the upper 256 KiB, whatever the MMC3's CHR inversion says.
+    fn make_a9711_512k_chr_mapper() -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new_for_test(
+            MAPPER_ID,
+            banked_data(8 * 1024, 32),
+            banked_data_with_upper_marker(1024, 512),
+            NametableLayout::Vertical,
+        ))
+        .expect("Mapper 121 must be created")
+    }
+
+    #[test]
+    fn mapper_121_512k_chr_half_follows_ppu_a12_with_chr_inversion() {
+        let mut mapper = make_a9711_512k_chr_mapper();
+        mapper.write_prg(0x8000, 0x80); // MMC3 CHR inversion on
+
+        assert_eq!(mapper.read_chr(0x0000), 0, "left table: lower 256 KiB");
+        assert_eq!(mapper.read_chr(0x1000), 1, "right table: upper 256 KiB");
+    }
+
+    #[test]
+    fn mapper_121_512k_chr_half_follows_ppu_a12_without_chr_inversion() {
+        let mut mapper = make_a9711_512k_chr_mapper();
+        mapper.write_prg(0x8000, 0x00); // MMC3 CHR inversion off
+
+        assert_eq!(mapper.read_chr(0x0000), 0, "left table: lower 256 KiB");
+        assert_eq!(mapper.read_chr(0x1000), 1, "right table: upper 256 KiB");
     }
 
     #[test]
