@@ -7,6 +7,8 @@
  * plugged device takes: an SNES pad before the NES joypad, a Super Scope before Select/Start.
  */
 
+import { getKeyboardControllerTarget } from "./input_routing";
+
 export type KeyBindingInput = "pad" | "snesPad" | "vsCoin" | "scopeTurbo" | "scopePause";
 
 export interface KeyBindingRow {
@@ -55,8 +57,17 @@ export function keyBindingsFor(table: readonly KeyBindingRow[], console: string,
 }
 
 /**
+ * The ports the keyboard drives on `console`, player 1's first. The GBA has one joypad, which
+ * the keyboard always drives; elsewhere connected gamepads take the first ports.
+ */
+export function keyboardPorts(console: string, gamepadCount: number, fourScoreEnabled: boolean): number[] {
+    return console === "gba" ? [1] : getKeyboardControllerTarget(gamepadCount, fourScoreEnabled);
+}
+
+/**
  * Apply `rows` for one key event. `ports` are the keyboard's ports (player 1 first). Returns
- * true when the key was the console's, so the caller prevents the browser's default.
+ * true when the key was the console's, so the caller prevents the browser's default: also
+ * when it reached a port whose device took none of its rows (an SNES-only key on a joypad).
  */
 export function applyKeyBindings(
     rows: readonly KeyBindingRow[],
@@ -65,6 +76,7 @@ export function applyKeyBindings(
     event: Pick<KeyboardEvent, "repeat">,
     pressed: boolean,
 ): boolean {
+    let reachedPort = false;
     for (const row of rows) {
         switch (row.input) {
             case "vsCoin":
@@ -85,6 +97,7 @@ export function applyKeyBindings(
                 if (port === null) {
                     return false;
                 }
+                reachedPort = true;
                 if (sink.snesPad?.(port, row.button, pressed)) {
                     return true;
                 }
@@ -100,7 +113,7 @@ export function applyKeyBindings(
             }
         }
     }
-    return false;
+    return reachedPort;
 }
 
 function portOf(row: KeyBindingRow, ports: readonly number[]): number | null {

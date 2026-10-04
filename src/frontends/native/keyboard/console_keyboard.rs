@@ -460,6 +460,37 @@ mod tests {
         );
     }
 
+    /// Every desktop SNES pad row of the shared table (nr-tlf) presses the button its id
+    /// names on port 1, exactly as setting that id directly does.
+    #[test]
+    fn every_desktop_snes_pad_row_presses_its_button() {
+        use crate::platform::emulator::SystemType;
+        use crate::platform::key_bindings::{Input, Shell, bindings_of};
+        let port1 = |console: &Console| {
+            console
+                .as_snes()
+                .unwrap()
+                .input_ports()
+                .unwrap()
+                .port1_state()
+        };
+        let mut checked = 0;
+        for b in bindings_of(Shell::Desktop).filter(|b| b.console == SystemType::Snes) {
+            let Input::Pad(_, button) = b.input else {
+                continue;
+            };
+            let key = crate::frontends::native::keyboard::controller_mapping::winit_key(b.key);
+            let mut by_key = make_snes_console("pad.sfc");
+            handle_key_pressed(&mut by_key, key, &mut make_state(), None);
+            let mut by_id = make_snes_console("pad.sfc");
+            by_id.set_button(0, button.id(), true);
+            assert_ne!(port1(&by_id).pressed, 0, "{b:?}");
+            assert_eq!(port1(&by_key), port1(&by_id), "{b:?}");
+            checked += 1;
+        }
+        assert_eq!(checked, 16);
+    }
+
     /// Every desktop Game Boy and GBA row of the shared table (nr-tlf) presses its button.
     #[test]
     fn every_desktop_gb_and_gba_pad_row_presses_its_button() {

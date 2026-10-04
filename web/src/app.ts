@@ -65,12 +65,12 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
-import { getKeyboardControllerTarget } from "./input/input_routing";
 import {
     type KeyBindingRow,
     type KeyBindingSink,
     applyKeyBindings,
     keyBindingsFor,
+    keyboardPorts,
     parseKeyBindingTable,
 } from "./input/key_bindings";
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
@@ -2926,10 +2926,7 @@ function keyBindingSink(active: ActiveEmulator): KeyBindingSink {
 
 /** Apply the key table to a key event; the browser's default is prevented for a console key. */
 function applyKeyboardBindings(event: KeyboardEvent, active: ActiveEmulator, pressed: boolean) {
-    // The GBA has one joypad, which the keyboard always drives.
-    const ports = active.kind === "gba"
-        ? [1]
-        : getKeyboardControllerTarget(connectedGamepads.length, nes?.is_four_score_enabled?.() ?? false);
+    const ports = keyboardPorts(active.kind, connectedGamepads.length, nes?.is_four_score_enabled?.() ?? false);
     const rows = keyBindingsFor(keyBindings(), active.kind, event.key);
     if (applyKeyBindings(rows, keyBindingSink(active), ports, event, pressed)) {
         event.preventDefault();

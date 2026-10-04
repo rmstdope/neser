@@ -232,6 +232,64 @@ mod tests {
         }
     }
 
+    /// Every desktop NES Power Pad and SNES-pad row reaches that device when it is plugged
+    /// into its player's port: the earlier rows of the chain are the ones a device takes.
+    #[test]
+    fn every_desktop_nes_power_pad_and_snes_pad_row_reaches_its_device() {
+        use crate::nes::input::{ControllerState, ControllerType};
+        let mut checked = 0;
+        for b in bindings_of(Shell::Desktop).filter(|b| b.console == SystemType::Nes) {
+            let (player, device, bit) = match b.input {
+                Input::PowerPad(player, button) => (player, ControllerType::PowerPad, button as u8),
+                Input::SnesPadOnNes(player, button) => (
+                    player,
+                    ControllerType::SnesController,
+                    button.on_nes_snes_pad() as u8,
+                ),
+                _ => continue,
+            };
+            let port = if player == Player::One { 1 } else { 2 };
+            let mut console = make_nes_console();
+            let nes = console.as_nes_mut().unwrap();
+            nes.bus().borrow_mut().set_controller_type(port, device);
+            let mut state = make_state();
+            handle_key_pressed(&mut console, super::winit_key(b.key), &mut state, None);
+            let nes = console.as_nes_mut().unwrap();
+            let pressed = match nes.bus().borrow().controller_state(port) {
+                ControllerState::PowerPad(s) => s.button_states,
+                ControllerState::SnesAdapter(s) => s.button_states,
+                _ => panic!("{b:?}: no {device:?} on port {port}"),
+            };
+            assert_eq!(pressed, 1 << bit, "{b:?}");
+            handle_key_released(&mut console, super::winit_key(b.key), 0, false);
+            let nes = console.as_nes_mut().unwrap();
+            let released = match nes.bus().borrow().controller_state(port) {
+                ControllerState::PowerPad(s) => s.button_states,
+                ControllerState::SnesAdapter(s) => s.button_states,
+                _ => unreachable!(),
+            };
+            assert_eq!(released, 0, "{b:?} release");
+            checked += 1;
+        }
+        assert_eq!(checked, 24 + 12, "24 Power Pad rows and 12 SNES-pad rows");
+    }
+
+    /// The Vs. service key (-) holds the service line ($4016 bit 2) while it is held.
+    #[test]
+    fn test_minus_holds_the_vs_service_button() {
+        let mut console = make_vs_console();
+        let mut state = make_state();
+        let service = |console: &mut crate::platform::emulator::Console| {
+            let nes = console.as_nes_mut().unwrap();
+            nes.bus().borrow_mut().read(0x4016, false) & 0x04
+        };
+        assert_eq!(service(&mut console), 0);
+        handle_key_pressed(&mut console, KeyCode::Minus, &mut state, None);
+        assert_ne!(service(&mut console), 0);
+        handle_key_released(&mut console, KeyCode::Minus, 0, false);
+        assert_eq!(service(&mut console), 0);
+    }
+
     /// Every desktop NES joypad row presses its button on its player's port.
     #[test]
     fn every_desktop_nes_pad_row_presses_its_button() {

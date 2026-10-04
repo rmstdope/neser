@@ -509,22 +509,46 @@ mod tests {
         assert_eq!(one_shell_rows(Shells::WebOnly), web_only);
     }
 
-    /// The bindings both shells share, so that a row moved into a one-shell list (or
-    /// dropped) is seen here too.
+    /// Every binding both shells share, pinned like the differences, so a shared row
+    /// that changes meaning (or moves to one shell) turns this red.
     #[test]
-    fn both_shells_share_the_core_layout() {
-        let shared: Vec<String> = one_shell_rows(Shells::Both);
-        for expected in [
+    fn both_shells_share_exactly_these_bindings() {
+        let shared = [
+            "Nes KeyQ SnesPadOnNes(One, L)",
             "Nes KeyW SnesPadOnNes(One, Up)",
             "Nes KeyW Pad(One, Up)",
+            "Nes KeyE SnesPadOnNes(One, R)",
+            "Nes KeyA SnesPadOnNes(One, Left)",
+            "Nes KeyA Pad(One, Left)",
+            "Nes KeyS SnesPadOnNes(One, Down)",
+            "Nes KeyS Pad(One, Down)",
+            "Nes KeyD SnesPadOnNes(One, Right)",
+            "Nes KeyD Pad(One, Right)",
+            "Nes Digit4 SnesPadOnNes(One, Select)",
             "Nes Digit4 Pad(One, Select)",
+            "Nes Digit5 SnesPadOnNes(One, Start)",
             "Nes Digit5 Pad(One, Start)",
+            "Nes Digit9 Pad(Two, Select)",
+            "Nes Digit0 Pad(Two, Start)",
             "Nes KeyI Pad(Two, Up)",
             "Nes KeyO Pad(Two, A)",
+            "Nes KeyJ Pad(Two, Left)",
+            "Nes KeyK Pad(Two, Down)",
+            "Nes KeyL Pad(Two, Right)",
             "Nes KeyP Pad(Two, B)",
             "Nes Digit6 VsCoin",
+            "GameBoy Digit4 Pad(One, Select)",
+            "GameBoy Digit5 Pad(One, Start)",
             "GameBoy KeyW Pad(One, Up)",
+            "GameBoy KeyS Pad(One, Down)",
+            "GameBoy KeyA Pad(One, Left)",
+            "GameBoy KeyD Pad(One, Right)",
+            "Gba Digit4 Pad(One, Select)",
             "Gba Digit5 Pad(One, Start)",
+            "Gba KeyW Pad(One, Up)",
+            "Gba KeyS Pad(One, Down)",
+            "Gba KeyA Pad(One, Left)",
+            "Gba KeyD Pad(One, Right)",
             "Snes KeyT Pad(One, A)",
             "Snes KeyR Pad(One, B)",
             "Snes KeyY Pad(One, X)",
@@ -532,29 +556,33 @@ mod tests {
             "Snes KeyQ Pad(One, L)",
             "Snes KeyE Pad(One, R)",
             "Snes Digit4 SuperScopeTurbo",
+            "Snes Digit4 Pad(One, Select)",
             "Snes Digit5 SuperScopePause",
-        ] {
-            assert!(shared.contains(&expected.to_string()), "missing {expected}");
-        }
-        assert_eq!(shared.len(), 49);
+            "Snes Digit5 Pad(One, Start)",
+            "Snes KeyW Pad(One, Up)",
+            "Snes KeyS Pad(One, Down)",
+            "Snes KeyA Pad(One, Left)",
+            "Snes KeyD Pad(One, Right)",
+        ];
+        assert_eq!(one_shell_rows(Shells::Both), shared);
     }
 
-    /// A shell stops at the first row the device accepts, and a joypad always accepts, so a
-    /// row after a `Pad` row would never be reached; nor is the same row declared twice.
+    /// A shell stops at the first row the device accepts, and a joypad, the Vs. coin and the
+    /// Vs. service button always accept, so a row after one of those would never be
+    /// reached; nor is the same row declared twice.
     #[test]
     fn every_row_a_shell_honours_is_reachable() {
         for shell in [Shell::Desktop, Shell::Web] {
             for b in bindings_of(shell) {
                 let rows: Vec<_> = bindings_for(shell, b.console, b.key).collect();
-                let pads = rows
-                    .iter()
-                    .filter(|r| matches!(r.input, Input::Pad(..)))
-                    .count();
-                assert!(pads <= 1, "{shell:?} {} has {pads} pad rows", describe(b));
-                if pads == 1 {
-                    assert!(
-                        matches!(rows.last().unwrap().input, Input::Pad(..)),
-                        "{shell:?}: the pad row of {:?} {:?} is not its last",
+                let always = |r: &&&KeyBinding| {
+                    matches!(r.input, Input::Pad(..) | Input::VsCoin | Input::VsService)
+                };
+                if let Some(at) = rows.iter().position(|r| always(&r)) {
+                    assert_eq!(
+                        at,
+                        rows.len() - 1,
+                        "{shell:?}: a row of {:?} {:?} follows one that always accepts",
                         b.console,
                         b.key
                     );

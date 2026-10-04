@@ -768,6 +768,12 @@ impl InputPorts {
         device.is_mouse().then(|| device.capture_state())
     }
 
+    /// The state of whatever device is in port 1.
+    #[cfg(test)]
+    pub(crate) fn port1_state(&self) -> SnesControllerState {
+        self.port1.capture_state()
+    }
+
     /// The state of the Super Scope on the given physical port (aim, buttons, Turbo), or
     /// `None` when that port has no Super Scope.
     pub fn superscope_state(&self, port: u8) -> Option<SnesControllerState> {

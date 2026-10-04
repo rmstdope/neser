@@ -5,6 +5,7 @@ import {
     type KeyBindingSink,
     applyKeyBindings,
     keyBindingsFor,
+    keyboardPorts,
     parseKeyBindingTable,
 } from "./key_bindings";
 
@@ -14,6 +15,7 @@ const RAW = [
     { key: "w", console: "nes", input: "pad", player: 1, button: 4 },
     { key: "o", console: "nes", input: "pad", player: 2, button: 0 },
     { key: "6", console: "nes", input: "vsCoin", player: 1, button: 0 },
+    { key: "y", console: "nes", input: "snesPad", player: 1, button: 9 },
     { key: "g", console: "gba", input: "pad", player: 1, button: 0 },
     { key: "4", console: "snes", input: "scopeTurbo", player: 1, button: 0 },
     { key: "4", console: "snes", input: "pad", player: 1, button: 2 },
@@ -123,5 +125,28 @@ describe("applyKeyBindings", () => {
         const { calls, sink } = recorder();
         expect(press("gba", "q", [1], sink)).toBe(false);
         expect(calls).toEqual([]);
+    });
+});
+
+describe("an SNES-only key on an NES joypad", () => {
+    it("does nothing to the joypad yet is still the console's key, as before the table", () => {
+        const { calls, sink } = recorder();
+        expect(press("nes", "y", [1, 2], sink)).toBe(true);
+        expect(calls).toEqual(["snesPad 1 9 true"]);
+    });
+});
+
+describe("keyboardPorts", () => {
+    it("always drives the GBA's one joypad on port 1, whatever gamepads are connected", () => {
+        expect(keyboardPorts("gba", 0, false)).toEqual([1]);
+        expect(keyboardPorts("gba", 1, false)).toEqual([1]);
+        expect(keyboardPorts("gba", 2, false)).toEqual([1]);
+    });
+
+    it("leaves the first ports to gamepads on the other consoles", () => {
+        expect(keyboardPorts("nes", 0, false)).toEqual([1, 2]);
+        expect(keyboardPorts("nes", 1, false)).toEqual([2]);
+        expect(keyboardPorts("snes", 2, false)).toEqual([]);
+        expect(keyboardPorts("nes", 1, true)).toEqual([2, 3]);
     });
 });
