@@ -20,6 +20,9 @@ pub struct Background {
     /// This captures the pattern table base + tile index + fine Y so that
     /// mid-tile $2000 writes do not affect the current tile's pattern fetch.
     tile_addr: u16,
+    /// The v a nametable or attribute fetch put on the bus in its first dot, read back in its
+    /// second dot; `None` on every other dot.
+    fetch_address: Option<u16>,
 }
 
 impl Default for Background {
@@ -41,6 +44,7 @@ impl Background {
             pattern_lo_latch: 0,
             pattern_hi_latch: 0,
             tile_addr: 0,
+            fetch_address: None,
         }
     }
 
@@ -55,6 +59,18 @@ impl Background {
         self.pattern_lo_latch = 0;
         self.pattern_hi_latch = 0;
         self.tile_addr = 0;
+        self.fetch_address = None;
+    }
+
+    /// Record the address a fetch puts on the bus in its first dot, or clear it on other dots.
+    pub fn latch_fetch_address(&mut self, v: Option<u16>) {
+        self.fetch_address = v;
+    }
+
+    /// The address latched in the fetch's first dot, or `v` if the first dot did no fetch
+    /// (rendering was switched on between the two dots).
+    pub fn take_fetch_address(&mut self, v: u16) -> u16 {
+        self.fetch_address.take().unwrap_or(v)
     }
 
     // Debug: Get shift register state
@@ -202,6 +218,8 @@ impl Background {
         self.attribute_latch = state.attribute_latch;
         self.pattern_lo_latch = state.pattern_lo_latch;
         self.pattern_hi_latch = state.pattern_hi_latch;
+        // Snapshots are taken in vblank, where no fetch is between its two dots.
+        self.fetch_address = None;
     }
 }
 

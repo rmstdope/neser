@@ -118,6 +118,23 @@ mod tests {
         );
     }
 
+    // nr-3jh: allpads identifies a Four Score from the signature in reads 17-24 of each port
+    // (source/src/identify.s, most significant bit first, $10 on $4016 and $20 on $4017).
+    // NESER sent the signature least significant bit first, so allpads did not recognise it.
+    #[test]
+    fn allpads_identifies_the_four_score() {
+        let mut config = ControllerConfig::joypad_port1().to_config();
+        config.nes.four_score_enabled = true;
+        config.nes.four_score_enabled_explicit = true;
+        let result = run_allpads_with_config(&config, &script_enter_test(), 420, 0);
+        let text = &result.captures[0].nametable_text;
+        assert!(
+            text.contains("FOUR SCORE ON 1-2P"),
+            "allpads should identify the Four Score, screen was:\n{}",
+            text
+        );
+    }
+
     /////////////////////////////////////
     // Allpads Joypad scenario (#1555)
     /////////////////////////////////////

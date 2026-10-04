@@ -231,7 +231,8 @@ fn tick_background(ppu: &mut Ppu) {
             let bg_pattern_table = ppu.registers.bg_pattern_table_addr();
 
             if is_second_cycle_of_fetch {
-                let v = ppu.registers.v();
+                // The address went out on the bus in the fetch's first dot (nr-3jh).
+                let v = ppu.background.take_fetch_address(ppu.registers.v());
                 match fetch_step {
                     0 => {
                         // Fetch nametable byte (cycle 2 of tile).
@@ -363,6 +364,16 @@ fn tick_background(ppu: &mut Ppu) {
             ppu.registers.v(),
         );
     }
+
+    // A nametable or attribute fetch takes its address from v in its first dot, after this
+    // dot's scroll updates and before a delayed $2006 update lands at the end of the dot
+    // (nr-3jh; Mesen2 NesPpu.cpp LoadTileInfo reads at dots 8n+1 and 8n+3).
+    let starts_address_fetch = is_rendering_enabled
+        && is_rendering_scanline
+        && is_bg_fetch_pixel(pixel)
+        && matches!((pixel - 1) % 8, 0 | 2);
+    ppu.background
+        .latch_fetch_address(starts_address_fetch.then(|| ppu.registers.v()));
 }
 
 /// Phase 4: Sprite evaluation, OAM handling, and sprite pattern fetching.

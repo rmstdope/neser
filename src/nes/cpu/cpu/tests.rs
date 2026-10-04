@@ -3725,6 +3725,21 @@ fn test_sta_absolute_y() {
     assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x42);
 }
 
+// nr-3jh: $FFF0,Y with Y=$20 wraps to $0010. The dummy read goes to $FF10 (the base's high
+// byte); computing it as addr - $100 overflowed and panicked in debug builds.
+#[test]
+fn test_sta_absolute_y_wrapping_past_ffff() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    let program = vec![STA_ABSYW, 0xF0, 0xFF, KIL];
+    fake_cartridge(&mut cpu, &program);
+    cpu.reset(true);
+    cpu.a = 0x42;
+    cpu.y = 0x20;
+    run(&mut cpu);
+    assert_eq!(cpu.bus.borrow_mut().read(0x0010, false), 0x42);
+}
+
 #[test]
 fn test_sta_indexed_indirect() {
     let (ppu, apu, memory) = create_test_memory();

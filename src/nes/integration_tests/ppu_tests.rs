@@ -871,118 +871,47 @@ FF AA AA 01 01 10 10 01 01 00\n\
         "roms/nes/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    // #[ignore] // Failing with current OAM implementation, needs investigation
+    // Quietust's scanline.nes toggles $2001 D3, $2000 D4 and writes $2005/$2006 mid-scanline;
+    // stars in its right-hand column mark writes that landed at the wrong time. Frames 301-310
+    // are pinned to Mesen2: NESER (NTSC, --nes-palette mesen) and Mesen2 (testRunner, zero RAM)
+    // differ by 0 px on every one of them (nr-3jh, 2026-10-04). The CRCs are NESER's output for
+    // those frames with the default palette, so a palette change alone also changes them. Both show star fragments in
+    // the $2005/$2006 area on frames 303 and 307, where a write's delayed v update lands
+    // between the two dots of a nametable fetch: the fetch takes its address in its first dot.
+    // The navigator chose to pin Mesen2's picture rather than a star-free one.
     #[test]
     fn test_scanline() {
+        const STEADY: u32 = 0xE23D_4BCD;
+        const STAR_FRAGMENTS: u32 = 0xB399_8B1C;
+        const EXPECTED_CRCS: [u32; 10] = [
+            STEADY,
+            STEADY,
+            STAR_FRAGMENTS,
+            STEADY,
+            STEADY,
+            STEADY,
+            STAR_FRAGMENTS,
+            STEADY,
+            STEADY,
+            STEADY,
+        ];
+
         let mut nes = create_nes_from_rom(
             "roms/nes/automated_tests/scanline/scanline.nes",
             crate::platform::app_context::AppContext::new_with_config(Config::default()),
             "scanline-a1",
         );
-
         run_nes_for_frames(&mut nes, 300);
 
-        let _white = Nes::lookup_system_palette(0x30);
-        let black = Nes::lookup_system_palette(0x00);
-        let write_bars_y = [
-            // First block
-            48u32..=54,
-            56u32..=62,
-            64u32..=70,
-            72u32..=78,
-            80u32..=86,
-            88u32..=94,
-            // Second block
-            120u32..=126,
-            128u32..=134,
-            136u32..=142,
-            144u32..=150,
-            152u32..=158,
-            160u32..=166,
-            // Third block
-            192u32..=198,
-            200u32..=206,
-            208u32..=214,
-            216u32..=222,
-        ];
-        let all_black_y = [
-            // First block
-            55, 63, 71, 79, 87, // Between first and second
-            95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112,
-            113, 114, 115, 116, 117, 118, 119, // Second block
-            127, 135, 143, 151, 159, // Between second and third
-            167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183,
-            184, 185, 186, 187, 188, 189, 190, 191, // Third block
-            199, 207, 215, 223, // After third
-            223, 224, 225, 226, 227, 228,
-        ];
-
-        let mut all_failures: Vec<String> = Vec::new();
-        for frame_offset in 0..10 {
-            run_nes_for_frames(&mut nes, 1);
-
-            let screen = nes.get_screen_buffer();
-            // Check that the white bars are solid and contiguous,
-            // and that the pixels to the right of the bars are black.
-            for y_range in &write_bars_y {
-                for y in y_range.clone() {
-                    for x in 187u32..189u32 {
-                        let pixel = screen.get_pixel(x, y);
-                        if pixel == black {
-                            all_failures.push(format!(
-                                "frame_offset={}, x={}, y={}, got {:?}",
-                                frame_offset, x, y, pixel
-                            ));
-                        }
-                    }
-                    for x in 189u32..SCREEN_WIDTH {
-                        let pixel = screen.get_pixel(x, y);
-                        if pixel != black {
-                            all_failures.push(format!(
-                                "frame_offset={}, x={}, y={}, got {:?}",
-                                frame_offset, x, y, pixel
-                            ));
-                        }
-                    }
-                }
-            }
-            // Check that the all-black rows are solid and contiguous.
-            for y in &all_black_y {
-                for x in 187u32..SCREEN_WIDTH {
-                    let pixel = screen.get_pixel(x, *y);
-                    if pixel != black {
-                        all_failures.push(format!(
-                            "frame_offset={}, x={}, y={}, got {:?}",
-                            frame_offset, x, y, pixel
-                        ));
-                    }
-                }
-            }
-        }
-
-        // Target: at most 20 unwanted pixels across all 10 checked frames.
-        // The remaining 20 failures are $2001 BG-enable timing edge cases at
-        // x=200-201 on frames 3 and 7 only (period-4 pattern).  Even Mesen
-        // has a few NTSC failures in this test area.  See issue #2054.
-        if all_failures.len() > 20 {
-            // Print per-frame breakdown only when the assertion is about to fail
-            for f in 0..10 {
-                let frame_fails: Vec<_> = all_failures
-                    .iter()
-                    .filter(|s| s.starts_with(&format!("frame_offset={},", f)))
-                    .collect();
-                if !frame_fails.is_empty() {
-                    eprintln!("Frame {}: {} failures", f, frame_fails.len());
-                    for fail in &frame_fails[..frame_fails.len().min(40)] {
-                        eprintln!("  {}", fail);
-                    }
-                }
-            }
-            panic!(
-                "expected at most 20 scanline test failures, but got {} failures:\n{}",
-                all_failures.len(),
-                all_failures.join("\n")
-            );
-        }
+        let actual: Vec<u32> = (0..EXPECTED_CRCS.len())
+            .map(|_| {
+                run_nes_for_frames(&mut nes, 1);
+                nes.get_screen_buffer().crc32()
+            })
+            .collect();
+        assert_eq!(
+            actual, EXPECTED_CRCS,
+            "scanline.nes frames 301-310 no longer match the Mesen2-approved CRCs"
+        );
     }
 }
