@@ -2198,6 +2198,52 @@ mod tests {
         assert_eq!(ppu.debug_state().background.nametable_latch, 0xAA);
     }
 
+    // nr-3jh: the attribute fetch also takes its address in its first dot (dot 235 here).
+    #[test]
+    fn test_attribute_fetch_takes_its_address_in_its_first_dot() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        // At dot 235 of line 0, v is $001D: attribute byte $23C7. After the write: $23C4.
+        ppu.write_address(0x23, false);
+        ppu.write_address(0xC4, false);
+        ppu.write_data(0xBB);
+        ppu.write_address(0x23, false);
+        ppu.write_address(0xC7, false);
+        ppu.write_data(0xAA);
+        ppu.write_address(0x00, false);
+        ppu.write_address(0x00, false);
+        ppu.write_mask(0x08);
+        while !(ppu.timing.scanline() == 0 && ppu.timing.pixel() == 232) {
+            ppu.run_ppu_cycles(1);
+        }
+
+        // Delayed by three dots: v becomes $2010 at the end of dot 235.
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x10, false);
+        ppu.run_ppu_cycles(4); // dots 233-236: the attribute fetch is dots 235-236
+
+        assert_eq!(ppu.registers.v(), 0x2010);
+        assert_eq!(ppu.debug_state().background.attribute_latch, 0xAA);
+    }
+
+    // nr-3jh: a fetch whose first dot ran with rendering off takes v in its second dot.
+    #[test]
+    fn test_fetch_after_rendering_turns_on_mid_fetch_uses_v() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0xCC);
+        ppu.write_address(0x00, false);
+        ppu.write_address(0x00, false);
+        while !(ppu.timing.scanline() == 0 && ppu.timing.pixel() == 233) {
+            ppu.run_ppu_cycles(1);
+        }
+
+        ppu.write_mask(0x08); // between the two dots of the dot-233 nametable fetch
+        ppu.run_ppu_cycles(1);
+
+        assert_eq!(ppu.debug_state().background.nametable_latch, 0xCC);
+    }
+
     #[test]
     fn test_ppu_vblank() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);

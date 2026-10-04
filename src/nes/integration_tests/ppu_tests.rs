@@ -874,7 +874,8 @@ FF AA AA 01 01 10 10 01 01 00\n\
     // Quietust's scanline.nes toggles $2001 D3, $2000 D4 and writes $2005/$2006 mid-scanline;
     // stars in its right-hand column mark writes that landed at the wrong time. Frames 301-310
     // are pinned to Mesen2: NESER (NTSC, --nes-palette mesen) and Mesen2 (testRunner, zero RAM)
-    // differ by 0 px on every one of them (nr-3jh, 2026-10-04). Both show star fragments in
+    // differ by 0 px on every one of them (nr-3jh, 2026-10-04). The CRCs are NESER's output for
+    // those frames with the default palette, so a palette change alone also changes them. Both show star fragments in
     // the $2005/$2006 area on frames 303 and 307, where a write's delayed v update lands
     // between the two dots of a nametable fetch: the fetch takes its address in its first dot.
     // The navigator chose to pin Mesen2's picture rather than a star-free one.

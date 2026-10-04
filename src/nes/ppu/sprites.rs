@@ -568,28 +568,17 @@ impl Sprites {
         }
     }
 
-    /// Swap sprite buffers for next scanline
+    /// Hand the fetched sprite set to the next scanline (dot 321)
     pub fn swap_buffers(&mut self) {
         if self.sprite_buffers_ready {
-            std::mem::swap(
-                &mut self.sprite_pattern_shift_lo,
-                &mut self.next_sprite_pattern_shift_lo,
-            );
-            std::mem::swap(
-                &mut self.sprite_pattern_shift_hi,
-                &mut self.next_sprite_pattern_shift_hi,
-            );
-            std::mem::swap(
-                &mut self.sprite_x_positions,
-                &mut self.next_sprite_x_positions,
-            );
-            std::mem::swap(
-                &mut self.sprite_attributes,
-                &mut self.next_sprite_attributes,
-            );
-            // Copied, not swapped: secondary OAM keeps the last evaluation's set until the
-            // next evaluation, so a line that skips evaluation (rendering off over dots
-            // 65-256) draws that set again, never an older one (nr-3jh).
+            // Copied, not swapped: secondary OAM keeps the last evaluation's set, and each
+            // sprite slot keeps the data last fetched into it, until they are next written.
+            // A line that skips evaluation or the 257-320 fetches (rendering off) draws that
+            // set again, never an older one (nr-3jh).
+            self.sprite_pattern_shift_lo = self.next_sprite_pattern_shift_lo;
+            self.sprite_pattern_shift_hi = self.next_sprite_pattern_shift_hi;
+            self.sprite_x_positions = self.next_sprite_x_positions;
+            self.sprite_attributes = self.next_sprite_attributes;
             self.sprite_count = self.next_sprite_count;
             self.sprite_0_index = self.next_sprite_0_index;
         }
@@ -1182,6 +1171,27 @@ mod tests {
         sprites.swap_buffers();
 
         assert_eq!(sprites.sprite_count(), 0, "line 75 draws nothing");
+    }
+
+    // nr-3jh review: a line whose sprite fetches (dots 257-320) were skipped keeps the data
+    // last fetched into each slot, as Mesen2's single sprite-tile array does. Swapping the
+    // buffers brought back the fetch from a line earlier.
+    #[test]
+    fn test_swap_without_refetch_keeps_the_last_fetched_sprite_data() {
+        let mut sprites = Sprites::new(crate::nes::console::RamInitMode::Zero);
+        sprites.next_sprite_x_positions[0] = 10;
+        sprites.next_sprite_pattern_shift_lo[0] = 0xF0;
+        sprites.next_sprite_count = 1;
+        sprites.mark_buffers_ready();
+        sprites.swap_buffers();
+        assert_eq!(sprites.sprite_x_positions[0], 10);
+
+        // Next line: no evaluation and no fetch, only the dot-321 swap.
+        sprites.swap_buffers();
+
+        assert_eq!(sprites.sprite_count(), 1);
+        assert_eq!(sprites.sprite_x_positions[0], 10);
+        assert_eq!(sprites.sprite_pattern_shift_lo[0], 0xF0);
     }
 
     #[test]

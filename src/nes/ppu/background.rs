@@ -218,6 +218,8 @@ impl Background {
         self.attribute_latch = state.attribute_latch;
         self.pattern_lo_latch = state.pattern_lo_latch;
         self.pattern_hi_latch = state.pattern_hi_latch;
+        // Snapshots are taken in vblank, where no fetch is between its two dots.
+        self.fetch_address = None;
     }
 }
 
