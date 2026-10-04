@@ -831,7 +831,8 @@ impl Bus {
     }
 
     /// The state of the controller in port 1 or 2, whatever its type.
-    #[cfg(test)]
+    // Only the native keyboard tests read it.
+    #[cfg(all(test, feature = "native"))]
     pub(crate) fn controller_state(&self, port: u8) -> crate::nes::input::ControllerState {
         self.controllers[(port - 1) as usize]
             .borrow()

@@ -769,7 +769,8 @@ impl InputPorts {
     }
 
     /// The state of whatever device is in port 1.
-    #[cfg(test)]
+    // Only the native keyboard tests read it.
+    #[cfg(all(test, feature = "native"))]
     pub(crate) fn port1_state(&self) -> SnesControllerState {
         self.port1.capture_state()
     }
