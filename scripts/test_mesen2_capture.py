@@ -34,6 +34,12 @@ import unittest
 from pathlib import Path
 
 from scripts.diff_screenshots import Screenshot, diff_pixels, load_screenshot
+from scripts.reference_capture.compare_mesen2 import (
+    COMMON_MESEN2_FLAGS,
+    NES_MESEN2_FLAGS,
+    SNES_MESEN2_FLAGS,
+    wait_for_other_mesen2,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "scripts" / "reference_capture" / "mesen2_capture.lua"
@@ -57,26 +63,19 @@ end
 
 # (rom, NESER flags, Mesen2 flags, frames), each frame one where the content differs
 # from both neighbouring frames.
-NES_FLAGS = ["--nes.DisableFrameSkipping=true", "--nes.RamPowerOnState=AllZeros"]
-SNES_FLAGS = [
-    "--snes.disableFrameSkipping=true",
-    "--snes.RamPowerOnState=AllZeros",
-    "--snes.port1.type=SnesController",
-    "--snes.port2.type=SnesController",
-]
 CASES = [
     (
         # Alternates two images every frame, so it pins the parity of the frame; no NES
         # ROM in roms/ changes monotonically and also matches Mesen2 at 0 px.
         "roms/nes/automated_tests/nmi_sync/demo_ntsc.nes",
         ["--nes-palette", "mesen"],
-        NES_FLAGS,
+        NES_MESEN2_FLAGS,
         (61, 64, 67, 120, 300),
     ),
     (
         "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/window-precalculated-single.sfc",
         [],
-        SNES_FLAGS,
+        SNES_MESEN2_FLAGS,
         (61, 72, 73, 120, 300),
     ),
 ]
@@ -89,21 +88,11 @@ def neser_frame(rom: Path, flags: list[str], frame: int, out_dir: Path) -> Scree
     return load_screenshot(out)
 
 
-def wait_for_other_mesen2() -> None:
-    """A concurrent testRunner makes Mesen2 exit 0 with no output (snes-hardware-research)."""
-    deadline = time.monotonic() + 300
-    while subprocess.run(["pgrep", "-f", "Mesen --testRunner"], capture_output=True).returncode == 0:
-        if time.monotonic() > deadline:
-            raise TimeoutError("another Mesen --testRunner is still running")
-        time.sleep(2)
-
-
 def mesen2_capture(rom: Path, flags: list[str], frame: int, out_dir: Path) -> Screenshot:
     script = out_dir / "capture.lua"
     script.write_text(SHIM.replace("__FRAME__", str(frame)) + SCRIPT.read_text())
-    wait_for_other_mesen2()
-    cmd = [str(MESEN2), "--testRunner", "--enableStdout", "--timeout=30"]
-    cmd += ["--Video.VideoFilter=None", "--Video.AspectRatio=NoStretching", *flags]
+    wait_for_other_mesen2(MESEN2)
+    cmd = [str(MESEN2), *COMMON_MESEN2_FLAGS, *flags]
     run = subprocess.run([*cmd, str(rom), str(script)], capture_output=True, text=True, timeout=120)
     hex_lines = [line for line in run.stdout.splitlines() if line.startswith("PNG_HEX ")]
     if len(hex_lines) != 1:
@@ -143,12 +132,13 @@ class TestMesen2SnesFlags(unittest.TestCase):
     attract demo differently for an empty port 2, so a comparison that leaves the ports to
     the settings file differs by a lag frame at frame 3000 with no emulation difference.
     NESER's defaults are a standard pad in each port (``SnesConfig::default``, pinned by
-    ``controller_ports_default_to_standard``).
+    ``controller_ports_default_to_standard``). The flags live in
+    ``scripts/reference_capture/compare_mesen2.py``, the comparison command (nr-ocx).
     """
 
     def test_both_ports_hold_a_standard_controller(self) -> None:
-        self.assertIn("--snes.port1.type=SnesController", SNES_FLAGS)
-        self.assertIn("--snes.port2.type=SnesController", SNES_FLAGS)
+        self.assertIn("--snes.port1.type=SnesController", SNES_MESEN2_FLAGS)
+        self.assertIn("--snes.port2.type=SnesController", SNES_MESEN2_FLAGS)
 
 
 # Mesen2 with "AllowIoOsAccess": false leaves the globals io and os nil (measured on 2.1.1,
@@ -164,7 +154,7 @@ class TestMesen2CaptureWithoutFileAccess(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "capture.lua"
             script.write_text(NO_FILE_ACCESS_SHIM + SCRIPT.read_text())
-            wait_for_other_mesen2()
+            wait_for_other_mesen2(MESEN2)
             cmd = [str(MESEN2), "--testRunner", "--enableStdout", "--timeout=30", str(rom), str(script)]
             start = time.monotonic()
             run = subprocess.run(cmd, capture_output=True, text=True, timeout=120)

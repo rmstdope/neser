@@ -13,7 +13,7 @@ Mesen2 recipe was re-verified on animated NES and SNES content on 2026-09-27 (nr
 
 | System | Reference | Tool | Frame-exact |
 |---|---|---|---|
-| NES, SNES | Mesen2 2.1.1 | `Mesen --testRunner` + `mesen2_capture.lua` | yes |
+| NES, SNES | Mesen2 2.1.1 | `compare_mesen2` (`Mesen --testRunner` + `mesen2_capture.lua`) | yes |
 | GB / CGB | SameBoy 1.0.3 | `sameboy_tester` (built from source, patched) | no, time-based |
 | GBA | mGBA 0.11 (git) | `mgba-headless` (built from source, patched) + `mgba_capture.lua` | yes |
 
@@ -54,27 +54,68 @@ checks for that before anything else: it prints one `ERROR: Lua file access is o
 "AllowIoOsAccess": true ...` line and stops Mesen2 with exit code 1 at once. Without that
 check, the run would sit silently until `--timeout` (nr-hg7).
 
+### Comparing a ROM: `compare_mesen2`
+
+Compare a NES or SNES ROM with this one command; sweep beads name it rather than copying flags,
+so a confound found later is fixed in the command once:
+
 ```bash
-CAPTURE_FRAME=120 CAPTURE_OUT="$PWD/mesen.png" \
-  /Applications/Mesen.app/Contents/MacOS/Mesen --testRunner --enableStdout --timeout=30 \
-  --Video.VideoFilter=None --Video.AspectRatio=NoStretching \
-  --nes.DisableFrameSkipping=true --nes.RamPowerOnState=AllZeros \
-  <rom.nes> scripts/reference_capture/mesen2_capture.lua
+cargo build --release --bin neser
+python -m scripts.reference_capture.compare_mesen2 <rom.nes|rom.sfc> --frames 120 600 --out-dir out/
 ```
 
-For the SNES replace the two `--nes.*` flags with `--snes.disableFrameSkipping=true
---snes.RamPowerOnState=AllZeros --snes.port1.type=SnesController
---snes.port2.type=SnesController`. The port flags plug in the standard pad NESER has in each
-port by default; without them Mesen2 takes the ports from `settings.json`, where port 2 may
-be empty. Pin NESER's side too with `--snes-controller-port1 standard --snes-controller-port2
-standard`, since a `neser.conf` port line would otherwise apply; for a game NESER recognises as
-a Mouse or Super Scope game, give Mesen2 that type (`SnesMouse`, `SuperScope`) instead. Games that read which pads are connected then play differently: Super Bomberman 3's
-attract demo lags a frame at frame 2917 with port 2 empty, which showed as a 0.9% difference
-at frame 3000 with no emulation difference behind it (nr-0an). The frame-skip flag is mandatory for animated content:
+It prints what each emulator decided about the ROM, then one line per frame, and writes
+`mesen2-<N>.png` and `neser-<N>.png` into `--out-dir` (a new temporary directory when it is
+left out) for `python -m scripts.diff_screenshots`. Exit status 0 means every frame matched, 1 a
+frame differs, 2 a capture failed.
+
+```text
+Mesen2: [iNes] Mapper: 0 Sub: 0
+Mesen2: [DB] Game not found in database
+NESER:  Loaded rom with CRC32: 5CE951EA, mapper=0, submapper=0, PRG-ROM=32KB, CHR-ROM=8KB
+NESER:  Hardware: NES (NTSC) | Port 1: Joypad | Port 2: Joypad
+frame 120: 0 differing pixels
+```
+
+The command owns the flags and removes the confounds earlier comparisons paid for:
+
+- **Battery saves** (nr-kds, nr-nuf, nr-7v3). Both emulators load a save by ROM file name, and
+  Mesen2 keeps its saves in `~/Library/Application Support/Mesen2/Saves/`, not beside the ROM.
+  A name shared between runs (one `fresh.nes` for every game, or one copy per game reused across
+  checkpoints) boots later runs on an earlier run's SRAM. Every invocation of either emulator
+  runs on its own copy (`<rom>-<pid>-<nanoseconds>.<ext>`), and Mesen2's `Saves`,
+  `RecentGames` and `SaveStates` entries for that copy are deleted afterwards.
+- **Mesen2's game database** (nr-nwy, nr-sjt, nr-1le). Mesen2 replaces the iNES header with its
+  database entry without saying so on screen, and misses the database for a file with trailing
+  data (it hashes everything after the header). The `[iNes]` and `[DB]` lines show which it used:
+  a `[DB] Mapper:` that differs from `[iNes] Mapper:`, `Game not found in database` or `File is
+  larger than expected` means the two emulators may not be running the same board. Compare
+  NESER's `mapper=` before filing a difference; `--no-game-database` makes Mesen2 use the header
+  (`--nes.DisableGameDatabase=true`). Mesen2's database is also wrong for some Vs. System PPUs
+  (nr-1le): it is not the reference for a Vs. game's palette.
+- **Controller ports** (nr-0an). Without port flags Mesen2 takes its ports from
+  `settings.json`, where port 2 may be empty, and games that read which pads are connected play
+  differently (Super Bomberman 3's attract demo lagged a frame at 2917). Both systems get a
+  standard pad in each port (`--nes.portN.type=NesController`,
+  `--snes.portN.type=SnesController`), and NESER runs with an empty `--config` file, so a
+  `neser.conf` port or palette line cannot apply; NESER's defaults are the same pads. For a
+  Mouse or Super Scope game pass the Mesen2 type and NESER's port with `--mesen2-arg` and
+  `--neser-arg` (for example `--mesen2-arg=--snes.port2.type=SnesMouse --neser-arg=--snes-controller-port2
+  --neser-arg=mouse`).
+- **Region** (nr-f6o). NESER's `Hardware:` line names the region it picked; NESER's ROM database
+  makes some "NTSC" files PAL or Dendy. Record it per ROM with a sweep's results, so a
+  region-gated change is read per region. NESER prints no cartridge lines for SNES ROMs.
+
+What it runs, for reading only: Mesen2 `--testRunner --enableStdout --timeout=30
+--Video.VideoFilter=None --Video.AspectRatio=NoStretching`, frame skipping off, zero RAM and the
+port flags above, with `CAPTURE_FRAME=N CAPTURE_OUT=<absolute path>` and `mesen2_capture.lua`;
+NESER `--config <empty> --headless --frames N` (`--nes-palette mesen` for the NES), whose
+`--headless` forces zero RAM. The frame-skip flag is mandatory for animated content:
 testRunner emulation runs far faster than real time and otherwise renders only every other
-frame. `CAPTURE_OUT` must be absolute. The script prints `SAVED <path>` and stops the
-emulator; the whole run takes about a second. The stdout log also lists the mapper,
-CRCs and any uninitialised-memory reads, which is useful in itself.
+frame. The capture script prints `SAVED <path>` and stops the emulator; one run takes about a
+second. Do not run two Mesen2 testRunners at once: the second exits 0 with no output, so the
+command waits for any other `Mesen --testRunner` to finish first. `MESEN2_BIN`, `NESER_BIN` and
+`MESEN2_HOME` (or `--mesen2-bin`, `--neser-bin`, `--mesen2-home`) point it elsewhere.
 
 Frame numbering: the script counts `startFrame` events from power-on and, at the N-th,
 reads the pixels with `emu.getScreenBuffer()`, so `CAPTURE_FRAME=N` is the N-th emulated
@@ -115,6 +156,9 @@ gate builds none). It leaves `AllowIoOsAccess` alone. The same module's
 `TestMesen2CaptureWithoutFileAccess` (nr-hg7) checks the file-access error above. It
 simulates the setting being off with a shim that sets `io` and `os` to nil, and needs Mesen2
 but no NESER build.
+`scripts/test_compare_mesen2.py` pins `compare_mesen2` itself (a ROM copy per Mesen2
+invocation, its save removed afterwards, the flags per system and the printed cartridge lines)
+against fake emulators, so it runs in the gate with no Mesen2 installed.
 
 ## Tracing against Mesen2 (NES and SNES)
 
