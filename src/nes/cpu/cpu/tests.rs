@@ -2570,6 +2570,33 @@ fn test_jsr() {
     assert_eq!(cpu.bus.borrow_mut().read(0x01FE, false), 0x02); // Low byte of return address
 }
 
+/// JSR reads the high byte of its target last, after pushing the return address
+/// (6502 cycle order: opcode, low byte, stack dummy read, push PCH, push PCL, high
+/// byte). A JSR whose high operand byte sits where PCH is pushed therefore jumps to
+/// the pushed byte, not to the byte the program held (nr-8px).
+#[test]
+fn test_jsr_reads_high_target_byte_after_pushing_return_address() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+    fake_cartridge(&mut cpu, &[]);
+    cpu.reset(true);
+    // JSR $1234 at $01FD: its high operand byte is at $01FF, where PCH ($01) is pushed.
+    cpu.bus.borrow_mut().write(0x01FD, JSR, false);
+    cpu.bus.borrow_mut().write(0x01FE, 0x34, false);
+    cpu.bus.borrow_mut().write(0x01FF, 0x12, false);
+    cpu.pc = 0x01FD;
+    cpu.sp = 0xFF;
+
+    let initial_cycles = cpu.total_cycles;
+    cpu.execute();
+
+    assert_eq!(
+        cpu.pc, 0x0134,
+        "the high target byte is read after PCH ($01) overwrote it"
+    );
+    assert_eq!(cpu.total_cycles, initial_cycles + 6, "JSR takes 6 cycles");
+}
+
 #[test]
 fn test_lda_immediate() {
     let (ppu, apu, memory) = create_test_memory();

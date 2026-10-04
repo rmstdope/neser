@@ -74,7 +74,7 @@ pub struct Dmc {
     #[cfg(test)]
     irq_trigger_count: u32,
 
-    // Transfer start delay (1-2 cycles after enabling DMC via $4015)
+    // Transfer start delay (3-4 cycles after enabling DMC via $4015)
     transfer_start_delay: u8,
 
     // Disable delay (2-3 cycles after disabling DMC via $4015)
@@ -129,15 +129,17 @@ impl Dmc {
         *self = Self::with_region(self.region);
     }
 
-    /// Reinitialize the timer counter to the full period value.
+    /// Set the timer phase the program starts with after the CPU's reset sequence.
     ///
-    /// This is called after the CPU reset sequence completes. The CPU reset
-    /// runs 7 internal cycles that clock the APU, which would decrement the
-    /// timer away from its initial value. On real hardware (and in catch-up
-    /// emulators like Mesen), the timer effectively starts counting from the
-    /// full period when user code begins, so we restore it here.
+    /// The timer starts at the full period and is clocked through the reset
+    /// sequence's 8 cycles, as in Mesen2 (the specification leaves the phase open),
+    /// so the first output clock comes 420 cycles into the program at rate 0.
+    /// NESER's reset runs 7 cycles and restores the phase here instead. A timer
+    /// 8 cycles behind Mesen2's moved every DMC fetch, and with it game state, in
+    /// Snake's Revenge and the Contra demo (nr-xgb, nr-8px).
     pub fn reinit_timer_after_reset(&mut self) {
-        self.timer = self.timer_period.saturating_sub(1);
+        const RESET_SEQUENCE_CYCLES: u16 = 8;
+        self.timer = self.timer_period.saturating_sub(1 + RESET_SEQUENCE_CYCLES);
     }
 
     /// Returns true if the DMC has a pending DMA request for the next sample byte.
@@ -417,8 +419,10 @@ impl Dmc {
             // If bytes_remaining is 0, restart the sample
             if self.bytes_remaining == 0 {
                 self.restart_sample();
-                // Delay DMA request by 1-2 cycles based on odd/even CPU cycle
-                self.transfer_start_delay = Self::delay_for_cpu_cycle(cpu_cycle, 1, 2);
+                // The load DMA halts on the get cycle of the 2nd APU cycle after the
+                // write (NESdev "DMA"): the CPU sees it 3 cycles after a write on an
+                // even cycle, 4 after an odd one, as in Mesen2 (nr-8px).
+                self.transfer_start_delay = Self::delay_for_cpu_cycle(cpu_cycle, 3, 4);
                 trace_apu!(4; "dmc transfer_start_delay {}", self.transfer_start_delay);
             }
         } else {
@@ -950,6 +954,56 @@ mod sample_tests {
 
         assert_eq!(dmc.current_address, 0xC800);
         assert_eq!(dmc.bytes_remaining, 17);
+    }
+
+    /// Runs one CPU cycle of the DMC as the APU does (delays, then the timer) and
+    /// returns whether the CPU's DMA check in that cycle sees the request.
+    fn run_dmc_cycle(dmc: &mut Dmc) -> bool {
+        dmc.process_clock();
+        dmc.clock_timer();
+        dmc.cpu_dma_pending()
+    }
+
+    /// The load DMA after a $4015 write halts on the get cycle of the 2nd APU cycle
+    /// after the write (NESdev "DMA", Summary): the CPU sees the request 3 cycles
+    /// after a write on an even cycle and 4 after an odd one, as in Mesen2. Seen
+    /// earlier, the first fetch of Contra's attract-demo drum came 2 cycles early
+    /// (nr-8px).
+    #[test]
+    fn test_load_dma_after_enable_is_seen_by_the_cpu_three_or_four_cycles_later() {
+        for (write_cycle, cycles_until_seen) in [(0u64, 3), (1, 4)] {
+            let mut dmc = Dmc::new();
+            dmc.write_sample_length(0x01);
+            dmc.set_enabled(true, write_cycle);
+
+            for cycle in 1..cycles_until_seen {
+                assert!(
+                    !run_dmc_cycle(&mut dmc),
+                    "write on cycle {write_cycle}: DMA seen {cycle} cycles after it"
+                );
+            }
+            assert!(
+                run_dmc_cycle(&mut dmc),
+                "write on cycle {write_cycle}: DMA not seen {cycles_until_seen} cycles after it"
+            );
+        }
+    }
+
+    /// Mesen2 clocks the DMC timer through all 8 cycles of the CPU's reset sequence,
+    /// so its first output clock comes 428 - 8 = 420 cycles into the program (nr-8px).
+    #[test]
+    fn test_timer_after_reset_sequence_ticks_420_cycles_into_the_program() {
+        let mut dmc = Dmc::new();
+        dmc.reinit_timer_after_reset();
+        dmc.silence_flag = false;
+        dmc.shift_register = 0xFF;
+
+        for cycle in 1..420 {
+            dmc.clock_timer();
+            assert_eq!(dmc.output_level, 0, "output clocked on cycle {cycle}");
+        }
+        dmc.clock_timer();
+        assert_eq!(dmc.output_level, 2, "no output clock on cycle 420");
     }
 
     #[test]
