@@ -20,7 +20,7 @@ Every hardware research skill in this repository uses the same three tiers. The 
    Used only when the specification is missing, incomplete, or ambiguous, to see how a specific behavior can be implemented. Mesen2 (`https://github.com/SourMesen/Mesen2`, `Core/SNES/`) is consulted first, because it is also the project's screenshot reference and a deliberate divergence from it must be commented at the call site; ares (`https://github.com/ares-emulator/ares`, `ares/sfc/`) is the second, independent lineage, consulted when Mesen2 has no model for the behavior or when two implementations agreeing would settle a question. Implementation evidence is never equal authority with the specification. Where an emulator makes a choice the specification does not settle, say so instead of presenting it as hardware fact. bsnes, higan and ares-performance are the same lineage as ares and count as one opinion; Snes9x is not an authority but may break a Mesen2-vs-ares tie (see `references/source-priority.md`).
 
 3. **Screenshot reference: Mesen2** (navigator decision in #3000).
-   When a visual test ROM needs a reference image, capture it with Mesen2 at the same frame as NESER and pixel-diff the two captures with `python -m scripts.diff_screenshots`. An exact match approves the golden. If the captures differ and Mesen2 itself is suspect, ask the navigator instead of approving either side. ares is never used for screenshots. The headless capture recipe is in "Automating Screenshot Capture at Specific Frames" below; the reusable script is `scripts/reference_capture/mesen2_capture.lua` (see `scripts/reference_capture/README.md`, shared with the NES).
+   When a visual test ROM needs a reference image, capture it with Mesen2 at the same frame as NESER and pixel-diff the two captures with `python -m scripts.diff_screenshots`. An exact match approves the golden. If the captures differ and Mesen2 itself is suspect, ask the navigator instead of approving either side. ares is never used for screenshots. The headless capture recipe is in "Automating Screenshot Capture at Specific Frames" below; the reusable script is `scripts/reference_capture/mesen2_capture.lua`, and a NESER-against-Mesen2 comparison is one command, `python -m scripts.reference_capture.compare_mesen2 <rom.sfc> --frames N` (see `scripts/reference_capture/README.md`, shared with the NES). Name that command in a bead rather than copying its flags.
 
 ## Instructions
 
@@ -87,7 +87,7 @@ Every hardware research skill in this repository uses the same three tiers. The 
    - Capture a Mesen2 screenshot at the same frame as NESER and pixel-diff programmatically; exact matches become the reference for NESER comparison.
    - If NESER and Mesen2 disagree and the divergence is suspected to be a Mesen2 quirk, **ask the user** how to proceed rather than approving either side unilaterally.
    - Screenshot settings for comparable captures:
-     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true --snes.port1.type=SnesController --snes.port2.type=SnesController`
+     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true --snes.port1.type=SnesController --snes.port2.type=SnesController` plus `--snes.RamPowerOnState=AllZeros`; `python -m scripts.reference_capture.compare_mesen2` passes all of them
    - Mesen2 headless mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
    - **`--snes.disableFrameSkipping=true` is mandatory for animated content** (found in #2990):
      headless testRunner emulation runs >100 fps, engaging `_skipRender` (SnesPpu.cpp) which
@@ -113,11 +113,13 @@ Every hardware research skill in this repository uses the same three tiers. The 
    - **Plug in the same controllers on BOTH sides** (nr-0an). Mesen2's testRunner takes its
      SNES ports from `settings.json`, and a local install may have port 2 empty, while
      NESER has a standard pad in each port by default. Pass
-     `--snes.port1.type=SnesController --snes.port2.type=SnesController` to Mesen2, and pin
-     NESER's side with `--snes-controller-port1 standard --snes-controller-port2 standard`,
-     since a `neser.conf` port line (e.g. `multitap`) would otherwise apply. For a game NESER
-     recognises as a Mouse or Super Scope game, NESER picks that device itself; give Mesen2
-     the same type (`SnesMouse`, `SuperScope`) instead. Games that read which pads are
+     `--snes.port1.type=SnesController --snes.port2.type=SnesController` to Mesen2, and keep
+     a `neser.conf` port line (e.g. `multitap`) from applying on NESER's side.
+     `python -m scripts.reference_capture.compare_mesen2` does both (it runs NESER with an
+     empty `--config`). For a game NESER recognises as a Mouse or Super Scope game, NESER
+     picks that device itself; give Mesen2 the same type instead with
+     `--mesen2-arg=--snes.port2.type=SnesMouse` (or `SuperScope`), which replaces the pinned
+     flag for that port. Games that read which pads are
      connected play differently otherwise: Super Bomberman 3's attract demo took a lag frame
      on Mesen2 only, which looked like a CPU-timing drift until a trace showed a branch on
      the game's "player 2 connected" byte going the other way. The lists are
@@ -385,7 +387,7 @@ When verifying SNES emulator accuracy:
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
 - **Screenshot settings for comparable captures**:
   - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true
-    --snes.port1.type=SnesController --snes.port2.type=SnesController`
+    --snes.port1.type=SnesController --snes.port2.type=SnesController` plus `--snes.RamPowerOnState=AllZeros`; `python -m scripts.reference_capture.compare_mesen2` passes all of them
     (the frame-skip switch is mandatory for animated content; see step 9 of the Instructions;
     the port flags match NESER's default controllers, see "Plug in the same controllers")
   - Since the BG vertical-scroll display-line fix (issue #2945, PR #2981), NESER and

@@ -22,7 +22,8 @@ import unittest
 from pathlib import Path
 
 from scripts.diff_timing_traces import diff_traces, format_report, parse_lines
-from scripts.test_mesen2_capture import MESEN2, NES_FLAGS, NO_FILE_ACCESS_SHIM, SNES_FLAGS, wait_for_other_mesen2
+from scripts.reference_capture.compare_mesen2 import NES_MESEN2_FLAGS, SNES_MESEN2_FLAGS, wait_for_other_mesen2
+from scripts.test_mesen2_capture import MESEN2, NO_FILE_ACCESS_SHIM
 
 REPO = Path(__file__).resolve().parent.parent
 LUA = REPO / "scripts" / "reference_capture"
@@ -42,7 +43,7 @@ os.getenv = function(k) return env[k] end
 
 NES_ROM = "roms/nes/automated_tests/nmi_sync/demo_ntsc.nes"
 SNES_ROM = "roms/snes/automated_tests/snes_test_roms/undisbeliever-ppu-window/window-precalculated-single.sfc"
-ROMS = [(NES_ROM, NES_FLAGS), (SNES_ROM, SNES_FLAGS)]
+ROMS = [(NES_ROM, NES_MESEN2_FLAGS), (SNES_ROM, SNES_MESEN2_FLAGS)]
 
 
 def mesen2_trace(script: str, rom: Path, flags: list[str], env: dict[str, str], tmp: Path) -> list[str]:
@@ -50,7 +51,7 @@ def mesen2_trace(script: str, rom: Path, flags: list[str], env: dict[str, str], 
     lua = tmp / script
     entries = ", ".join(f'{key} = "{value}"' for key, value in values.items())
     lua.write_text(SHIM.replace("__ENV__", entries) + (LUA / script).read_text())
-    wait_for_other_mesen2()
+    wait_for_other_mesen2(MESEN2)
     cmd = [str(MESEN2), "--testRunner", "--enableStdout", "--timeout=60", *flags, str(rom), str(lua)]
     run = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     lines = [line.removeprefix("TRACE ") for line in run.stdout.splitlines() if line.startswith("TRACE ")]
@@ -107,7 +108,7 @@ class TestMesen2TracesWithoutFileAccess(unittest.TestCase):
             with self.subTest(script=script), tempfile.TemporaryDirectory() as tmp:
                 lua = Path(tmp) / script
                 lua.write_text(NO_FILE_ACCESS_SHIM + (LUA / script).read_text())
-                wait_for_other_mesen2()
+                wait_for_other_mesen2(MESEN2)
                 cmd = [str(MESEN2), "--testRunner", "--enableStdout", "--timeout=30", str(REPO / NES_ROM), str(lua)]
                 start = time.monotonic()
                 run = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
