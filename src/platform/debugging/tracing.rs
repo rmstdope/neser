@@ -305,9 +305,9 @@ impl Tracing {
     /// Only overrides values that are explicitly specified in args.
     pub fn apply_args(&mut self, args: &[String]) {
         for arg in args {
-            if arg == "--trace" {
+            if let Some((_, level)) = Self::cpu_level_from_arg(arg) {
                 self.enabled = true;
-                self.cpu = 1;
+                self.cpu = level;
                 continue;
             }
 
@@ -316,8 +316,6 @@ impl Tracing {
 
                 if arg == "--trace-nestest" {
                     self.nestest = true;
-                } else if let Some(rest) = arg.strip_prefix("--trace-cpu") {
-                    self.cpu = Self::parse_level(rest);
                 } else if let Some(rest) = arg.strip_prefix("--trace-ppu") {
                     self.ppu = Self::clamp_ppu_level(Self::parse_level(rest));
                 } else if let Some(rest) = arg.strip_prefix("--trace-apu") {
@@ -337,6 +335,18 @@ impl Tracing {
     fn window(&self, master_clock: u64) -> bool {
         self.clock_from.is_none_or(|from| master_clock >= from)
             && self.clock_to.is_none_or(|to| master_clock <= to)
+    }
+
+    /// The CPU trace spelling `arg` is (without any `=N`) and the level it sets, or `None`
+    /// when it does not set the CPU trace level. The one place both [`Self::apply_args`] and
+    /// [`release_nes_trace_warning`] read it, so they cannot drift apart.
+    fn cpu_level_from_arg(arg: &str) -> Option<(&'static str, u8)> {
+        if arg == "--trace" {
+            Some(("--trace", 1))
+        } else {
+            let rest = arg.strip_prefix("--trace-cpu")?;
+            Some(("--trace-cpu", Self::parse_level(rest)))
+        }
     }
 
     /// Parse a level from "" or "=N" suffix. Returns 1 if empty, N if "=N".
@@ -379,11 +389,7 @@ pub fn release_nes_trace_warning(args: &[String], debug_build: bool) -> Option<S
     let mut level = 0;
     let mut turned_on_by = None;
     for arg in args {
-        let (flag, new_level) = if arg == "--trace" {
-            ("--trace", 1)
-        } else if let Some(rest) = arg.strip_prefix("--trace-cpu") {
-            ("--trace-cpu", Tracing::parse_level(rest))
-        } else {
+        let Some((flag, new_level)) = Tracing::cpu_level_from_arg(arg) else {
             continue;
         };
         if new_level == 0 {
