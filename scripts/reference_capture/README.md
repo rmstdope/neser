@@ -184,7 +184,7 @@ patching. `timing_trace` reads the PC, the clock and two trace counters the core
 cargo build --release --features native --bin timing_trace
 ROM=<rom>; T="$PWD/trace"; mkdir -p "$T"
 MESEN=/Applications/Mesen.app/Contents/MacOS/Mesen
-FLAGS="--nes.RamPowerOnState=AllZeros"   # SNES: the four --snes.* flags from "Mesen2" above
+FLAGS="--nes.RamPowerOnState=AllZeros"   # SNES: SNES_MESEN2_FLAGS in compare_mesen2.py
 
 # 1. The first NMI entry whose clock differs.
 target/release/timing_trace nmi "$ROM" --nmis 3600 --out "$T/neser_nmi.txt"
