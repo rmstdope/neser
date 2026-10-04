@@ -38,12 +38,16 @@ local armed = false
 local handler = nil
 local handlerCallback = nil
 local tracing = false
+-- emu.stop() is not immediate: callbacks keep firing for a while after it, so every one
+-- checks this first.
+local done = false
 
 local function write(address)
   out:write(string.format("pc=%06X clk=%d\n", address, emu.getState().masterClock))
 end
 
 local function finish()
+  done = true
   out:close()
   print("SAVED " .. os.getenv("TRACE_OUT"))
   emu.stop(0)
@@ -60,6 +64,7 @@ local function isEntry(address)
 end
 
 local function onAny(address)
+  if done then return end
   if isEntry(address) and entries >= to then return finish() end
   write(address)
 end
@@ -72,7 +77,7 @@ end
 -- Until the window opens only the handler is watched; a callback added inside another does
 -- not see the instruction that added it, so the window's first line is written here.
 local function onHandler(address)
-  if tracing or not isEntry(address) then return end
+  if done or tracing or not isEntry(address) then return end
   if entries == from then
     write(address)
     startTracing()

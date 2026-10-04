@@ -37,16 +37,19 @@ local entries = 0
 local armed = false
 local handler = nil
 local callback = nil
+-- emu.stop() is not immediate: callbacks keep firing for a while after it.
+local done = false
 
 -- An exec callback fires once per instruction, at the opcode fetch, and getState() then
 -- reports the clock before that fetch: the same point NESER samples. It is registered without
 -- a cpuType argument; with one, memory callbacks never fire (nr-dh7).
 local function onHandler(address)
-  if not armed then return end
+  if done or not armed then return end
   armed = false
   entries = entries + 1
   out:write(string.format("nmi=%d pc=%06X clk=%d\n", entries, address, emu.getState().masterClock))
   if entries >= wanted then
+    done = true
     out:close()
     print("SAVED " .. os.getenv("TRACE_OUT"))
     emu.stop(0)
