@@ -146,6 +146,15 @@ Note that a ROM may still be showing a blank screen in its first frames — the
 default of 60 is enough for the test ROMs in `roms/`, but a ROM with a longer
 boot or intro sequence needs a larger `--frames`.
 
+### Timing traces against Mesen2
+
+When an NES or SNES game drifts from Mesen2, `timing_trace` (`cargo build --release
+--features native --bin timing_trace`) writes NESER's half of two traces: the clock at each
+NMI entry, and every instruction between two NMI entries. The Mesen2 scripts in
+`scripts/reference_capture/` write the other half, and `python -m scripts.diff_timing_traces`
+names the first divergent line. The recipe is in `scripts/reference_capture/README.md`,
+"Tracing against Mesen2".
+
 ## Web frontend
 
 The browser frontend is built from the Rust WASM target and the JavaScript frontend under `web/`.
