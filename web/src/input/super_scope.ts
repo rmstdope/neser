@@ -14,17 +14,6 @@ export function superScopeTurboMessage(on: boolean): string {
     return on ? "Turbo on" : "Turbo off";
 }
 
-/** The Select key (4) is the Turbo switch and the Start key (5) is Pause. */
-export function superScopeKeyAction(key: string): "turbo" | "pause" | null {
-    if (key === "4") {
-        return "turbo";
-    }
-    if (key === "5") {
-        return "pause";
-    }
-    return null;
-}
-
 const LEFT_BUTTON = 0;
 const RIGHT_BUTTON = 2;
 

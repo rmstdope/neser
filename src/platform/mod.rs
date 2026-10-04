@@ -9,6 +9,7 @@ pub mod frame_benchmark;
 pub mod frontend_toasts;
 pub mod headless_capture;
 pub mod image_cache;
+pub mod key_bindings;
 pub mod metadata;
 pub mod png_utils;
 pub mod ram_init;

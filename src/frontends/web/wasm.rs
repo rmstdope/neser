@@ -1051,6 +1051,72 @@ pub fn rom_extension_table() -> js_sys::Array {
         .collect()
 }
 
+/// One row of the shared key table as the web page applies it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebKeyBinding {
+    /// The lower-cased `KeyboardEvent.key` the page matches.
+    pub key: &'static str,
+    /// The web console kind: `nes`, `gb`, `gba` or `snes`.
+    pub console: &'static str,
+    /// `pad`, `snesPad`, `vsCoin`, `scopeTurbo` or `scopePause`.
+    pub input: &'static str,
+    /// The keyboard player, 1 or 2.
+    pub player: u8,
+    /// The button id the wasm setter for `input` takes, or 0 for an input without one.
+    pub button: u8,
+}
+
+/// The web rows of `platform::key_bindings::KEY_BINDINGS`, in the order the page tries them.
+/// An input the page cannot apply (a Power Pad, the Vs. service button) has no name here,
+/// so declaring such a row for the web leaves it out, and a test goes red.
+pub fn web_key_binding_rows() -> Vec<WebKeyBinding> {
+    use crate::platform::key_bindings::{Input, Player, Shell, bindings_of};
+    bindings_of(Shell::Web)
+        .filter_map(|b| {
+            let player = |p| if p == Player::One { 1 } else { 2 };
+            let (input, player, button) = match b.input {
+                Input::Pad(p, button) => ("pad", player(p), button.id()),
+                Input::SnesPadOnNes(p, button) => {
+                    ("snesPad", player(p), button.on_nes_snes_pad() as u8)
+                }
+                Input::VsCoin => ("vsCoin", 1, 0),
+                Input::SuperScopeTurbo => ("scopeTurbo", 1, 0),
+                Input::SuperScopePause => ("scopePause", 1, 0),
+                Input::PowerPad(..) | Input::VsService => return None,
+            };
+            Some(WebKeyBinding {
+                key: b.key.web_key(),
+                console: console_key(b.console),
+                input,
+                player,
+                button,
+            })
+        })
+        .collect()
+}
+
+/// Every keyboard binding of the web shell, as `{key, console, input, player, button}`
+/// objects: the page's copy of `platform::key_bindings::KEY_BINDINGS`.
+#[wasm_bindgen]
+pub fn key_binding_table() -> js_sys::Array {
+    web_key_binding_rows()
+        .into_iter()
+        .map(|row| {
+            let object = js_sys::Object::new();
+            let set = |name: &str, value: JsValue| {
+                js_sys::Reflect::set(&object, &JsValue::from_str(name), &value)
+                    .expect("setting a field on a fresh object");
+            };
+            set("key", JsValue::from_str(row.key));
+            set("console", JsValue::from_str(row.console));
+            set("input", JsValue::from_str(row.input));
+            set("player", JsValue::from(row.player));
+            set("button", JsValue::from(row.button));
+            JsValue::from(object)
+        })
+        .collect()
+}
+
 #[wasm_bindgen]
 pub fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
     shared_gamepad_init_toast_message(gamepads_enabled, detected_controllers)
@@ -1086,6 +1152,53 @@ mod tests {
     use super::*;
     use crate::nes::debugging::snapshot;
     use crate::platform::app_context::AppContext;
+
+    // ── The shared key table (nr-tlf) ─────────────────────────────────────────
+
+    use crate::platform::key_bindings::{Shell, bindings_of};
+
+    fn row(key: &str, console: &str, input: &str) -> Vec<WebKeyBinding> {
+        web_key_binding_rows()
+            .into_iter()
+            .filter(|r| r.key == key && r.console == console && r.input == input)
+            .collect()
+    }
+
+    /// A row the web shell cannot apply would be a binding missing on the web with nothing
+    /// red to say so: every web row must have an input the page handles.
+    #[test]
+    fn every_web_row_reaches_the_page() {
+        assert_eq!(
+            web_key_binding_rows().len(),
+            bindings_of(Shell::Web).count()
+        );
+    }
+
+    #[test]
+    fn web_rows_carry_the_id_their_wasm_setter_takes() {
+        // WasmNes::set_button and the GB/GBA/SNES set_button take platform ids.
+        assert_eq!(row("w", "nes", "pad")[0].button, 4);
+        assert_eq!(row("y", "snes", "pad")[0].button, 10); // X
+        assert_eq!(row("b", "gba", "pad")[0].button, 9); // R
+        // WasmNes::set_snes_button takes its own order: 0=B, 1=Y, …, 8=A, 9=X, 10=L, 11=R.
+        assert_eq!(row("r", "nes", "snesPad")[0].button, 0); // B
+        assert_eq!(row("t", "nes", "snesPad")[0].button, 8); // A
+        assert_eq!(row("q", "nes", "snesPad")[0].button, 10); // L
+    }
+
+    #[test]
+    fn web_rows_keep_the_order_a_shell_tries_them() {
+        let w: Vec<_> = web_key_binding_rows()
+            .into_iter()
+            .filter(|r| r.key == "w" && r.console == "nes")
+            .map(|r| r.input)
+            .collect();
+        assert_eq!(w, ["snesPad", "pad"]);
+        assert_eq!(row("6", "nes", "vsCoin").len(), 1);
+        assert_eq!(row("i", "snes", "pad")[0].player, 2);
+        assert_eq!(row("4", "snes", "scopeTurbo").len(), 1);
+        assert_eq!(row("5", "snes", "scopePause").len(), 1);
+    }
 
     #[test]
     fn test_serialize_debugger_snapshot_json_includes_oam_field() {

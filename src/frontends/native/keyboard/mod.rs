@@ -101,12 +101,12 @@ pub fn handle_key_released(
             controller_mapping::handle_controller_key(console, key_code, false, ports);
         }
         SystemType::GameBoy => {
-            if let Some(btn_id) = controller_mapping::gameboy_key_to_button_id(key_code) {
+            if let Some(btn_id) = controller_mapping::pad_button_id(SystemType::GameBoy, key_code) {
                 console.set_button(0, btn_id, false);
             }
         }
         SystemType::Gba => {
-            if let Some(btn_id) = controller_mapping::gba_key_to_button_id(key_code) {
+            if let Some(btn_id) = controller_mapping::pad_button_id(SystemType::Gba, key_code) {
                 console.set_button(0, btn_id, false);
             }
         }
@@ -114,7 +114,7 @@ pub fn handle_key_released(
             if console_keyboard::handle_super_scope_key(console, key_code, false) {
                 return;
             }
-            if let Some(btn_id) = controller_mapping::snes_key_to_button_id(key_code) {
+            if let Some(btn_id) = controller_mapping::pad_button_id(SystemType::Snes, key_code) {
                 console.set_button(0, btn_id, false);
             }
         }

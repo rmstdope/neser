@@ -4,6 +4,7 @@ import init, {
     WasmGba,
     WasmSnes,
     gamepad_init_toast_message,
+    key_binding_table,
     rom_extension_table,
     snes_firmware_chips_json,
     snes_dsp_firmware_is_genuine,
@@ -64,8 +65,14 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
-import { getKeyboardControllerTarget } from "./input/input_routing";
-import { applyVsCoinKey, gbaKeyboardButtonForEvent } from "./input/keyboard_mapping";
+import {
+    type KeyBindingRow,
+    type KeyBindingSink,
+    applyKeyBindings,
+    keyBindingsFor,
+    keyboardPorts,
+    parseKeyBindingTable,
+} from "./input/key_bindings";
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
@@ -78,7 +85,6 @@ import {
 import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
-    superScopeKeyAction,
     superScopeTurboMessage,
     type ClickCaptureSession,
 } from "./input/super_scope";
@@ -2812,35 +2818,6 @@ async function populateRomSelect() {
 // Set initial button states (all disabled until a ROM is loaded)
 updateEmulationButtons();
 
-// Keyboard input mappings for both controllers
-// Controller 1: W=Up, S=Down, A=Left, D=Right, R=B, T=A, Y=X, G=Y, Q=L, E=R, 4=Select, 5=Start
-const keyToButtonController1: Record<string, { button?: number; snesButton?: number; name: string }> = {
-    'w': { button: 4, snesButton: 4, name: 'Up' },        // NES Up / SNES Up
-    's': { button: 5, snesButton: 5, name: 'Down' },      // NES Down / SNES Down
-    'a': { button: 6, snesButton: 6, name: 'Left' },      // NES Left / SNES Left
-    'd': { button: 7, snesButton: 7, name: 'Right' },     // NES Right / SNES Right
-    'r': { button: 0, snesButton: 0, name: 'B' },         // NES A fallback / SNES B
-    't': { button: 1, snesButton: 8, name: 'A' },         // NES B fallback / SNES A
-    'y': { snesButton: 9, name: 'X' },                    // SNES X only
-    'g': { snesButton: 1, name: 'Y' },                    // SNES Y only
-    'q': { snesButton: 10, name: 'L' },                   // SNES L only
-    'e': { snesButton: 11, name: 'R' },                   // SNES R only
-    '4': { button: 2, snesButton: 2, name: 'Select' },    // NES Select / SNES Select
-    '5': { button: 3, snesButton: 3, name: 'Start' }      // NES Start / SNES Start
-};
-
-// Controller 2: I=Up, K=Down, J=Left, L=Right, P=B, O=A, 9=Select, 0=Start
-const keyToButtonController2: Record<string, { button?: number; snesButton?: number; name: string }> = {
-    'i': { button: 4, name: 'Up' },      // Button 4 = Up
-    'k': { button: 5, name: 'Down' },    // Button 5 = Down
-    'j': { button: 6, name: 'Left' },    // Button 6 = Left
-    'l': { button: 7, name: 'Right' },   // Button 7 = Right
-    'p': { button: 1, name: 'B' },       // Button 1 = B
-    'o': { button: 0, name: 'A' },       // Button 0 = A
-    '9': { button: 2, name: 'Select' },  // Button 2 = Select
-    '0': { button: 3, name: 'Start' }    // Button 3 = Start
-};
-
 // Track connected gamepads for routing
 let connectedGamepads: Gamepad[] = [];
 
@@ -2907,33 +2884,52 @@ function toggleFilterAction() {
     updateFilterToggleButtonLabel();
 }
 
-function applyKeyboardMapping(event: KeyboardEvent, mapping: { button?: number; snesButton?: number; name: string } | undefined, controller: number, targets: number[], pressed: boolean) {
-    if (!mapping || !targets.includes(controller)) {
-        return;
-    }
-    event.preventDefault();
+let keyBindingTable: KeyBindingRow[] | null = null;
 
-    // Try SNES button mapping first when available.
-    if (nes && mapping.snesButton !== undefined) {
-        const handledAsSnes = nes.set_snes_button(controller, mapping.snesButton, pressed);
-        if (handledAsSnes) {
-            return;
-        }
-    }
-    if (emulator?.kind === "snes" && mapping.snesButton !== undefined) {
-        if (!shouldSuppressSnesJoypadInput(emulator.inst, controller)) {
-            emulator.inst.set_button(controller, remapLegacySnesButtonId(mapping.snesButton), pressed);
-        }
-        return;
-    }
+/**
+ * The web rows of the key table both shells read (Rust `platform::key_bindings`). Read on the
+ * first key event with an emulator, by which time the wasm module is initialised.
+ */
+function keyBindings(): KeyBindingRow[] {
+    keyBindingTable ??= parseKeyBindingTable(key_binding_table());
+    return keyBindingTable;
+}
 
-    if (mapping.button !== undefined) {
-        if (nes) {
-            applyJoypadButtonIfAllowed(nes, controller, mapping.button, pressed);
-        } else if (emulator) {
-            // GB: direct button routing (no mouse/zapper suppression needed).
-            emulator.inst.set_button(controller, mapping.button, pressed);
+/** What a key-binding row may do to the running console. */
+function keyBindingSink(active: ActiveEmulator): KeyBindingSink {
+    switch (active.kind) {
+        case "nes": {
+            const nesInst = active.inst;
+            return {
+                pad: (port, button, pressed) => applyJoypadButtonIfAllowed(nesInst, port, button, pressed),
+                snesPad: (port, button, pressed) => nesInst.set_snes_button(port, button, pressed),
+                vsCoin: () => nesInst.insert_vs_coin(0),
+            };
         }
+        case "snes": {
+            const snesInst = active.inst;
+            return {
+                pad: (port, button, pressed) => {
+                    if (!shouldSuppressSnesJoypadInput(snesInst, port)) {
+                        snesInst.set_button(port, button, pressed);
+                    }
+                },
+                scope: (action, pressed, repeat) => applySuperScopeKey(snesInst, action, pressed, repeat),
+            };
+        }
+        default: {
+            const inst = active.inst;
+            return { pad: (port, button, pressed) => inst.set_button(port, button, pressed) };
+        }
+    }
+}
+
+/** Apply the key table to a key event; the browser's default is prevented for a console key. */
+function applyKeyboardBindings(event: KeyboardEvent, active: ActiveEmulator, pressed: boolean) {
+    const ports = keyboardPorts(active.kind, connectedGamepads.length, nes?.is_four_score_enabled?.() ?? false);
+    const rows = keyBindingsFor(keyBindings(), active.kind, event.key);
+    if (applyKeyBindings(rows, keyBindingSink(active), ports, event, pressed)) {
+        event.preventDefault();
     }
 }
 
@@ -2997,21 +2993,19 @@ function releaseSuperScopeButtons() {
 }
 
 /**
- * With a Super Scope connected the Select key (4) flips its Turbo switch and the Start key
- * (5) is its Pause button; neither then reaches port 1, so one press never pauses twice.
- * Returns true when the key was the scope's.
+ * A plugged Super Scope takes the table's scope keys (4 flips its Turbo switch, 5 is its
+ * Pause button) before they reach port 1, so one press never pauses twice. Returns false
+ * when no scope is plugged in.
  */
-function handleSuperScopeKey(event: KeyboardEvent, pressed: boolean): boolean {
+function applySuperScopeKey(snesInst: WasmSnes, action: "turbo" | "pause", pressed: boolean, repeat: boolean): boolean {
     const port = superScopePort();
-    const action = superScopeKeyAction(event.key.toLowerCase());
-    if (emulator?.kind !== "snes" || port === null || action === null) {
+    if (port === null) {
         return false;
     }
-    event.preventDefault();
     if (action === "pause") {
-        emulator.inst.set_superscope_pause(port, pressed);
-    } else if (pressed && !event.repeat) {
-        const on = emulator.inst.toggle_superscope_turbo(port);
+        snesInst.set_superscope_pause(port, pressed);
+    } else if (pressed && !repeat) {
+        const on = snesInst.toggle_superscope_turbo(port);
         if (on !== undefined) {
             toastOverlay.show(superScopeTurboMessage(on));
         }
@@ -3051,32 +3045,7 @@ async function handleKeyDown(event: KeyboardEvent) {
         return;
     }
 
-    if (emulator.kind === "gba") {
-        const button = gbaKeyboardButtonForEvent(event);
-        if (button !== null) {
-            event.preventDefault();
-            emulator.inst.set_button(1, button, true);
-        }
-        return;
-    }
-
-    if (handleSuperScopeKey(event, true)) {
-        return;
-    }
-
-    if (nes && applyVsCoinKey(nes, event, true)) {
-        event.preventDefault();
-        return;
-    }
-
-    const key = event.key.toLowerCase();
-    const targets = getKeyboardControllerTarget(
-        connectedGamepads.length,
-        nes?.is_four_score_enabled?.() ?? false
-    );
-
-    applyKeyboardMapping(event, keyToButtonController1[key], targets[0] ?? 1, targets, true);
-    applyKeyboardMapping(event, keyToButtonController2[key], targets[1] ?? 2, targets, true);
+    applyKeyboardBindings(event, emulator, true);
 }
 
 function handleKeyUp(event: KeyboardEvent) {
@@ -3093,32 +3062,7 @@ function handleKeyUp(event: KeyboardEvent) {
         return;
     }
 
-    if (emulator.kind === "gba") {
-        const button = gbaKeyboardButtonForEvent(event);
-        if (button !== null) {
-            event.preventDefault();
-            emulator.inst.set_button(1, button, false);
-        }
-        return;
-    }
-
-    if (handleSuperScopeKey(event, false)) {
-        return;
-    }
-
-    if (nes && applyVsCoinKey(nes, event, false)) {
-        event.preventDefault();
-        return;
-    }
-
-    const key = event.key.toLowerCase();
-    const targets = getKeyboardControllerTarget(
-        connectedGamepads.length,
-        nes?.is_four_score_enabled?.() ?? false
-    );
-
-    applyKeyboardMapping(event, keyToButtonController1[key], targets[0] ?? 1, targets, false);
-    applyKeyboardMapping(event, keyToButtonController2[key], targets[1] ?? 2, targets, false);
+    applyKeyboardBindings(event, emulator, false);
 }
 
 document.addEventListener('keydown', handleKeyDown);

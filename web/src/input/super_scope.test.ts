@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
     SUPER_SCOPE_MOUSE_RELEASED,
     createSuperScopeSession,
-    superScopeKeyAction,
     superScopeTurboMessage,
 } from "./super_scope";
 
@@ -90,13 +89,5 @@ describe("createSuperScopeSession", () => {
         expect(session.captured()).toBe(true);
         session.lockChanged(false);
         expect(session.captured()).toBe(false);
-    });
-});
-
-describe("superScopeKeyAction", () => {
-    it("makes the Select key the Turbo switch and the Start key Pause", () => {
-        expect(superScopeKeyAction("4")).toBe("turbo");
-        expect(superScopeKeyAction("5")).toBe("pause");
-        expect(superScopeKeyAction("w")).toBeNull();
     });
 });

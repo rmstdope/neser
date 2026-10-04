@@ -8,7 +8,8 @@
 use super::{KeyOutcome, controller_mapping, hotkeys, keyboard_target_ports};
 use crate::frontends::native::app_state::NativeAppState;
 use crate::platform::audio::EmulatorAudio;
-use crate::platform::emulator::Console;
+use crate::platform::emulator::{Console, SystemType};
+use crate::platform::key_bindings::Input;
 use winit::keyboard::KeyCode;
 
 /// Handles a key-press event for a [`Console::GameBoy`].
@@ -22,13 +23,7 @@ pub(super) fn handle_gameboy_key_pressed(
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
-    handle_single_joypad_key_pressed(
-        console,
-        key_code,
-        app_state,
-        audio,
-        controller_mapping::gameboy_key_to_button_id,
-    )
+    handle_single_joypad_key_pressed(console, key_code, app_state, audio)
 }
 
 pub(super) fn handle_gba_key_pressed(
@@ -37,13 +32,7 @@ pub(super) fn handle_gba_key_pressed(
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
 ) -> KeyOutcome {
-    handle_single_joypad_key_pressed(
-        console,
-        key_code,
-        app_state,
-        audio,
-        controller_mapping::gba_key_to_button_id,
-    )
+    handle_single_joypad_key_pressed(console, key_code, app_state, audio)
 }
 
 pub(super) fn handle_snes_key_pressed(
@@ -55,13 +44,7 @@ pub(super) fn handle_snes_key_pressed(
     if !app_state.modifiers.control_key() && handle_super_scope_key(console, key_code, true) {
         return KeyOutcome::Continue;
     }
-    handle_single_joypad_key_pressed(
-        console,
-        key_code,
-        app_state,
-        audio,
-        controller_mapping::snes_key_to_button_id,
-    )
+    handle_single_joypad_key_pressed(console, key_code, app_state, audio)
 }
 
 /// With a Super Scope connected, the Select key (4) flips its Turbo switch and the Start
@@ -81,8 +64,11 @@ pub(super) fn handle_super_scope_key(
     let Some(port) = (0..=1u8).find(|&port| ports.has_superscope_on_port(port)) else {
         return false;
     };
-    match key_code {
-        KeyCode::Digit4 => {
+    let action = controller_mapping::desktop_rows(SystemType::Snes, key_code)
+        .map(|b| b.input)
+        .find(|input| matches!(input, Input::SuperScopeTurbo | Input::SuperScopePause));
+    match action {
+        Some(Input::SuperScopeTurbo) => {
             if pressed && let Some(on) = ports.toggle_superscope_turbo(port) {
                 console
                     .app_context()
@@ -91,11 +77,11 @@ pub(super) fn handle_super_scope_key(
             }
             true
         }
-        KeyCode::Digit5 => {
+        Some(_) => {
             ports.set_superscope_pause(port, pressed);
             true
         }
-        _ => false,
+        None => false,
     }
 }
 
@@ -104,7 +90,6 @@ fn handle_single_joypad_key_pressed(
     key_code: KeyCode,
     app_state: &mut NativeAppState,
     audio: Option<&dyn EmulatorAudio>,
-    key_to_button_id: fn(KeyCode) -> Option<u8>,
 ) -> KeyOutcome {
     // Generic hotkeys that work for any system.
     if app_state.modifiers.control_key() {
@@ -144,7 +129,8 @@ fn handle_single_joypad_key_pressed(
         KeyCode::F10 => return KeyOutcome::StepOver,
         KeyCode::F11 => return KeyOutcome::StepInto,
         _ => {
-            if let Some(btn_id) = key_to_button_id(key_code) {
+            if let Some(btn_id) = controller_mapping::pad_button_id(console.system_type(), key_code)
+            {
                 console.set_button(0, btn_id, true);
             }
         }
@@ -472,6 +458,81 @@ mod tests {
             0,
             "Releasing D should clear GB Right button"
         );
+    }
+
+    /// Every desktop SNES pad row of the shared table (nr-tlf) presses the button its id
+    /// names on port 1, exactly as setting that id directly does.
+    #[test]
+    fn every_desktop_snes_pad_row_presses_its_button() {
+        use crate::platform::emulator::SystemType;
+        use crate::platform::key_bindings::{Input, Shell, bindings_of};
+        let port1 = |console: &Console| {
+            console
+                .as_snes()
+                .unwrap()
+                .input_ports()
+                .unwrap()
+                .port1_state()
+        };
+        let mut checked = 0;
+        for b in bindings_of(Shell::Desktop).filter(|b| b.console == SystemType::Snes) {
+            let Input::Pad(_, button) = b.input else {
+                continue;
+            };
+            let key = crate::frontends::native::keyboard::controller_mapping::winit_key(b.key);
+            let mut by_key = make_snes_console("pad.sfc");
+            handle_key_pressed(&mut by_key, key, &mut make_state(), None);
+            let mut by_id = make_snes_console("pad.sfc");
+            by_id.set_button(0, button.id(), true);
+            assert_ne!(port1(&by_id).pressed, 0, "{b:?}");
+            assert_eq!(port1(&by_key), port1(&by_id), "{b:?}");
+            checked += 1;
+        }
+        assert_eq!(checked, 16);
+    }
+
+    /// Every desktop Game Boy and GBA row of the shared table (nr-tlf) presses its button.
+    #[test]
+    fn every_desktop_gb_and_gba_pad_row_presses_its_button() {
+        use crate::platform::emulator::SystemType;
+        use crate::platform::key_bindings::{Input, PadButton, Shell, bindings_of};
+        for b in bindings_of(Shell::Desktop) {
+            let Input::Pad(_, button) = b.input else {
+                continue;
+            };
+            let key = crate::frontends::native::keyboard::controller_mapping::winit_key(b.key);
+            let mut state = make_state();
+            match b.console {
+                SystemType::GameBoy => {
+                    let mut console = make_gameboy_console();
+                    handle_key_pressed(&mut console, key, &mut state, None);
+                    assert_ne!(
+                        console.get_joypad_button_states(0) & (1 << button.id()),
+                        0,
+                        "{b:?}"
+                    );
+                }
+                SystemType::Gba => {
+                    let mask = match button {
+                        PadButton::A => GBA_KEY_A,
+                        PadButton::B => GBA_KEY_B,
+                        PadButton::Select => GBA_KEY_SELECT,
+                        PadButton::Start => GBA_KEY_START,
+                        PadButton::Right => GBA_KEY_RIGHT,
+                        PadButton::Left => GBA_KEY_LEFT,
+                        PadButton::Up => GBA_KEY_UP,
+                        PadButton::Down => GBA_KEY_DOWN,
+                        PadButton::R => GBA_KEY_R,
+                        PadButton::L => GBA_KEY_L,
+                        PadButton::X | PadButton::Y => panic!("{b:?}: the GBA has no X/Y"),
+                    };
+                    let mut console = make_gba_console();
+                    handle_key_pressed(&mut console, key, &mut state, None);
+                    assert_eq!(gba_keyinput(&console) & mask, 0, "{b:?}");
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]
