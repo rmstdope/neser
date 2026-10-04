@@ -587,8 +587,11 @@ impl Sprites {
                 &mut self.sprite_attributes,
                 &mut self.next_sprite_attributes,
             );
-            std::mem::swap(&mut self.sprite_count, &mut self.next_sprite_count);
-            std::mem::swap(&mut self.sprite_0_index, &mut self.next_sprite_0_index);
+            // Copied, not swapped: secondary OAM keeps the last evaluation's set until the
+            // next evaluation, so a line that skips evaluation (rendering off over dots
+            // 65-256) draws that set again, never an older one (nr-3jh).
+            self.sprite_count = self.next_sprite_count;
+            self.sprite_0_index = self.next_sprite_0_index;
         }
     }
 
@@ -1138,6 +1141,47 @@ mod tests {
         // screen_x 11 should be transparent (bit 6 of lo = 0, bit 6 of hi = 0)
         let result = sprites.get_pixel(11, true);
         assert!(result.is_none());
+    }
+
+    /// Run one scanline's sprite evaluation (dots 0-256) and the dot-321 buffer swap.
+    fn evaluate_line_and_swap(sprites: &mut Sprites, scanline: u16) {
+        sprites.reset_evaluation();
+        for pixel in 1..=64 {
+            sprites.initialize_secondary_oam_byte(pixel);
+        }
+        for pixel in 65..=256 {
+            sprites.evaluate_sprites(pixel, scanline, 8);
+        }
+        sprites.finalize_evaluation();
+        sprites.mark_buffers_ready();
+        sprites.swap_buffers();
+    }
+
+    // nr-3jh: Super Off Road turns rendering off on line 69 and back on at dot 266 of line 74.
+    // No evaluation runs on line 74, so secondary OAM still holds the empty set line 69
+    // evaluated, and nothing is drawn on line 75 (Mesen2 keeps _spriteCount from the last
+    // evaluation). NESER swapped the sprite count with its buffers and drew line 69's
+    // sprites again: sprite 0's pixel at x=253 on line 75.
+    #[test]
+    fn test_line_without_evaluation_draws_the_last_evaluated_sprite_set() {
+        let mut sprites = Sprites::new(crate::nes::console::RamInitMode::Zero);
+        for i in 4..256 {
+            sprites.oam_data[i] = 0xFF; // only sprite 0 can be in range
+        }
+        sprites.oam_data[0] = 61; // sprite 0 on lines 62-69
+        sprites.oam_data[3] = 253;
+
+        evaluate_line_and_swap(&mut sprites, 68);
+        assert_eq!(sprites.sprite_count(), 1, "line 69 draws sprite 0");
+        evaluate_line_and_swap(&mut sprites, 69);
+        assert_eq!(sprites.sprite_count(), 0, "line 70 draws nothing");
+
+        // Lines 70-73 with rendering off: no evaluation and no swap. Line 74 turns rendering
+        // on after dot 256, so only the dot-321 swap runs.
+        sprites.mark_buffers_ready();
+        sprites.swap_buffers();
+
+        assert_eq!(sprites.sprite_count(), 0, "line 75 draws nothing");
     }
 
     #[test]
