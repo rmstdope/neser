@@ -853,7 +853,11 @@ impl Cpu {
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read at base + Y with wrong high byte if page crossed
                 let page_crossed = Self::page_crossed(base, addr);
-                let dummy_addr = if page_crossed { addr - 0x100 } else { addr };
+                let dummy_addr = if page_crossed {
+                    addr.wrapping_sub(0x100)
+                } else {
+                    addr
+                };
                 self.dummy_read(dummy_addr);
                 addr
             }
