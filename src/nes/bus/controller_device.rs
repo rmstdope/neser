@@ -217,9 +217,11 @@ impl ControllerDevice {
             let player_state = extra_state[port_index];
             (player_state >> (idx - 8)) & 0x01
         } else if idx < 24 {
-            // Next 8 bits are the Four Score signature.
-            let signature = if port_index == 0 { 0x10 } else { 0x20 };
-            (signature >> (idx - 16)) & 0x01
+            // Next 8 bits are the Four Score signature, $10 on $4016 and $20 on $4017, sent
+            // most significant bit first: the only 1 is report bit 19 on $4016 and 18 on
+            // $4017 (NESdev, Four player adapters: Four Score; nr-3jh).
+            let signature: u8 = if port_index == 0 { 0x10 } else { 0x20 };
+            (signature >> (23 - idx)) & 0x01
         } else {
             // Remaining reads return 1.
             1
@@ -596,10 +598,11 @@ mod tests {
         assert!(device.write(0x4016, 1, false));
         assert!(device.write(0x4016, 0, false));
 
-        // Expected Four Score sequence on $4016:
-        // P1 byte (all 0 in this fixture), P3 byte (all 0 in this fixture), signature $10.
+        // Expected Four Score sequence on $4016 (NESdev, Four player adapters: Four Score):
+        // P1 byte (all 0 in this fixture), P3 byte (all 0 in this fixture), then a signature
+        // whose only 1 is report bit 19, the 20th read (nr-3jh).
         let bits = read_24_bits(&mut device, 0x4016);
-        assert_eq!(bits, 0x0010_0000);
+        assert_eq!(bits, 1 << 19);
     }
 
     #[test]
@@ -619,10 +622,11 @@ mod tests {
         assert!(device.write(0x4016, 1, false));
         assert!(device.write(0x4016, 0, false));
 
-        // Expected Four Score sequence on $4017:
-        // P2 byte (all 0 in this fixture), P4 byte (all 0 in this fixture), signature $20.
+        // Expected Four Score sequence on $4017 (NESdev, Four player adapters: Four Score):
+        // P2 byte (all 0 in this fixture), P4 byte (all 0 in this fixture), then a signature
+        // whose only 1 is report bit 18, the 19th read (nr-3jh).
         let bits = read_24_bits(&mut device, 0x4017);
-        assert_eq!(bits, 0x0020_0000);
+        assert_eq!(bits, 1 << 18);
     }
 
     #[test]
