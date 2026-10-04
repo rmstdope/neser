@@ -239,7 +239,7 @@ mod tests {
     use super::Mapper121;
     use crate::nes::cartridge::NametableLayout;
     use crate::nes::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::nes::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
+    use crate::nes::cartridge::test_helpers::banked_data;
 
     const MAPPER_ID: u16 = 121;
     const PRG_BANKS_8K: usize = 48;
@@ -369,33 +369,66 @@ mod tests {
 
     /// A9711 board with 512 KiB CHR-ROM (Street Fighter Zero 2 '97): CHR A18 is
     /// PPU A12, so the left pattern table reads the lower and the right pattern
-    /// table the upper 256 KiB, whatever the MMC3's CHR inversion says.
+    /// table the upper 256 KiB, whatever the MMC3's CHR inversion says. Each 1 KiB
+    /// CHR bank starts with its 9-bit number (low byte, then high byte), so a read
+    /// shows both the MMC3 bank and the half.
     fn make_a9711_512k_chr_mapper() -> Box<dyn Mapper> {
+        let mut chr = vec![0u8; 512 * 1024];
+        for bank in 0..512 {
+            chr[bank * 1024] = bank as u8;
+            chr[bank * 1024 + 1] = (bank >> 8) as u8;
+        }
         create_mapper(MapperContext::new_for_test(
             MAPPER_ID,
             banked_data(8 * 1024, 32),
-            banked_data_with_upper_marker(1024, 512),
+            chr,
             NametableLayout::Vertical,
         ))
         .expect("Mapper 121 must be created")
     }
 
+    fn chr_bank_at(mapper: &mut dyn Mapper, ppu_addr: u16) -> usize {
+        usize::from(mapper.read_chr(ppu_addr)) | (usize::from(mapper.read_chr(ppu_addr + 1)) << 8)
+    }
+
     #[test]
     fn mapper_121_512k_chr_half_follows_ppu_a12_with_chr_inversion() {
         let mut mapper = make_a9711_512k_chr_mapper();
-        mapper.write_prg(0x8000, 0x80); // MMC3 CHR inversion on
+        mapper.write_prg(0x8000, 0x80); // R0, MMC3 CHR inversion on
+        mapper.write_prg(0x8001, 0x10); // R0 = $10: 2 KiB at $1000
+        mapper.write_prg(0x8000, 0x82);
+        mapper.write_prg(0x8001, 0x21); // R2 = $21: 1 KiB at $0000
 
-        assert_eq!(mapper.read_chr(0x0000), 0, "left table: lower 256 KiB");
-        assert_eq!(mapper.read_chr(0x1000), 1, "right table: upper 256 KiB");
+        assert_eq!(
+            chr_bank_at(&mut *mapper, 0x0000),
+            0x021,
+            "left: lower half, R2"
+        );
+        assert_eq!(
+            chr_bank_at(&mut *mapper, 0x1000),
+            0x110,
+            "right: upper half, R0"
+        );
     }
 
     #[test]
     fn mapper_121_512k_chr_half_follows_ppu_a12_without_chr_inversion() {
         let mut mapper = make_a9711_512k_chr_mapper();
-        mapper.write_prg(0x8000, 0x00); // MMC3 CHR inversion off
+        mapper.write_prg(0x8000, 0x00); // R0, MMC3 CHR inversion off
+        mapper.write_prg(0x8001, 0x10); // R0 = $10: 2 KiB at $0000
+        mapper.write_prg(0x8000, 0x02);
+        mapper.write_prg(0x8001, 0x21); // R2 = $21: 1 KiB at $1000
 
-        assert_eq!(mapper.read_chr(0x0000), 0, "left table: lower 256 KiB");
-        assert_eq!(mapper.read_chr(0x1000), 1, "right table: upper 256 KiB");
+        assert_eq!(
+            chr_bank_at(&mut *mapper, 0x0000),
+            0x010,
+            "left: lower half, R0"
+        );
+        assert_eq!(
+            chr_bank_at(&mut *mapper, 0x1000),
+            0x121,
+            "right: upper half, R2"
+        );
     }
 
     #[test]
