@@ -14560,7 +14560,13 @@ fn test_taken_branch_without_page_cross_delays_nmi_like_a_two_cycle_instruction(
     for dots in 0..=30 {
         let after_nop = nmi_taken_after_one_instruction(NOP, true, dots);
         let after_branch = nmi_taken_after_one_instruction(BEQ_TAKEN_SAME_PAGE, true, dots);
+        let after_branch_not_taken =
+            nmi_taken_after_one_instruction(BEQ_TAKEN_SAME_PAGE, false, dots);
         let after_lda = nmi_taken_after_one_instruction(LDA_ZP, true, dots);
+        assert_eq!(
+            after_branch_not_taken, after_nop,
+            "vblank {dots} dots ahead: a branch not taken is a two-cycle instruction"
+        );
         assert_eq!(
             after_branch, after_nop,
             "vblank {dots} dots ahead: a taken same-page branch must poll NMI where a \
