@@ -105,6 +105,10 @@ class TestMesen2Flags(unittest.TestCase):
         self.assertIn("--snes.port1.type=SnesController", merged)
         self.assertIn("--snes.Overclock=1", merged)
 
+    def test_extra_flag_keys_match_regardless_of_case(self) -> None:
+        merged = merge_flags(SNES_MESEN2_FLAGS, ["--snes.Port2.Type=SnesMouse"])
+        self.assertNotIn("--snes.port2.type=SnesController", merged)
+
     def test_concurrent_testrunner_is_matched_by_basename(self) -> None:
         # Another session may start Mesen2 through PATH or a symlink (nr-ocx review).
         self.assertEqual(testrunner_pattern(Path("/Applications/Mesen.app/Contents/MacOS/Mesen")), "Mesen --testRunner")
@@ -344,6 +348,12 @@ class TestCompareMesen2EndToEnd(unittest.TestCase):
                 code, out = self.run_main(flag, str(Path(self.tmp.name) / "nonexistent"))
                 self.assertEqual(code, 2)
                 self.assertNotIn("differing pixels", out)
+
+    def test_extra_mesen2_arg_replaces_a_common_flag(self) -> None:
+        self.run_main("--mesen2-arg=--timeout=60")
+        args = self.logged("mesen2")[0].split()[1:]
+        self.assertIn("--timeout=60", args)
+        self.assertNotIn("--timeout=30", args)
 
     def test_extra_mesen2_arg_replaces_a_pinned_port(self) -> None:
         self.run_main("--mesen2-arg=--nes.port2.type=Zapper")

@@ -87,7 +87,7 @@ Every hardware research skill in this repository uses the same three tiers. The 
    - Capture a Mesen2 screenshot at the same frame as NESER and pixel-diff programmatically; exact matches become the reference for NESER comparison.
    - If NESER and Mesen2 disagree and the divergence is suspected to be a Mesen2 quirk, **ask the user** how to proceed rather than approving either side unilaterally.
    - Screenshot settings for comparable captures:
-     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true --snes.port1.type=SnesController --snes.port2.type=SnesController`
+     - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true --snes.port1.type=SnesController --snes.port2.type=SnesController` plus `--snes.RamPowerOnState=AllZeros`; `python -m scripts.reference_capture.compare_mesen2` passes all of them
    - Mesen2 headless mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
    - **`--snes.disableFrameSkipping=true` is mandatory for animated content** (found in #2990):
      headless testRunner emulation runs >100 fps, engaging `_skipRender` (SnesPpu.cpp) which
@@ -387,7 +387,7 @@ When verifying SNES emulator accuracy:
 - **CRC-based integration tests**: Capture frame CRCs at known stable points (e.g., frame 600) and use as golden values for regression testing. Update test comments to reference GitHub issues for known differences.
 - **Screenshot settings for comparable captures**:
   - Mesen2: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching --snes.disableFrameSkipping=true
-    --snes.port1.type=SnesController --snes.port2.type=SnesController`
+    --snes.port1.type=SnesController --snes.port2.type=SnesController` plus `--snes.RamPowerOnState=AllZeros`; `python -m scripts.reference_capture.compare_mesen2` passes all of them
     (the frame-skip switch is mandatory for animated content; see step 9 of the Instructions;
     the port flags match NESER's default controllers, see "Plug in the same controllers")
   - Since the BG vertical-scroll display-line fix (issue #2945, PR #2981), NESER and

@@ -122,14 +122,10 @@ specification authority, one or two implementation references, one screenshot re
 
 7. **Mesen2** (navigator decision in #3000)
    - The only emulator whose captures approve a NESER golden frame.
-   - Headless test mode: `Mesen --testRunner --enableStdout --timeout=N <rom> <script.lua>`
-   - Screenshot settings: `--Video.VideoFilter=None --Video.AspectRatio=NoStretching
-     --snes.disableFrameSkipping=true` (the frame-skip switch is mandatory for animated
-     content, see SKILL.md), plus `--snes.RamPowerOnState=AllZeros` for any ROM that can
-     display uninitialised WRAM; pin NESER's side with `--ram-init-mode zero` too.
-     Always add `--snes.port1.type=SnesController --snes.port2.type=SnesController`, the
-     standard pads NESER has in each port by default, and pin NESER with
-     `--snes-controller-port1 standard --snes-controller-port2 standard` (nr-0an).
+   - Compare with one command, which owns the flags (frame skip off, zero RAM, a standard pad
+     in both ports, NESER on an empty `--config`) and isolates battery saves per run:
+     `python -m scripts.reference_capture.compare_mesen2 <rom.sfc> --frames <n> --out-dir <dir>`
+     (`scripts/reference_capture/README.md` says why each flag is there).
    - Capture twice before trusting any non-zero diff; a capture that changes between
      identical runs means the reference is not pinned.
    - Diff the captures with `python -m scripts.diff_screenshots <neser> <mesen> --shift-search 1`

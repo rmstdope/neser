@@ -95,9 +95,13 @@ def mesen2_flags(system: str, no_game_database: bool) -> list[str]:
 
 
 def merge_flags(pinned: list[str], extra: list[str]) -> list[str]:
-    """``pinned`` with ``extra`` appended; an extra ``--key=value`` replaces the pinned flag with that key."""
-    keys = {flag.split("=", 1)[0] for flag in extra if "=" in flag}
-    return [*(flag for flag in pinned if flag.split("=", 1)[0] not in keys), *extra]
+    """``pinned`` with ``extra`` appended; an extra ``--key=value`` replaces the pinned flag with that key.
+
+    Keys compare without case: the pinned flags themselves mix it (``--nes.DisableFrameSkipping``,
+    ``--snes.disableFrameSkipping``), and Mesen2 accepts either.
+    """
+    keys = {flag.split("=", 1)[0].lower() for flag in extra if "=" in flag}
+    return [*(flag for flag in pinned if flag.split("=", 1)[0].lower() not in keys), *extra]
 
 
 def fresh_copy(rom: Path, directory: Path) -> Path:
@@ -165,7 +169,7 @@ def capture_mesen2(
     try:
         if shutil.which("pgrep"):
             wait_for_other_mesen2(mesen2)
-        cmd = [str(mesen2), *COMMON_MESEN2_FLAGS, *flags, str(copy), str(CAPTURE_SCRIPT)]
+        cmd = [str(mesen2), *flags, str(copy), str(CAPTURE_SCRIPT)]
         run = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)
     finally:
         remove_mesen2_leftovers(mesen2_home, copy)
@@ -197,7 +201,7 @@ def capture_neser(rom: Path, frame: int, out: Path, neser: Path, flags: list[str
 
 def compare(rom: Path, frames: list[int], out_dir: Path, args: argparse.Namespace) -> int:
     system = system_for(rom)
-    flags_m = merge_flags(mesen2_flags(system, args.no_game_database), args.mesen2_arg)
+    flags_m = merge_flags([*COMMON_MESEN2_FLAGS, *mesen2_flags(system, args.no_game_database)], args.mesen2_arg)
     flags_n = [*NESER_FLAGS[system], *args.neser_arg]
     print(f"ROM: {rom}")
     print(f"Output: {out_dir}")
