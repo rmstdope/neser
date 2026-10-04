@@ -575,6 +575,40 @@ fn test_dmc_dma_overlap_4016_exercises_halt_and_dummy_cycles() {
     );
 }
 
+/// A DMC fetch that halts a $4016 read splits it into two contiguous reads, the
+/// halted one and the resumed one, so the pad is clocked twice and the CPU gets
+/// the second button (NESdev "DMA", Register conflicts; nr-8px).
+#[test]
+fn test_dmc_dma_halting_4016_read_clocks_the_pad_twice() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(
+        TimingMode::Ntsc,
+        Rc::clone(&memory),
+        Rc::clone(&ppu),
+        Rc::clone(&apu),
+    );
+    fake_cartridge(&mut cpu, &[0xA5; 17]);
+    cpu.bus
+        .borrow_mut()
+        .set_button(1, crate::nes::input::Button::B, true);
+    cpu.bus.borrow_mut().write(0x4016, 1, false);
+    cpu.bus.borrow_mut().write(0x4016, 0, false);
+    {
+        let mut apu = apu.borrow_mut();
+        apu.dmc_mut().write_sample_address(0x00);
+        apu.dmc_mut().write_sample_length(0x01); // 17 bytes, not a single-byte sample
+        apu.write_enable(0b0001_0000);
+        apu.dmc_mut().debug_set_transfer_start_delay(0);
+        apu.dmc_mut().debug_set_dma_pending(true);
+    }
+
+    let first = cpu.read(0x4016) & 1;
+    let second = cpu.read(0x4016) & 1;
+
+    assert_eq!(first, 1, "the halted read must return B, the A bit deleted");
+    assert_eq!(second, 0, "the next read must return Select");
+}
+
 #[test]
 fn test_dmc_dma_overlap_4017_get_cycle_returns_dmc_sample_value() {
     let (ppu, apu, memory) = create_test_memory();

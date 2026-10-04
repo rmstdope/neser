@@ -2364,7 +2364,7 @@ mod tests {
     #[test]
     fn test_dmc_dma_stalls_cpu_on_sample_fetch() {
         // DMC DMA reads should stall the CPU (RDY low) for 1-4 cycles.
-        // After set_enabled, there is a transfer_start_delay of 2-3 cycles
+        // After set_enabled, there is a transfer_start_delay of 3-4 cycles
         // before the DMA request becomes visible. Run enough ticks for the
         // delay to expire and the stall to occur.
         let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
