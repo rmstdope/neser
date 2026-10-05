@@ -106,7 +106,9 @@ pub struct Cpu {
     /// all interrupts. Mesen2 delays only IRQ, so games that wait for NMI in a branch loop
     /// can drift from Mesen2 captures (Vs. Duck Hunt from frame ~950). The navigator chose
     /// to keep the specification's behaviour in nr-046; Zap Ruder's X-tracking test also
-    /// depends on it.
+    /// depends on it. The navigator confirmed the choice in nr-nb0, where it alone puts
+    /// Metal Mech, Toki, Ikari III, Days of Thunder and Last Action Hero a frame behind
+    /// Mesen2's scene changes.
     skip_interrupt_latch_this_cycle: bool,
 
     // DMC DMA state machine
