@@ -653,8 +653,9 @@ pub trait Mapper {
         self.base_mut().write_chr(addr, value);
     }
 
-    /// Notify mapper of PPU address bus changes
-    /// Used for detecting A12 rising edges (for MMC3 IRQ)
+    /// Notify mapper of PPU address bus changes for CHR ($0000-$1FFF) fetches only.
+    /// Used for detecting A12 rising edges (for MMC3 IRQ). Nametable fetches arrive through
+    /// `ppu_nametable_address`; a mapper counting every A12 edge needs both.
     /// Default delegates to MMC3 when available, otherwise is a no-op.
     fn ppu_address_changed(&mut self, addr: u16) {
         if let Some(mmc3) = self.mmc3_delegate_mut() {
