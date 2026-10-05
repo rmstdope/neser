@@ -658,26 +658,17 @@ fn tick_pixel_output(ppu: &mut Ppu) {
 /// the first PPU cycle after the access (ref Mesen2 `_needVideoRamIncrement`).
 fn tick_delayed_updates(ppu: &mut Ppu) {
     ppu.apply_pending_vram_increment();
-    if ppu.update_vram_addr_delay > 0 {
-        ppu.update_vram_addr_delay -= 1;
-        if ppu.update_vram_addr_delay == 0 {
-            let old_v = ppu.registers.v();
-            let new_v = ppu.pending_vram_addr;
-            ppu.registers.set_v(new_v);
-
-            // Notify mapper of the delayed address change exactly once
-            // (this also handles MMC3 A12 tracking). While rendering, the bus carries the
-            // rendering fetches, not v, so the mapper sees nothing (nr-6gs).
-            if !ppu.is_actively_rendering() {
-                ppu.prime_a12_and_notify_mapper(old_v, new_v);
-            }
-
+    match ppu.update_vram_addr_delay {
+        0 => {}
+        1 => {
+            ppu.land_pending_vram_addr();
             trace_ppu!(3; "delayed v=t applied v={:04X} y={} x={}",
-                new_v,
+                ppu.registers.v(),
                 ppu.timing.scanline(),
                 ppu.timing.pixel(),
             );
         }
+        _ => ppu.update_vram_addr_delay -= 1,
     }
 }
 
