@@ -21,7 +21,7 @@ mod save_state;
 mod sprites;
 mod timing;
 
-pub(super) use background::{PixelSource, ScreenPixel, ScreenTarget, WindowLayer};
+pub(super) use background::{BgColumnFetch, PixelSource, ScreenPixel, ScreenTarget, WindowLayer};
 
 use crate::platform::config::RamInitMode;
 use crate::platform::ram_init::initialize_ram;
@@ -428,11 +428,15 @@ pub struct Ppu {
     bg_hofs: [u16; 4],
     /// Per-BG vertical scroll (10-bit), built via the shared BG_old write-twice latch.
     bg_vofs: [u16; 4],
-    /// `bg_vofs` as each tile column of the current line was fetched with it: the renderer
-    /// reads a column's vertical scroll from here, so a mid-line write reaches only the
-    /// columns fetched after it ([`Ppu::write_bg_vofs`]). Refreshed from `bg_vofs` at every
-    /// line start; derived, so not part of save states.
-    bg_vofs_fetched: [[u16; BG_FETCH_COLUMNS]; 4],
+    /// The line and `bg_vofs` each tile column was last fetched with: the renderer reads a
+    /// column's vertical position from here, so a mid-line VOFS write reaches only the
+    /// columns fetched after it ([`Ppu::write_bg_vofs`]), and a column whose fetch slot
+    /// passed during forced blank keeps an older line's tile ([`Ppu::start_bg_fetch_line`]).
+    /// Rebuilt from `bg_vofs` on restore, so not part of save states.
+    bg_fetched: [[BgColumnFetch; BG_FETCH_COLUMNS]; 4],
+    /// `bg_fetched` as it stood when the current line began, which forced blank set
+    /// mid-line restores to the columns it stops from being fetched.
+    bg_fetched_at_line_start: [[BgColumnFetch; BG_FETCH_COLUMNS]; 4],
     /// Shared write-twice latch (BG_old) for the BGnHOFS/BGnVOFS registers.
     bg_old: u8,
     /// The last byte written to any BGnHOFS register, whose bits 0-2 become the next HOFS
@@ -601,7 +605,8 @@ impl Ppu {
             bg_char_base: [0; 4],
             bg_hofs: [0; 4],
             bg_vofs: [0; 4],
-            bg_vofs_fetched: [[0; BG_FETCH_COLUMNS]; 4],
+            bg_fetched: [[BgColumnFetch::default(); BG_FETCH_COLUMNS]; 4],
+            bg_fetched_at_line_start: [[BgColumnFetch::default(); BG_FETCH_COLUMNS]; 4],
             bg_old: 0,
             bg_old_hofs: 0,
             tm: 0,

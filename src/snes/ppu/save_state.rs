@@ -79,7 +79,8 @@ impl Ppu {
             bg_char_base,
             bg_hofs,
             bg_vofs,
-            bg_vofs_fetched: _, // derived: rebuilt from bg_vofs on restore
+            bg_fetched: _,               // derived: rebuilt from bg_vofs on restore
+            bg_fetched_at_line_start: _, // derived: rebuilt from bg_vofs on restore
             bg_old,
             bg_old_hofs,
             tm,
@@ -409,7 +410,7 @@ impl Ppu {
         self.bg_char_base = bg_char_base;
         self.bg_hofs = bg_hofs;
         self.bg_vofs = bg_vofs;
-        self.refresh_bg_vofs_fetched();
+        self.reset_bg_fetched();
         self.bg_old = bg_old;
         self.bg_old_hofs = bg_old_hofs;
         self.tm = tm;

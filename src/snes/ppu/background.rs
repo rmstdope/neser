@@ -4,7 +4,7 @@
 //! shared across all eight `BGnHOFS`/`BGnVOFS` writes. The 10-bit scroll value is rebuilt on each
 //! write per the fullsnes formula.
 
-use super::{BG_FETCH_COLUMNS, BG_FETCH_LAST_DOT, CGRAM_SIZE, Ppu, VISIBLE_LINE_START, VRAM_SIZE};
+use super::{BG_FETCH_COLUMNS, BG_FETCH_LAST_DOT, CGRAM_SIZE, Ppu, VRAM_SIZE};
 
 /// A front-to-back priority slot in the Background Priority Chart: either a BG layer at a given
 /// tile-priority, or an OBJ priority level (0-3).
@@ -44,6 +44,15 @@ pub(crate) struct ScreenPixel {
     pub source: PixelSource,
 }
 
+/// What the PPU fetched for one BG tile column: the display line and the vertical scroll
+/// it fetched the tile with (Mesen2 `_layerData[layer].Tiles[column]`, which holds the
+/// tile itself; NESER reads VRAM when drawing, so the line and scroll stand in for it).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BgColumnFetch {
+    line: u16,
+    vofs: u16,
+}
+
 impl Ppu {
     /// Handle a write to `BGnHOFS` (horizontal scroll, write-twice via two latches):
     /// `hofs = (data << 8) | (bg_old & ~7) | (bg_old_hofs & 7)`.
@@ -67,32 +76,86 @@ impl Ppu {
     /// The new value reaches only the tile columns of this line whose tilemap entry has not
     /// been fetched yet ([`Ppu::first_unfetched_bg_column`]); the rest were fetched with the
     /// old scroll and keep it until the next line (Mesen2 `GetTilemapData` stores `VScroll`
-    /// with the column it fetches).
+    /// with the column it fetches). While no fetch is running (forced blank, VBlank) it
+    /// reaches no column: the next fetch takes it from `bg_vofs`, and a column left
+    /// unfetched keeps the scroll it was last fetched with.
     pub(super) fn write_bg_vofs(&mut self, bg: usize, value: u8) {
         let prev = self.bg_old as u16;
         self.bg_vofs[bg] = ((value as u16) << 8) | prev;
         self.bg_old = value;
+        if !self.bg_fetch_running() {
+            return;
+        }
         let first = self.first_unfetched_bg_column(bg);
         let vofs = self.bg_vofs[bg];
-        self.bg_vofs_fetched[bg][first..].fill(vofs);
+        for column in &mut self.bg_fetched[bg][first..] {
+            column.vofs = vofs;
+        }
     }
 
-    /// Start a line's BG fetch: every tile column is fetched with the scroll in force now.
-    pub(super) fn refresh_bg_vofs_fetched(&mut self) {
-        for bg in 0..4 {
-            self.bg_vofs_fetched[bg] = [self.bg_vofs[bg]; BG_FETCH_COLUMNS];
+    /// Whether the PPU is fetching BG tile data on this line: on the lines it draws (and
+    /// line 0, Mesen2 `ProcessEndOfScanline`), and never during forced blank (Mesen2
+    /// `FetchTileData` returns at once under `ForcedBlank`).
+    fn bg_fetch_running(&self) -> bool {
+        !self.forced_blank_enabled() && self.position.scanline < self.vblank_start_line()
+    }
+
+    /// This line's record for every column: the line itself and the scroll in force now.
+    fn fresh_bg_fetch(&self, bg: usize) -> BgColumnFetch {
+        BgColumnFetch {
+            line: self.position.scanline,
+            vofs: self.bg_vofs[bg],
         }
+    }
+
+    /// Start a line's BG fetch: every tile column is fetched with the scroll in force now,
+    /// unless forced blank stops the fetch, in which case each column keeps its last fetch.
+    pub(super) fn start_bg_fetch_line(&mut self) {
+        self.bg_fetched_at_line_start = self.bg_fetched;
+        if self.bg_fetch_running() {
+            for bg in 0..4 {
+                self.bg_fetched[bg] = [self.fresh_bg_fetch(bg); BG_FETCH_COLUMNS];
+            }
+        }
+    }
+
+    /// Forced blank was set or cleared mid-line: the columns still to be fetched on this
+    /// line are fetched from now on (cleared), or keep what they held when the line began
+    /// (set). Columns already past their fetch slot are unaffected either way.
+    pub(super) fn forced_blank_changed_bg_fetch(&mut self) {
+        if self.position.scanline >= self.vblank_start_line() {
+            return;
+        }
+        let fetching = !self.forced_blank_enabled();
+        for bg in 0..4 {
+            let first = self.first_unfetched_bg_column(bg);
+            if fetching {
+                let fresh = self.fresh_bg_fetch(bg);
+                self.bg_fetched[bg][first..].fill(fresh);
+            } else {
+                let held = self.bg_fetched_at_line_start[bg];
+                self.bg_fetched[bg][first..].copy_from_slice(&held[first..]);
+            }
+        }
+    }
+
+    /// Rebuild the fetch records from the registers, as if every column had just been
+    /// fetched on this line (save-state restore).
+    pub(super) fn reset_bg_fetched(&mut self) {
+        for bg in 0..4 {
+            self.bg_fetched[bg] = [self.fresh_bg_fetch(bg); BG_FETCH_COLUMNS];
+        }
+        self.bg_fetched_at_line_start = self.bg_fetched;
     }
 
     /// The first tile column of layer `bg` whose tilemap entry is still to be fetched on
     /// this line, or [`BG_FETCH_COLUMNS`] when the line's fetch is over.
     ///
     /// Column `k` is read at dot `8k + slot`, where the slot is the layer's place in its
-    /// mode's 8-dot fetch pattern (Mesen2 `SnesPpu::FetchTileData`). Outside the drawn
-    /// lines nothing is being rendered, so every column takes the new value at once.
+    /// mode's 8-dot fetch pattern (Mesen2 `SnesPpu::FetchTileData`). During VBlank
+    /// nothing is being fetched, so every column takes the new value at once.
     fn first_unfetched_bg_column(&self, bg: usize) -> usize {
-        let line = self.position.scanline;
-        if line < VISIBLE_LINE_START || line >= self.vblank_start_line() {
+        if self.position.scanline >= self.vblank_start_line() {
             return 0;
         }
         let dot = self.position.dot;
@@ -112,12 +175,29 @@ impl Ppu {
         (usize::from((dot - slot) / 8) + 1).min(BG_FETCH_COLUMNS)
     }
 
-    /// Layer `bg`'s vertical scroll for native pixel `x`, as its tile column was fetched.
-    /// The column is chosen with the live fine horizontal scroll, as Mesen2's
-    /// `RenderTilemap` does (`lookupIndex = (x + (HScroll & 7)) >> 3`).
-    fn fetched_bg_vofs(&self, bg: usize, x: u16) -> u16 {
+    /// Layer `bg`'s fetch record for native pixel `x`. The column is chosen with the live
+    /// fine horizontal scroll, as Mesen2's `RenderTilemap` does
+    /// (`lookupIndex = (x + (HScroll & 7)) >> 3`).
+    fn fetched_bg_column(&self, bg: usize, x: u16) -> BgColumnFetch {
         let column = usize::from((x + (self.bg_hofs[bg] & 7)) >> 3);
-        self.bg_vofs_fetched[bg][column.min(BG_FETCH_COLUMNS - 1)]
+        self.bg_fetched[bg][column.min(BG_FETCH_COLUMNS - 1)]
+    }
+
+    /// Layer `bg`'s vertical scroll for native pixel `x`, as its tile column was fetched.
+    fn fetched_bg_vofs(&self, bg: usize, x: u16) -> u16 {
+        self.fetched_bg_column(bg, x).vofs
+    }
+
+    /// The display line layer `bg`'s tile column for native pixel `x` was fetched for:
+    /// `screen_y`, the line being drawn, unless forced blank stopped this line's fetch of
+    /// that column, which then still holds the line of its last fetch (nr-g1d).
+    fn fetched_bg_line(&self, bg: usize, x: u16, screen_y: u16) -> u16 {
+        let fetch = self.fetched_bg_column(bg, x);
+        if fetch.line == self.position.scanline {
+            screen_y
+        } else {
+            fetch.line
+        }
     }
 
     /// Resolve the front-most main- and sub-screen pixels at visible screen `(x, y)`.
@@ -739,7 +819,7 @@ impl Ppu {
         let hscroll = (self.bg_hofs[bg] & 0x03FF) << 1;
         let hoffset = hx.wrapping_add(hscroll) & 0x07FF;
         let mut entry_col = hoffset >> 4;
-        let screen_y = y.wrapping_add(1);
+        let screen_y = self.fetched_bg_line(bg, hx >> 1, y.wrapping_add(1));
         // Screen interlace doubles the vertical fetch in modes 5/6 (the only modes
         // that reach this path): Mesen2 GetTilemapData/GetChrData compute
         // realY = (scanline << 1) | oddFrame when IsDoubleHeight, so each field
@@ -817,7 +897,7 @@ impl Ppu {
         // Framebuffer row `y` shows display line `y + 1` (line 0 is never rendered), and the BG
         // fetch adds BGnVOFS to the raw display line (ares fetchNameTable: vcounter() + vscroll;
         // Mesen2: realY = _scanline). Same convention as Mode 7's screen_y (mode7.rs).
-        let screen_y = y.wrapping_add(1);
+        let screen_y = self.fetched_bg_line(bg, x, y.wrapping_add(1));
         let mut hoffset = x.wrapping_add(hscroll);
         let mut voffset = screen_y.wrapping_add(vscroll);
 
@@ -3372,7 +3452,9 @@ mod tests {
     /// fetched tile column, `Ppu::bg_vofs_fetched`, nr-kis.) Mesen2 instead pre-fetches tilemap and CHR into
     /// `_layerData` in chunks bounded by H=263 (`SnesPpu::FetchTileData`), and skips
     /// fetching altogether while forced blank is set -- so there, the same write reaches
-    /// a tile only if it precedes that tile's fetch.
+    /// a tile only if it precedes that tile's fetch. (NESER models the forced-blank skip
+    /// alone, by keeping the line and scroll each column was last fetched with,
+    /// `Ppu::bg_fetched`, nr-g1d; the VRAM read stays per dot.)
     ///
     /// This model difference is what is left of issue 3042. The HDMA B-bus write clocks
     /// it was filed against are **not** the cause: over the burst preceding the divergent
@@ -3434,6 +3516,128 @@ mod tests {
                  contents -- NESER samples VRAM per dot, with no fetch stage in between"
             );
         }
+    }
+
+    /// Tick until the PPU has just processed `dot` of `scanline`.
+    fn tick_to_dot(ppu: &mut Ppu, scanline: u16, dot: u16) {
+        while !(ppu.position.scanline == scanline && ppu.position.dot == dot) {
+            ppu.tick();
+        }
+    }
+
+    /// White BG1 on map row 0 (BG lines 0-7) and transparent char 0 everywhere else, so
+    /// a column fetched for display line 1 is white and one fetched for line 9, on map
+    /// row 1, is black. Display line 1 renders with the display on, then forced blank covers
+    /// lines 2-8 and is still on when line 9 begins.
+    fn setup_white_row0_then_forced_blank(ppu: &mut Ppu) {
+        setup_white_bg1(ppu);
+        for col in 0..32usize {
+            set_vram_word(ppu, 0x400 + 32 + col, 0); // map row 1: char 0 (transparent)
+        }
+        tick_to_dot(ppu, 2, 0);
+        ppu.write_register(0x2100, 0x8F);
+    }
+
+    /// Framebuffer row 8 (display line 9) after the rest of that line is drawn.
+    fn finish_row8(ppu: &mut Ppu) -> Vec<[u8; 3]> {
+        tick_to_dot(ppu, 10, 0);
+        let rgb = ppu.screen_snapshot_rgb();
+        (0..256).map(|x| pixel(&rgb, x, 8)).collect()
+    }
+
+    /// While forced blank is on the PPU fetches no BG tile data, so the columns whose
+    /// fetch slot passed before the display was enabled mid-line are drawn from their
+    /// last fetch -- here display line 1's -- rather than from the current line (Mesen2
+    /// `SnesPpu::FetchTileData` returns at once under `ForcedBlank` and `_layerData`
+    /// keeps the old tiles). undisbeliever's `inidisp_enable_display_mid_frame.sfc`
+    /// shows those stale tiles on row 88, x=41-62 (nr-g1d).
+    ///
+    /// Mode 0 reads BG1's tilemap at dot `8k + 3`; enabling at dot 62 (pixel 40 drawn)
+    /// leaves columns 0-7 unfetched on this line, so pixels 41-63 are stale and 64-255
+    /// are fetched for line 9.
+    #[test]
+    fn columns_fetched_during_forced_blank_keep_their_last_fetch_when_display_is_enabled_mid_line()
+    {
+        let mut ppu = Ppu::new();
+        setup_white_row0_then_forced_blank(&mut ppu);
+        tick_to_dot(&mut ppu, 9, 62);
+        ppu.write_register(0x2100, 0x0F);
+        let row = finish_row8(&mut ppu);
+
+        assert!(
+            row[..=40].iter().all(|&px| px == BLACK),
+            "pixels drawn before the enable are force-blanked"
+        );
+        assert!(
+            row[41..64].iter().all(|&px| px == WHITE),
+            "columns 5-7 were not fetched on this line, so they keep line 1's white tiles"
+        );
+        assert!(
+            row[64..].iter().all(|&px| px == BLACK),
+            "columns fetched after the enable show line 9's (transparent) tiles"
+        );
+    }
+
+    /// Forced blank set again mid-line stops the fetch once more: the columns whose slot
+    /// passes while it is on keep their last fetch, and are stale again when the display
+    /// returns later on the same line.
+    #[test]
+    fn forced_blank_toggled_twice_on_one_line_leaves_each_blanked_fetch_slot_stale() {
+        let mut ppu = Ppu::new();
+        setup_white_row0_then_forced_blank(&mut ppu);
+        tick_to_dot(&mut ppu, 9, 62); // pixel 40; columns 0-7 already past
+        ppu.write_register(0x2100, 0x0F);
+        tick_to_dot(&mut ppu, 9, 122); // pixel 100; columns 0-14 past
+        ppu.write_register(0x2100, 0x8F);
+        tick_to_dot(&mut ppu, 9, 202); // pixel 180; columns 0-24 past
+        ppu.write_register(0x2100, 0x0F);
+        let row = finish_row8(&mut ppu);
+
+        assert!(
+            row[41..64].iter().all(|&px| px == WHITE),
+            "columns 5-7 stale"
+        );
+        assert!(
+            row[64..=100].iter().all(|&px| px == BLACK),
+            "columns 8-12 fresh"
+        );
+        assert!(
+            row[101..=180].iter().all(|&px| px == BLACK),
+            "force-blanked span"
+        );
+        assert!(
+            row[181..200].iter().all(|&px| px == WHITE),
+            "columns 22-24 were blanked at their fetch slot, so they keep line 1's tiles"
+        );
+        assert!(
+            row[200..].iter().all(|&px| px == BLACK),
+            "columns 25+ fresh"
+        );
+    }
+
+    /// A column not fetched keeps the vertical scroll of its last fetch too (Mesen2 stores
+    /// `VScroll` with the tile in `GetTilemapData`): a BG1VOFS write during forced blank
+    /// does not reach the stale columns, only the ones fetched after the enable.
+    #[test]
+    fn a_vofs_write_during_forced_blank_does_not_reach_the_stale_columns() {
+        let mut ppu = Ppu::new();
+        setup_white_row0_then_forced_blank(&mut ppu);
+        tick_to_dot(&mut ppu, 5, 100);
+        // VOFS = 8: line 1 would fetch map row 1 (transparent) with it, line 9 map row 2.
+        ppu.write_register(0x210E, 0x08);
+        ppu.write_register(0x210E, 0x00);
+        tick_to_dot(&mut ppu, 9, 62);
+        ppu.write_register(0x2100, 0x0F);
+        let row = finish_row8(&mut ppu);
+
+        assert!(
+            row[41..64].iter().all(|&px| px == WHITE),
+            "stale columns keep line 1 with the scroll they were fetched with (0)"
+        );
+        assert!(
+            row[64..].iter().all(|&px| px == BLACK),
+            "fresh columns use the new scroll"
+        );
     }
 
     /// BGnVOFS is sampled when a tile column's tilemap entry is fetched, not when its
