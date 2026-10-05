@@ -1899,6 +1899,15 @@ mod tests {
             .filter(|w| w[0] & 0x1000 == 0 && w[1] & 0x1000 != 0)
             .count();
         assert_eq!(rises, 8, "one A12 rise per sprite slot");
+        // nr-asq: the MC-ACC (mapper 4.3) clocks its counter once per eight A12 falls, so
+        // one clock per line needs exactly eight falls: after each sprite slot's pattern
+        // fetches, the next slot's garbage nametable fetch (or, after the last slot, the
+        // next line's first background fetch) drops A12.
+        let falls = addresses
+            .windows(2)
+            .filter(|w| w[0] & 0x1000 != 0 && w[1] & 0x1000 == 0)
+            .count();
+        assert_eq!(falls, 8, "one A12 fall per sprite slot");
         let nametable_fetches = addresses.iter().filter(|&&a| a >= 0x2000).count();
         // 32 tiles x (NT + AT) + 2 prefetch tiles x 2 + 2 dummy NT + 8 slots x 2 garbage NT.
         assert_eq!(nametable_fetches, 64 + 4 + 2 + 16);

@@ -562,7 +562,8 @@ impl MMC3Mapper {
 
     fn clock_irq_counter(&mut self) {
         // MMC3 IRQ counter behavior:
-        // - On each A12 rising edge, update the counter.
+        // - On each counter clock (an A12 rising edge; MC-ACC: every eighth falling edge),
+        //   update the counter.
         // - If counter==0 or reload requested: load counter from latch.
         // - Else: decrement counter.
         //
