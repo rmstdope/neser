@@ -23,6 +23,8 @@
 //!   not yet implemented for mapper 209; those bits are accepted but currently ignored.
 //!   (Standard mirroring via bits 0–1 is always active.)
 //! - MMC4-like automatic CHR bankswitching ($D003 bit 7) is not implemented.
+//! - IRQ source 2 (PPU reads) is approximated by CHR address changes; it does not count
+//!   nametable and attribute reads.
 
 use crate::nes::cartridge::BaseMapper;
 use crate::nes::cartridge::NametableLayout;

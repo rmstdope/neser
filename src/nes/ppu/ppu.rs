@@ -971,7 +971,8 @@ impl Ppu {
         self.registers.v()
     }
 
-    /// Read nametable for debugging/testing (doesn't affect PPU state)
+    /// Read nametable for testing through the mapper, as a rendering fetch does: it does not
+    /// change PPU state, but the mapper sees the address (`ppu_nametable_address`).
     #[cfg(test)]
     pub fn read_nametable_for_debug(&self, addr: u16) -> u8 {
         self.memory.read_nametable_mapped(addr, &self.cartridge)
@@ -1901,6 +1902,36 @@ mod tests {
         let nametable_fetches = addresses.iter().filter(|&&a| a >= 0x2000).count();
         // 32 tiles x (NT + AT) + 2 prefetch tiles x 2 + 2 dummy NT + 8 slots x 2 garbage NT.
         assert_eq!(nametable_fetches, 64 + 4 + 2 + 16);
+    }
+
+    /// nr-55b: with background at $1000 and sprites at $0000, every background tile's
+    /// nametable and attribute fetches drop A12 before its pattern fetches: one rise per
+    /// tile fetched, 32 visible plus the two prefetched for the next line.
+    #[test]
+    fn test_mapper_sees_a12_rise_per_background_tile_with_background_at_1000() {
+        let addresses: Rc<RefCell<Vec<u16>>> = Rc::new(RefCell::new(Vec::new()));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            BusAddressSpyMapper {
+                base: create_test_base_mapper(),
+                addresses: addresses.clone(),
+            },
+        ))));
+
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_control(0x10); // background $1000, sprites $0000
+        while ppu.scanline() != 10 {
+            ppu.run_ppu_cycles(1);
+        }
+        ppu.write_mask(0x18);
+        ppu.run_ppu_cycles(341); // all of line 10
+
+        let addresses = addresses.borrow();
+        let rises = addresses
+            .windows(2)
+            .filter(|w| w[0] & 0x1000 == 0 && w[1] & 0x1000 != 0)
+            .count();
+        assert_eq!(rises, 34, "one A12 rise per background tile fetched");
     }
 
     struct A12PrimingSpyMapper {
