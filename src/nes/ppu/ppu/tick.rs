@@ -274,7 +274,7 @@ fn tick_background(ppu: &mut Ppu) {
         // Also pre-fetch loads at pixels 329, 337 (cycles 329, 337)
         // Note: pixel 321 is % 8 == 1 but should NOT load (fetch not complete yet)
         if is_shift_reload_pixel {
-            ppu.background.load_shift_registers(ppu.registers.v());
+            ppu.background.load_shift_registers();
         }
     }
 

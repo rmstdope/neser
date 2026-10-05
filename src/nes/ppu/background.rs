@@ -12,6 +12,8 @@ pub struct Background {
     nametable_latch: u8,
     /// Attribute table byte latch (palette selection)
     attribute_latch: u8,
+    /// The 2-bit palette chosen from `attribute_latch` with the v that fetched it.
+    attribute_palette: u8,
     /// Pattern table low byte latch
     pattern_lo_latch: u8,
     /// Pattern table high byte latch
@@ -41,6 +43,7 @@ impl Background {
             bg_attribute_shift_hi: 0,
             nametable_latch: 0,
             attribute_latch: 0,
+            attribute_palette: 0,
             pattern_lo_latch: 0,
             pattern_hi_latch: 0,
             tile_addr: 0,
@@ -56,6 +59,7 @@ impl Background {
         self.bg_attribute_shift_hi = 0;
         self.nametable_latch = 0;
         self.attribute_latch = 0;
+        self.attribute_palette = 0;
         self.pattern_lo_latch = 0;
         self.pattern_hi_latch = 0;
         self.tile_addr = 0;
@@ -97,13 +101,19 @@ impl Background {
         self.tile_addr = pattern_table_base | (tile_index << 4) | fine_y;
     }
 
-    /// Fetch attribute byte from memory
+    /// Fetch attribute byte from memory and choose its 2-bit palette.
+    ///
+    /// The quadrant comes from coarse X bit 1 and coarse Y bit 1 of the same v that addressed
+    /// the byte, not the v at the later shift-register reload: a $2006 write can land between
+    /// the two (nr-9pn; Mesen2 NesPpu.cpp LoadTileInfo shifts at the fetch).
     pub fn fetch_attribute<F>(&mut self, v: u16, read_nametable: F)
     where
         F: Fn(u16) -> u8,
     {
         let addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
         self.attribute_latch = read_nametable(addr);
+        let shift = ((v >> 4) & 0x04) | (v & 0x02);
+        self.attribute_palette = (self.attribute_latch >> shift) & 0x03;
     }
 
     /// Fetch pattern table low byte from CHR ROM using the latched tile address.
@@ -123,7 +133,7 @@ impl Background {
     }
 
     /// Load shift registers from latches
-    pub fn load_shift_registers(&mut self, v: u16) {
+    pub fn load_shift_registers(&mut self) {
         // Load pattern data into LOW 8 bits, then shift left to move to HIGH 8 bits
         // The NES hardware loads new data and existing data shifts left
         self.bg_pattern_shift_lo =
@@ -131,11 +141,7 @@ impl Background {
         self.bg_pattern_shift_hi =
             (self.bg_pattern_shift_hi & 0xFF00) | (self.pattern_hi_latch as u16);
 
-        // Extract the correct 2-bit palette from the attribute byte
-        let coarse_x = v & 0x1F;
-        let coarse_y = (v >> 5) & 0x1F;
-        let shift = ((coarse_y & 0x02) << 1) | (coarse_x & 0x02);
-        let palette = (self.attribute_latch >> shift) & 0x03;
+        let palette = self.attribute_palette;
 
         // Load attribute data into LOW 8 bits (same as pattern data)
         let palette_lo_bits = if (palette & 0x01) != 0 { 0xFF } else { 0x00 };
@@ -218,8 +224,10 @@ impl Background {
         self.attribute_latch = state.attribute_latch;
         self.pattern_lo_latch = state.pattern_lo_latch;
         self.pattern_hi_latch = state.pattern_hi_latch;
-        // Snapshots are taken in vblank, where no fetch is between its two dots.
+        // Snapshots are taken in vblank, where no fetch is between its two dots and every
+        // palette is chosen again by an attribute fetch before the next reload.
         self.fetch_address = None;
+        self.attribute_palette = 0;
     }
 }
 
@@ -304,10 +312,23 @@ mod tests {
         let mut bg = Background::new();
         bg.pattern_lo_latch = 0xFF;
         bg.pattern_hi_latch = 0xFF;
-        bg.attribute_latch = 0x03;
-        bg.load_shift_registers(0);
+        bg.fetch_attribute(0, |_| 0x03);
+        bg.load_shift_registers();
         assert_eq!(bg.bg_pattern_shift_lo & 0xFF, 0xFF);
         assert_eq!(bg.bg_pattern_shift_hi & 0xFF, 0xFF);
+        assert_eq!(bg.bg_attribute_shift_lo & 0xFF, 0xFF);
+        assert_eq!(bg.bg_attribute_shift_hi & 0xFF, 0xFF);
+    }
+
+    #[test]
+    fn test_fetch_attribute_chooses_the_quadrant_of_its_own_v() {
+        // Coarse X 2 (bit 1 set), coarse Y 2 (bit 1 set): bottom-right, bits 7-6.
+        let v = (2 << 5) | 2;
+        let mut bg = Background::new();
+        bg.fetch_attribute(v, |_| 0b0100_0000);
+        bg.load_shift_registers();
+        assert_eq!(bg.bg_attribute_shift_lo & 0xFF, 0xFF);
+        assert_eq!(bg.bg_attribute_shift_hi & 0xFF, 0x00);
     }
 
     #[test]

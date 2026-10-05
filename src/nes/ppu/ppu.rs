@@ -2225,6 +2225,43 @@ mod tests {
         assert_eq!(ppu.debug_state().background.attribute_latch, 0xAA);
     }
 
+    // nr-9pn: Yo-Noid writes $2006 at dot 200 of its status-bar split line, so the delayed v
+    // lands between a tile's attribute fetch and the shift-register reload that takes it in.
+    // The 2-bit palette is chosen from the attribute byte with the coarse X and Y bit 1 of the
+    // v that fetched it (NESdev PPU scrolling, "Tile and attribute fetching"; Mesen2
+    // NesPpu.cpp LoadTileInfo shifts at the fetch). NESER chose it at the reload from the new
+    // v, picked another quadrant, and drew an 8-pixel run in the wrong palette.
+    #[test]
+    fn test_attribute_quadrant_is_chosen_with_the_v_that_fetched_it() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        // At dot 235 of line 0, v is $001D: attribute byte $23C7, top-left quadrant (bits
+        // 1-0) = palette 1. The new v $2012 has coarse X bit 1 set: top-right (bits 3-2) = 3.
+        ppu.write_address(0x23, false);
+        ppu.write_address(0xC7, false);
+        ppu.write_data(0b0000_1101);
+        ppu.write_address(0x00, false);
+        ppu.write_address(0x00, false);
+        ppu.write_mask(0x08);
+        while !(ppu.timing.scanline() == 0 && ppu.timing.pixel() == 232) {
+            ppu.run_ppu_cycles(1);
+        }
+
+        // Delayed by three dots: v becomes $2012 at the end of dot 235, after the fetch.
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x12, false);
+        ppu.run_ppu_cycles(9); // dots 233-241: the reload at dot 241 takes the tile in
+
+        let background = ppu.debug_state().background;
+        assert_eq!(
+            (
+                background.bg_attribute_shift_lo & 0x00F0,
+                background.bg_attribute_shift_hi & 0x00F0
+            ),
+            (0x00F0, 0x0000),
+            "palette 1, from the quadrant of the v that fetched the attribute byte"
+        );
+    }
+
     // nr-3jh: a fetch whose first dot ran with rendering off takes v in its second dot.
     #[test]
     fn test_fetch_after_rendering_turns_on_mid_fetch_uses_v() {
