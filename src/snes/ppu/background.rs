@@ -3526,8 +3526,8 @@ mod tests {
     }
 
     /// White BG1 on map row 0 (BG lines 0-7) and transparent char 0 everywhere else, so
-    /// a column fetched for display line 1 is white and one fetched for line 9 (map row
-    /// 1) is black. Display line 1 renders with the display on, then forced blank covers
+    /// a column fetched for display line 1 is white and one fetched for line 9, on map
+    /// row 1, is black. Display line 1 renders with the display on, then forced blank covers
     /// lines 2-8 and is still on when line 9 begins.
     fn setup_white_row0_then_forced_blank(ppu: &mut Ppu) {
         setup_white_bg1(ppu);
