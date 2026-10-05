@@ -534,12 +534,17 @@ impl ParsedRom {
         if let Some(mirroring) = entry.nametable_layout {
             self.header.mirroring = mirroring;
         }
-        // The board's PRG-RAM, as Mesen2 takes it from its database. An iNES 1.0 header
-        // cannot say "none" (byte 8 = 0 means 8 KiB), so without this every board without
-        // PRG-RAM would answer $6000-$7FFF from RAM instead of open bus (nr-i2x).
-        if entry.prg_ram_size.is_some() || entry.prg_nvram_size.is_some() {
-            self.header.prg_ram_size_bytes = Some(entry.prg_ram_size.unwrap_or(0) as usize);
-            self.header.prg_nvram_size_bytes = Some(entry.prg_nvram_size.unwrap_or(0) as usize);
+        // An iNES 1.0 header cannot say a board has no PRG-RAM (byte 8 = 0 means 8 KiB), so
+        // a row that states none (both sizes 0) replaces it; without this such boards
+        // answered $6000-$7FFF from RAM instead of open bus (nr-i2x). Only that case: a row
+        // giving RAM or leaving a size blank keeps the header's size, and a NES 2.0 header
+        // states its own (Mesen2 applies no database to NES 2.0 either).
+        if self.header.header_version != "2.0"
+            && entry.prg_ram_size == Some(0)
+            && entry.prg_nvram_size == Some(0)
+        {
+            self.header.prg_ram_size_bytes = Some(0);
+            self.header.prg_nvram_size_bytes = Some(0);
         }
         if let Some(timing) = entry.hardware.map(|h| h.timing_mode()) {
             self.header.timing_mode = timing;
@@ -1240,6 +1245,70 @@ mod tests {
 
         assert_eq!(parsed.header.vs_ppu_type, Some(0), "RP2C03");
         assert_eq!(parsed.header.vs_hardware_type, Some(0), "Vs. UniSystem");
+    }
+
+    /// Apply a database row with the given PRG-NVRAM and PRG-RAM columns to a 32 KiB/8 KiB
+    /// mapper-1 ROM whose header byte 8 is `byte8`, as NES 2.0 when `nes2`.
+    fn prg_ram_after_db(
+        nvram: &str,
+        ram: &str,
+        byte8: u8,
+        nes2: bool,
+    ) -> (Option<usize>, Option<usize>) {
+        use crate::nes::cartridge::rom_db::RomDb;
+
+        let csv =
+            format!("1,Game,,DEADBEEF,0,Licensed,1,0,H,32768,,{nvram},{ram},8192,,0,0,1,,,1\n");
+        let db = RomDb::from_csv_content(&csv);
+        let mut data = vec![0u8; 16 + 32768 + 8192];
+        data[0..4].copy_from_slice(b"NES\x1A");
+        data[4] = 2;
+        data[5] = 1;
+        data[6] = 0x12; // mapper 1, battery
+        if nes2 {
+            data[7] = 0x08;
+            data[10] = 0x70; // 8 KiB PRG-NVRAM
+        } else {
+            data[8] = byte8;
+        }
+        let mut parsed = ParsedRom::parse(&data, None).unwrap();
+        parsed.crc32 = 0xDEADBEEF;
+        parsed.apply_db_overrides(&data, &db).unwrap();
+        (
+            parsed.header.prg_ram_size_bytes,
+            parsed.header.prg_nvram_size_bytes,
+        )
+    }
+
+    /// nr-i2x: an iNES 1.0 header cannot say "no PRG-RAM" (byte 8 = 0 means 8 KiB); a
+    /// database row that says none (both sizes 0) is what tells NESER the board has none.
+    #[test]
+    fn apply_db_overrides_takes_no_prg_ram_from_the_rom_db_for_an_ines1_header() {
+        assert_eq!(prg_ram_after_db("0", "0", 0, false), (Some(0), Some(0)));
+    }
+
+    /// A row that gives PRG-RAM leaves the header's size alone: 8 KiB work RAM plus 8 KiB
+    /// save RAM is a 16 KiB SOROM board, which a header with byte 8 = 2 states correctly.
+    #[test]
+    fn apply_db_overrides_keeps_the_header_prg_ram_when_the_row_gives_some() {
+        assert_eq!(
+            prg_ram_after_db("8192", "8192", 2, false),
+            (Some(16384), None)
+        );
+    }
+
+    /// A blank column is unknown, not "none" (Sweet Home's translation row leaves PRG-NVRAM
+    /// blank, and the game needs its battery RAM).
+    #[test]
+    fn apply_db_overrides_keeps_the_header_prg_ram_when_a_column_is_blank() {
+        assert_eq!(prg_ram_after_db("", "0", 0, false), (Some(8192), None));
+    }
+
+    /// A NES 2.0 header states its PRG-RAM itself, and Mesen2 never applies its database to
+    /// one; the row does not replace it.
+    #[test]
+    fn apply_db_overrides_keeps_a_nes2_headers_prg_ram() {
+        assert_eq!(prg_ram_after_db("0", "0", 0, true), (None, Some(8192)));
     }
 
     #[test]
