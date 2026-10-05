@@ -483,6 +483,33 @@ mod tests {
         Cartridge::load_from_file(data, unique_temp_path("in_memory_test.nes"), None)
     }
 
+    /// An iNES 1.0 header cannot say "no PRG-RAM" (byte 8 = 0 means 8 KiB), so the ROM
+    /// database is what knows a board has none. Super Spy Hunter is NES-TLROM (MMC3, no
+    /// PRG-RAM, database row AB41445E); its random-number routine reads $6000-$7FFF, which
+    /// on that board is open bus, and with 8 KiB of RAM there NESER picked other stars than
+    /// Mesen2 from frame 18 (nr-i2x).
+    #[test]
+    fn test_rom_db_without_prg_ram_leaves_6000_open_bus_on_an_ines1_mmc3() {
+        let rom = create_test_rom_with_mapper(2, 1, 4, false, 0);
+        let crc =
+            crate::nes::cartridge::calculate_rom_crc32(&rom[16..16 + 32768], &rom[16 + 32768..]);
+        let db = RomDb::from_csv_content(&format!(
+            "1,No PRG-RAM board,,{crc:08X},0,Licensed,4,0,H,32768,,0,0,8192,,0,0,0,,,1\n"
+        ));
+        let mut cart =
+            Cartridge::load_from_file(&rom, unique_temp_path("no_prg_ram.nes"), Some(&db))
+                .expect("load_from_file should succeed");
+
+        cart.mapper_mut().write_prg(0xA001, 0x80); // MMC3: PRG-RAM chip enable
+        cart.mapper_mut().write_prg(0x6000, 0x42);
+
+        assert_eq!(
+            cart.mapper().read_prg_open_bus(0x6000, 0x7E),
+            0x7E,
+            "the database says the board has no PRG-RAM, so $6000 is open bus"
+        );
+    }
+
     #[test]
     fn test_load_from_file_parses_ines_rom() {
         // iNES Flags 6 bit 0 set => vertical mirroring.

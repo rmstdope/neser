@@ -534,6 +534,13 @@ impl ParsedRom {
         if let Some(mirroring) = entry.nametable_layout {
             self.header.mirroring = mirroring;
         }
+        // The board's PRG-RAM, as Mesen2 takes it from its database. An iNES 1.0 header
+        // cannot say "none" (byte 8 = 0 means 8 KiB), so without this every board without
+        // PRG-RAM would answer $6000-$7FFF from RAM instead of open bus (nr-i2x).
+        if entry.prg_ram_size.is_some() || entry.prg_nvram_size.is_some() {
+            self.header.prg_ram_size_bytes = Some(entry.prg_ram_size.unwrap_or(0) as usize);
+            self.header.prg_nvram_size_bytes = Some(entry.prg_nvram_size.unwrap_or(0) as usize);
+        }
         if let Some(timing) = entry.hardware.map(|h| h.timing_mode()) {
             self.header.timing_mode = timing;
         }
