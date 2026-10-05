@@ -663,12 +663,16 @@ pub trait Mapper {
         }
     }
 
-    /// Notify mapper that the PPU put a nametable address ($2000-$2FFF) on its bus.
+    /// Notify mapper that the PPU put a nametable address ($2000-$2FFF) on its bus, or, for
+    /// a PPUDATA read of $3000-$3FFF, that address itself.
     ///
     /// The PPU reports CHR fetches through `ppu_address_changed`; this reports the
     /// nametable and attribute fetches in between, including the two garbage nametable
     /// fetches of each sprite slot, so a mapper counting every PPU A12 rise sees A12 fall
-    /// between sprite pattern fetches. Default implementation is a no-op.
+    /// between sprite pattern fetches. A PPUDATA read of $3000-$3FFF (a nametable
+    /// mirror or palette RAM) reports that address here, since that is what the bus carries
+    /// while the byte or read buffer comes from the nametable underneath. Default
+    /// implementation is a no-op.
     fn ppu_nametable_address(&mut self, _addr: u16) {}
 
     /// Set the current PPU CHR fetch kind.
