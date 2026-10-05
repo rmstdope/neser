@@ -49,7 +49,11 @@ impl Ppu {
                 {
                     self.reload_oam_address();
                 }
+                let was_forced_blank = self.forced_blank_enabled();
                 self.inidisp = value;
+                if was_forced_blank != self.forced_blank_enabled() {
+                    self.forced_blank_changed_bg_fetch();
+                }
             }
             // OBSEL: OBJ size pair (bits 7-5), name gap (bits 4-3), OBJ tile name base (bits 2-0).
             0x2101 => self.obsel = value,

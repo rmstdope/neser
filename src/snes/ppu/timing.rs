@@ -203,7 +203,7 @@ impl Ppu {
     fn on_scanline_start(&mut self) {
         let scanline = self.position.scanline;
         self.latch_line_timing_profile();
-        self.refresh_bg_vofs_fetched();
+        self.start_bg_fetch_line();
         let vblank_start_line = self.vblank_start_line();
         // Advance the vertical mosaic block counter for visible scanlines.
         if (VISIBLE_LINE_START..vblank_start_line).contains(&scanline) {
