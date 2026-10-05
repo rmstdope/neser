@@ -489,6 +489,12 @@ impl Ppu {
                 self.registers.oam_address = self.registers.oam_address.wrapping_add(1);
                 trace_ppu!(2; "OAMADDR after glitch: {:02X}", self.registers.oam_address);
             }
+            // Rendering stopped mid-frame: the bus goes back to v, which a mapper watching
+            // A12 sees (Mesen2 NesPpu::UpdateState; nr-e10).
+            if self.is_on_rendering_scanline() {
+                let v = self.registers.v() & 0x3FFF;
+                self.with_mapper_mut(|mapper| mapper.ppu_address_changed(v));
+            }
         }
 
         // Mid-scanline grayscale toggles take effect essentially immediately on real hardware.
@@ -664,21 +670,29 @@ impl Ppu {
             }
             0x2000..=0x3EFF => {
                 // Nametable: buffered read
+                // The bus carries the address itself: $3000-$3EFF keeps A12 high (nr-e10).
                 let buffered = self.registers.data_buffer();
                 self.registers
-                    .set_data_buffer(self.memory.read_nametable_mapped(addr, &self.cartridge));
+                    .set_data_buffer(self.memory.read_nametable_mapped_on_bus(
+                        addr,
+                        addr & 0x3FFF,
+                        &self.cartridge,
+                    ));
                 buffered
             }
             0x3F00..=0x3FFF => {
                 // Palette: immediate read
                 // Bits 5-0 come from palette, bits 7-6 from open bus
                 let palette_data = self.memory.read_palette(addr);
-                // Update buffer with nametable data underneath
+                // Update buffer with nametable data underneath. The bus carries the
+                // palette address itself, so A12 stays high (nr-e10).
                 let mirrored_addr = addr & 0x2FFF;
-                self.registers.set_data_buffer(
-                    self.memory
-                        .read_nametable_mapped(mirrored_addr, &self.cartridge),
-                );
+                self.registers
+                    .set_data_buffer(self.memory.read_nametable_mapped_on_bus(
+                        mirrored_addr,
+                        addr & 0x3FFF,
+                        &self.cartridge,
+                    ));
                 // Combine palette data (bits 5-0) with open bus (bits 7-6)
                 let io_bus = self.registers.io_bus();
                 (io_bus & 0xC0) | (palette_data & 0x3F)
@@ -1943,6 +1957,74 @@ mod tests {
             .filter(|w| w[0] & 0x1000 == 0 && w[1] & 0x1000 != 0)
             .count();
         assert_eq!(rises, 34, "one A12 rise per background tile fetched");
+    }
+
+    fn bus_address_spy_ppu() -> (Ppu, Rc<RefCell<Vec<u16>>>) {
+        let addresses: Rc<RefCell<Vec<u16>>> = Rc::new(RefCell::new(Vec::new()));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            BusAddressSpyMapper {
+                base: create_test_base_mapper(),
+                addresses: addresses.clone(),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        (ppu, addresses)
+    }
+
+    /// nr-e10: a PPUDATA read of palette RAM puts the palette address, $3Fxx, on the PPU
+    /// bus (the buffer is filled from the nametable underneath), so A12 stays high; a
+    /// falling-edge counter (Acclaim MC-ACC) must not see the mirrored $2Fxx.
+    #[test]
+    fn test_palette_read_puts_3fxx_on_the_mapper_bus() {
+        let (mut ppu, addresses) = bus_address_spy_ppu();
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x11, false);
+        addresses.borrow_mut().clear();
+        ppu.read_data();
+        let addresses = addresses.borrow();
+        assert!(
+            addresses.iter().all(|&a| a & 0x1000 != 0),
+            "A12 must stay high through a palette read, saw {addresses:04X?}"
+        );
+        assert!(addresses.contains(&0x3F11), "saw {addresses:04X?}");
+    }
+
+    /// nr-e10: a PPUDATA read of $3000-$3EFF puts that address on the bus, A12 high, though
+    /// the byte comes from the $2xxx nametable it mirrors.
+    #[test]
+    fn test_nametable_mirror_read_puts_3xxx_on_the_mapper_bus() {
+        let (mut ppu, addresses) = bus_address_spy_ppu();
+        ppu.write_address(0x30, false);
+        ppu.write_address(0x00, false);
+        addresses.borrow_mut().clear();
+        ppu.read_data();
+        let addresses = addresses.borrow();
+        assert!(
+            addresses.iter().all(|&a| a & 0x1000 != 0),
+            "A12 must stay high through a $3000 read, saw {addresses:04X?}"
+        );
+        assert!(addresses.contains(&0x3000), "saw {addresses:04X?}");
+    }
+
+    /// nr-e10: turning rendering off mid-line puts v back on the PPU bus (Mesen2
+    /// NesPpu::UpdateState, "When rendering is disabled midscreen, set the vram bus back to
+    /// the value of 'v'"), so after a sprite pattern fetch from $1xxx A12 falls.
+    #[test]
+    fn test_disabling_rendering_mid_line_puts_v_on_the_mapper_bus() {
+        let (mut ppu, addresses) = bus_address_spy_ppu();
+        ppu.write_control(0x08); // background $0000, sprites $1000
+        while ppu.scanline() != 10 {
+            ppu.run_ppu_cycles(1);
+        }
+        ppu.write_mask(0x18);
+        while ppu.pixel() != 288 {
+            ppu.run_ppu_cycles(1); // through slot 3's pattern fetches from $1xxx
+        }
+        assert_ne!(*addresses.borrow().last().unwrap() & 0x1000, 0);
+        ppu.write_mask(0x00);
+        let v = ppu.registers.v() & 0x3FFF;
+        assert_eq!(*addresses.borrow().last().unwrap(), v);
     }
 
     struct A12PrimingSpyMapper {
