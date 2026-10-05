@@ -458,6 +458,12 @@ fn tick_sprites(ppu: &mut Ppu) {
     {
         let sprite_pattern_table = ppu.registers.sprite_pattern_table_addr();
         let cartridge = &ppu.cartridge;
+        // Each sprite slot opens with two garbage nametable fetches (second cycles at
+        // slot dots 1 and 3), which pull A12 low between the sprite pattern fetches.
+        if matches!((pixel - SPRITE_TILE_LOAD_START) % 8, 1 | 3) {
+            ppu.memory
+                .notify_nametable_address(ppu.registers.v(), cartridge);
+        }
         ppu.sprites.fetch_sprite_pattern(
             pixel,
             scanline,

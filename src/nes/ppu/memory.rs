@@ -189,12 +189,23 @@ impl Memory {
         if let Some(cart) = cartridge {
             let mut cart = cart.borrow_mut();
             let mapper = cart.mapper_mut();
+            mapper.ppu_nametable_address(masked_addr);
             if let Some(value) = mapper.read_nametable(masked_addr) {
                 return value;
             }
         }
 
         self.read_nametable(masked_addr)
+    }
+
+    /// Tell the mapper the PPU put a nametable address on its bus without reading it: the
+    /// garbage nametable fetches of the sprite slots, whose byte nothing uses.
+    pub fn notify_nametable_address(&self, addr: u16, cartridge: &Option<Rc<RefCell<Cartridge>>>) {
+        if let Some(cart) = cartridge {
+            cart.borrow_mut()
+                .mapper_mut()
+                .ppu_nametable_address(0x2000 | (addr & 0x0FFF));
+        }
     }
 
     /// Write to nametable at the specified address (with mirroring)

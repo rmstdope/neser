@@ -23,6 +23,8 @@
 //!   not yet implemented for mapper 209; those bits are accepted but currently ignored.
 //!   (Standard mirroring via bits 0–1 is always active.)
 //! - MMC4-like automatic CHR bankswitching ($D003 bit 7) is not implemented.
+//! - IRQ source 2 (PPU reads) is approximated by CHR address changes; it does not count
+//!   nametable and attribute reads.
 
 use crate::nes::cartridge::BaseMapper;
 use crate::nes::cartridge::NametableLayout;
@@ -149,7 +151,7 @@ impl JyCompanyMapper {
             irq_xor: 0,
             mul_a: 0,
             mul_b: 0,
-            a12: A12RisingEdgeDetector::new(3),
+            a12: A12RisingEdgeDetector::new(0),
         };
         m.update_banks();
         m
@@ -412,9 +414,15 @@ impl Mapper for JyCompanyMapper {
         self.irq_pending
     }
 
+    fn ppu_nametable_address(&mut self, addr: u16) {
+        // A nametable fetch drives A12 low, so the next pattern fetch from $1xxx is a rise.
+        self.a12.update(addr);
+    }
+
     fn ppu_address_changed(&mut self, addr: u16) {
-        // Always update the A12 edge detector for correct filtering,
-        // regardless of which IRQ source is selected.
+        // Always track A12, regardless of which IRQ source is selected. Source 1 counts
+        // every rise, unfiltered (eight per line with sprites at $1000), so the detector has
+        // no debounce threshold.
         let a12_rose = self.a12.update(addr);
 
         if self.irq_source == IrqSource::PpuA12Rise && a12_rose {
@@ -503,7 +511,7 @@ impl Mapper for JyCompanyMapper {
         self.irq_xor = 0;
         self.mul_a = 0;
         self.mul_b = 0;
-        self.a12 = A12RisingEdgeDetector::new(3);
+        self.a12 = A12RisingEdgeDetector::new(0);
         self.base.set_mirroring(NametableLayout::Vertical);
         self.update_banks();
     }
@@ -888,6 +896,58 @@ mod tests {
         assert!(
             fired,
             "IRQ must fire on A12 rising edges when source=PpuA12Rise"
+        );
+    }
+
+    /// nr-55b: Final Fight 3 counts PPU A12 rises (source 1, prescaler mask $07, counting
+    /// down) to split the screen between the picture and the story text. The wiki's IRQ
+    /// mode table says source 1 is "PPU A12 rise (unfiltered, eight per scanline)": with
+    /// background at $0000 and sprites at $1000, each of the eight sprite slots fetches two
+    /// garbage nametable bytes (A12 low) before its pattern bytes (A12 high). So the
+    /// counter steps once per rendered line, and a counter of 2 wraps to $FF on line 1:
+    /// pre-render 2→1, line 0 1→0, line 1 0→$FF.
+    #[test]
+    fn a12_irq_source_counts_eight_rises_per_rendered_scanline() {
+        use crate::nes::cartridge::Cartridge;
+        use crate::nes::console::TimingMode;
+        use crate::nes::ppu::Ppu;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xC001, 0x85); // count down, prescaler mask $07, source A12 rise
+        mapper.write_prg(0xC004, 0x00); // prescaler 0
+        mapper.write_prg(0xC005, 0x02); // counter 2
+        mapper.write_prg(0xC003, 0x00); // enable
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            mapper,
+        ))));
+
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart.clone());
+        ppu.write_control(0x08); // background $0000, sprites $1000
+
+        // Turn rendering on at the start of the pre-render line, then tick the mapper's
+        // M2 once per three dots.
+        while ppu.scanline() != 261 {
+            ppu.run_ppu_cycles(1);
+        }
+        ppu.write_mask(0x18); // background and sprites on
+        let mut irq_line = None;
+        for dot in 0..(341 * 30) {
+            ppu.run_ppu_cycles(1);
+            if dot % 3 == 2 {
+                cart.borrow_mut().mapper_mut().cpu_cycle();
+            }
+            if cart.borrow().mapper().irq_pending() {
+                irq_line = Some(ppu.scanline());
+                break;
+            }
+        }
+        assert_eq!(
+            irq_line,
+            Some(1),
+            "the counter must step once per line (eight unfiltered A12 rises), wrapping on line 1"
         );
     }
 
