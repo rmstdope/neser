@@ -35,7 +35,8 @@ use crate::trace_mapper;
 /// Common boards: NES-TLROM, NES-TKROM, NES-TQROM, NES-TSROM
 ///
 /// Notes:
-/// - Scanline IRQ counter triggered by PPU A12 rising edges
+/// - Scanline IRQ counter triggered by PPU A12 rising edges (MC-ACC, submapper 3: every
+///   eighth falling edge)
 /// - Two IRQ behaviors (Sharp vs NEC) selected per-ROM via CRC database
 /// - Register $8000 selects target bank and PRG/CHR swap mode
 /// - Used in Super Mario Bros. 3, Mega Man 3-6, Kirby's Adventure
@@ -76,6 +77,15 @@ pub struct MMC3Mapper {
     mmc6: bool,
     /// MMC6 $A001 (HhLl xxxx); forced to $00 while $8000 bit 5 is clear.
     mmc6_protect: u8,
+
+    /// Acclaim MC-ACC (mapper 4, submapper 3): the counter is clocked through a ÷8
+    /// prescaler by falling edges of PPU A12, unfiltered, instead of by filtered rises.
+    mc_acc: bool,
+    /// MC-ACC: A12 as last seen on the PPU bus, to find its falling edges.
+    mc_acc_prev_a12: bool,
+    /// MC-ACC: falling edges seen in the current group of eight (0-7); the counter clocks
+    /// on the first of each group, and a $C001 write starts a new group.
+    mc_acc_pulses: u8,
 }
 
 // ============================================================================
@@ -94,6 +104,9 @@ impl MMC3Mapper {
     const MMC6_SUBMAPPER: u8 = 1;
     const MMC6_PRG_RAM_SIZE: usize = 0x0400; // 1KB
     const MMC6_RAM_ENABLE_MASK: u8 = 0b0010_0000; // $8000 bit 5
+
+    const MC_ACC_SUBMAPPER: u8 = 3;
+    const MC_ACC_PRESCALER: u8 = 8;
 
     pub fn new(ctx: crate::nes::cartridge::mapper::MapperContext) -> Self {
         let crc32 = ctx.crc32;
@@ -160,6 +173,7 @@ impl MMC3Mapper {
         use_alternate_irq: bool,
     ) -> Self {
         let mmc6 = ctx.mapper == 4 && ctx.submapper == Self::MMC6_SUBMAPPER;
+        let mc_acc = ctx.mapper == 4 && ctx.submapper == Self::MC_ACC_SUBMAPPER;
         let prg_ram_size = if mmc6 {
             Self::MMC6_PRG_RAM_SIZE
         } else {
@@ -203,6 +217,10 @@ impl MMC3Mapper {
 
             mmc6,
             mmc6_protect: 0,
+
+            mc_acc,
+            mc_acc_prev_a12: false,
+            mc_acc_pulses: 0,
         };
         mapper.base.set_mirroring(mirroring);
         mapper.update_banks();
@@ -542,7 +560,7 @@ impl MMC3Mapper {
     //
     // See: https://www.nesdev.org/wiki/MMC3#IRQ_Specifics
 
-    fn clock_irq_counter_on_a12_rising_edge(&mut self) {
+    fn clock_irq_counter(&mut self) {
         // MMC3 IRQ counter behavior:
         // - On each A12 rising edge, update the counter.
         // - If counter==0 or reload requested: load counter from latch.
@@ -582,6 +600,22 @@ impl MMC3Mapper {
             trace_mapper!(1; "MMC3 IRQ ASSERTED!");
             self.irq_asserted = true;
         }
+    }
+
+    /// MC-ACC: track A12 and clock the counter on the first falling edge of every eight
+    /// (NESdev MMC3, "MC-ACC"; the prescaler phase is krikzz's research, as in Mesen2).
+    fn mc_acc_a12(&mut self, addr: u16) {
+        let a12 = addr & 0x1000 != 0;
+        let falling = self.mc_acc_prev_a12 && !a12;
+        self.mc_acc_prev_a12 = a12;
+        if !falling {
+            return;
+        }
+        if self.mc_acc_pulses == 0 {
+            trace_mapper!(5; "MC-ACC A12 falling edge clocks the counter: addr=${:04X}", addr);
+            self.clock_irq_counter();
+        }
+        self.mc_acc_pulses = (self.mc_acc_pulses + 1) % Self::MC_ACC_PRESCALER;
     }
 
     // ============================================================================
@@ -854,6 +888,105 @@ mod tests {
         restored.load_wram_snapshot(&wram);
         assert_eq!(restored.read_prg_open_bus(0x7000, 0x5C), 0xAA);
         assert_eq!(restored.read_prg_open_bus(0x7200, 0x5C), 0x00);
+    }
+
+    // --- Acclaim MC-ACC (mapper 4, submapper 3), https://www.nesdev.org/wiki/MMC3 ---
+    // "The scanline counter uses a ÷8 prescaler instead of filtering A12, clocked by
+    // falling edges." The prescaler's phase (the counter clocks on the first of every
+    // eight falling edges) and its reset on a $C001 write are not on the wiki: they come
+    // from krikzz's hardware research as Mesen2 implements it (Mmc3Variants/McAcc.h).
+
+    fn create_mc_acc_mapper() -> Box<dyn Mapper> {
+        let ctx = MapperContext::new_for_test(
+            4,
+            banked_data(8 * 1024, 16),
+            banked_data(1024, 16),
+            NametableLayout::Horizontal,
+        )
+        .with_submapper(3);
+        create_mapper(ctx).expect("MC-ACC (mapper 4.3) should be implemented")
+    }
+
+    /// One A12 pulse as 8x8 sprites at $1000 make it: high (the pattern fetch), then
+    /// low (the next slot's garbage nametable fetch, which the PPU reports through
+    /// `ppu_nametable_address`), with no CPU cycle in between.
+    fn a12_pulse(mapper: &mut Box<dyn Mapper>) {
+        mapper.ppu_address_changed(0x1000);
+        mapper.ppu_nametable_address(0x2000);
+    }
+
+    #[test]
+    fn test_mc_acc_counter_clocks_on_a12_falling_edge_not_rising() {
+        let mut mapper = create_mc_acc_mapper();
+        mapper.write_prg(0xC000, 0); // latch 0: the first clock reloads to 0 and fires
+        mapper.write_prg(0xC001, 0);
+        mapper.write_prg(0xE001, 0);
+
+        mapper.ppu_address_changed(0x0000);
+        mapper.ppu_address_changed(0x1000); // rising edge, no low-time filter on MC-ACC
+        assert!(!mapper.irq_pending(), "MC-ACC must not clock on A12 rising");
+        mapper.ppu_address_changed(0x0000); // falling edge
+        assert!(mapper.irq_pending(), "MC-ACC clocks on A12 falling");
+    }
+
+    #[test]
+    fn test_mc_acc_counter_clocks_once_per_eight_falling_edges() {
+        let mut mapper = create_mc_acc_mapper();
+        mapper.write_prg(0xC000, 1);
+        mapper.write_prg(0xC001, 0);
+        mapper.write_prg(0xE001, 0);
+
+        // Pulse 1 clocks: reload to 1, no IRQ. Pulses 2-8 are swallowed by the prescaler.
+        for pulse in 1..=8 {
+            a12_pulse(&mut mapper);
+            assert!(!mapper.irq_pending(), "no IRQ after pulse {pulse}");
+        }
+        // Pulse 9 starts the next group of eight and clocks: 1 -> 0, IRQ.
+        a12_pulse(&mut mapper);
+        assert!(mapper.irq_pending(), "IRQ on the 9th falling edge");
+    }
+
+    #[test]
+    fn test_mc_acc_c001_resets_the_prescaler() {
+        let mut mapper = create_mc_acc_mapper();
+        mapper.write_prg(0xC000, 0);
+        mapper.write_prg(0xE001, 0);
+        mapper.write_prg(0xC001, 0);
+        a12_pulse(&mut mapper); // clocks: reload to 0, IRQ
+        mapper.write_prg(0xE000, 0); // acknowledge
+        mapper.write_prg(0xE001, 0);
+        a12_pulse(&mut mapper); // 2nd of eight: swallowed
+        assert!(!mapper.irq_pending());
+
+        mapper.write_prg(0xC001, 0); // resets the prescaler: the next edge is the 1st
+        a12_pulse(&mut mapper);
+        assert!(
+            mapper.irq_pending(),
+            "the first falling edge after $C001 clocks"
+        );
+    }
+
+    #[test]
+    fn test_mc_acc_save_state_keeps_the_prescaler() {
+        let mut mapper = create_mc_acc_mapper();
+        mapper.write_prg(0xC000, 0);
+        mapper.write_prg(0xC001, 0);
+        mapper.write_prg(0xE001, 0);
+        a12_pulse(&mut mapper); // 1st clocks
+        mapper.write_prg(0xE000, 0);
+        mapper.write_prg(0xE001, 0);
+        for _ in 2..=8 {
+            a12_pulse(&mut mapper);
+        }
+        let snapshot = mapper.registers_snapshot();
+        let mut restored = create_mc_acc_mapper();
+        restored.restore_registers(&snapshot);
+        assert!(!restored.irq_pending());
+        a12_pulse(&mut restored); // 9th: clocks again
+        assert!(
+            restored.irq_pending(),
+            "prescaler position survives a save state"
+        );
     }
 
     #[test]
@@ -1725,6 +1858,8 @@ impl Mapper for MMC3Mapper {
                     trace_mapper!(1; "MMC3 IRQ_reload");
                     self.irq_counter = 0;
                     self.irq_reload = true;
+                    // MC-ACC: "Writing to $C001 resets pulse counter" (krikzz, via Mesen2).
+                    self.mc_acc_pulses = 0;
                 }
             }
             0xE000..=0xFFFF => {
@@ -1743,10 +1878,22 @@ impl Mapper for MMC3Mapper {
         }
     }
 
+    fn ppu_nametable_address(&mut self, addr: u16) {
+        // Only MC-ACC needs these: the sprite slots' garbage nametable fetches are where
+        // A12 falls between their pattern fetches. The MMC3's filter ignores them.
+        if self.mc_acc {
+            self.mc_acc_a12(addr);
+        }
+    }
+
     fn ppu_address_changed(&mut self, addr: u16) {
+        if self.mc_acc {
+            self.mc_acc_a12(addr);
+            return;
+        }
         if self.a12_detector.update(addr) {
             trace_mapper!(5; "MMC3 A12 rising edge detected: addr=${:04X}", addr);
-            self.clock_irq_counter_on_a12_rising_edge();
+            self.clock_irq_counter();
         }
     }
 
@@ -1818,6 +1965,11 @@ impl Mapper for MMC3Mapper {
             // [16]: MMC6 $A001
             snapshot.push(self.mmc6_protect);
         }
+        if self.mc_acc {
+            // [16]: MC-ACC prescaler position, [17]: MC-ACC last A12
+            snapshot.push(self.mc_acc_pulses);
+            snapshot.push(self.mc_acc_prev_a12 as u8);
+        }
         snapshot
     }
 
@@ -1850,6 +2002,10 @@ impl Mapper for MMC3Mapper {
 
         if self.mmc6 {
             self.mmc6_protect = data.get(16).copied().unwrap_or(0) & 0xF0;
+        }
+        if self.mc_acc {
+            self.mc_acc_pulses = data.get(16).copied().unwrap_or(0) % Self::MC_ACC_PRESCALER;
+            self.mc_acc_prev_a12 = data.get(17).copied().unwrap_or(0) != 0;
         }
 
         self.update_banks();
