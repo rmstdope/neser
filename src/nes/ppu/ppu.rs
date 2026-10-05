@@ -2175,6 +2175,65 @@ mod tests {
         }
     }
 
+    /// Render one frame from the pre-render line with `control` and fine Y scroll `fine_y`,
+    /// background on, and stop at dot 5 of the post-render line 240. Returns the addresses
+    /// the PPU put on its bus, and v.
+    fn bus_addresses_at_vblank_start(control: u8, fine_y: u8) -> (Vec<u16>, u16) {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
+                calls: calls.clone(),
+                chr_writes: Rc::new(RefCell::new(Vec::new())),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_control(control);
+        ppu.write_scroll(0, false);
+        ppu.write_scroll(fine_y, false);
+        ppu.write_mask(0x08); // background on, sprites off
+        while ppu.scanline() != 261 {
+            ppu.run_ppu_cycles(1);
+        }
+        while !(ppu.scanline() == 240 && ppu.pixel() == 5) {
+            ppu.run_ppu_cycles(1);
+        }
+        let v = ppu.registers.v() & 0x3FFF;
+        let calls = calls.borrow().clone();
+        (calls, v)
+    }
+
+    // nr-5ex: at the start of vblank the PPU puts v back on its address bus (Mesen2 NesPpu.cpp,
+    // after Visual NES: "this occurs on scanline 240, cycle 1"), so PPU A12 through vblank is
+    // bit 12 of v, fine Y bit 0, whatever the last rendering fetch was. NESER left the dot-336
+    // background pattern address there, so with the background at $1000 A12 looked high all
+    // through vblank: The Last Ninja's vblank $2006 write to $3F10 then lost its rising edge
+    // and the MMC3 IRQ under the status box came a scanline late (frame 546).
+    #[test]
+    fn test_vblank_start_puts_v_with_a12_low_on_the_bus_after_background_at_1000() {
+        let (calls, v) = bus_addresses_at_vblank_start(0x10, 0);
+        assert_eq!(v & 0x1000, 0, "fine Y 0 at line 240 leaves A12 of v low");
+        assert_eq!(
+            calls.last().copied(),
+            Some(v),
+            "line 240 dot 1 puts v ${v:04X} on the bus"
+        );
+    }
+
+    // The same with A12 of v high and the last fetch from $0xxx: the bus goes high, so a
+    // vblank write that sets A12 is no rising edge (The Last Ninja, frame 1742).
+    #[test]
+    fn test_vblank_start_puts_v_with_a12_high_on_the_bus_after_background_at_0000() {
+        let (calls, v) = bus_addresses_at_vblank_start(0x00, 1);
+        assert_ne!(v & 0x1000, 0, "fine Y 1 at line 240 sets A12 of v");
+        assert_eq!(
+            calls.last().copied(),
+            Some(v),
+            "line 240 dot 1 puts v ${v:04X} on the bus"
+        );
+    }
+
     #[test]
     fn test_ppudata_access_during_rendering_still_reaches_chr_at_v() {
         let chr_writes = Rc::new(RefCell::new(Vec::new()));

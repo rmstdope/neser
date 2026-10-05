@@ -105,6 +105,16 @@ fn tick_timing(ppu: &mut Ppu) {
         ppu.with_mapper_mut(|mapper| mapper.ppu_scanline(scanline, is_rendering_enabled));
     }
 
+    // At the start of vblank the PPU puts v back on its address bus (Mesen2, after Visual NES:
+    // scanline 240, cycle 1), so PPU A12 through vblank is bit 12 of v, not the last rendering
+    // fetch. MMC3 sees a vblank $2006/$2007 access as a rising edge only from there (nr-5ex).
+    if ppu.timing.scanline() == LAST_VISIBLE_SCANLINE_PLUS_ONE
+        && ppu.timing.pixel() == FIRST_VISIBLE_PIXEL
+    {
+        let v = ppu.registers.v() & 0x3FFF;
+        ppu.with_mapper_mut(|mapper| mapper.ppu_address_changed(v));
+    }
+
     // Tick the registers for decay timing
     ppu.registers.tick();
 }
