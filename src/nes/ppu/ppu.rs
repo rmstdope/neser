@@ -1192,8 +1192,8 @@ impl Ppu {
             .set_pending_sprite_0_hit(state.pending_sprite_zero_hit);
         self.status.set_frame_complete(state.frame_complete);
 
-        self.background
-            .restore_state(&crate::nes::ppu::background::BackgroundState {
+        self.background.restore_state(
+            &crate::nes::ppu::background::BackgroundState {
                 bg_pattern_shift_lo: state.bg_pattern_shift_lo,
                 bg_pattern_shift_hi: state.bg_pattern_shift_hi,
                 bg_attribute_shift_lo: state.bg_attribute_shift_lo,
@@ -1202,7 +1202,9 @@ impl Ppu {
                 attribute_latch: state.attribute_latch,
                 pattern_lo_latch: state.pattern_lo_latch,
                 pattern_hi_latch: state.pattern_hi_latch,
-            });
+            },
+            state.registers.v,
+        );
 
         self.rendering.restore_screen_buffer(&state.screen_buffer);
 
@@ -2327,6 +2329,74 @@ mod tests {
 
         assert_eq!(ppu.registers.v(), 0x2010);
         assert_eq!(ppu.debug_state().background.attribute_latch, 0xAA);
+    }
+
+    // nr-9pn: Yo-Noid writes $2006 at dot 200 of its status-bar split line, so the delayed v
+    // lands between a tile's attribute fetch and the shift-register reload that takes it in.
+    // The 2-bit palette is chosen from the attribute byte with the coarse X and Y bit 1 of the
+    // v that fetched it (NESdev PPU scrolling, "Tile and attribute fetching"; Mesen2
+    // NesPpu.cpp LoadTileInfo shifts at the fetch). NESER chose it at the reload from the new
+    // v, picked another quadrant, and drew an 8-pixel run in the wrong palette.
+    #[test]
+    fn test_attribute_quadrant_is_chosen_with_the_v_that_fetched_it() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        // At dot 235 of line 0, v is $001D: attribute byte $23C7, top-left quadrant (bits
+        // 1-0) = palette 1. The new v $2012 has coarse X bit 1 set: top-right (bits 3-2) = 3.
+        ppu.write_address(0x23, false);
+        ppu.write_address(0xC7, false);
+        ppu.write_data(0b0000_1101);
+        ppu.write_address(0x00, false);
+        ppu.write_address(0x00, false);
+        ppu.write_mask(0x08);
+        while !(ppu.timing.scanline() == 0 && ppu.timing.pixel() == 232) {
+            ppu.run_ppu_cycles(1);
+        }
+
+        // Delayed by three dots: v becomes $2012 at the end of dot 235, after the fetch.
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x12, false);
+        ppu.run_ppu_cycles(9); // dots 233-241: the reload at dot 241 takes the tile in
+
+        let background = ppu.debug_state().background;
+        assert_eq!(
+            (
+                background.bg_attribute_shift_lo & 0x00F0,
+                background.bg_attribute_shift_hi & 0x00F0
+            ),
+            (0x00F0, 0x0000),
+            "palette 1, from the quadrant of the v that fetched the attribute byte"
+        );
+    }
+
+    // nr-9pn review: a state captured between an attribute fetch and its reload (a debugger
+    // paused mid-line) keeps the tile's palette, which the restored latch and v still give.
+    #[test]
+    fn test_attribute_palette_survives_a_restore_between_fetch_and_reload() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        // At dot 235 of line 0 v is $001D: byte $23C7, top-left quadrant = palette 1.
+        ppu.write_address(0x23, false);
+        ppu.write_address(0xC7, false);
+        ppu.write_data(0b0000_0001);
+        ppu.write_address(0x00, false);
+        ppu.write_address(0x00, false);
+        ppu.write_mask(0x08);
+        while !(ppu.timing.scanline() == 0 && ppu.timing.pixel() == 236) {
+            ppu.run_ppu_cycles(1);
+        }
+        let state = ppu.capture_state();
+
+        let mut restored = Ppu::new_for_testing(TimingMode::Ntsc);
+        restored.restore_state(&state);
+        restored.run_ppu_cycles(5); // dots 237-241: the reload at dot 241
+
+        let background = restored.debug_state().background;
+        assert_eq!(
+            (
+                background.bg_attribute_shift_lo & 0x00F0,
+                background.bg_attribute_shift_hi & 0x00F0
+            ),
+            (0x00F0, 0x0000)
+        );
     }
 
     // nr-3jh: a fetch whose first dot ran with rendering off takes v in its second dot.
