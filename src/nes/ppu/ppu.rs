@@ -379,6 +379,7 @@ impl Ppu {
         self.prev_a12 = false;
         self.recent_pixels = [None, None];
         self.vram_increment_pending = false;
+        self.update_vram_addr_delay = 0;
     }
 
     pub fn io_bus(&self) -> u8 {
@@ -769,9 +770,10 @@ impl Ppu {
     /// Land the v=t copy still due from a second $2006 write, if any.
     ///
     /// The tick loop lands it three PPU cycles after the write. A register access that uses
-    /// v calls it first too: on hardware the next such access comes at least a CPU
-    /// instruction later, so the copy has always landed by then, and unit tests that access
-    /// registers without ticking the PPU rely on the same order.
+    /// v calls it first too: on hardware the next such access comes at least three PPU
+    /// cycles later (a read-modify-write on $2006 writes it in consecutive CPU cycles), so the
+    /// copy has always landed by then, and unit tests that access registers without ticking
+    /// the PPU rely on the same order.
     pub(super) fn land_pending_vram_addr(&mut self) {
         if self.update_vram_addr_delay == 0 {
             return;
@@ -1137,8 +1139,9 @@ impl Ppu {
 
     /// Restore PPU state from a save-state.
     fn restore_state_inner(&mut self, state: &PpuState) {
-        // A restored v replaces whatever a pending $2007 increment was meant for.
+        // A restored v replaces whatever a pending $2007 increment or $2006 copy was meant for.
         self.vram_increment_pending = false;
+        self.update_vram_addr_delay = 0;
         // Restore timing
         self.timing.restore_state(
             state.timing.scanline,
@@ -1312,8 +1315,9 @@ impl Ppu {
         self.vblank_suppressed_for_frame = state.vblank_suppressed_for_frame;
         self.vblank_for_nmi = state.vblank_for_nmi;
         self.prev_a12 = state.prev_a12;
-        // A replaced v replaces whatever a pending $2007 increment was meant for.
+        // A replaced v replaces whatever a pending $2007 increment or $2006 copy was meant for.
         self.vram_increment_pending = false;
+        self.update_vram_addr_delay = 0;
     }
 }
 
@@ -1608,6 +1612,40 @@ mod tests {
             Nes::lookup_system_palette(0x2A),
             "the fourth dot shows $3F02"
         );
+    }
+
+    /// A reset drops a v=t copy still pending from a second $2006 write, so the address the
+    /// game wrote before the reset cannot land in the reset v afterwards (nr-pt7 review;
+    /// Mesen2 NesPpu::Reset clears `_updateVramAddrDelay`).
+    #[test]
+    fn test_reset_drops_a_pending_ppuaddr_update() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x02, false);
+
+        ppu.reset(true, crate::nes::console::RamInitMode::Zero);
+        ppu.run_ppu_cycles(3);
+
+        assert_eq!(ppu.registers.v(), 0x0000);
+    }
+
+    /// Loading a save state drops a v=t copy still pending in the running session, so it
+    /// cannot overwrite the restored v a few dots later (nr-pt7 review).
+    #[test]
+    fn test_restore_state_drops_a_pending_ppuaddr_update() {
+        let mut saved = Ppu::new_for_testing(TimingMode::Ntsc);
+        saved.write_address(0x21, false);
+        saved.write_address(0x00, false);
+        saved.flush_pending_vram_addr();
+        let state = saved.capture_state();
+
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x02, false);
+        ppu.restore_state(&state);
+        ppu.run_ppu_cycles(3);
+
+        assert_eq!(ppu.registers.v(), 0x2100);
     }
 
     #[test]
