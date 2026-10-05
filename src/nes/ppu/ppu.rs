@@ -346,12 +346,7 @@ impl Ppu {
     #[cfg(test)]
     pub fn flush_pending_vram_addr(&mut self) {
         self.apply_pending_vram_increment();
-        if self.update_vram_addr_delay > 0 {
-            let old_v = self.registers.v();
-            self.registers.set_v(self.pending_vram_addr);
-            self.prime_a12_and_notify_mapper(old_v, self.pending_vram_addr);
-            self.update_vram_addr_delay = 0;
-        }
+        self.land_pending_vram_addr();
     }
 
     #[cfg(test)]
@@ -384,6 +379,7 @@ impl Ppu {
         self.prev_a12 = false;
         self.recent_pixels = [None, None];
         self.vram_increment_pending = false;
+        self.update_vram_addr_delay = 0;
     }
 
     pub fn io_bus(&self) -> u8 {
@@ -614,6 +610,7 @@ impl Ppu {
     /// Write to address register ($2006)
     pub fn write_address(&mut self, value: u8, is_dummy_write: bool) {
         self.apply_pending_vram_increment();
+        self.land_pending_vram_addr();
         trace_ppu!(3; "ppuaddr write value={:02X} w_before={} t_before={:04X} v_before={:04X}",
             value,
             self.registers.w(),
@@ -633,24 +630,21 @@ impl Ppu {
         if was_second_write {
             let new_addr = self.registers.v(); // v was set to t by write_address
 
-            // During rendering scanlines the v=t update is delayed by 3 PPU
-            // cycles (based on Visual NES findings, ref Mesen2 NesPpu.cpp).
-            // Outside rendering, it takes effect immediately.
-            if self.is_actively_rendering() {
-                // Undo the immediate v=t; the tick loop will apply it after the delay.
-                self.registers.set_v(old_v);
-                self.update_vram_addr_delay = 3;
-                self.pending_vram_addr = new_addr;
-            } else {
-                // Immediate update outside rendering; notify mapper of address change.
-                self.prime_a12_and_notify_mapper(old_v, new_addr);
-            }
+            // The v=t update lands 3 PPU cycles after the write, whether or not the PPU is
+            // rendering (based on Visual NES findings; Mesen2 NesPpu.cpp sets
+            // `_updateVramAddrDelay = 3` on every second write). Popeye changes its forced-blank
+            // backdrop colour with $2006 and drew it three pixels early when this was immediate
+            // outside rendering (nr-pt7).
+            self.registers.set_v(old_v);
+            self.update_vram_addr_delay = 3;
+            self.pending_vram_addr = new_addr;
         }
     }
 
     /// Read from data register ($2007)
     pub fn read_data(&mut self) -> u8 {
         self.apply_pending_vram_increment();
+        self.land_pending_vram_addr();
         let addr = self.registers.v();
         let result = match addr {
             0x0000..=0x1FFF => {
@@ -716,6 +710,7 @@ impl Ppu {
     /// Write to data register ($2007)
     pub fn write_data(&mut self, value: u8) {
         self.apply_pending_vram_increment();
+        self.land_pending_vram_addr();
         self.registers.set_io_bus(value); // Update I/O bus
         let addr = self.registers.v();
         match addr {
@@ -769,6 +764,30 @@ impl Ppu {
         let new_addr = self.registers.v();
         if !self.is_actively_rendering() {
             self.prime_a12_and_notify_mapper(old_addr, new_addr);
+        }
+    }
+
+    /// Land the v=t copy still due from a second $2006 write, if any.
+    ///
+    /// The tick loop lands it three PPU cycles after the write. A register access that uses
+    /// v calls it first too: on hardware the next such access comes at least three PPU
+    /// cycles later (a read-modify-write on $2006 writes it in consecutive CPU cycles), so the
+    /// copy has always landed by then, and unit tests that access registers without ticking
+    /// the PPU rely on the same order.
+    pub(super) fn land_pending_vram_addr(&mut self) {
+        if self.update_vram_addr_delay == 0 {
+            return;
+        }
+        self.update_vram_addr_delay = 0;
+        let old_v = self.registers.v();
+        let new_v = self.pending_vram_addr;
+        self.registers.set_v(new_v);
+
+        // Notify the mapper of the address change exactly once (this also handles MMC3 A12
+        // tracking). While rendering, the bus carries the rendering fetches, not v, so the
+        // mapper sees nothing (nr-6gs).
+        if !self.is_actively_rendering() {
+            self.prime_a12_and_notify_mapper(old_v, new_v);
         }
     }
 
@@ -1120,8 +1139,9 @@ impl Ppu {
 
     /// Restore PPU state from a save-state.
     fn restore_state_inner(&mut self, state: &PpuState) {
-        // A restored v replaces whatever a pending $2007 increment was meant for.
+        // A restored v replaces whatever a pending $2007 increment or $2006 copy was meant for.
         self.vram_increment_pending = false;
+        self.update_vram_addr_delay = 0;
         // Restore timing
         self.timing.restore_state(
             state.timing.scanline,
@@ -1295,8 +1315,9 @@ impl Ppu {
         self.vblank_suppressed_for_frame = state.vblank_suppressed_for_frame;
         self.vblank_for_nmi = state.vblank_for_nmi;
         self.prev_a12 = state.prev_a12;
-        // A replaced v replaces whatever a pending $2007 increment was meant for.
+        // A replaced v replaces whatever a pending $2007 increment or $2006 copy was meant for.
         self.vram_increment_pending = false;
+        self.update_vram_addr_delay = 0;
     }
 }
 
@@ -1423,6 +1444,7 @@ mod tests {
         // Point v into palette space before rendering output.
         ppu.write_address(0x3F, false);
         ppu.write_address(0x11, false);
+        ppu.flush_pending_vram_addr(); // v=t lands 3 PPU cycles after the write
 
         // First visible output dot should draw pixel (0,0).
         ppu.run_ppu_cycles(2);
@@ -1548,6 +1570,82 @@ mod tests {
             Nes::lookup_system_palette(0x2A),
             "the next dot shows $3F02"
         );
+    }
+
+    /// The second $2006 write moves v three PPU cycles late during forced blank too, so the
+    /// backdrop override keeps showing the palette entry at the old v for three more pixels
+    /// (nr-pt7). Popeye writes $2006 with rendering off at frame 941 and drew its colour change
+    /// on row 4 three pixels early. NESDev (PPU scrolling) only says the write reloads v;
+    /// Mesen2 NesPpu.cpp sets `_updateVramAddrDelay = 3` on every second write, rendering or not.
+    #[test]
+    fn test_ppuaddr_write_during_forced_blank_moves_backdrop_override_three_dots_late() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_mask(0x00);
+
+        // $3F01 = $16 (red) and $3F02 = $2A (green), then point v at $3F01.
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x01, false);
+        ppu.write_data(0x16);
+        ppu.write_data(0x2A);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x01, false);
+
+        // Stop after dot 100 of scanline 10 has been drawn (pixel x=99).
+        while !(ppu.scanline() == 10 && ppu.pixel() == 100) {
+            ppu.run_ppu_cycles(1);
+        }
+
+        // Point v at $3F02; it lands at the end of the third PPU cycle after the write.
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x02, false);
+        ppu.run_ppu_cycles(4); // draws x=100..=103 (dots 101-104)
+
+        for x in 100..=102 {
+            assert_eq!(
+                ppu.screen_buffer().get_pixel(x, 10),
+                Nes::lookup_system_palette(0x16),
+                "pixel {x}: the three dots after the write still show $3F01"
+            );
+        }
+        assert_eq!(
+            ppu.screen_buffer().get_pixel(103, 10),
+            Nes::lookup_system_palette(0x2A),
+            "the fourth dot shows $3F02"
+        );
+    }
+
+    /// A reset drops a v=t copy still pending from a second $2006 write, so the address the
+    /// game wrote before the reset cannot land in the reset v afterwards (nr-pt7 review;
+    /// Mesen2 NesPpu::Reset clears `_updateVramAddrDelay`).
+    #[test]
+    fn test_reset_drops_a_pending_ppuaddr_update() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x02, false);
+
+        ppu.reset(true, crate::nes::console::RamInitMode::Zero);
+        ppu.run_ppu_cycles(3);
+
+        assert_eq!(ppu.registers.v(), 0x0000);
+    }
+
+    /// Loading a save state drops a v=t copy still pending in the running session, so it
+    /// cannot overwrite the restored v a few dots later (nr-pt7 review).
+    #[test]
+    fn test_restore_state_drops_a_pending_ppuaddr_update() {
+        let mut saved = Ppu::new_for_testing(TimingMode::Ntsc);
+        saved.write_address(0x21, false);
+        saved.write_address(0x00, false);
+        saved.flush_pending_vram_addr();
+        let state = saved.capture_state();
+
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x02, false);
+        ppu.restore_state(&state);
+        ppu.run_ppu_cycles(3);
+
+        assert_eq!(ppu.registers.v(), 0x2100);
     }
 
     #[test]
@@ -1980,6 +2078,7 @@ mod tests {
         let (mut ppu, addresses) = bus_address_spy_ppu();
         ppu.write_address(0x3F, false);
         ppu.write_address(0x11, false);
+        ppu.flush_pending_vram_addr(); // v=t lands 3 PPU cycles after the write
         addresses.borrow_mut().clear();
         ppu.read_data();
         let addresses = addresses.borrow();
@@ -1997,6 +2096,7 @@ mod tests {
         let (mut ppu, addresses) = bus_address_spy_ppu();
         ppu.write_address(0x30, false);
         ppu.write_address(0x00, false);
+        ppu.flush_pending_vram_addr(); // v=t lands 3 PPU cycles after the write
         addresses.borrow_mut().clear();
         ppu.read_data();
         let addresses = addresses.borrow();
@@ -2178,6 +2278,7 @@ mod tests {
 
         ppu.write_address(0x3F, false);
         ppu.write_address(0x20, false);
+        ppu.flush_pending_vram_addr(); // v=t lands 3 PPU cycles after the write
 
         let expected_ppuaddr_calls = expected_calls(0, 0x3F20);
         assert_eq!(*calls.borrow(), expected_ppuaddr_calls);
@@ -3217,6 +3318,7 @@ mod tests {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
         ppu.write_address(0x20, false); // High byte
         ppu.write_address(0x00, false); // Low byte
+        ppu.flush_pending_vram_addr(); // v=t lands 3 PPU cycles after the write
         assert_eq!(ppu.v_register(), 0x2000);
     }
 
@@ -3225,6 +3327,7 @@ mod tests {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
         ppu.write_address(0xFF, false); // High byte
         ppu.write_address(0xFF, false); // Low byte
+        ppu.flush_pending_vram_addr(); // v=t lands 3 PPU cycles after the write
         // Address should be masked to 14 bits (0x3FFF)
         assert_eq!(ppu.v_register() & 0x3FFF, 0x3FFF);
     }
