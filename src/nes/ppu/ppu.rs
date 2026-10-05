@@ -1191,8 +1191,8 @@ impl Ppu {
             .set_pending_sprite_0_hit(state.pending_sprite_zero_hit);
         self.status.set_frame_complete(state.frame_complete);
 
-        self.background
-            .restore_state(&crate::nes::ppu::background::BackgroundState {
+        self.background.restore_state(
+            &crate::nes::ppu::background::BackgroundState {
                 bg_pattern_shift_lo: state.bg_pattern_shift_lo,
                 bg_pattern_shift_hi: state.bg_pattern_shift_hi,
                 bg_attribute_shift_lo: state.bg_attribute_shift_lo,
@@ -1201,7 +1201,9 @@ impl Ppu {
                 attribute_latch: state.attribute_latch,
                 pattern_lo_latch: state.pattern_lo_latch,
                 pattern_hi_latch: state.pattern_hi_latch,
-            });
+            },
+            state.registers.v,
+        );
 
         self.rendering.restore_screen_buffer(&state.screen_buffer);
 
@@ -2259,6 +2261,37 @@ mod tests {
             ),
             (0x00F0, 0x0000),
             "palette 1, from the quadrant of the v that fetched the attribute byte"
+        );
+    }
+
+    // nr-9pn review: a state captured between an attribute fetch and its reload (a debugger
+    // paused mid-line) keeps the tile's palette, which the restored latch and v still give.
+    #[test]
+    fn test_attribute_palette_survives_a_restore_between_fetch_and_reload() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        // At dot 235 of line 0 v is $001D: byte $23C7, top-left quadrant = palette 1.
+        ppu.write_address(0x23, false);
+        ppu.write_address(0xC7, false);
+        ppu.write_data(0b0000_0001);
+        ppu.write_address(0x00, false);
+        ppu.write_address(0x00, false);
+        ppu.write_mask(0x08);
+        while !(ppu.timing.scanline() == 0 && ppu.timing.pixel() == 236) {
+            ppu.run_ppu_cycles(1);
+        }
+        let state = ppu.capture_state();
+
+        let mut restored = Ppu::new_for_testing(TimingMode::Ntsc);
+        restored.restore_state(&state);
+        restored.run_ppu_cycles(5); // dots 237-241: the reload at dot 241
+
+        let background = restored.debug_state().background;
+        assert_eq!(
+            (
+                background.bg_attribute_shift_lo & 0x00F0,
+                background.bg_attribute_shift_hi & 0x00F0
+            ),
+            (0x00F0, 0x0000)
         );
     }
 

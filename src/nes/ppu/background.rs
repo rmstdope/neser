@@ -112,6 +112,11 @@ impl Background {
     {
         let addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
         self.attribute_latch = read_nametable(addr);
+        self.select_attribute_palette(v);
+    }
+
+    /// Choose the 2-bit palette of `attribute_latch` from coarse X bit 1 and coarse Y bit 1.
+    fn select_attribute_palette(&mut self, v: u16) {
         let shift = ((v >> 4) & 0x04) | (v & 0x02);
         self.attribute_palette = (self.attribute_latch >> shift) & 0x03;
     }
@@ -215,7 +220,9 @@ impl Background {
         }
     }
 
-    pub fn restore_state(&mut self, state: &BackgroundState) {
+    /// Restore the latches; `v` is the restored VRAM address, from which the palette of the
+    /// latched attribute byte is chosen again (between a fetch and its reload v is unchanged).
+    pub fn restore_state(&mut self, state: &BackgroundState, v: u16) {
         self.bg_pattern_shift_lo = state.bg_pattern_shift_lo;
         self.bg_pattern_shift_hi = state.bg_pattern_shift_hi;
         self.bg_attribute_shift_lo = state.bg_attribute_shift_lo;
@@ -224,10 +231,9 @@ impl Background {
         self.attribute_latch = state.attribute_latch;
         self.pattern_lo_latch = state.pattern_lo_latch;
         self.pattern_hi_latch = state.pattern_hi_latch;
-        // Snapshots are taken in vblank, where no fetch is between its two dots and every
-        // palette is chosen again by an attribute fetch before the next reload.
+        // Snapshots are taken in vblank, where no fetch is between its two dots.
         self.fetch_address = None;
-        self.attribute_palette = 0;
+        self.select_attribute_palette(v);
     }
 }
 
@@ -329,6 +335,12 @@ mod tests {
         bg.load_shift_registers();
         assert_eq!(bg.bg_attribute_shift_lo & 0xFF, 0xFF);
         assert_eq!(bg.bg_attribute_shift_hi & 0xFF, 0x00);
+
+        // Coarse Y 2 only (bit 1 set): bottom-left, bits 5-4.
+        bg.fetch_attribute(2 << 5, |_| 0b0010_0000);
+        bg.load_shift_registers();
+        assert_eq!(bg.bg_attribute_shift_lo & 0xFF, 0x00);
+        assert_eq!(bg.bg_attribute_shift_hi & 0xFF, 0xFF);
     }
 
     #[test]
