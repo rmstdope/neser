@@ -36,7 +36,6 @@ impl Cpu {
                     // DMA was processed; retry the read from the beginning
                     continue;
                 }
-                DmaReadOutcome::ReturnValue(value) => return value,
             }
 
             let value = self.bus.borrow_mut().read(addr, is_dummy_read);
