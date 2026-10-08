@@ -44,6 +44,10 @@ pub struct RegionParams {
     pub odd_frame_skip: bool,
     /// Whether OAM DRAM decays while rendering is off.
     pub oam_decay: bool,
+    /// Whether PPUMASK bits 5 and 6 emphasise green and red instead of red and green
+    /// (nesdev Colour emphasis: the PAL and Dendy PPUs swap them; Mesen2
+    /// `NesPpu::SetMaskRegister`).
+    pub swaps_red_green_emphasis: bool,
     pub four_step: FourStepSequence,
     /// The 5-step sequence's steps 1, 2, 3 and 5 (step 4 clocks nothing).
     pub five_step: [u32; 4],
@@ -96,6 +100,7 @@ pub static NTSC: RegionParams = RegionParams {
     vblank_start_scanline: 241,
     odd_frame_skip: true,
     oam_decay: true,
+    swaps_red_green_emphasis: false,
     four_step: NTSC_FOUR_STEP,
     five_step: NTSC_FIVE_STEP,
     noise_periods: NTSC_NOISE_PERIODS,
@@ -114,6 +119,7 @@ pub static PAL: RegionParams = RegionParams {
     vblank_start_scanline: 241,
     odd_frame_skip: false,
     oam_decay: false,
+    swaps_red_green_emphasis: true,
     four_step: FourStepSequence {
         steps: [8313, 16627, 24939, 33253],
         irq_cycle: 33252,
@@ -139,6 +145,7 @@ pub static DENDY: RegionParams = RegionParams {
     vblank_start_scanline: 291,
     odd_frame_skip: false,
     oam_decay: false,
+    swaps_red_green_emphasis: true,
     four_step: NTSC_FOUR_STEP,
     five_step: NTSC_FIVE_STEP,
     noise_periods: NTSC_NOISE_PERIODS,
@@ -175,6 +182,7 @@ mod tests {
         assert_eq!(r.vblank_start_scanline, 241);
         assert!(r.odd_frame_skip);
         assert!(r.oam_decay);
+        assert!(!r.swaps_red_green_emphasis);
         assert_eq!(r.four_step.steps, [7457, 14913, 22371, 29829]);
         assert_eq!(
             (r.four_step.irq_cycle, r.four_step.frame_cycles),
@@ -201,6 +209,7 @@ mod tests {
         assert_eq!(r.vblank_start_scanline, 241);
         assert!(!r.odd_frame_skip);
         assert!(!r.oam_decay);
+        assert!(r.swaps_red_green_emphasis);
         assert_eq!(r.four_step.steps, [8313, 16627, 24939, 33253]);
         assert_eq!(
             (r.four_step.irq_cycle, r.four_step.frame_cycles),
@@ -229,6 +238,7 @@ mod tests {
         assert_eq!(r.vblank_start_scanline, 291);
         assert!(!r.odd_frame_skip);
         assert!(!r.oam_decay);
+        assert!(r.swaps_red_green_emphasis);
         assert_eq!(r.four_step.steps, NTSC.four_step.steps);
         assert_eq!(r.four_step.irq_cycle, NTSC.four_step.irq_cycle);
         assert_eq!(r.four_step.frame_cycles, NTSC.four_step.frame_cycles);

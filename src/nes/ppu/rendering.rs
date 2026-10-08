@@ -4,8 +4,6 @@ use super::screen_buffer::ScreenBuffer;
 pub struct Rendering {
     /// Screen buffer for rendered pixels
     screen_buffer: ScreenBuffer,
-    /// Whether Famicom emphasis bit swap is active (green/blue swapped)
-    pub(crate) famicom_emphasis: bool,
 }
 
 impl Default for Rendering {
@@ -19,7 +17,6 @@ impl Rendering {
     pub fn new() -> Self {
         Self {
             screen_buffer: ScreenBuffer::new(),
-            famicom_emphasis: false,
         }
     }
 
@@ -77,7 +74,7 @@ impl Rendering {
             g,
             b,
             color_emphasis,
-            self.famicom_emphasis,
+            false, // NTSC bit order: this test-only path has no region
             false,
         );
 
