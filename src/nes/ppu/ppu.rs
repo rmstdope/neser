@@ -1315,8 +1315,8 @@ impl Ppu {
 
 #[cfg(test)]
 impl Ppu {
-    /// The backdrop colour $20 drawn at (0, 0) over a whole frame with rendering off and
-    /// PPUMASK = `mask`, beside the same colour with no emphasis.
+    /// The backdrop colour $20 drawn at (0, 0) over a whole frame with PPUMASK = `mask`
+    /// (no pattern data, so every tile is transparent), beside the same colour with no emphasis.
     pub(crate) fn backdrop_under_emphasis(&mut self, mask: u8) -> ((u8, u8, u8), (u8, u8, u8)) {
         self.write_address(0x3F, false);
         self.write_address(0x00, false);
@@ -1488,14 +1488,19 @@ mod tests {
                 (true, false, false),
             ),
         ] {
-            for (mask, expected) in [(0x20, bit5), (0x40, bit6), (0x80, (false, false, true))] {
-                let mut ppu = Ppu::new_for_testing(mode);
-                let (plain, shown) = ppu.backdrop_under_emphasis(mask);
-                assert_eq!(
-                    Ppu::undimmed_channels(plain, shown),
-                    expected,
-                    "{mode:?} PPUMASK ${mask:02X}: {plain:?} shown as {shown:?}"
-                );
+            for (emphasis, expected) in [(0x20, bit5), (0x40, bit6), (0x80, (false, false, true))] {
+                // Rendering off draws through the backdrop path; background on (with the left
+                // column shown) draws a transparent tile through the rendering path.
+                for rendering in [0x00, 0x0A] {
+                    let mask = emphasis | rendering;
+                    let mut ppu = Ppu::new_for_testing(mode);
+                    let (plain, shown) = ppu.backdrop_under_emphasis(mask);
+                    assert_eq!(
+                        Ppu::undimmed_channels(plain, shown),
+                        expected,
+                        "{mode:?} PPUMASK ${mask:02X}: {plain:?} shown as {shown:?}"
+                    );
+                }
             }
         }
     }

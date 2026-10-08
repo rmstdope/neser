@@ -74,7 +74,7 @@ impl Rendering {
             g,
             b,
             color_emphasis,
-            false,
+            false, // NTSC bit order: this test-only path has no region
             false,
         );
 
