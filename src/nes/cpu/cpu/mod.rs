@@ -154,7 +154,6 @@ pub enum InterruptKind {
 enum DmaReadOutcome {
     NoDma,
     RetryRead,
-    ReturnValue(u8),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]

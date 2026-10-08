@@ -609,8 +609,13 @@ fn test_dmc_dma_halting_4016_read_clocks_the_pad_twice() {
     assert_eq!(second, 0, "the next read must return Select");
 }
 
+/// A DMC fetch that halts a $4017 read re-runs the read after the get cycle, as
+/// it does for $4016 and every other address: halt + dummy + get + the read itself.
+/// NESER used to hand the CPU the fetched sample byte on the get cycle and skip the
+/// re-read, one cycle short of Mesen2; Top Gun: The Second Mission's `LDA $4017` at
+/// $EA58 then drifted against NMI (nr-xgb).
 #[test]
-fn test_dmc_dma_overlap_4017_get_cycle_returns_dmc_sample_value() {
+fn test_dmc_dma_halting_4017_read_retries_the_read() {
     let (ppu, apu, memory) = create_test_memory();
     let mut cpu = Cpu::new(
         TimingMode::Ntsc,
@@ -625,8 +630,13 @@ fn test_dmc_dma_overlap_4017_get_cycle_returns_dmc_sample_value() {
     let value = cpu.read(0x4017);
 
     assert_eq!(
+        cpu.get_total_cycles(),
+        4,
+        "DMC overlap on $4017 should consume halt + dummy + get + retried CPU read"
+    );
+    assert_ne!(
         value, 0xA5,
-        "On the DMC get cycle, $4017 should observe the DMC sample byte on the bus"
+        "the retried read returns $4017, not the DMC sample byte"
     );
 }
 
