@@ -138,7 +138,7 @@ impl Cpu {
     }
 
     /// Process any pending DMA (OAM and/or DMC) during a CPU read cycle.
-    /// Returns a DMA read outcome indicating whether to retry the read or return a bus value.
+    /// Returns whether DMA ran, in which case the caller retries the halted read.
     pub(super) fn process_pending_dma(&mut self, read_address: u16) -> DmaReadOutcome {
         // Check if OAM DMA is pending
         let oam_dma_pending = self.bus.borrow().oam_dma_pending();

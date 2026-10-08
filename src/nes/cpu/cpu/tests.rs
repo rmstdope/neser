@@ -634,10 +634,43 @@ fn test_dmc_dma_halting_4017_read_retries_the_read() {
         4,
         "DMC overlap on $4017 should consume halt + dummy + get + retried CPU read"
     );
-    assert_ne!(
-        value, 0xA5,
-        "the retried read returns $4017, not the DMC sample byte"
+    assert_eq!(
+        value, 0xA0,
+        "the retried read returns $4017: open-bus bits 7-5 from the fetched $A5, no button"
     );
+}
+
+/// The $4017 twin of the $4016 test above: with a multi-byte sample the halted read
+/// is a real read too, so pad 2 is clocked twice and the game loses a bit (nr-xgb).
+#[test]
+fn test_dmc_dma_halting_4017_read_clocks_the_pad_twice() {
+    let (ppu, apu, memory) = create_test_memory();
+    let mut cpu = Cpu::new(
+        TimingMode::Ntsc,
+        Rc::clone(&memory),
+        Rc::clone(&ppu),
+        Rc::clone(&apu),
+    );
+    fake_cartridge(&mut cpu, &[0xA4; 17]); // bit 0 clear: the sample byte cannot pass for B
+    cpu.bus
+        .borrow_mut()
+        .set_button(2, crate::nes::input::Button::B, true);
+    cpu.bus.borrow_mut().write(0x4016, 1, false);
+    cpu.bus.borrow_mut().write(0x4016, 0, false);
+    {
+        let mut apu = apu.borrow_mut();
+        apu.dmc_mut().write_sample_address(0x00);
+        apu.dmc_mut().write_sample_length(0x01); // 17 bytes, not a single-byte sample
+        apu.write_enable(0b0001_0000);
+        apu.dmc_mut().debug_set_transfer_start_delay(0);
+        apu.dmc_mut().debug_set_dma_pending(true);
+    }
+
+    let first = cpu.read(0x4017) & 1;
+    let second = cpu.read(0x4017) & 1;
+
+    assert_eq!(first, 1, "the halted read must return B, the A bit deleted");
+    assert_eq!(second, 0, "the next read must return Select");
 }
 
 #[test]
