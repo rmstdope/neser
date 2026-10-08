@@ -150,9 +150,6 @@ fn build_hardware(app_context: &SharedAppContext) -> Hardware {
     {
         let mut ppu = ppu.borrow_mut();
         ppu.set_oam_dram_decay_enabled(config.nes.oam_dram_decay_enabled);
-        ppu.set_famicom_emphasis(
-            config.nes.hardware_mode == crate::nes::console::HardwareMode::Famicom,
-        );
         ppu.set_system_palette(config.nes.palette);
     }
     let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
@@ -3597,26 +3594,31 @@ mod tests {
         assert_eq!(nes.current_palette(), crate::nes::ppu::NesPalette::NesDev);
     }
 
+    /// The Famicom's PPU is the NTSC 2C02, and nesdev Colour emphasis gives the 2C02 one bit
+    /// order: bit 6 emphasises green and bit 7 blue, as on the NES (nr-xjt). A cartridge the
+    /// ROM database marks as Famicom must not swap them.
     #[test]
-    fn test_insert_cartridge_propagates_famicom_emphasis_to_ppu() {
-        // Start with default NES mode — PPU has famicom_emphasis=false
+    fn famicom_mode_keeps_the_2c02_emphasis_bit_order() {
+        use crate::nes::console::HardwareMode;
+
         let mut nes = Nes::new(crate::platform::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        assert!(
-            !nes.ppu.borrow().famicom_emphasis,
-            "PPU should start without Famicom emphasis in NES mode"
-        );
-
-        // The ROM database says this cartridge uses the Famicom four-players adapter.
         let cartridge = famicom_four_players_cartridge(&mut nes);
         nes.insert_cartridge(cartridge);
-
-        // After insert_cartridge, the PPU emphasis should now reflect Famicom mode
-        assert!(
-            nes.ppu.borrow().famicom_emphasis,
-            "PPU should have Famicom emphasis after ROM DB hint sets Famicom mode"
+        assert_eq!(
+            nes.app_context.borrow().config().nes.hardware_mode,
+            HardwareMode::Famicom
         );
+
+        for (mask, expected) in [(0x40, (false, true, false)), (0x80, (false, false, true))] {
+            let (plain, shown) = nes.ppu.borrow_mut().backdrop_under_emphasis(mask);
+            assert_eq!(
+                Ppu::undimmed_channels(plain, shown),
+                expected,
+                "Famicom PPUMASK ${mask:02X}: {plain:?} shown as {shown:?}"
+            );
+        }
     }
 
     #[test]

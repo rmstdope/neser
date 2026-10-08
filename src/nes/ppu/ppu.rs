@@ -147,8 +147,6 @@ pub struct Ppu {
     /// - Proper mapper integration for pattern table access
     /// - Hardware-accurate CHR-ROM and CHR-RAM behavior
     cartridge: Option<Rc<RefCell<Cartridge>>>,
-    /// Whether Famicom emphasis bit swap is active (green/blue swapped)
-    pub(crate) famicom_emphasis: bool,
     /// VS System PPU type, set during cartridge insertion.
     vs_ppu_type: Option<VsPpuType>,
     /// VS System palette override (set from vs_ppu_type).
@@ -225,11 +223,6 @@ impl Ppu {
 
     fn clear_vblank_for_nmi(&mut self) {
         self.vblank_for_nmi = false;
-    }
-
-    pub fn set_famicom_emphasis(&mut self, enabled: bool) {
-        self.famicom_emphasis = enabled;
-        self.rendering.famicom_emphasis = enabled;
     }
 
     pub fn set_vs_ppu_type(&mut self, vs_ppu_type: Option<VsPpuType>) {
@@ -320,7 +313,6 @@ impl Ppu {
             recent_pixels: [None, None],
             prev_a12: false,
             cartridge: None,
-            famicom_emphasis: false,
             vs_ppu_type: None,
             vs_palette: None,
             system_palette: NesPalette::default(),
@@ -1322,6 +1314,34 @@ impl Ppu {
 }
 
 #[cfg(test)]
+impl Ppu {
+    /// The backdrop colour $20 drawn at (0, 0) over a whole frame with rendering off and
+    /// PPUMASK = `mask`, beside the same colour with no emphasis.
+    pub(crate) fn backdrop_under_emphasis(&mut self, mask: u8) -> ((u8, u8, u8), (u8, u8, u8)) {
+        self.write_address(0x3F, false);
+        self.write_address(0x00, false);
+        self.write_data(0x20);
+        self.write_address(0x00, false);
+        self.write_address(0x00, false);
+        self.flush_pending_vram_addr();
+        self.write_mask(mask);
+        self.run_ppu_cycles(341 * 312 + 10);
+        (
+            self.lookup_system_palette(0x20),
+            self.screen_buffer().get_pixel(0, 0),
+        )
+    }
+
+    /// Which channels emphasis left at full brightness: (red, green, blue).
+    pub(crate) fn undimmed_channels(
+        plain: (u8, u8, u8),
+        shown: (u8, u8, u8),
+    ) -> (bool, bool, bool) {
+        (plain.0 == shown.0, plain.1 == shown.1, plain.2 == shown.2)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::nes::cartridge::{NametableLayout, VsPpuType};
@@ -1451,6 +1471,33 @@ mod tests {
 
         let expected = Nes::lookup_system_palette(0x16);
         assert_eq!(ppu.screen_buffer().get_pixel(0, 0), expected);
+    }
+
+    // nesdev Colour emphasis: "Bit 5 emphasizes red on the NTSC PPU, and green on the PAL &
+    // Dendy PPUs. Bit 6 emphasizes green on the NTSC PPU, and red on the PAL & Dendy PPUs.
+    // Bit 7 emphasizes blue on the NTSC, PAL, & Dendy PPUs." Mesen2 NesPpu::SetMaskRegister
+    // swaps the same two bits for Pal and Dendy (nr-xjt).
+    #[test]
+    fn emphasis_bits_follow_the_region_bit_order() {
+        for (mode, bit5, bit6) in [
+            (TimingMode::Ntsc, (true, false, false), (false, true, false)),
+            (TimingMode::Pal, (false, true, false), (true, false, false)),
+            (
+                TimingMode::Dendy,
+                (false, true, false),
+                (true, false, false),
+            ),
+        ] {
+            for (mask, expected) in [(0x20, bit5), (0x40, bit6), (0x80, (false, false, true))] {
+                let mut ppu = Ppu::new_for_testing(mode);
+                let (plain, shown) = ppu.backdrop_under_emphasis(mask);
+                assert_eq!(
+                    Ppu::undimmed_channels(plain, shown),
+                    expected,
+                    "{mode:?} PPUMASK ${mask:02X}: {plain:?} shown as {shown:?}"
+                );
+            }
+        }
     }
 
     /// Tick the PPU until the dot just processed is (`scanline`, `pixel`).
