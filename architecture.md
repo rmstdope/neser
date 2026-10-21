@@ -705,3 +705,12 @@ status comments in step with the bead.
 5. **JavaScript unit tests** — Web frontend JS modules tested with Vitest (`npm test`), and all of `web/` type-checked by `npx tsc --noEmit -p tsconfig.json` against the wasm bindings' generated `web/pkg/neser.d.ts` (in `scripts/gate-full.sh` and the `web-integration` CI job).
 6. **Playwright integration tests** — End-to-end browser tests for the web frontend.
 7. **Python tests** — Unit tests for the ROM scraper and mappertool utilities.
+## Browser container deployment
+
+`Dockerfile` packages the existing Vite output for Caddy using only the
+production entrypoint and hashed assets. `deploy/` holds its HTTP configuration,
+production-container browser smoke check and build contract. No ROM/firmware
+directories enter the image; an empty ROM manifest supports local file loading.
+The `web-container` CI job tests the image before publishing a main-only
+immutable deployment manifest. Runtime routing and automatic VPS polling are
+owned by the separate `rmstdope-infra` repository.
