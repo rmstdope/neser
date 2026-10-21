@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!deploy/
+!deploy/Caddyfile
+!dist/
+!dist/index.html
+!dist/assets/
+!dist/assets/**

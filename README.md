@@ -48,6 +48,16 @@ No SDL2 setup is required. The native frontend uses Rust crates for windowing, a
 
 ## Building from source
 
+### Hosted browser frontend
+
+The browser frontend is also packaged for `https://neser.rmstdope.eu`.
+Successful main CI builds publish an immutable `ghcr.io/rmstdope/neser-web` image
+for the opt-in VPS poller managed in `rmstdope-infra`. The hosted image contains
+the emulator only: players load their own ROMs and firmware. Browser saves are
+local to that site's origin, not shared with other NESER sites.
+See [container deployment](deploy/README.md) for the build and release contract.
+The existing SFTP deployment and native releases are unchanged.
+
 Prerequisites:
 
 - Rust via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml`

@@ -70,5 +70,37 @@ class WebIntegrationShardsTest(unittest.TestCase):
         self.assertRegex(self.job, pattern)
 
 
+class WebContainerPublicationTest(unittest.TestCase):
+    def test_pr_builds_are_read_only_and_publish_waits_for_the_tested_image(self) -> None:
+        ci = CI_YML.read_text(encoding="utf-8")
+        build, publish = ci.split("  web-container:\n", 1)[1].split("  publish-web:\n")
+        self.assertNotIn("packages: write", build)
+        self.assertIn("needs: web-container", publish)
+        self.assertIn(
+            "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            publish,
+        )
+        self.assertIn("packages: write", publish)
+        self.assertIn("docker load --input web-container.tar", publish)
+        self.assertIn("node deploy/smoke.mjs", build)
+        self.assertLess(build.index("node deploy/smoke.mjs"), build.index("docker save"))
+
+    def test_build_is_gated_by_every_other_check_and_reruns_preserve_manifest(self) -> None:
+        ci = CI_YML.read_text(encoding="utf-8")
+        jobs = set(re.findall(r"^  ([a-z][a-z-]+):$", ci, re.MULTILINE))
+        build, publish = ci.split("  web-container:\n", 1)[1].split("  publish-web:\n")
+        needs = re.search(r"needs: \[([^\]]+)\]", build)
+        assert needs is not None
+        self.assertEqual(
+            {name.strip() for name in needs.group(1).split(",")},
+            jobs - {"web-container", "publish-web", "push", "pull_request"},
+        )
+        self.assertIn("!contains(needs.*.result, 'failure')", build)
+        self.assertIn("!contains(needs.*.result, 'cancelled')", build)
+        for step in publish.split("      - ")[1:]:
+            if "docker load" in step or "docker push" in step or "upload-artifact@" in step:
+                self.assertIn("if: steps.existing.outputs.found != 'true'", step)
+
+
 if __name__ == "__main__":
     unittest.main()
