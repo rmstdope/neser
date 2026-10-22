@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 // line's background the colour of its text. So every class the page or the code uses that
 // DaisyUI also defines must be one we use on purpose: a whole component (`btn` admits `btn-sm`)
 // or, for DaisyUI's colour utilities, the exact name.
-const DELIBERATE_DAISYUI_COMPONENTS = ["alert", "badge", "btn", "checkbox", "drawer", "file-input", "kbd", "label", "modal", "select"];
+const DELIBERATE_DAISYUI_COMPONENTS = ["alert", "badge", "btn", "checkbox", "drawer", "file-input", "kbd", "label", "modal", "range", "select"];
 const DELIBERATE_DAISYUI_NAMES = ["text-info"];
 
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
