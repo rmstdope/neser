@@ -64,18 +64,18 @@ body {
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-header {
-  background: rgba(8, 13, 21, 0.6) !important;
-  border-color: var(--line) !important;
+.app-topbar {
+  background: rgba(8, 13, 21, 0.6);
+  border-color: var(--line);
   backdrop-filter: blur(10px);
 }
 
-aside {
-  background: linear-gradient(180deg, rgba(18, 30, 47, 0.92), rgba(10, 17, 28, 0.92)) !important;
-  border-color: var(--line) !important;
+.app-sidebar {
+  background: linear-gradient(180deg, rgba(18, 30, 47, 0.92), rgba(10, 17, 28, 0.92));
+  border-color: var(--line);
 }
 
-aside .label:not(.cursor-pointer) {
+.app-sidebar .label:not(.cursor-pointer) {
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -175,6 +175,7 @@ aside .label:not(.cursor-pointer) {
 }
 
 .kbd {
+  border-radius: 6px;
   font-family: var(--font-mono-ui);
   color: var(--ice);
   background: rgba(6, 12, 20, 0.6);
@@ -269,14 +270,13 @@ canvas {
 
 /* ── Status / controls ───────────────────────────────────── */
 
-/* Our status line, not DaisyUI's .status dot component of the same name. */
-.status {
-  width: auto;
-  height: auto;
-  background: none;
-  border-radius: 0;
+/* The status line holds a message only when something went wrong. */
+.status-line {
   font-size: 0.95rem;
-  color: var(--color-success);
+}
+
+.status-line.status-error {
+  color: var(--color-error);
 }
 
 #autorun-status {

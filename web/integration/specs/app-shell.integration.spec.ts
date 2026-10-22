@@ -12,6 +12,21 @@ test.describe("web app shell", () => {
         }
     });
 
+    test("shows a refused file's message as one line in the theme's error colour, and no REC badge while idle", async ({ page }) => {
+        await page.goto("/");
+        await expect(page.locator("#rec-overlay")).toBeHidden();
+
+        await page.locator("#rom").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a game") });
+
+        const status = page.locator("#status");
+        await expect(status).toHaveText("Unsupported file type .txt");
+        await expect(status).toBeVisible();
+        const box = (await status.boundingBox())!;
+        expect(box.height).toBeLessThan(40);
+        expect(box.width).toBeGreaterThan(box.height * 3);
+        await expect(status).toHaveCSS("color", "rgb(242, 113, 138)");
+    });
+
     test("accepts every supported ROM file in the file picker once start-up installs the wasm table", async ({ page }) => {
         await page.goto("/");
 

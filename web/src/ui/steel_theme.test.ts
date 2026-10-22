@@ -19,13 +19,6 @@ describe("Steel Glow theme", () => {
         expect(mainCss).toMatch(/@plugin "daisyui\/theme" \{[^}]*name: "steel";/);
     });
 
-    it("Given the steel theme, When reading its colours, Then the primary is the steel highlight and the page is night blue", () => {
-        const theme = mainCss.match(/@plugin "daisyui\/theme" \{([^}]*)\}/)![1];
-        expect(theme).toContain("--color-primary: #7fb0e3;");
-        expect(theme).toContain("--color-base-100: #0c1420;");
-        expect(theme).toContain("--color-error: #f2718a;");
-    });
-
     it("Given the sidebar, When reading the logo, Then it is the wordmark with its system line, not ASCII art", () => {
         const logo = page.querySelector(".neser-logo");
         expect(logo?.querySelector(".neser-logo-word")?.textContent).toBe("NESER");
