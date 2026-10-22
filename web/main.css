@@ -333,6 +333,195 @@ canvas {
   background: rgba(3, 6, 11, 0.6);
 }
 
+/* ── Control bar: every in-game control under the picture ── */
+
+:root {
+  --icon-play: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M7 5l12 7-12 7z'/%3E%3C/svg%3E");
+  --icon-pause: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 5v14M16 5v14'/%3E%3C/svg%3E");
+  --icon-reset: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12a8 8 0 1 0 3-6.2'/%3E%3Cpath d='M4 4v5h5'/%3E%3C/svg%3E");
+  --icon-save: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h11l3 3v13H5z'/%3E%3Cpath d='M8 4v5h7V4M8 20v-6h8v6'/%3E%3C/svg%3E");
+  --icon-load: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 10l5 5 5-5'/%3E%3Cpath d='M4 20h16'/%3E%3C/svg%3E");
+  --icon-eject: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5l7 8H5z'/%3E%3Cpath d='M5 18h14'/%3E%3C/svg%3E");
+  --icon-zoom-in: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='6'/%3E%3Cpath d='M20 20l-4.5-4.5M11 8v6M8 11h6'/%3E%3C/svg%3E");
+  --icon-zoom-out: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='6'/%3E%3Cpath d='M20 20l-4.5-4.5M8 11h6'/%3E%3C/svg%3E");
+  --icon-filter: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Cpath d='M3 10h18M3 14h18'/%3E%3C/svg%3E");
+  --icon-palette: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Ccircle cx='8' cy='10' r='1'/%3E%3Ccircle cx='12' cy='7.5' r='1'/%3E%3Ccircle cx='16' cy='10' r='1'/%3E%3Cpath d='M12 21a3 3 0 0 1 0-6h2'/%3E%3C/svg%3E");
+  --icon-volume: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11'/%3E%3C/svg%3E");
+  --icon-mute: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M17 9l5 6M22 9l-5 6'/%3E%3C/svg%3E");
+  --icon-fullscreen: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'/%3E%3C/svg%3E");
+}
+
+.control-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 18px;
+  padding: 6px;
+  border-radius: 16px;
+  background: rgba(14, 23, 36, 0.82);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 30px rgba(70, 140, 220, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.control-bar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.control-bar-sep {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: var(--line-strong);
+}
+
+.control-bar .btn {
+  position: relative;
+  height: 2.25rem;
+  gap: 7px;
+}
+
+.control-bar .btn-ghost {
+  border: 1px solid transparent;
+  color: #dbe6f3;
+}
+
+/* Icon-only controls keep their words as the accessible name and show only the icon. */
+.control-bar .btn-icon-only {
+  width: 2.25rem;
+  padding: 0;
+  font-size: 0;
+}
+
+[data-icon]::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+
+[data-icon="play"] { --icon: var(--icon-play); }
+[data-icon="pause"] { --icon: var(--icon-pause); }
+[data-icon="reset"] { --icon: var(--icon-reset); }
+[data-icon="save"] { --icon: var(--icon-save); }
+[data-icon="load"] { --icon: var(--icon-load); }
+[data-icon="eject"] { --icon: var(--icon-eject); }
+[data-icon="zoom-in"] { --icon: var(--icon-zoom-in); }
+[data-icon="zoom-out"] { --icon: var(--icon-zoom-out); }
+[data-icon="filter"] { --icon: var(--icon-filter); }
+[data-icon="palette"] { --icon: var(--icon-palette); }
+[data-icon="volume"] { --icon: var(--icon-volume); }
+[data-icon="fullscreen"] { --icon: var(--icon-fullscreen); }
+#mute.volume-off { --icon: var(--icon-mute); }
+
+/* Start before a game runs, Pause while it runs, a lit Resume while paused. */
+#emulation-controls[data-emulation-state="idle"] #pause,
+#emulation-controls:not([data-emulation-state="idle"]) #start {
+  display: none;
+}
+
+#emulation-controls[data-emulation-state="paused"] #pause {
+  --icon: var(--icon-play);
+  border-color: rgba(127, 176, 227, 0.35);
+  background: linear-gradient(180deg, rgba(127, 176, 227, 0.22), rgba(74, 118, 168, 0.12));
+}
+
+/* Hover tips: what the control does, and its key when it has one. */
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: #e6f0fb;
+  color: #0a1422;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  z-index: 30;
+}
+
+[data-tip][aria-keyshortcuts]:hover::after {
+  content: attr(data-tip) "  ·  " attr(aria-keyshortcuts);
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+}
+
+.volume-control .range {
+  width: 84px;
+  color: var(--steel-hi);
+  --range-bg: rgba(127, 176, 227, 0.18);
+  --range-thumb: #e6f2ff;
+  --range-fill: 1;
+}
+
+/* ── The running game in the top bar ─────────────────────── */
+
+.game-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.game-title.hidden {
+  display: none;
+}
+
+.game-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.game-file {
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.game-file::before {
+  content: "· ";
+}
+
+.sys-badge {
+  flex: none;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #06101c;
+  background: var(--steel-hi);
+}
+
+.sys-badge[data-system="NES"] { background: #f0a9a0; }
+.sys-badge[data-system="GB"] { background: #9fd38a; }
+.sys-badge[data-system="GBC"] { background: #c7a2f0; }
+.sys-badge[data-system="GBA"] { background: #8fa3f5; }
+.sys-badge[data-system="SNES"] { background: #d9b2e8; }
+
 .neser-toast-container {
   position: absolute;
   /* Span the picture, so a message wraps inside it however narrow the window. */

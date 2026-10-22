@@ -33,10 +33,10 @@ test.describe("Palette button (does what F8 does)", () => {
         await waitForRunningState(page);
         await expect(palette).toBeVisible();
         await expect(palette).toHaveText("Palette: Default");
-        await expect(palette).toHaveAttribute("title", "Change palette (F8)");
+        await expect(palette).toHaveAttribute("aria-keyshortcuts", "F8");
 
-        // Sits right after Filter and before Mute.
-        const order = await page.locator("header button").evaluateAll((els) =>
+        // Sits right after Filter and before Mute in the control bar.
+        const order = await page.locator("#emulation-controls button").evaluateAll((els) =>
             els.filter((el) => (el as HTMLElement).offsetParent !== null).map((el) => el.id)
         );
         expect(order.slice(order.indexOf("filter-toggle"), order.indexOf("mute") + 1)).toEqual([

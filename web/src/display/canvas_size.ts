@@ -1,3 +1,20 @@
+/** The preferred windowed picture height before any zoom, in CSS pixels. */
+export const PREFERRED_WINDOWED_HEIGHT = 720;
+
+/**
+ * What surrounds the windowed picture vertically: the top bar, the steel frame, the control bar
+ * under the picture and the status line, in CSS pixels.
+ */
+export const WINDOWED_CHROME_HEIGHT = 260;
+
+/**
+ * The windowed picture height a page starts with: the preferred 720, or less when the window is too
+ * short to show it with the control bar beneath, but never below the NES's 240 lines.
+ */
+export function initialWindowedHeight(viewportHeight: number): number {
+    return Math.max(240, Math.min(PREFERRED_WINDOWED_HEIGHT, Math.floor(viewportHeight - WINDOWED_CHROME_HEIGHT)));
+}
+
 /**
  * Computes canvas dimensions for windowed (non-fullscreen) display.
  * CSS height is intentionally "auto" so that when CSS max-width:100% clamps the canvas

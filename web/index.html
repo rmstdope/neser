@@ -15,20 +15,19 @@
       <!-- Main content area -->
       <div class="drawer-content flex flex-col min-h-screen">
         <!-- Top bar -->
-        <header class="app-topbar flex items-center gap-2 px-4 py-2 border-b flex-wrap">
+        <header class="app-topbar flex items-center gap-3 px-4 py-2 min-h-14 border-b">
           <!-- Hamburger for mobile/tablet -->
           <label for="sidebar-toggle" class="btn btn-ghost btn-sm lg:hidden" aria-label="Open sidebar">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
           </label>
-          <div class="flex flex-wrap items-center gap-2">
-            <button id="screen-minus" class="btn btn-outline btn-sm">Zoom -</button>
-            <button id="screen-plus" class="btn btn-outline btn-sm">Zoom +</button>
-            <button id="fullscreen" class="btn btn-outline btn-sm">Fullscreen</button>
-            <button id="filter-toggle" class="btn btn-outline btn-sm">Filter</button>
-            <button id="palette-cycle" class="btn btn-outline btn-sm whitespace-nowrap" title="Change palette (F8)" style="display: none">Palette</button>
-            <button id="cgb-color-toggle" class="btn btn-outline btn-sm" style="display: none">Colors: Raw</button>
-            <button id="mute" class="btn btn-outline btn-sm" aria-pressed="false">Mute</button>
+          <!-- The running game: its system and name (filled in by app.ts when a game starts) -->
+          <div id="game-title" class="game-title hidden">
+            <span id="game-system" class="sys-badge"></span>
+            <span id="game-name" class="game-name"></span>
+            <span id="game-file" class="game-file"></span>
           </div>
+          <span class="flex-1"></span>
+          <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
         </header>
 
         <!-- Canvas area -->
@@ -64,9 +63,36 @@
             </div>
           </div>
 
+          <!-- The control bar: every in-game control under the picture. data-emulation-state is the
+               app's lifecycle (idle|running|paused); icons and hover tips are drawn in main.css. -->
+          <div id="emulation-controls" class="control-bar" role="toolbar" aria-label="Game controls" data-emulation-state="idle">
+            <button id="start" class="btn btn-primary btn-sm" data-icon="play" data-tip="Start">Start</button>
+            <button id="pause" class="btn btn-ghost btn-sm" data-icon="pause" data-tip="Pause or resume" aria-keyshortcuts="Space" aria-label="Pause or resume emulation">Pause</button>
+            <button id="reset" class="btn btn-ghost btn-sm" data-icon="reset" data-tip="Reset" aria-keyshortcuts="Control+R" aria-label="Reset emulation">Reset</button>
+            <span class="control-bar-sep" aria-hidden="true"></span>
+            <div id="save-state-section" class="control-bar-group" data-save-state="empty">
+              <button id="save-state" class="btn btn-ghost btn-sm" data-icon="save" data-tip="Save state" aria-keyshortcuts="F6" disabled>Save State</button>
+              <button id="load-state" class="btn btn-ghost btn-sm" data-icon="load" data-tip="Load state" aria-keyshortcuts="F7" disabled>Load State</button>
+            </div>
+            <span class="control-bar-sep" aria-hidden="true"></span>
+            <button id="stop" class="btn btn-ghost btn-sm" data-icon="eject" data-tip="Eject the game" aria-label="Eject game">Eject</button>
+            <span class="control-bar-sep" aria-hidden="true"></span>
+            <div class="control-bar-group">
+              <button id="screen-minus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-out" data-tip="Zoom out">Zoom -</button>
+              <button id="screen-plus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-in" data-tip="Zoom in">Zoom +</button>
+              <button id="filter-toggle" class="btn btn-ghost btn-sm" data-icon="filter" data-tip="Next filter" aria-keyshortcuts="F4">Filter</button>
+              <button id="palette-cycle" class="btn btn-ghost btn-sm whitespace-nowrap" data-icon="palette" data-tip="Next palette" aria-keyshortcuts="F8" style="display: none">Palette</button>
+              <button id="cgb-color-toggle" class="btn btn-ghost btn-sm" data-icon="palette" data-tip="Colour correction" aria-keyshortcuts="F8" style="display: none">Colors: Raw</button>
+              <div class="volume-control">
+                <button id="mute" class="btn btn-ghost btn-sm btn-icon-only" data-icon="volume" data-tip="Mute" aria-pressed="false">Mute</button>
+                <input id="volume" type="range" min="0" max="100" value="100" class="range range-xs" aria-label="Volume" />
+              </div>
+              <button id="fullscreen" class="btn btn-ghost btn-sm btn-icon-only" data-icon="fullscreen" data-tip="Fullscreen" aria-keyshortcuts="Control+F">Fullscreen</button>
+            </div>
+          </div>
+
           <div class="mt-3 flex items-center gap-2">
             <span id="status" class="status-line"></span>
-            <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
             <span class="help-hint touch-hide">Press <kbd class="kbd kbd-sm">H</kbd> for keyboard shortcuts</span>
           </div>
         </main>
@@ -122,20 +148,6 @@
             <button id="autorun-load" class="btn btn-outline btn-sm w-full" disabled>Load autorun</button>
             <ul id="autorun-status" class="text-xs text-info list-none space-y-0.5"></ul>
             <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
-          </div>
-
-          <!-- Emulation controls; data-emulation-state is the app's lifecycle (idle|running|paused) -->
-          <div id="emulation-controls" class="flex flex-col gap-2" data-emulation-state="idle">
-            <button id="start" class="btn btn-primary btn-sm w-full">Start</button>
-            <div class="flex gap-2">
-              <button id="pause" class="btn btn-outline btn-sm flex-1" aria-label="Pause or resume emulation">Pause</button>
-              <button id="reset" class="btn btn-outline btn-sm flex-1" aria-label="Reset emulation">Reset</button>
-            </div>
-            <button id="stop" class="btn btn-error btn-outline btn-sm w-full" aria-label="Stop emulation">Stop</button>
-            <div id="save-state-section" class="flex gap-2" data-save-state="empty">
-              <button id="save-state" class="btn btn-outline btn-sm flex-1" disabled>Save State</button>
-              <button id="load-state" class="btn btn-outline btn-sm flex-1" disabled>Load State</button>
-            </div>
           </div>
 
           <!-- Spacer to push content up -->
