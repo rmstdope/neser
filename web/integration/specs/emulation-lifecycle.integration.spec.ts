@@ -9,7 +9,7 @@ import {
     waitForPausedState
 } from "../helpers/lifecycle.helpers";
 
-const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#pause", "#stop", "#reset", "#status"];
+const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#pause", "#stop", "#reset"];
 const START_BUTTON_SELECTOR = "#start";
 const PAUSE_BUTTON_SELECTOR = "#pause";
 const STOP_BUTTON_SELECTOR = "#stop";
@@ -24,6 +24,8 @@ test.describe("Phase 1 critical path lifecycle", () => {
         for (const selector of ESSENTIAL_CONTROL_SELECTORS) {
             await expect(page.locator(selector)).toBeVisible();
         }
+        // The status line holds a message only when there is one; while idle it is empty.
+        await expect(page.locator("#status")).toBeAttached();
 
         await waitForIdleState(page);
     });
