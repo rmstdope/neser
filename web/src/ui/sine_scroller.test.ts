@@ -26,3 +26,4 @@ it("sampleWaveY follows sine phase", () => {
 it("buildFontString formats size", () => {
     expect(buildFontString(24, "'Courier New', monospace")).toBe("bold 24px 'Courier New', monospace");
 });
+

@@ -1,3 +1,6 @@
+/** The scroller's letter colours: a vertical ice-to-steel gradient with a steel glow. */
+export const SCROLLER_LETTER_COLORS = { top: "#eef6ff", middle: "#b9dcff", bottom: "#7fb0e3", glow: "#7fb0e3" } as const;
+
 export function buildFontString(fontSizePx: number, fontFamily: string) {
     return `bold ${fontSizePx}px ${fontFamily}`;
 }
@@ -83,14 +86,14 @@ export function createSineScroller({
             const charY = (height / 2) + sineOffset;
 
             const gradient = ctx.createLinearGradient(charX, charY - 20, charX, charY + 20);
-            gradient.addColorStop(0, "#ff00ff");
-            gradient.addColorStop(0.5, "#00ffff");
-            gradient.addColorStop(1, "#ffff00");
+            gradient.addColorStop(0, SCROLLER_LETTER_COLORS.top);
+            gradient.addColorStop(0.5, SCROLLER_LETTER_COLORS.middle);
+            gradient.addColorStop(1, SCROLLER_LETTER_COLORS.bottom);
 
             ctx.fillStyle = gradient;
             ctx.fillText(char, charX, charY);
 
-            ctx.shadowColor = "#00ffff";
+            ctx.shadowColor = SCROLLER_LETTER_COLORS.glow;
             ctx.shadowBlur = 10;
             ctx.fillText(char, charX, charY);
             ctx.shadowBlur = 0;

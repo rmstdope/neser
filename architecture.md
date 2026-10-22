@@ -547,13 +547,13 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 
 ### `web/` — Browser Frontend
 
-The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `web/`, build output: `dist/`). Styled with **Tailwind CSS v4** and **DaisyUI v5** (night theme with neon accent colors). Uses a DaisyUI drawer layout with a sidebar for ROM/emulation controls and a top bar for screen controls. TypeScript modules are organized into feature folders under `web/src/`.
+The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `web/`, build output: `dist/`). Styled with **Tailwind CSS v4** and **DaisyUI v5**, with a custom `steel` theme (Steel Glow: night-blue glass panels, steel-blue gradients and a soft glow; the agreed drawings are in `docs/ui/steel-glow/`). Uses a DaisyUI drawer layout with a sidebar for ROM/emulation controls and a top bar for screen controls. TypeScript modules are organized into feature folders under `web/src/`.
 
 | Directory/File | Description |
 | -------------- | ------------- |
 | `web/index.html` | Entry point — DaisyUI drawer layout with sidebar, top bar, canvas area, footer, and autorun modal dialog. Loads `./src/app.ts` as the main module. |
-| `web/main.css` | Tailwind CSS entry point with DaisyUI plugin config, neon theme overrides, and custom component styles. |
-| `web/debugger.css` | Debugger panel styling (green-on-black terminal aesthetic). |
+| `web/main.css` | Tailwind CSS entry point with the DaisyUI plugin, the `steel` theme definition, and custom component styles. |
+| `web/debugger.css` | Debugger panel styling, in the steel palette. |
 | `web/src/app.ts` | Application bootstrapper — initializes the WASM module, selects `WasmNes` / `WasmGb` / `WasmGba` by ROM extension, sets up the render loop, and coordinates all subsystems. |
 | `web/src/console/` | The one list of consoles the web frontend runs (`consoles.ts`): the `ConsoleKind` type and a per-console table (frame pixel format, stereo and sample scaling, filter family and default filter, help-overlay key bindings, save-state support, fresh instance per Start, Palette and Colors buttons) that every web module reads, so adding a console to the web is one row plus its wasm binding. Screen size, frame rate and audio sample rate are reported by the binding at runtime and are not copied there. `console_set_declared_once.test.ts` fails if a module redeclares the console set. |
 | `web/src/audio/` | Audio resampling (`audio_resampler.ts`), frame timing (`frame_limiter.ts`, `frame_plan.ts`). |

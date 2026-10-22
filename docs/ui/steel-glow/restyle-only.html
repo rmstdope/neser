@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option A — Steel Glow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-0: #070b12; --bg-1: #0c1420; --panel: rgba(22, 34, 52, .62); --panel-solid: #121d2d;
+  --line: rgba(130, 170, 215, .16); --line-strong: rgba(130, 170, 215, .34);
+  --steel: #4a76a8; --steel-hi: #7fb0e3; --ice: #b9dcff; --text: #dbe6f3; --muted: #7d8fa6;
+  --glow: 0 0 0 1px rgba(127,176,227,.35), 0 0 18px rgba(80,150,230,.35), 0 0 48px rgba(80,150,230,.12);
+  --ok: #5fd3b0; --warn: #e9b65f; --err: #f2718a;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; color: var(--text); font: 14px/1.45 Inter, system-ui, sans-serif;
+  background: radial-gradient(1200px 600px at 60% -10%, #1a2c46 0%, transparent 60%),
+              radial-gradient(800px 500px at 0% 100%, #0f1d30 0%, transparent 60%), var(--bg-0); }
+.app { display: grid; grid-template-columns: 272px 1fr; min-height: 100vh; }
+aside { padding: 22px 18px; display: flex; flex-direction: column; gap: 22px;
+  background: linear-gradient(180deg, rgba(18,30,47,.9), rgba(10,17,28,.9)); border-right: 1px solid var(--line);
+  backdrop-filter: blur(12px); }
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(140deg, #8cc0f2, #2f5d92); box-shadow: var(--glow); font-weight: 700; color: #06101c; }
+.logo-word { font-weight: 700; letter-spacing: .32em; font-size: 17px;
+  background: linear-gradient(180deg, #f1f7ff, #8fb4dc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.logo-sub { font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+.section { display: flex; flex-direction: column; gap: 8px; }
+.section h4 { margin: 0; font-size: 10.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.field { height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: rgba(6,12,20,.6);
+  color: var(--text); padding: 0 12px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.field .chev { color: var(--muted); }
+.drop { border: 1px dashed var(--line-strong); border-radius: 12px; padding: 14px; text-align: center; color: var(--muted); font-size: 12.5px;
+  background: linear-gradient(180deg, rgba(74,118,168,.08), transparent); }
+.drop b { color: var(--ice); font-weight: 600; }
+.btn { height: 34px; border-radius: 10px; border: 1px solid var(--line-strong); background: linear-gradient(180deg, rgba(60,90,128,.35), rgba(30,46,68,.35));
+  color: var(--text); font: 500 13px Inter, sans-serif; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; transition: .15s; }
+.btn:hover, .btn.hover { border-color: var(--steel-hi); box-shadow: var(--glow); color: #fff; }
+.btn.primary { border: 0; color: #04111f; font-weight: 600; background: linear-gradient(180deg, #a8d2fb, #5b8fc7); box-shadow: 0 0 22px rgba(110,170,235,.45), inset 0 1px 0 rgba(255,255,255,.6); }
+.btn.danger { color: var(--err); border-color: rgba(242,113,138,.35); }
+.btn:disabled { opacity: .38; box-shadow: none; cursor: default; }
+.row { display: flex; gap: 8px; } .row .btn { flex: 1; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.check i { width: 16px; height: 16px; border-radius: 5px; border: 1px solid var(--line-strong); display: inline-block; }
+main { display: flex; flex-direction: column; min-width: 0; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.seg { display: inline-flex; padding: 3px; border-radius: 12px; background: rgba(6,12,20,.6); border: 1px solid var(--line); }
+.seg button { height: 30px; border: 0; background: none; color: var(--muted); padding: 0 12px; border-radius: 9px; font: 500 12.5px Inter; cursor: pointer; }
+.seg button.on { color: #fff; background: linear-gradient(180deg, rgba(127,176,227,.28), rgba(74,118,168,.18)); box-shadow: inset 0 0 0 1px rgba(127,176,227,.4), 0 0 14px rgba(80,150,230,.25); }
+.spacer { flex: 1; }
+.chip { font: 500 11.5px "JetBrains Mono", monospace; color: var(--muted); padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); }
+.chip.live { color: var(--ok); border-color: rgba(95,211,176,.35); }
+.chip.live::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); margin-right: 7px; box-shadow: 0 0 8px var(--ok); vertical-align: 1px; }
+.stage { flex: 1; display: grid; place-items: center; padding: 32px 24px 16px; }
+.bezel { position: relative; padding: 18px; border-radius: 22px;
+  background: linear-gradient(160deg, #22344d 0%, #0e1724 40%, #0a111b 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 0 0 1px rgba(127,176,227,.22), 0 0 60px rgba(70,140,220,.22), 0 30px 60px rgba(0,0,0,.5); }
+.bezel::after { content: ""; position: absolute; inset: 0; border-radius: 22px; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,.07) 0%, transparent 30%); }
+.bezel canvas { display: block; width: min(640px, 70vw); aspect-ratio: 256/240; image-rendering: pixelated; border-radius: 8px; background: #000; }
+.status { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 0 26px; flex-wrap: wrap; }
+.kbd { font: 600 11px "JetBrains Mono"; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line-strong); color: var(--ice); }
+.hint { color: var(--muted); font-size: 12.5px; }
+/* States */
+.states { padding: 36px 32px 60px; border-top: 1px solid var(--line); }
+.states h2 { margin: 0 0 4px; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--steel-hi); }
+.states p.lede { margin: 0 0 22px; color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 22px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+.card .cap { font-size: 11px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 10px; }
+.mini { position: relative; aspect-ratio: 256/240; border-radius: 10px; overflow: hidden; background: #03060b; box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; }
+.mini canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+.empty { text-align: center; color: var(--muted); font-size: 13px; padding: 18px; }
+.empty .ring { width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 50%; border: 1px solid var(--line-strong); box-shadow: var(--glow); display: grid; place-items: center; color: var(--ice); font-size: 22px; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5,10,18,.55); backdrop-filter: blur(3px); }
+.overlay span { font-weight: 600; letter-spacing: .3em; color: #fff; text-shadow: 0 0 14px rgba(127,176,227,.9); }
+.toast { position: absolute; left: 10px; right: 10px; bottom: 10px; padding: 9px 12px; border-radius: 10px; font-size: 12px;
+  background: rgba(40,14,22,.85); border: 1px solid rgba(242,113,138,.45); color: #ffd6de; box-shadow: 0 0 18px rgba(242,113,138,.25); }
+.dialog { background: linear-gradient(180deg, #172539, #0e1724); border: 1px solid var(--line-strong); border-radius: 18px; padding: 20px; box-shadow: var(--glow), 0 30px 60px rgba(0,0,0,.5); }
+.dialog h3 { margin: 0 0 8px; font-size: 16px; } .dialog p { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+.dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn.ghost { background: none; border-color: transparent; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.sw { width: 44px; height: 44px; border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); }
+.btnrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+@media (max-width: 860px) { .app { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--line); }
+  .bezel canvas { width: calc(100vw - 80px); } header { padding: 12px 16px; } .states { padding: 28px 16px; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="logo"><div class="logo-mark">N</div><div><div class="logo-word">NESER</div><div class="logo-sub">NES · GB · GBC · GBA · SNES</div></div></div>
+    <div class="section"><h4>Game</h4>
+      <div class="drop"><b>Drop a ROM</b> or click to browse</div>
+      <div class="field">Select bundled ROM… <span class="chev">▾</span></div>
+    </div>
+    <div class="section"><h4>Game Boy games run on</h4><div class="field">Game Boy Color <span class="chev">▾</span></div></div>
+    <div class="section"><h4>Emulation</h4>
+      <button class="btn primary">▶ Start</button>
+      <div class="row"><button class="btn">Pause</button><button class="btn">Reset</button></div>
+      <button class="btn danger">Stop</button>
+    </div>
+    <div class="section"><h4>Save state</h4>
+      <div class="row"><button class="btn hover">Save</button><button class="btn" disabled>Load</button></div>
+    </div>
+    <div class="section"><h4>Autorun</h4>
+      <label class="check"><i></i>Create autorun</label>
+      <button class="btn" disabled>Load autorun</button>
+    </div>
+  </aside>
+  <main>
+    <header>
+      <div class="seg"><button>−</button><button class="on">3×</button><button>+</button></div>
+      <div class="seg"><button class="on">Filter</button><button>Palette</button><button>Mute</button><button>Fullscreen</button></div>
+      <div class="spacer"></div>
+      <span class="chip">60.0 fps</span><span class="chip live">Running · NES</span>
+    </header>
+    <div class="stage"><div class="bezel"><canvas data-scene width="256" height="240"></canvas></div></div>
+    <div class="status"><span class="hint">Press</span><span class="kbd">H</span><span class="hint">for keyboard shortcuts</span></div>
+  </main>
+</div>
+
+<section class="states">
+  <h2>Option A — Steel Glow · states</h2>
+  <p class="lede">Dark glass panels, steel-blue gradients, soft light bleeding from what's active. Rounded, calm, high-end.</p>
+  <div class="grid">
+    <div class="card"><div class="cap">No game loaded</div><div class="mini"><div class="empty"><div class="ring">⤓</div>Drop a ROM file here<br>or pick a bundled one</div></div></div>
+    <div class="card"><div class="cap">Paused</div><div class="mini"><canvas data-scene width="256" height="240"></canvas><div class="overlay"><span>PAUSED</span></div></div></div>
+    <div class="card"><div class="cap">Error</div><div class="mini"><div class="empty">—</div><div class="toast">Could not load “game.zip”: not a ROM NESER recognises.</div></div></div>
+    <div class="card"><div class="cap">Dialog</div><div class="dialog"><h3>This game needs the DSP-1 firmware</h3><p>Choose your dsp1b.rom file (8 KB). It stays in this browser, so you only do this once.</p><div class="actions"><button class="btn ghost">Cancel</button><button class="btn primary">Choose file…</button></div></div></div>
+    <div class="card"><div class="cap">Palette</div><div class="swatches">
+      <div class="sw" style="background:#070b12"></div><div class="sw" style="background:#121d2d"></div><div class="sw" style="background:#4a76a8"></div><div class="sw" style="background:#7fb0e3"></div><div class="sw" style="background:#b9dcff"></div><div class="sw" style="background:#5fd3b0"></div><div class="sw" style="background:#e9b65f"></div><div class="sw" style="background:#f2718a"></div></div>
+      <div class="btnrow"><button class="btn primary">Primary</button><button class="btn">Default</button><button class="btn hover">Hover</button><button class="btn" disabled>Disabled</button><button class="btn danger">Danger</button></div></div>
+  </div>
+</section>
+<script src="scene.js"></script>
+</body>
+</html>
