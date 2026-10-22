@@ -66,6 +66,11 @@ export function sidebarStored(chip: SnesFirmwareChip): string {
     return `${chip.label}: stored ✓`;
 }
 
+/** A chip whose firmware the player has not given yet, in the settings panel's list. */
+export function sidebarMissing(chip: SnesFirmwareChip): string {
+    return `${chip.label}: not added`;
+}
+
 /** A game's name in messages: its file name without the last extension. */
 export function romDisplayName(fileName: string): string {
     const dot = fileName.lastIndexOf(".");

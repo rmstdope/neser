@@ -9,6 +9,7 @@ import {
     dialogText,
     dialogTitle,
     notGenuineDetail,
+    sidebarMissing,
     sidebarStored,
     storedMessage,
     wrongFileTitle,
@@ -137,17 +138,17 @@ export async function obtainSnesFirmware({
 
 export type FirmwareSidebarElements = {
     section: HTMLElement;
-    /** Where the rows go, one per stored chip. */
+    /** Where the rows go, one per chip. */
     rows: HTMLElement;
     /** The hidden file chooser every row's Replace… opens. */
     fileInput: HTMLInputElement;
 };
 
 /**
- * Wires the sidebar's "SNES firmware" block: one row per chip with a stored genuine file, in
- * `SNES_FIRMWARE_CHIPS` order, each with its own Replace… and Forget; the block is shown only
- * while a row exists. Replace… checks like the dialog (messages at the bottom, since no dialog
- * is open); Forget removes that chip's file at once, without asking.
+ * Wires the settings panel's "SNES firmware" block: one row per chip, in `SNES_FIRMWARE_CHIPS`
+ * order. A chip with a stored genuine file has Replace… and Forget; any other chip has Add….
+ * Add… and Replace… check like the dialog (messages at the bottom, since no firmware dialog is
+ * open); Forget removes that chip's file at once, without asking.
  */
 export function createFirmwareSidebar({
     elements,
@@ -163,23 +164,40 @@ export function createFirmwareSidebar({
     const { section, rows, fileInput } = elements;
     let replacing: SnesFirmwareChip | null = null;
 
-    function row(chip: SnesFirmwareChip): HTMLElement {
-        const line = document.createElement("div");
-        line.className = "flex items-center gap-2";
-        line.dataset.chip = chip.key;
-        const label = document.createElement("span");
-        label.className = "text-xs flex-1";
-        label.textContent = sidebarStored(chip);
-        const replace = document.createElement("button");
-        replace.type = "button";
-        replace.className = "btn btn-outline btn-xs";
-        replace.textContent = "Replace…";
-        replace.setAttribute("aria-label", `Replace the ${chip.label} firmware`);
-        replace.addEventListener("click", () => {
+    function chooseFileFor(chip: SnesFirmwareChip, text: string, verb: string): HTMLButtonElement {
+        const choose = document.createElement("button");
+        choose.type = "button";
+        choose.className = "btn btn-outline btn-xs";
+        choose.textContent = text;
+        choose.setAttribute("aria-label", `${verb} the ${chip.label} firmware`);
+        choose.addEventListener("click", () => {
             replacing = chip;
             fileInput.value = "";
             fileInput.click();
         });
+        return choose;
+    }
+
+    function missingRow(chip: SnesFirmwareChip): HTMLElement {
+        const line = document.createElement("div");
+        line.className = "firmware-row";
+        line.dataset.chip = chip.key;
+        const label = document.createElement("span");
+        label.className = "firmware-row-label";
+        label.textContent = sidebarMissing(chip);
+        line.append(label, chooseFileFor(chip, "Add…", "Add"));
+        return line;
+    }
+
+    function row(chip: SnesFirmwareChip): HTMLElement {
+        const line = document.createElement("div");
+        line.className = "firmware-row";
+        line.dataset.chip = chip.key;
+        line.dataset.stored = "true";
+        const label = document.createElement("span");
+        label.className = "firmware-row-label";
+        label.textContent = sidebarStored(chip);
+        const replace = chooseFileFor(chip, "Replace…", "Replace");
         const forget = document.createElement("button");
         forget.type = "button";
         forget.className = "btn btn-outline btn-xs";
@@ -203,8 +221,8 @@ export function createFirmwareSidebar({
             const bytes = await store.load(chip.key).catch(() => null);
             if (bytes && isGenuine(chip.key, bytes)) stored.push(chip);
         }
-        rows.replaceChildren(...stored.map(row));
-        section.classList.toggle("hidden", stored.length === 0);
+        rows.replaceChildren(...SNES_FIRMWARE_CHIPS.map((chip) => (stored.includes(chip) ? row(chip) : missingRow(chip))));
+        section.classList.remove("hidden");
     }
 
     fileInput.addEventListener("change", async () => {

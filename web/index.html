@@ -28,6 +28,7 @@
           </div>
           <span class="flex-1"></span>
           <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
+          <button id="settings-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="gear" data-tip="Settings" aria-label="Settings" aria-controls="settings-panel" aria-haspopup="dialog" aria-expanded="false">Settings</button>
         </header>
 
         <!-- Canvas area -->
@@ -123,39 +124,82 @@
             </select>
           </div>
 
-          <!-- The console original Game Boy games run on, remembered in this browser (nr-zdy.4) -->
-          <div class="flex flex-col gap-2">
-            <label for="gb-hardware" class="label text-xs font-bold p-0">Game Boy games run on</label>
-            <select id="gb-hardware" class="select select-bordered select-sm w-full">
-              <option value="dmg">Game Boy</option>
-              <option value="cgb">Game Boy Color</option>
-            </select>
-            <span id="gb-hardware-note" class="text-xs opacity-60 hidden">Applies when you press Reset</span>
-          </div>
-
-          <!-- SNES firmware: one row per chip with a file stored in this browser (nr-auv, nr-608) -->
-          <div id="snes-firmware-section" class="hidden flex flex-col gap-2">
-            <span class="label text-xs font-bold p-0">SNES firmware</span>
-            <div id="snes-firmware-rows" class="flex flex-col gap-1"></div>
-            <input type="file" id="snes-firmware-replace-file" class="hidden" aria-label="Replacement SNES firmware file" />
-          </div>
-
-          <!-- Autorun controls -->
-          <div id="autorun-section" class="flex flex-col gap-2">
-            <label class="label cursor-pointer justify-start gap-2 p-0">
-              <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" disabled />
-              <span class="label-text text-xs">Create autorun</span>
-            </label>
-            <button id="autorun-load" class="btn btn-outline btn-sm w-full" disabled>Load autorun</button>
-            <ul id="autorun-status" class="text-xs text-info list-none space-y-0.5"></ul>
-            <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
-          </div>
-
           <!-- Spacer to push content up -->
           <div class="flex-1"></div>
         </aside>
       </div>
     </div>
+
+    <!-- Settings: the things set once, in a sheet from the right. The game pauses while it is open. -->
+    <dialog id="settings-panel" class="settings-sheet" aria-labelledby="settings-title">
+      <div class="settings-head">
+        <h2 id="settings-title">Settings</h2>
+        <button type="button" id="settings-close" class="btn btn-ghost btn-sm btn-icon-only" data-icon="close" aria-label="Close settings">Close</button>
+      </div>
+      <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button type="button" role="tab" id="settings-tab-btn-general" aria-controls="settings-tab-general" aria-selected="true">General</button>
+        <button type="button" role="tab" id="settings-tab-btn-controls" aria-controls="settings-tab-controls" aria-selected="false" tabindex="-1">Controls</button>
+        <button type="button" role="tab" id="settings-tab-btn-developer" aria-controls="settings-tab-developer" aria-selected="false" tabindex="-1">Developer</button>
+      </div>
+
+      <section id="settings-tab-general" class="settings-page" role="tabpanel" aria-labelledby="settings-tab-btn-general">
+        <!-- The console original Game Boy games run on, remembered in this browser (nr-zdy.4) -->
+        <div class="settings-group">
+          <h3 class="settings-group-title">Game Boy</h3>
+          <label for="gb-hardware" class="settings-label">Game Boy games run on</label>
+          <select id="gb-hardware" class="select select-sm w-full">
+            <option value="dmg">Game Boy</option>
+            <option value="cgb">Game Boy Color</option>
+          </select>
+          <span id="gb-hardware-note" class="settings-hint hidden">Applies when you press Reset</span>
+        </div>
+
+        <!-- SNES firmware: one row per chip, stored in this browser or not yet added (nr-auv, nr-608) -->
+        <div id="snes-firmware-section" class="settings-group">
+          <h3 class="settings-group-title">SNES firmware</h3>
+          <div id="snes-firmware-rows" class="flex flex-col gap-2"></div>
+          <p class="settings-hint">Firmware files stay in this browser. A game asks for its chip the first time it needs it.</p>
+          <input type="file" id="snes-firmware-replace-file" class="hidden" aria-label="Replacement SNES firmware file" />
+        </div>
+      </section>
+
+      <section id="settings-tab-controls" class="settings-page" role="tabpanel" aria-labelledby="settings-tab-btn-controls" hidden>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Keyboard</h3>
+          <div id="settings-keys-system" class="settings-seg" role="group" aria-label="System">
+            <button type="button" data-console="nes" aria-pressed="true">NES</button>
+            <button type="button" data-console="gb" aria-pressed="false">GB</button>
+            <button type="button" data-console="gba" aria-pressed="false">GBA</button>
+            <button type="button" data-console="snes" aria-pressed="false">SNES</button>
+          </div>
+          <div id="settings-keys" class="settings-keys"></div>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Gamepads</h3>
+          <p id="settings-gamepads" class="settings-hint"></p>
+        </div>
+      </section>
+
+      <section id="settings-tab-developer" class="settings-page" role="tabpanel" aria-labelledby="settings-tab-btn-developer" hidden>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Debugger</h3>
+          <button type="button" id="settings-debugger" class="btn btn-outline btn-sm" disabled>Open debugger</button>
+          <p class="settings-hint">Or press F5 while an NES game runs.</p>
+        </div>
+
+        <!-- Autorun controls -->
+        <div id="autorun-section" class="settings-group">
+          <h3 class="settings-group-title">Autorun</h3>
+          <label class="label cursor-pointer justify-start gap-2 p-0">
+            <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" disabled />
+            <span class="label-text text-sm">Create autorun</span>
+          </label>
+          <button id="autorun-load" class="btn btn-outline btn-sm w-full" disabled>Load autorun</button>
+          <ul id="autorun-status" class="text-xs list-none space-y-0.5"></ul>
+          <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
+        </div>
+      </section>
+    </dialog>
 
     <!-- Autorun modal dialog (native dialog element) -->
     <dialog id="autorun-modal" class="modal" aria-labelledby="autorun-modal-label">

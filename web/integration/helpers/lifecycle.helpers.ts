@@ -152,3 +152,21 @@ export async function startFromBundledRom(page: Page) {
     });
     await waitForRunningState(page);
 }
+/** The settings panel's tabs, by their visible names. */
+export type SettingsTab = "General" | "Controls" | "Developer";
+
+/** Opens the settings panel (from the top bar) on the given tab, unless it is already open. */
+export async function openSettings(page: Page, tab: SettingsTab = "General") {
+    const panel = page.locator("#settings-panel");
+    if (!(await panel.isVisible())) {
+        await page.locator("#settings-open").click();
+        await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    }
+    await page.getByRole("tab", { name: tab }).click();
+}
+
+/** Closes the settings panel with its close button; a game it paused carries on. */
+export async function closeSettings(page: Page) {
+    await page.locator("#settings-close").click();
+    await expect(page.locator("#settings-panel")).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
+}
