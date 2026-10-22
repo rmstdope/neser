@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steel Glow — Desktop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="steel.css">
+<style>
+/* Library (the start screen) */
+.lib { position: absolute; left: 0; right: 0; top: 60px; bottom: 0; padding: 34px 64px; display: grid; grid-template-columns: 1fr 380px; gap: 32px; }
+.hero { position: relative; border-radius: 22px; padding: 30px; overflow: hidden; display: flex; flex-direction: column; gap: 18px; justify-content: flex-end; min-height: 330px;
+  background: linear-gradient(160deg, #1d3150 0%, #0e1826 55%), #0e1826; box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 0 1px rgba(127,176,227,.22), 0 0 50px rgba(70,140,220,.16); }
+.hero.drag { box-shadow: inset 0 0 0 2px var(--steel-hi), 0 0 0 1px rgba(127,176,227,.5), 0 0 70px rgba(70,140,220,.45); }
+.hero .wave { position: absolute; left: 0; right: 0; top: 6px; height: 100px; font: 700 22px var(--mono); color: var(--ice); white-space: nowrap; text-shadow: 0 0 16px rgba(127,176,227,.8); opacity: .9; }
+.hero .wave span { display: inline-block; }
+.hero h2 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.01em; }
+.hero p { margin: 0; color: var(--muted); }
+.hero .cta { display: flex; gap: 10px; align-items: center; }
+.sectionhd { display: flex; align-items: center; gap: 10px; margin: 26px 0 12px; }
+.sectionhd h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.card { border-radius: 14px; overflow: hidden; background: var(--panel); border: 1px solid var(--line); }
+.card .thumb { aspect-ratio: 16/11; background: #000; position: relative; overflow: hidden; }
+.card .thumb canvas { width: 100%; height: 100%; object-fit: cover; }
+.card .thumb .sys { position: absolute; left: 8px; top: 8px; }
+.card .meta { padding: 10px 12px; }
+.card .meta b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .meta span { font-size: 11.5px; color: var(--muted); }
+.card.empty { display: grid; place-items: center; text-align: center; color: var(--dim); font-size: 12px; border-style: dashed; padding: 14px; min-height: 160px; }
+.side { border-radius: 18px; background: var(--panel); border: 1px solid var(--line); padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.side .filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.side .filters .chip.on { color: #fff; border-color: var(--steel-hi); box-shadow: var(--glow-soft); }
+.list { display: flex; flex-direction: column; margin: 0 -8px; }
+.list .grp-t { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); padding: 10px 8px 4px; }
+.list .it { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px; font-size: 13px; }
+.list .it .p { color: var(--dim); font: 11px var(--mono); margin-left: auto; }
+.list .it.on { background: rgba(127,176,227,.14); }
+/* Playing */
+.game .bezel .scr { width: 576px; height: 540px; }
+.over { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5,10,18,.55); backdrop-filter: blur(3px); }
+.bigplay { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(180deg, #a8d2fb, #5b8fc7); color: #04111f; box-shadow: 0 0 40px rgba(110,170,235,.6); }
+.bigplay .ico { width: 34px; height: 34px; }
+.over .lbl { margin-top: 14px; text-align: center; letter-spacing: .3em; font-weight: 600; text-shadow: 0 0 14px rgba(127,176,227,.9); }
+.thumbpop { position: absolute; width: 230px; padding: 10px; border-radius: 14px; background: rgba(16,26,40,.97); border: 1px solid var(--line-strong); box-shadow: 0 20px 50px rgba(0,0,0,.6); z-index: 20; }
+.thumbpop .t { aspect-ratio: 256/240; border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+.thumbpop .t canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+.toasts { position: absolute; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; align-items: center; z-index: 8; }
+.vol { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+.vol .slider { width: 80px; }
+/* Debugger docked */
+.dbg { position: absolute; top: 60px; right: 0; bottom: 0; width: 600px; border-left: 1px solid var(--line-strong); background: linear-gradient(180deg, #0f1928, #0a111b); display: flex; flex-direction: column; font: 12px var(--mono); }
+.dbg .bar { display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-family: Inter; }
+.dbg .cols { flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr auto; gap: 1px; background: var(--line); overflow: hidden; }
+.dbg .pane { background: #0b1320; padding: 10px 12px; overflow: hidden; }
+.dbg .pane h5 { margin: 0 0 8px; font: 600 10.5px Inter; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.dbg .pane h5 .tabs2 { margin-left: auto; display: flex; gap: 2px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.dbg .pane h5 .tabs2 span { padding: 2px 8px; border-radius: 6px; } .dbg .pane h5 .tabs2 span.on { background: rgba(127,176,227,.18); color: #fff; }
+.dbg .reg { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 14px; }
+.dbg .reg b { color: var(--muted); font-weight: 400; } .dbg .reg span { color: var(--ice); }
+.dbg .dis div { white-space: pre; padding: 1px 6px; border-radius: 4px; color: #b8c6d8; } .dbg .dis div.pc { background: rgba(127,176,227,.2); color: #fff; box-shadow: inset 2px 0 0 var(--steel-hi); }
+.dbg .dis .a { color: var(--dim); } .dbg .dis .bp::before { content: "●"; color: var(--err); margin-left: -4px; margin-right: 2px; }
+.dbg .hex div { white-space: pre; color: #9fb0c6; } .dbg .hex .a { color: var(--dim); } .dbg .hex .chg { color: var(--warn); }
+.ppu { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ppu canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 6px; box-shadow: 0 0 0 1px var(--line); }
+/* Help */
+.help { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 900px; z-index: 11; border-radius: 22px; overflow: hidden;
+  background: linear-gradient(180deg, #152338, #0d1623); border: 1px solid var(--line-strong); box-shadow: var(--glow), 0 30px 70px rgba(0,0,0,.6); }
+.help .hd { display: flex; align-items: center; padding: 18px 22px; border-bottom: 1px solid var(--line); gap: 10px; font-size: 16px; font-weight: 600; }
+.help .bd { display: grid; grid-template-columns: 1fr 1.2fr; }
+.help .col { padding: 18px 22px; }
+.help .col + .col { border-left: 1px solid var(--line); }
+.kl { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; align-items: center; font-size: 13px; }
+.kl .keys { display: flex; gap: 4px; }
+.pad { position: relative; height: 190px; margin: 6px 0 14px; border-radius: 60px; background: linear-gradient(180deg, #1b2b42, #101a28); box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 0 0 1px var(--line-strong); }
+.pad .lab { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10.5px; color: var(--muted); }
+.pad .cross { position: absolute; left: 70px; top: 55px; width: 80px; height: 80px; }
+.pad .cross::before, .pad .cross::after { content: ""; position: absolute; background: #2a3c56; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pad .cross::before { left: 27px; top: 0; width: 26px; height: 80px; } .pad .cross::after { top: 27px; left: 0; height: 26px; width: 80px; }
+.pad .ab { position: absolute; width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(180deg, #a8d2fb, #5b8fc7); color: #04111f; font-weight: 700; display: grid; place-items: center; box-shadow: 0 0 16px rgba(110,170,235,.4); }
+.pad .ss { position: absolute; width: 44px; height: 12px; border-radius: 6px; background: #2a3c56; box-shadow: inset 0 0 0 1px var(--line-strong); }
+/* Fullscreen */
+.fs { background: #000; }
+.fs .scr { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); width: 853px; }
+.fs .dock { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); }
+.hint-cursor { position: absolute; width: 18px; height: 18px; }
+</style>
+</head>
+<body>
+<div class="sheet">
+<header>
+  <h1>Steel Glow, round 2 — <b>desktop</b></h1>
+  <p class="intro">The whole web app in Steel Glow, with the UX changes I suggest, one screen per state. Items marked <b style="color:var(--warn)">new</b> are changes in how things work, not only in how they look; each one is a separate yes/no.</p>
+  <nav class="nav"><a class="here" href="desktop.html">Desktop</a><a href="phone.html">Phone &amp; tablet</a><a href="parts.html">Parts &amp; dialogs</a><a href="restyle-only.html">Round 1: restyle only</a></nav>
+</header>
+
+<!-- 1 Library -->
+<section class="shot"><h2><span class="n">1</span>Start screen: the library <span class="new">new</span></h2>
+<p>Today the start screen is a scrolling message on an empty canvas, with a file picker and a dropdown in the sidebar. Suggested: the start screen <b>is</b> the place to pick a game. A big drop target (you can drop anywhere on the page), <b>Continue playing</b> with the last games you ran (kept in this browser, like the SNES firmware), and the bundled test ROMs as a searchable list with system filters. Picking a game <b>starts it at once</b>, so the separate Start step goes away. The sine scroller carries the release news, as it does today.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="lib"></div>
+  <div class="lib">
+    <div>
+      <div class="hero">
+        <div class="wave" data-wave="NEW IN 1.3.0 — SUPER NINTENDO SUPPORT ON DESKTOP AND WEB · STAR FOX, SUPER MARIO RPG AND MEGA MAN X2 RUN WITH THEIR CHIPS"></div>
+        <h2>Drop a game anywhere to play</h2>
+        <p>NES, Famicom, Game Boy, Game Boy Color, Game Boy Advance and Super Nintendo files. Nothing leaves your browser.</p>
+        <div class="cta"><span class="btn primary"><i data-i="file"></i>Choose a file…</span><span class="muted" style="font-size:12.5px">or press <span class="kbd">O</span></span></div>
+      </div>
+      <div class="sectionhd"><h3>Continue playing</h3><span class="muted" style="font-size:12px">kept in this browser</span><span class="sp"></span><span class="btn sm ghost">Clear</span></div>
+      <div class="cards">
+        <div class="card"><div class="thumb"><canvas data-scene width="256" height="240"></canvas><span class="sys nes">NES</span></div><div class="meta"><b>Platform Quest</b><span>Today · saved state</span></div></div>
+        <div class="card"><div class="thumb"><canvas data-gb width="160" height="144"></canvas><span class="sys gb">GB</span></div><div class="meta"><b>Tetris-like</b><span>Yesterday</span></div></div>
+        <div class="card"><div class="thumb"><canvas data-test width="256" height="240"></canvas><span class="sys nes">NES</span></div><div class="meta"><b>cpu_timing_test</b><span>3 days ago</span></div></div>
+        <div class="card"><div class="thumb"><canvas data-snes width="256" height="224"></canvas><span class="sys snes">SNES</span></div><div class="meta"><b>Sky Racer</b><span>Last week</span></div></div>
+      </div>
+    </div>
+    <div class="side">
+      <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">Bundled test ROMs</b><span class="sp"></span><span class="chip">412</span></div>
+      <div class="field"><span class="ph" style="display:flex;gap:8px;align-items:center"><i data-i="search"></i>Search…</span><span class="kbd">/</span></div>
+      <div class="filters"><span class="chip on">All</span><span class="chip">NES</span><span class="chip">GB</span><span class="chip">GBA</span><span class="chip">SNES</span></div>
+      <div class="list">
+        <div class="grp-t">blargg_apu_2005.07.30</div>
+        <div class="it"><span class="sys nes">NES</span>01.len_ctr<span class="p">.nes</span></div>
+        <div class="it on"><span class="sys nes">NES</span>02.len_table<span class="p">.nes</span></div>
+        <div class="it"><span class="sys nes">NES</span>03.irq_flag<span class="p">.nes</span></div>
+        <div class="grp-t">cpu_timing_test6</div>
+        <div class="it"><span class="sys nes">NES</span>cpu_timing_test<span class="p">.nes</span></div>
+        <div class="grp-t">mooneye / acceptance</div>
+        <div class="it"><span class="sys gb">GB</span>div_timing<span class="p">.gb</span></div>
+        <div class="it"><span class="sys gb">GB</span>ei_sequence<span class="p">.gb</span></div>
+        <div class="it"><span class="sys gb">GB</span>halt_ime1_timing<span class="p">.gb</span></div>
+        <div class="grp-t">gba-tests</div>
+        <div class="it"><span class="sys gba">GBA</span>arm<span class="p">.gba</span></div>
+      </div>
+    </div>
+  </div>
+</div></div></section>
+
+<!-- 2 Playing -->
+<section class="shot"><h2><span class="n">2</span>Playing <span class="new">new</span></h2>
+<p>Today the controls are split: zoom, filter and mute along the top, Start/Pause/Reset/Stop/Save/Load in the sidebar. Suggested: the sidebar goes and the game gets the room. Every in-game control sits in <b>one control bar under the picture</b>, the way video players do it: play and reset on the left, save states in the middle, picture and sound on the right. The game's name and system move to the top bar. Hovering a control shows its keyboard shortcut. <b>Stop</b> becomes <b>Eject</b>, which returns you to the library. <b>Mute</b> becomes a volume control.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="game"></div>
+  <div class="stage game">
+    <div class="bezel"><div class="scr"><canvas data-scene width="256" height="240"></canvas></div></div>
+    <div data-part="dock" data-hover="pause"></div>
+  </div>
+</div></div></section>
+
+<!-- 3 Menus -->
+<section class="shot"><h2><span class="n">3</span>Filter, palette and reset open as short lists <span class="new">new</span></h2>
+<p>Today Filter, Palette and the GB colour button cycle on every press, so you only learn the options by pressing through them. Suggested: each opens a short list showing every choice with the current one ticked; the F4 and F8 keys still cycle. Reset gets a list too, so the hard reset you can only reach today with Shift+Ctrl+R is visible. Only the choices for the running system appear.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="game"></div>
+  <div class="stage game">
+    <div class="bezel"><div class="scr"><canvas data-scene width="256" height="240"></canvas></div></div>
+    <div data-part="dock" data-lit="filter"></div>
+  </div>
+  <div class="menu" style="left:768px;bottom:110px;width:230px">
+    <div class="cap">Filter · NES</div>
+    <div class="mi"><span class="tick"></span>None</div>
+    <div class="mi on"><span class="tick">✓</span>NTSC<span class="k muted" style="font-size:11px">default</span></div>
+    <div class="mi"><span class="tick"></span>CRT</div>
+    <hr><div class="mi muted" style="font-size:12px">Cycle with <span class="kbd" style="margin-left:6px">F4</span></div>
+  </div>
+  <div class="menu" style="left:226px;bottom:110px;width:270px">
+    <div class="mi"><i data-i="reset"></i>Soft reset<span class="k"><span class="kbd">Ctrl</span> <span class="kbd">R</span></span></div>
+    <div class="mi on"><i data-i="reset"></i>Hard reset<span class="k"><span class="kbd">⇧</span> <span class="kbd">Ctrl</span> <span class="kbd">R</span></span></div>
+    <div class="cap" style="text-transform:none;letter-spacing:0">Hard reset is the same as power off and on.</div>
+  </div>
+</div></div></section>
+
+<!-- 4 Paused -->
+<section class="shot"><h2><span class="n">4</span>Paused</h2>
+<p>The picture dims behind a play button you can click. The bar's Pause turns into a lit Resume. Picking another game from the top bar's Library keeps this one paused underneath until you choose.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="game" data-state="paused"></div>
+  <div class="stage game">
+    <div class="bezel"><div class="scr"><canvas data-scene width="256" height="240"></canvas><div class="over"><div><div class="bigplay"><i data-i="play" class="fill"></i></div><div class="lbl">PAUSED</div></div></div></div></div>
+    <div data-part="dock" data-paused="1"></div>
+  </div>
+</div></div></section>
+
+<!-- 5 Save state -->
+<section class="shot"><h2><span class="n">5</span>Saving and loading a state <span class="new">new</span></h2>
+<p>Today Save State and Load State are two buttons with no hint of what is saved. Suggested: after a save a short message confirms it, and hovering <b>Load</b> shows a picture of the saved moment and when it was taken. Still one save per game, as today. On a Game Boy Advance game, where states aren't supported yet, both are greyed with the reason on hover.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="game"></div>
+  <div class="stage game">
+    <div class="bezel"><div class="scr"><canvas data-scene width="256" height="240"></canvas></div></div>
+    <div data-part="dock" data-lit="load"></div>
+  </div>
+  <div class="thumbpop" style="left:410px;bottom:110px"><div class="t"><canvas data-scene width="256" height="240"></canvas></div><div style="font-size:12.5px;font-weight:600">Saved 2 minutes ago</div><div class="muted" style="font-size:12px">Today 14:02 · <span class="kbd">F7</span> to load</div></div>
+  <div class="toasts" style="top:84px"><div class="toast ok"><i data-i="check"></i>State saved</div></div>
+</div></div></section>
+
+<!-- 6 Settings -->
+<section class="shot"><h2><span class="n">6</span>Settings panel <span class="new">new</span></h2>
+<p>The things you set once, now spread between the sidebar and nowhere, gather in one panel that slides in from the right over the game (which pauses while it is open): the Game Boy hardware choice, SNES firmware, sound, controls, and a <b>Developer</b> section holding the autorun and debugger switches that players don't need to see.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="game" data-lit="gear"></div>
+  <div class="stage game" style="right:400px">
+    <div class="bezel"><div class="scr" style="width:480px;height:450px"><canvas data-scene width="256" height="240"></canvas><div class="over"><div class="lbl">PAUSED</div></div></div></div>
+  </div>
+  <div class="sheet-r" style="top:60px">
+    <div class="hd">Settings<span class="sp"></span><span class="btn sm icon ghost"><i data-i="x"></i></span></div>
+    <div class="tabs"><span class="on">General</span><span>Controls</span><span>Developer</span></div>
+    <div class="bd">
+      <div class="grp"><div class="h4">Game Boy</div>
+        <div class="rowx"><span class="lbl">Original Game Boy games run on<span class="sub">Applies the next time a game starts</span></span></div>
+        <div class="seg"><span>Game Boy</span><span class="on">Game Boy Color</span></div></div>
+      <div class="grp"><div class="h4">SNES firmware</div>
+        <div class="rowx"><i data-i="chip"></i><span class="lbl">DSP-1<span class="sub">dsp1b.rom · stored</span></span><span class="chip ok"><span class="dot"></span>Stored</span><span class="btn sm icon ghost"><i data-i="more"></i></span></div>
+        <div class="rowx"><i data-i="chip"></i><span class="lbl">DSP-2<span class="sub">dsp2.rom</span></span><span class="chip">Not added</span><span class="btn sm">Add…</span></div>
+        <div class="rowx"><i data-i="chip"></i><span class="lbl">DSP-3<span class="sub">dsp3.rom</span></span><span class="chip">Not added</span><span class="btn sm">Add…</span></div>
+        <div class="rowx"><i data-i="chip"></i><span class="lbl">DSP-4<span class="sub">dsp4.rom</span></span><span class="chip">Not added</span><span class="btn sm">Add…</span></div>
+        <div class="muted" style="font-size:12px">Firmware files stay in this browser. A game asks for its chip the first time it needs it.</div></div>
+      <div class="grp"><div class="h4">Sound</div>
+        <div class="rowx"><i data-i="vol"></i><div class="slider" style="flex:1"><i style="width:70%"></i><b style="left:66%"></b></div><span class="mono muted">70%</span></div></div>
+      <div class="grp"><div class="h4">Picture</div>
+        <div class="rowx"><span class="lbl">Show frame rate</span><span class="toggle on"></span></div></div>
+    </div>
+  </div>
+</div></div></section>
+
+<!-- 7 Debugger -->
+<section class="shot"><h2><span class="n">7</span>Debugger docked beside the game <span class="new">new</span></h2>
+<p>Today the debugger is drawn over the picture, so you can't see the game and its state at once. Suggested: <b>F5</b> (or the bug button, shown once it is switched on under Developer) docks it as a panel to the right and the picture shrinks to make room, the way desktop emulators show it. Its panes keep today's contents (registers, disassembly, memory, watches, trace, sprites and the PPU view) and the stepping keys stay F10 and F11.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="game" data-state="paused" data-lit="bug"></div>
+  <div class="stage game" style="right:600px">
+    <div class="bezel"><div class="scr" style="width:576px;height:540px"><canvas data-scene width="256" height="240"></canvas></div></div>
+    <div data-part="dock" data-paused="1" data-compact="1"></div>
+  </div>
+  <div class="dbg">
+    <div class="bar"><span class="btn sm primary"><i data-i="play" class="fill"></i>Run</span><span class="btn sm"><i data-i="step"></i>Step over <span class="kbd">F10</span></span><span class="btn sm"><i data-i="stepin"></i>Step into <span class="kbd">F11</span></span><span class="sp"></span><span class="chip warn"><span class="dot"></span>Break at $C3A2</span><span class="btn sm icon ghost"><i data-i="x"></i></span></div>
+    <div class="cols">
+      <div class="pane"><h5>CPU</h5><div class="reg"><b>A</b><span>$3F</span><b>X</b><span>$07</span><b>Y</b><span>$00</span><b>S</b><span>$FB</span><b>PC</b><span>$C3A2</span><b>P</b><span>nv-BdIzc</span><b>CYC</b><span>112</span><b>SL</b><span>241</span></div></div>
+      <div class="pane"><h5>Watch</h5><div class="reg" style="grid-template-columns:auto 1fr"><b>$0300</b><span>$12</span><b>$0301</b><span style="color:var(--warn)">$80</span><b>$2002</b><span>$90</span></div></div>
+      <div class="pane dis"><h5>Disassembly</h5>
+        <div><span class="a">C39C</span>  LDA $0300</div><div><span class="a">C39F</span>  AND #$3F</div><div class="pc"><span class="a">C3A2</span>  STA $2006</div><div class="bp"><span class="a">C3A5</span>  LDX #$07</div><div><span class="a">C3A7</span>  LDA $0301,X</div><div><span class="a">C3AA</span>  STA $2007</div><div><span class="a">C3AD</span>  DEX</div><div><span class="a">C3AE</span>  BPL $C3A7</div><div><span class="a">C3B0</span>  RTS</div></div>
+      <div class="pane"><h5>Video<span class="tabs2"><span class="on">Patterns</span><span>Nametables</span><span>Sprites</span></span></h5><div class="ppu"><canvas data-tiles width="128" height="128"></canvas><canvas data-tiles="2" width="128" height="128"></canvas></div></div>
+      <div class="pane hex" style="grid-column:1/3"><h5>Memory<span class="tabs2"><span class="on">CPU</span><span>PPU</span><span>OAM</span></span></h5>
+        <div><span class="a">0300</span>  12 80 00 3F 07 1A 00 00  FF 10 20 30 00 00 00 01</div><div><span class="a">0310</span>  00 00 <span class="chg">4C</span> A2 C3 00 00 00  00 00 00 00 00 00 00 00</div><div><span class="a">0320</span>  21 22 23 24 00 00 00 00  80 80 80 80 00 00 00 00</div></div>
+    </div>
+  </div>
+</div></div></section>
+
+<!-- 8 Help -->
+<section class="shot"><h2><span class="n">8</span>Keys and controller help <span class="new">new</span></h2>
+<p>Today <b>H</b> shows a grey text box over the corner of the picture. Suggested: a proper panel with key caps, shortcuts on the left and the running system's controller on the right, drawn as a pad with each button's key beside it. Tabs show the other systems' keys. A connected gamepad replaces the keys with "Gamepad". <b>H</b> or <b>Esc</b> closes it.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="game" data-lit="help"></div>
+  <div class="stage game"><div class="bezel"><div class="scr"><canvas data-scene width="256" height="240"></canvas></div></div><div data-part="dock"></div></div>
+  <div class="scrim"></div>
+  <div class="help">
+    <div class="hd"><i data-i="help"></i>Keys and controls<span class="sp"></span><span class="muted" style="font-size:12px;font-weight:400">Close with <span class="kbd">H</span> or <span class="kbd">Esc</span></span></div>
+    <div class="bd">
+      <div class="col"><div class="h4">Shortcuts</div><div class="kl">
+        <span class="keys"><span class="kbd">Space</span></span>Pause / resume
+        <span class="keys"><span class="kbd">Ctrl</span><span class="kbd">R</span></span>Soft reset
+        <span class="keys"><span class="kbd">⇧</span><span class="kbd">Ctrl</span><span class="kbd">R</span></span>Hard reset
+        <span class="keys"><span class="kbd">F6</span> <span class="kbd">F7</span></span>Save / load state
+        <span class="keys"><span class="kbd">F4</span></span>Next filter
+        <span class="keys"><span class="kbd">F8</span></span>Next palette / colours
+        <span class="keys"><span class="kbd">Ctrl</span><span class="kbd">F</span></span>Fullscreen
+        <span class="keys"><span class="kbd">F5</span></span>Debugger
+        <span class="keys"><span class="kbd">F10</span> <span class="kbd">F11</span></span>Step over / into
+      </div></div>
+      <div class="col">
+        <div style="display:flex;gap:6px;margin-bottom:6px"><span class="chip" style="color:#fff;border-color:var(--steel-hi)">NES · Player 1</span><span class="chip">Player 2</span><span class="sp"></span><span class="chip">GB</span><span class="chip">GBA</span><span class="chip">SNES</span></div>
+        <div class="pad">
+          <div class="cross"></div>
+          <div class="lab" style="left:58px;top:146px">D-Pad <span><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span></span></div>
+          <div class="ss" style="left:196px;top:96px"></div><div class="ss" style="left:252px;top:96px"></div>
+          <div class="lab" style="left:194px;top:118px">Select <span class="kbd">4</span></div><div class="lab" style="left:254px;top:118px">Start <span class="kbd">5</span></div>
+          <div class="ab" style="left:350px;top:80px">B</div><div class="ab" style="left:410px;top:64px">A</div>
+          <div class="lab" style="left:358px;top:126px"><span class="kbd">T</span></div><div class="lab" style="left:418px;top:110px"><span class="kbd">R</span></div>
+        </div>
+        <div class="alert"><i data-i="pad"></i><span>Plug in a gamepad and press any button to use it instead.</span></div>
+      </div>
+    </div>
+  </div>
+</div></div></section>
+
+<!-- 9 Errors -->
+<section class="shot"><h2><span class="n">9</span>When something goes wrong</h2>
+<p>Today errors are a line of small red text under the picture. Suggested: a file that can't be opened shows a message on the library, where you are, with the way forward as a button. An error while a game runs stops the picture, says so on it, and offers Reset and Back to library. Short messages (firmware stored, controller connected) stay as brief notes at the top.</p>
+<div class="fit"><div class="screen">
+  <div data-part="top" data-mode="lib"></div>
+  <div class="lib" style="grid-template-columns:1fr 1fr">
+    <div>
+      <div class="hero drag" style="min-height:260px"><h2>Drop a game anywhere to play</h2><p>NES, Famicom, Game Boy, Game Boy Color, Game Boy Advance and Super Nintendo files.</p><div class="cta"><span class="btn primary"><i data-i="file"></i>Choose a file…</span></div></div>
+      <div class="alert err" style="margin-top:16px"><i data-i="alert"></i><span><b>Couldn't open “holiday-photo.jpg”</b>.jpg isn&#39;t a game file NESER knows. Try a .nes, .gb, .gbc, .gba, .sfc or .smc file.</span><span class="sp"></span><span class="btn sm">Choose another…</span></div>
+      <p class="muted" style="font-size:12px;margin-top:20px">↑ Dragging a file over the page lights the drop target.</p>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:16px">
+      <div class="bezel"><div class="scr" style="width:420px;height:394px"><canvas data-scene width="256" height="240" style="filter:grayscale(1) brightness(.35)"></canvas>
+        <div class="over" style="background:rgba(30,8,14,.5)"><div style="text-align:center;max-width:300px"><div style="color:var(--err);margin-bottom:10px"><i data-i="alert" style="width:36px;height:36px"></i></div><b>The game stopped</b><p class="muted" style="font-size:12.5px;margin:6px 0 14px">Emulation error: unsupported mapper 413.</p><span class="btn sm">Reset</span> <span class="btn sm ghost">Back to library</span></div></div></div></div>
+      <div class="toast ok"><i data-i="pad"></i>Controller connected: Xbox Wireless Controller</div>
+    </div>
+  </div>
+</div></div></section>
+
+<!-- 10 Fullscreen -->
+<section class="shot"><h2><span class="n">10</span>Fullscreen</h2>
+<p>Only the picture. Moving the mouse brings the same control bar back over the bottom of the picture for three seconds; the pointer hides with it. (For light-gun and mouse games the bar stays hidden until the pointer reaches the bottom edge, so it never covers a shot.)</p>
+<div class="fit"><div class="screen fs">
+  <div class="scr"><canvas data-scene width="256" height="240"></canvas></div>
+  <div data-part="dock"></div>
+</div></div></section>
+
+</div>
+<script>
+// Builds the shared top bar and control bar so every frame matches.
+const I = (n, cls = "") => `<i data-i="${n}" class="${cls}"></i>`;
+document.querySelectorAll('[data-part="top"]').forEach((el) => {
+  const d = el.dataset, lit = (k) => d.lit === k ? " lit hover" : "";
+  const title = d.mode === "game"
+    ? `<div class="title"><span class="sys nes">NES</span>Platform Quest <span class="muted">· platform_quest.nes</span></div>` : "";
+  const status = d.mode === "game"
+    ? (d.state === "paused" ? `<span class="chip warn"><span class="dot"></span>Paused</span>` : `<span class="chip ok"><span class="dot"></span>60.0 fps</span>`) : "";
+  el.outerHTML = `<div class="top"><div class="logo"><div class="logo-mark">N</div><div class="logo-word">NESER</div></div>${title}<span class="sp"></span>${status}
+    <span class="chip">${I("pad")}No controller</span>
+    ${d.lit === "bug" ? `<span class="btn icon hover">${I("bug")}</span>` : ""}
+    <span class="btn${d.mode === "lib" ? " hover" : ""}">${I("lib")}Library</span><span class="btn icon${lit("gear")}">${I("gear")}</span><span class="btn icon${lit("help")}">${I("help")}</span></div>`;
+});
+document.querySelectorAll('[data-part="dock"]').forEach((el) => {
+  const d = el.dataset, lit = (k) => d.lit === k ? " lit" : "";
+  const pause = d.paused ? `<span class="btn lit">${I("play", "fill")}Resume</span>` : `<span class="btn${d.hover === "pause" ? " lit" : ""}">${I("pause")}Pause</span>`;
+  const right = d.compact
+    ? `<span class="btn icon">${I("zoomout")}</span><span class="btn icon">${I("filter")}</span><span class="btn icon">${I("vol")}</span><span class="btn icon">${I("full")}</span>`
+    : `<span class="btn icon">${I("zoomout")}</span><span class="mono muted" style="font-size:12px">3×</span><span class="btn icon">${I("zoomin")}</span>
+       <span class="btn${lit("filter")}">${I("filter")}NTSC ${I("chev")}</span><span class="btn">${I("palette")}Palette ${I("chev")}</span>
+       <span class="vol">${I("vol")}<span class="slider"><i style="width:70%"></i><b style="left:62%"></b></span></span><span class="btn icon">${I("full")}</span>`;
+  el.outerHTML = `<div style="position:relative">${d.hover === "pause" ? `<div class="tip" style="left:-4px;top:-38px">Pause<span class="kbd">Space</span></div>` : ""}
+    <div class="dock">${d.compact ? `<span class="btn icon lit">${I("play", "fill")}</span><span class="btn icon">${I("reset")}</span><span class="sep"></span><span class="btn icon">${I("save")}</span><span class="btn icon">${I("load")}</span><span class="sep"></span><span class="btn icon">${I("eject")}</span><span class="sep"></span>`
+      : `${pause}<span class="btn">${I("reset")}Reset ${I("chev")}</span><span class="sep"></span>
+    <span class="btn">${I("save")}Save</span><span class="btn${lit("load")}">${I("load")}Load</span><span class="sep"></span>
+    <span class="btn">${I("eject")}Eject</span><span class="sep"></span>`}${right}</div></div>`;
+});
+// Sine-scroller letters on the library hero.
+document.querySelectorAll("[data-wave]").forEach((el) => {
+  el.innerHTML = [...el.dataset.wave].map((ch, i) => `<span style="transform:translateY(${Math.sin(i * 0.35) * 16 + 40}px)">${ch === " " ? "&nbsp;" : ch}</span>`).join("");
+});
+</script>
+<script src="scenes2.js"></script>
+<script src="scene.js"></script>
+<script src="fit.js"></script>
+</body>
+</html>

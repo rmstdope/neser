@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steel Glow — Phone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="steel.css">
+<style>
+.ptop { position: absolute; left: 0; right: 0; top: 0; height: 96px; padding: 46px 16px 0; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); background: rgba(8,13,21,.7); }
+.ptop .t { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 14px; min-width: 0; }
+.ptop .t span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pbody { position: absolute; left: 0; right: 0; top: 96px; bottom: 0; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.phero { border-radius: 18px; padding: 20px; background: linear-gradient(160deg, #1d3150, #0e1826 60%); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 0 0 1px rgba(127,176,227,.22), 0 0 40px rgba(70,140,220,.16); }
+.phero h2 { margin: 0 0 6px; font-size: 20px; font-weight: 600; } .phero p { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+.hscroll { display: flex; gap: 10px; overflow: hidden; margin-right: -16px; }
+.mcard { width: 132px; flex: none; border-radius: 12px; overflow: hidden; background: var(--panel); border: 1px solid var(--line); }
+.mcard canvas { width: 100%; aspect-ratio: 16/12; display: block; image-rendering: pixelated; object-fit: cover; }
+.mcard div { padding: 7px 9px; font-size: 12px; font-weight: 600; } .mcard div span { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
+.plist .it { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.pscr { margin: 0 -16px; background: #000; box-shadow: 0 0 40px rgba(70,140,220,.25), 0 1px 0 rgba(127,176,227,.3), 0 -1px 0 rgba(127,176,227,.3); }
+.pscr canvas { display: block; width: 100%; aspect-ratio: 256/240; image-rendering: pixelated; }
+.qbar { display: flex; gap: 8px; justify-content: center; }
+.qbar .btn { height: 38px; }
+.pad-area { flex: 1; position: relative; }
+.joy { position: absolute; width: 140px; height: 140px; border-radius: 50%; background: radial-gradient(circle at 50% 40%, #1b2c44, #0c1522); box-shadow: inset 0 0 0 1px var(--line-strong), 0 0 30px rgba(70,140,220,.15); }
+.joy::before { content: ""; position: absolute; inset: 18px; border-radius: 50%; border: 1px dashed rgba(127,176,227,.18); }
+.joy b { position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #6f9fd3, #2c4f7a); box-shadow: 0 6px 16px rgba(0,0,0,.5), 0 0 0 1px rgba(127,176,227,.5), 0 0 20px rgba(110,170,235,.35); }
+.tb { position: absolute; width: 70px; height: 70px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 20px; color: #04111f;
+  background: radial-gradient(circle at 40% 35%, #c3e1ff, #5b8fc7); box-shadow: 0 6px 16px rgba(0,0,0,.5), 0 0 24px rgba(110,170,235,.45); }
+.tb.down { transform: scale(.94); box-shadow: 0 2px 6px rgba(0,0,0,.5), 0 0 40px rgba(140,200,255,.9); }
+.meta { position: absolute; display: flex; gap: 14px; }
+.meta span { height: 26px; padding: 0 14px; border-radius: 13px; display: grid; place-items: center; font: 600 10px Inter; letter-spacing: .12em; color: var(--muted); background: #121e2f; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.bsheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 12; border-radius: 26px 26px 0 0; padding: 10px 18px 34px; background: linear-gradient(180deg, #16253a, #0c1522); border-top: 1px solid var(--line-strong); box-shadow: 0 -20px 50px rgba(0,0,0,.6), 0 0 30px rgba(70,140,220,.15); }
+.bsheet .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: 0 auto 14px; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.tile { border-radius: 14px; padding: 12px 6px 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; background: rgba(6,12,20,.6); border: 1px solid var(--line); }
+.tile .ico { width: 20px; height: 20px; color: var(--ice); }
+.tile.dim { opacity: .4; }
+.srow { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.srow .l { flex: 1; }
+.land .lscr { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); width: 416px; background: #000; box-shadow: 0 0 40px rgba(70,140,220,.25); }
+.land .lscr canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+.pill { position: absolute; display: flex; gap: 4px; padding: 4px; border-radius: 14px; background: rgba(14,23,36,.75); border: 1px solid var(--line-strong); }
+.pill .btn { height: 30px; width: 30px; padding: 0; border: 0; background: none; }
+</style>
+</head>
+<body>
+<div class="sheet">
+<header>
+  <h1>Steel Glow, round 2 — <b>phone &amp; tablet</b></h1>
+  <p class="intro">Today on a phone the sidebar becomes a drawer behind the ☰ button, and the touch controls appear either side of a small picture. Suggested: the phone gets a handheld layout. In portrait the picture goes edge to edge at the top and the controls sit below it, where thumbs are. In landscape the controls go either side of the picture. Everything else is one tap away in a sheet that slides up. Tablets use the desktop layout, with touch controls when touched.</p>
+  <nav class="nav"><a href="desktop.html">Desktop</a><a class="here" href="phone.html">Phone &amp; tablet</a><a href="parts.html">Parts &amp; dialogs</a><a href="restyle-only.html">Round 1: restyle only</a></nav>
+</header>
+
+<section class="shot"><h2><span class="n">P1</span>Portrait</h2>
+<p>Left to right: the library, playing a game (B being pressed), and the ⋯ sheet holding everything that isn't on the controller. The game pauses while the sheet is open.</p>
+<div class="phones">
+  <div>
+  <div class="phone">
+    <div class="ptop"><div class="logo"><div class="logo-mark">N</div><div class="logo-word">NESER</div></div><span class="sp"></span><span class="btn icon">${gear}</span></div>
+    <div class="pbody">
+      <div class="phero"><h2>Choose a game to play</h2><p>NES, Game Boy, GBA and SNES files from your phone. Nothing is uploaded.</p><span class="btn primary"><i data-i="file"></i>Choose a file…</span></div>
+      <div style="display:flex;align-items:center"><b style="font-size:13px">Continue playing</b><span class="sp"></span><span class="muted" style="font-size:12px">Clear</span></div>
+      <div class="hscroll">
+        <div class="mcard"><canvas data-scene width="256" height="240"></canvas><div>Platform Quest<span>Today</span></div></div>
+        <div class="mcard"><canvas data-gb width="160" height="144"></canvas><div>Tetris-like<span>Yesterday</span></div></div>
+        <div class="mcard"><canvas data-snes width="256" height="224"></canvas><div>Sky Racer<span>Last week</span></div></div>
+      </div>
+      <div style="display:flex;align-items:center"><b style="font-size:13px">Bundled test ROMs</b><span class="sp"></span><span class="btn sm icon ghost"><i data-i="search"></i></span></div>
+      <div class="plist">
+        <div class="it"><span class="sys nes">NES</span>01.len_ctr</div><div class="it"><span class="sys nes">NES</span>02.len_table</div><div class="it"><span class="sys gb">GB</span>div_timing</div><div class="it"><span class="sys gba">GBA</span>arm</div>
+      </div>
+    </div>
+  </div>
+  <div class="phone-cap">Library</div></div>
+
+  <div>
+  <div class="phone">
+    <div class="ptop"><span class="btn sm icon ghost"><i data-i="lib"></i></span><div class="t"><span class="sys nes">NES</span><span>Platform Quest</span></div><span class="sp"></span><span class="chip ok" style="font-size:10.5px"><span class="dot"></span>60</span></div>
+    <div class="pbody" style="gap:12px">
+      <div class="pscr"><canvas data-scene width="256" height="240"></canvas></div>
+      <div class="qbar"><span class="btn"><i data-i="pause"></i>Pause</span><span class="btn"><i data-i="save"></i>Save</span><span class="btn"><i data-i="load"></i>Load</span><span class="btn icon"><i data-i="more"></i></span></div>
+      <div class="pad-area">
+        <div class="joy" style="left:4px;top:40px"><b style="transform:translate(-14px,6px)"></b></div>
+        <div class="tb down" style="right:92px;top:78px">B</div><div class="tb" style="right:6px;top:40px">A</div>
+        <div class="meta" style="left:50%;transform:translateX(-50%);bottom:30px"><span>SELECT</span><span>START</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="phone-cap">Playing. The controller fills the lower half; Pause, Save and Load stay one tap away.</div></div>
+
+  <div>
+  <div class="phone">
+    <div class="ptop"><span class="btn sm icon ghost"><i data-i="lib"></i></span><div class="t"><span class="sys nes">NES</span><span>Platform Quest</span></div><span class="sp"></span><span class="chip warn" style="font-size:10.5px"><span class="dot"></span>Paused</span></div>
+    <div class="pbody" style="gap:12px"><div class="pscr" style="filter:brightness(.5)"><canvas data-scene width="256" height="240"></canvas></div></div>
+    <div class="scrim" style="top:96px"></div>
+    <div class="bsheet">
+      <div class="grab"></div>
+      <div class="tiles">
+        <div class="tile"><i data-i="reset"></i>Reset</div><div class="tile"><i data-i="reset"></i>Hard reset</div><div class="tile"><i data-i="full"></i>Fullscreen</div><div class="tile"><i data-i="eject"></i>Eject</div>
+      </div>
+      <div class="srow"><i data-i="filter"></i><span class="l">Filter</span><div class="seg"><span>None</span><span class="on">NTSC</span><span>CRT</span></div></div>
+      <div class="srow"><i data-i="palette"></i><span class="l">Palette</span><span class="muted">Default</span><i data-i="chev"></i></div>
+      <div class="srow"><i data-i="vol"></i><div class="slider" style="flex:1"><i style="width:70%"></i><b style="left:66%"></b></div></div>
+      <div class="srow"><i data-i="gear"></i><span class="l">Settings</span><i data-i="chev" style="transform:rotate(-90deg)"></i></div>
+      <div class="srow"><i data-i="help"></i><span class="l">Keys and controls</span><i data-i="chev" style="transform:rotate(-90deg)"></i></div>
+    </div>
+  </div>
+  <div class="phone-cap">The ⋯ sheet. Drag it down or tap the picture to close it and resume.</div></div>
+</div></section>
+
+<section class="shot"><h2><span class="n">P2</span>Landscape</h2>
+<p>The picture uses the full height. The joystick and buttons sit either side of it, and a small translucent pill top-left holds Pause and ⋯ so nothing covers the game.</p>
+<div class="phones">
+  <div>
+  <div class="phone land">
+    <div class="lscr"><canvas data-scene width="256" height="240"></canvas></div>
+    <div class="pill" style="left:52px;top:18px"><span class="btn"><i data-i="pause"></i></span><span class="btn"><i data-i="more"></i></span></div>
+    <div class="chip ok" style="position:absolute;right:56px;top:22px;font-size:10.5px"><span class="dot"></span>60</div>
+    <div class="joy" style="left:60px;top:150px;width:130px;height:130px"><b></b></div>
+    <div class="tb" style="right:118px;top:200px">B</div><div class="tb" style="right:42px;top:150px">A</div>
+    <div class="meta" style="left:50px;bottom:22px;flex-direction:column;gap:8px;display:none"></div>
+    <div class="meta" style="right:60px;bottom:24px"><span>SELECT</span><span>START</span></div>
+  </div>
+  <div class="phone-cap">Playing in landscape</div></div>
+</div></section>
+</div>
+<script>document.body.innerHTML = document.body.innerHTML.replaceAll("${gear}", '<i data-i="gear"></i>');</script>
+<script src="scenes2.js"></script>
+<script src="scene.js"></script>
+<script src="fit.js"></script>
+</body>
+</html>
