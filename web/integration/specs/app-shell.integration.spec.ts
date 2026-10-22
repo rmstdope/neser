@@ -25,6 +25,8 @@ test.describe("web app shell", () => {
         expect(box.height).toBeLessThan(40);
         expect(box.width).toBeGreaterThan(box.height * 3);
         await expect(status).toHaveCSS("color", "rgb(242, 113, 138)");
+        // Readable: the error colours the words, never a box behind them.
+        await expect(status).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     });
 
     test("accepts every supported ROM file in the file picker once start-up installs the wasm table", async ({ page }) => {

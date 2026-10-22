@@ -275,7 +275,7 @@ canvas {
   font-size: 0.95rem;
 }
 
-.status-line.status-error {
+.status-line[data-state="error"] {
   color: var(--color-error);
 }
 

@@ -1369,7 +1369,7 @@ const SNES_LEGACY_BUTTON = {
 
 function setStatus(msg: string, isError = false) {
     statusEl!.textContent = isError ? msg : "";
-    statusEl!.classList.toggle("status-error", isError);
+    statusEl!.dataset.state = isError ? "error" : "";
 }
 
 async function applyRomBytes(bytes: Uint8Array, name: string) {
