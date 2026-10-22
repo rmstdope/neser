@@ -9,11 +9,11 @@
   display: flex;
   flex-direction: column;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(10, 11, 15, 0.94);
-  border: 1px solid rgba(100, 200, 100, 0.35);
-  color: #90ee90;
-  font-family: "Courier New", Courier, monospace;
+  border-radius: 14px;
+  background: rgba(9, 15, 25, 0.94);
+  border: 1px solid rgba(127, 176, 227, 0.35);
+  color: #b9dcff;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.72rem;
   line-height: 1.45;
   z-index: 12;
@@ -59,10 +59,10 @@
 }
 
 .dbg-btn {
-  background: rgba(40, 70, 40, 0.9);
-  border: 1px solid rgba(100, 200, 100, 0.5);
-  color: #90ee90;
-  font-family: "Courier New", Courier, monospace;
+  background: rgba(30, 50, 78, 0.9);
+  border: 1px solid rgba(127, 176, 227, 0.5);
+  color: #b9dcff;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.72rem;
   padding: 2px 7px;
   border-radius: 4px;
@@ -71,8 +71,8 @@
 }
 
 .dbg-btn:hover {
-  background: rgba(60, 110, 60, 0.95);
-  border-color: #90ee90;
+  background: rgba(60, 100, 150, 0.95);
+  border-color: #b9dcff;
 }
 
 .debugger-disasm {
@@ -84,8 +84,8 @@
 }
 
 .debugger-disasm-title {
-  color: #c8ffc8;
-  border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+  color: #e6f2ff;
+  border-bottom: 1px solid rgba(127, 176, 227, 0.25);
   margin-bottom: 2px;
 }
 
@@ -107,8 +107,8 @@
 }
 
 .debugger-regs-title {
-  color: #c8ffc8;
-  border-bottom: 1px solid rgba(100, 200, 100, 0.25);
+  color: #e6f2ff;
+  border-bottom: 1px solid rgba(127, 176, 227, 0.25);
   margin-bottom: 2px;
 }
 
@@ -119,7 +119,7 @@
 
 .debugger-hexdump-divider {
   display: block;
-  border-top: 1px solid rgba(100, 200, 100, 0.25);
+  border-top: 1px solid rgba(127, 176, 227, 0.25);
   margin: 2px 0;
 }
 
@@ -132,46 +132,46 @@
 
 .dbg-hexdump-input {
   width: 76px;
-  background: rgba(10, 11, 15, 0.96);
-  border: 1px solid rgba(100, 200, 100, 0.5);
-  color: #90ee90;
-  font-family: "Courier New", Courier, monospace;
+  background: rgba(9, 15, 25, 0.96);
+  border: 1px solid rgba(127, 176, 227, 0.5);
+  color: #b9dcff;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.72rem;
   padding: 2px 4px;
   border-radius: 4px;
 }
 
 .debugger-hexdump-error {
-  color: #ff7d7d;
+  color: #f2718a;
   margin-bottom: 2px;
 }
 
 .debugger-hexdump-title {
-  color: #c8ffc8;
+  color: #e6f2ff;
   margin-bottom: 2px;
 }
 
 .debugger-hexdump-block {
   display: block;
   overflow: visible;
-  color: #6ab06a;
+  color: #7d8fa6;
 }
 
 .debugger-oam-title {
-  color: #c8ffc8;
+  color: #e6f2ff;
   margin-bottom: 2px;
 }
 
 .debugger-oam-header {
   display: block;
-  color: #90ee90;
+  color: #b9dcff;
   margin-bottom: 1px;
 }
 
 .debugger-oam-block {
   display: block;
   overflow: visible;
-  color: #6ab06a;
+  color: #7d8fa6;
 }
 
 .debugger-oam-row {
@@ -179,7 +179,7 @@
 }
 
 .debugger-watch-title {
-  color: #c8ffc8;
+  color: #e6f2ff;
   margin-bottom: 2px;
 }
 
@@ -192,10 +192,10 @@
 
 .dbg-watch-input {
   width: 76px;
-  background: rgba(10, 11, 15, 0.96);
-  border: 1px solid rgba(100, 200, 100, 0.5);
-  color: #90ee90;
-  font-family: "Courier New", Courier, monospace;
+  background: rgba(9, 15, 25, 0.96);
+  border: 1px solid rgba(127, 176, 227, 0.5);
+  color: #b9dcff;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.72rem;
   padding: 2px 4px;
   border-radius: 4px;
@@ -204,7 +204,7 @@
 .debugger-watch-block {
   display: block;
   overflow: visible;
-  color: #6ab06a;
+  color: #7d8fa6;
 }
 
 .debugger-watch-row {
@@ -219,13 +219,13 @@
 }
 
 .debugger-watch-error {
-  color: #ff7d7d;
+  color: #f2718a;
   margin-bottom: 2px;
   display: block;
 }
 
 .debugger-ppu-title {
-  color: #c8ffc8;
+  color: #e6f2ff;
 }
 
 .debugger-ppu-overlay {
@@ -239,8 +239,8 @@
   flex-direction: column;
   gap: 4px;
   padding: 6px;
-  background: rgba(10, 11, 15, 0.96);
-  border: 1px solid rgba(100, 200, 100, 0.35);
+  background: rgba(9, 15, 25, 0.96);
+  border: 1px solid rgba(127, 176, 227, 0.35);
   border-radius: 6px;
 }
 
@@ -253,15 +253,15 @@
 }
 
 .debugger-ppu-label {
-  color: #9fd89f;
+  color: #a9c8ea;
 }
 
 .debugger-ppu-canvas {
   width: 100%;
   image-rendering: pixelated;
-  border: 1px solid rgba(100, 200, 100, 0.35);
+  border: 1px solid rgba(127, 176, 227, 0.35);
   border-radius: 3px;
-  background: rgba(6, 8, 10, 0.95);
+  background: rgba(5, 10, 18, 0.95);
 }
 
 .debugger-ppu-canvas-large {
@@ -270,7 +270,7 @@
 
 .disasm-divider {
   border: none;
-  border-top: 1px solid rgba(100, 200, 100, 0.25);
+  border-top: 1px solid rgba(127, 176, 227, 0.25);
   margin: 3px 0;
 }
 
@@ -283,18 +283,18 @@
 
 .disasm-line {
   display: block;
-  color: #6ab06a;
+  color: #7d8fa6;
 }
 
 .disasm-current {
   display: block;
-  color: #f0f080;
+  color: #e9b65f;
   font-weight: bold;
-  background: rgba(80, 80, 0, 0.35);
+  background: rgba(233, 182, 95, 0.18);
 }
 
 .debugger-trace-title {
-  color: #c8ffc8;
+  color: #e6f2ff;
   margin-bottom: 2px;
 }
 
@@ -303,7 +303,7 @@
   overflow-y: auto;
   min-height: 0;
   max-height: 32%;
-  color: #6ab06a;
+  color: #7d8fa6;
 }
 
 .debugger-trace-row {

@@ -1,31 +1,199 @@
 @import "tailwindcss";
 @plugin "daisyui" {
-  themes: night;
+  themes: false;
 }
 
-/* Neon accent color overrides for DaisyUI night theme */
-@theme {
-  --color-neon-cyan: #00f0ff;
-  --color-neon-magenta: #ff00e6;
+/* Steel Glow: dark glass, steel-blue gradients, light that bleeds from what's active. */
+@plugin "daisyui/theme" {
+  name: "steel";
+  default: true;
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: #0c1420;
+  --color-base-200: #0e1826;
+  --color-base-300: #1d2c42;
+  --color-base-content: #dbe6f3;
+  --color-primary: #7fb0e3;
+  --color-primary-content: #04111f;
+  --color-secondary: #4a76a8;
+  --color-secondary-content: #eef5fd;
+  --color-accent: #b9dcff;
+  --color-accent-content: #04111f;
+  --color-neutral: #1a2a40;
+  --color-neutral-content: #dbe6f3;
+  --color-info: #7fb0e3;
+  --color-info-content: #04111f;
+  --color-success: #5fd3b0;
+  --color-success-content: #04140f;
+  --color-warning: #e9b65f;
+  --color-warning-content: #1c1204;
+  --color-error: #f2718a;
+  --color-error-content: #1f060c;
+  --radius-selector: 0.375rem;
+  --radius-field: 0.625rem;
+  --radius-box: 1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+:root {
+  --steel: #4a76a8;
+  --steel-hi: #7fb0e3;
+  --ice: #b9dcff;
+  --muted: #7d8fa6;
+  --line: rgba(130, 170, 215, 0.14);
+  --line-strong: rgba(130, 170, 215, 0.32);
+  --glow: 0 0 0 1px rgba(127, 176, 227, 0.35), 0 0 18px rgba(80, 150, 230, 0.35), 0 0 48px rgba(80, 150, 230, 0.12);
+  --glow-soft: 0 0 0 1px rgba(127, 176, 227, 0.25), 0 0 14px rgba(80, 150, 230, 0.22);
+  --font-mono-ui: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* ── Base styles ─────────────────────────────────────────── */
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top, #1e1f24 0%, #0c0d10 60%, #070708 100%);
-  color: #e6e6e6;
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 60% -10%, #1a2c46 0%, transparent 60%),
+    radial-gradient(800px 500px at 0% 100%, #0f1d30 0%, transparent 60%),
+    #070b12;
+  background-attachment: fixed;
+  color: #dbe6f3;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* ── Neon glow effects ───────────────────────────────────── */
+header {
+  background: rgba(8, 13, 21, 0.6) !important;
+  border-color: var(--line) !important;
+  backdrop-filter: blur(10px);
+}
+
+aside {
+  background: linear-gradient(180deg, rgba(18, 30, 47, 0.92), rgba(10, 17, 28, 0.92)) !important;
+  border-color: var(--line) !important;
+}
+
+aside .label:not(.cursor-pointer) {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Logo ────────────────────────────────────────────────── */
+
+.neser-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.neser-logo-mark {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: linear-gradient(140deg, #8cc0f2, #2f5d92);
+  box-shadow: var(--glow);
+  color: #06101c;
+  font-weight: 700;
+}
+
+.neser-logo-word {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  background: linear-gradient(180deg, #f1f7ff, #8fb4dc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.neser-logo-systems {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+/* ── Buttons and fields: steel gradients that glow when live ─ */
+
+.btn {
+  font-weight: 500;
+}
+
+.btn-outline:not(.btn-error) {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, rgba(60, 90, 128, 0.35), rgba(30, 46, 68, 0.35));
+  color: #dbe6f3;
+}
+
+.btn-outline.btn-error {
+  border-color: rgba(242, 113, 138, 0.35);
+  background: transparent;
+}
+
+.btn-primary {
+  border: 0;
+  background: linear-gradient(180deg, #a8d2fb, #5b8fc7);
+  box-shadow: 0 0 22px rgba(110, 170, 235, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+}
 
 .btn:hover:not(:disabled) {
-  box-shadow: 0 0 12px #00f0ff40;
+  border-color: var(--steel-hi);
+  box-shadow: var(--glow);
 }
 
 .btn:active:not(:disabled) {
-  box-shadow: 0 0 18px #00f0ff60;
+  box-shadow: 0 0 0 1px rgba(127, 176, 227, 0.5), 0 0 26px rgba(80, 150, 230, 0.55);
+}
+
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.38;
+  box-shadow: none;
+}
+
+.btn:focus-visible,
+.select:focus-visible,
+.file-input:focus-visible,
+.checkbox:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(127, 176, 227, 0.18), var(--glow);
+}
+
+.select,
+.file-input {
+  background-color: rgba(6, 12, 20, 0.6);
+  border-color: var(--line-strong);
+}
+
+.kbd {
+  font-family: var(--font-mono-ui);
+  color: var(--ice);
+  background: rgba(6, 12, 20, 0.6);
+  border-color: var(--line-strong);
+}
+
+.badge-neutral {
+  font-family: var(--font-mono-ui);
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.help-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
 }
 
 /* ── Screen / canvas ─────────────────────────────────────── */
@@ -36,10 +204,13 @@ body {
   justify-content: center;
   align-items: center;
   padding: 16px;
-  background: #0a0b0f;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 0 24px #00f0ff18;
+  border-radius: 22px;
+  background: linear-gradient(160deg, #22344d 0%, #0e1724 40%, #0a111b 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 1px rgba(127, 176, 227, 0.22),
+    0 0 60px rgba(70, 140, 220, 0.22),
+    0 30px 60px rgba(0, 0, 0, 0.5);
 }
 
 /* ── Recording overlay ───────────────────────────────────── */
@@ -52,21 +223,29 @@ body {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  background: rgba(0, 0, 0, 0.6);
-  border-radius: 6px;
-  font-family: monospace;
-  font-size: 0.85rem;
+  background: rgba(40, 10, 18, 0.75);
+  border: 1px solid rgba(242, 113, 138, 0.5);
+  border-radius: 999px;
+  box-shadow: 0 0 14px rgba(242, 113, 138, 0.35);
+  font-family: var(--font-mono-ui);
+  font-size: 0.8rem;
+  font-weight: 600;
   color: #fff;
   pointer-events: none;
   z-index: 10;
 }
 
 .rec-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #e11d48;
+  background: #ff4d6d;
+  box-shadow: 0 0 8px #ff4d6d;
   animation: rec-blink 1s step-end infinite;
+}
+
+.rec-overlay.hidden {
+  display: none;
 }
 
 @keyframes rec-blink {
@@ -76,6 +255,8 @@ body {
 
 .screen-wrap:fullscreen {
   padding: 0;
+  border-radius: 0;
+  background: #000;
 }
 
 canvas {
@@ -83,23 +264,29 @@ canvas {
   max-width: 100%;
   height: auto;
   border-radius: 8px;
-  box-shadow: 0 0 30px rgba(0, 0, 0, 0.55);
+  background: #000;
 }
 
 /* ── Status / controls ───────────────────────────────────── */
 
+/* Our status line, not DaisyUI's .status dot component of the same name. */
 .status {
+  width: auto;
+  height: auto;
+  background: none;
+  border-radius: 0;
   font-size: 0.95rem;
-  color: #8fe28f;
+  color: var(--color-success);
 }
 
 #autorun-status {
-  color: #9bc2ff;
+  font-family: var(--font-mono-ui);
+  color: var(--ice);
 }
 
 #controls,
 #shortcut-reference {
-  color: #c4c4c4;
+  color: var(--muted);
   text-align: center;
   line-height: 1.4;
 }
@@ -119,15 +306,31 @@ canvas {
   top: 12px;
   left: 12px;
   max-width: min(44%, 460px);
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(90, 90, 90, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #ffffff;
-  line-height: 1.25;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(16, 26, 40, 0.92);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), var(--glow-soft);
+  color: #dbe6f3;
+  line-height: 1.3;
   white-space: pre-line;
   z-index: 11;
   pointer-events: none;
+}
+
+.modal-box {
+  background: linear-gradient(180deg, #172539, #0e1724);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--glow), 0 30px 70px rgba(0, 0, 0, 0.6);
+}
+
+.modal-box p,
+.modal-box .label {
+  color: var(--muted);
+}
+
+.modal-backdrop {
+  background: rgba(3, 6, 11, 0.6);
 }
 
 .neser-toast-container {
@@ -147,13 +350,13 @@ canvas {
 .neser-toast {
   max-width: min(420px, 100%);
   box-sizing: border-box;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(10, 11, 15, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #e6e6e6;
-  font-size: 0.9rem;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(16, 26, 40, 0.94);
+  border: 1px solid var(--line-strong);
+  color: #dbe6f3;
+  font-size: 0.85rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 18px rgba(70, 140, 220, 0.15);
   /* A two-line message (a refused SNES firmware file's words) keeps its line break. */
   white-space: pre-line;
 }
@@ -214,9 +417,9 @@ body.touch-running .touch-hide {
 .touch-joystick-base {
   inset: 0;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #5c5c5c 0%, #3a3a3a 58%, #262626 100%);
-  border: 2px solid #5b5b5b;
-  box-shadow: inset 0 8px 16px rgba(255, 255, 255, 0.08), inset 0 -10px 16px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.28);
+  background: radial-gradient(circle at 50% 40%, #1b2c44 0%, #0c1522 100%);
+  border: 1px solid var(--line-strong);
+  box-shadow: inset 0 0 0 18px rgba(127, 176, 227, 0.03), 0 0 30px rgba(70, 140, 220, 0.15);
 }
 
 .touch-joystick-knob {
@@ -227,21 +430,21 @@ body.touch-running .touch-hide {
   margin-left: -29px;
   margin-top: -29px;
   border-radius: 50%;
-  background: radial-gradient(circle at 32% 28%, #f7f7f7 0%, #cbcbcb 22%, #8a8a8a 62%, #5c5c5c 100%);
-  border: 2px solid #4c4c4c;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.38), inset 0 2px 4px rgba(255, 255, 255, 0.18);
+  background: radial-gradient(circle at 40% 35%, #6f9fd3 0%, #2c4f7a 100%);
+  border: 1px solid rgba(127, 176, 227, 0.5);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 0 20px rgba(110, 170, 235, 0.35);
   transform: translate(var(--touch-stick-x), var(--touch-stick-y));
   transition: transform 60ms linear, box-shadow 80ms ease, background 80ms ease;
 }
 
 .touch-joystick.pressed .touch-joystick-base {
-  border-color: #707070;
-  box-shadow: inset 0 10px 18px rgba(255, 255, 255, 0.1), inset 0 -12px 18px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0, 0, 0, 0.32);
+  border-color: var(--steel-hi);
+  box-shadow: inset 0 0 0 18px rgba(127, 176, 227, 0.06), 0 0 36px rgba(70, 140, 220, 0.3);
 }
 
 .touch-joystick.pressed .touch-joystick-knob {
-  background: radial-gradient(circle at 32% 28%, #ffffff 0%, #dadada 20%, #989898 60%, #666666 100%);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.34), inset 0 2px 4px rgba(255, 255, 255, 0.22);
+  background: radial-gradient(circle at 40% 35%, #8cb9e8 0%, #3a6698 100%);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45), 0 0 30px rgba(140, 200, 255, 0.6);
 }
 
 /* ── Action buttons (A/B) ──────────────────────────── */
@@ -265,11 +468,9 @@ body.touch-running .touch-hide {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: "Courier New", monospace;
   font-size: 1.2rem;
-  font-weight: bold;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  font-weight: 700;
+  color: #04111f;
   touch-action: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -278,16 +479,15 @@ body.touch-running .touch-hide {
 
 .touch-btn-a,
 .touch-btn-b {
-  background: #cc0000;
-  border: 3px solid #990000;
-  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  background: radial-gradient(circle at 40% 35%, #c3e1ff 0%, #5b8fc7 100%);
+  border: 0;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5), 0 0 24px rgba(110, 170, 235, 0.45);
 }
 
 .touch-btn-a.pressed,
 .touch-btn-b.pressed {
-  background: #990000;
-  border-color: #770000;
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+  background: radial-gradient(circle at 40% 35%, #d8ecff 0%, #6c9fd6 100%);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 40px rgba(140, 200, 255, 0.9);
   transform: scale(0.95);
 }
 
@@ -302,17 +502,15 @@ body.touch-running .touch-hide {
   width: 72px;
   height: 28px;
   border-radius: 14px;
-  background: #4a4a4a;
-  border: 2px solid #666;
+  background: #121e2f;
+  border: 1px solid var(--line-strong);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: "Courier New", monospace;
-  font-size: 0.55rem;
-  font-weight: bold;
-  color: #ccc;
-  letter-spacing: 0.05em;
-  transform: rotate(-15deg);
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.12em;
   touch-action: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -320,9 +518,9 @@ body.touch-running .touch-hide {
 }
 
 .touch-meta-btn.pressed {
-  background: #333;
-  border-color: #555;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+  background: #1d3150;
+  border-color: var(--steel-hi);
+  box-shadow: var(--glow-soft);
 }
 
 /* ── Touch device header override (only while running, non-handheld) ── */

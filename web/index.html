@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="night">
+<html lang="en" data-theme="steel">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -67,7 +67,7 @@
           <div class="mt-3 flex items-center gap-2">
             <span id="status" class="status"></span>
             <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
-            <span class="badge badge-neutral touch-hide">Press 'h' for help</span>
+            <span class="help-hint touch-hide">Press <kbd class="kbd kbd-sm">H</kbd> for help</span>
           </div>
         </main>
 
@@ -77,14 +77,14 @@
       <!-- Sidebar -->
       <div class="drawer-side z-40">
         <label for="sidebar-toggle" class="drawer-overlay" aria-label="Close sidebar"></label>
-        <aside class="w-60 min-h-screen bg-base-200 border-r border-base-300 flex flex-col p-4 gap-4">
-          <!-- NESER ASCII art logo -->
-          <div class="text-center select-none">
-            <pre class="font-mono text-xs leading-tight text-[#00f0ff]"> _   _ _____ ____  _____ ____
-| \ | | ____/ ___|| ____|  _ \
-|  \| |  _| \___ \|  _| | |_) |
-| |\  | |___ ___) | |___|  _ &lt;
-|_| \_|_____|____/|_____|_| \_\</pre>
+        <aside class="w-68 min-h-screen bg-base-200 border-r border-base-300 flex flex-col p-4 gap-4">
+          <!-- Logo: steel mark, wordmark and the systems NESER runs -->
+          <div class="neser-logo select-none">
+            <div class="neser-logo-mark" aria-hidden="true">N</div>
+            <div>
+              <div class="neser-logo-word">NESER</div>
+              <div class="neser-logo-systems">NES · GB · GBC · GBA · SNES</div>
+            </div>
           </div>
 
           <!-- ROM controls -->
@@ -119,22 +119,22 @@
               <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" disabled />
               <span class="label-text text-xs">Create autorun</span>
             </label>
-            <button id="autorun-load" class="btn btn-info btn-outline btn-sm w-full" disabled>Load autorun</button>
+            <button id="autorun-load" class="btn btn-outline btn-sm w-full" disabled>Load autorun</button>
             <ul id="autorun-status" class="text-xs text-info list-none space-y-0.5"></ul>
             <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
           </div>
 
           <!-- Emulation controls; data-emulation-state is the app's lifecycle (idle|running|paused) -->
           <div id="emulation-controls" class="flex flex-col gap-2" data-emulation-state="idle">
-            <button id="start" class="btn btn-success btn-sm w-full">Start</button>
+            <button id="start" class="btn btn-primary btn-sm w-full">Start</button>
             <div class="flex gap-2">
               <button id="pause" class="btn btn-outline btn-sm flex-1" aria-label="Pause or resume emulation">Pause</button>
-              <button id="reset" class="btn btn-warning btn-outline btn-sm flex-1" aria-label="Reset emulation">Reset</button>
+              <button id="reset" class="btn btn-outline btn-sm flex-1" aria-label="Reset emulation">Reset</button>
             </div>
             <button id="stop" class="btn btn-error btn-outline btn-sm w-full" aria-label="Stop emulation">Stop</button>
             <div id="save-state-section" class="flex gap-2" data-save-state="empty">
-              <button id="save-state" class="btn btn-warning btn-outline btn-sm flex-1" disabled>Save State</button>
-              <button id="load-state" class="btn btn-warning btn-outline btn-sm flex-1" disabled>Load State</button>
+              <button id="save-state" class="btn btn-outline btn-sm flex-1" disabled>Save State</button>
+              <button id="load-state" class="btn btn-outline btn-sm flex-1" disabled>Load State</button>
             </div>
           </div>
 
