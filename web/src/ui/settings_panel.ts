@@ -1,3 +1,12 @@
+import { selectGamepads } from "../input/gamepad";
+
+/** The Controls tab's gamepads line: the pads the game reads as players 1 and 2, or how to connect one. */
+export function gamepadLines(gamepads: (Gamepad | null)[]): string {
+    const pads = selectGamepads(gamepads);
+    if (pads.length === 0) return "No gamepad connected. Plug one in and press any button.";
+    return pads.map((pad, index) => `Player ${index + 1}: ${pad.id}`).join("\n");
+}
+
 /** One row of a console's key list: the button and the keyboard keys that press it. */
 export type KeyBindingRow = { action: string; keys: string[] };
 
@@ -90,7 +99,19 @@ export function createSettingsPanel({
         closed();
     }
 
-    for (const tab of tabs) tab.addEventListener("click", () => select(tab));
+    for (const tab of tabs) {
+        tab.addEventListener("click", () => select(tab));
+        // The tabs pattern: arrows move to the next tab and choose it, Home and End to the ends.
+        tab.addEventListener("keydown", (event) => {
+            const at = tabs.indexOf(tab);
+            const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[event.key];
+            if (to === undefined) return;
+            event.preventDefault();
+            const next = tabs[(to + tabs.length) % tabs.length];
+            select(next);
+            next.focus();
+        });
+    }
     openButton.addEventListener("click", open);
     closeButton.addEventListener("click", close);
     // Esc closes a modal dialog by itself; a click on the backdrop closes it too.

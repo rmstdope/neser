@@ -67,7 +67,7 @@ import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { gameTitle } from "./ui/game_title";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
-import { createSettingsPanel, renderKeyList } from "./ui/settings_panel";
+import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
 import { belongsToOpenDialog, isEditableKeyboardTarget } from "./shortcuts/keyboard_target";
 import {
     type KeyBindingRow,
@@ -208,7 +208,11 @@ const snesFirmwareSidebar = createFirmwareSidebar({
     },
     store: snesFirmwareStore,
     isGenuine: snes_dsp_firmware_is_genuine,
-    showMessage: (message) => toastOverlay.show(message)
+    // The rows sit in the settings panel, so their words show there rather than behind it.
+    showMessage: (message) => {
+        const line = document.getElementById("snes-firmware-message");
+        if (line) line.textContent = message;
+    }
 });
 void snesFirmwareSidebar.refresh();
 
@@ -2865,11 +2869,11 @@ function renderSettingsKeys() {
 }
 
 function renderSettingsGamepads() {
-    const pads = [...(navigator.getGamepads?.() ?? [])].filter((pad): pad is Gamepad => pad !== null);
-    settingsGamepadsEl.textContent = pads.length === 0
-        ? "No gamepad connected. Plug one in and press any button."
-        : pads.map((pad, index) => `Player ${index + 1}: ${pad.id}`).join("\n");
+    settingsGamepadsEl.textContent = gamepadLines([...(navigator.getGamepads?.() ?? [])]);
 }
+// A pad appears once a button is pressed on it, so the open panel follows it as it comes and goes.
+window.addEventListener("gamepadconnected", () => renderSettingsGamepads());
+window.addEventListener("gamepaddisconnected", () => renderSettingsGamepads());
 
 for (const button of settingsKeySystemButtons) {
     button.addEventListener("click", () => {

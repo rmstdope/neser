@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createSettingsPanel, keyBindingRows, renderKeyList } from "./settings_panel";
+import { createSettingsPanel, gamepadLines, keyBindingRows, renderKeyList } from "./settings_panel";
 
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const indexHtml = readFileSync(resolve(webDir, "index.html"), "utf8");
@@ -107,6 +107,27 @@ describe("createSettingsPanel", () => {
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
+    it("Given focus on a tab, When the arrow keys, Home or End are pressed, Then the next tab is chosen and focused, wrapping round", () => {
+        const { controller } = panel();
+        controller.open();
+        const press = (key: string) => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+        tab("General").focus();
+        press("ArrowRight");
+        expect(document.activeElement).toBe(tab("Controls"));
+        expect(tab("Controls").getAttribute("aria-selected")).toBe("true");
+        expect(document.getElementById("settings-tab-controls")!.hidden).toBe(false);
+        press("End");
+        expect(document.activeElement).toBe(tab("Developer"));
+        press("ArrowRight");
+        expect(document.activeElement).toBe(tab("General"));
+        press("ArrowLeft");
+        expect(document.activeElement).toBe(tab("Developer"));
+        press("Home");
+        expect(document.activeElement).toBe(tab("General"));
+        expect(tab("General").tabIndex).toBe(0);
+        expect(tab("Developer").tabIndex).toBe(-1);
+    });
+
     it("Given the panel was closed on Developer, When it opens again, Then it opens on General", () => {
         const { controller } = panel();
         controller.open();
@@ -132,5 +153,17 @@ describe("the key list", () => {
         const rows = [...list.querySelectorAll(".settings-key-row")];
         expect(rows.map((r) => r.querySelector(".settings-key-action")!.textContent)).toEqual(["D-Pad", "B"]);
         expect([...rows[0].querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["W", "A", "S", "D"]);
+    });
+});
+
+describe("the gamepads line", () => {
+    const pad = (id: string, connected = true) => ({ id, connected }) as Gamepad;
+
+    it("Given no connected gamepad, When described, Then it says how to connect one", () => {
+        expect(gamepadLines([null, pad("Old pad", false)])).toBe("No gamepad connected. Plug one in and press any button.");
+    });
+
+    it("Given connected gamepads, When described, Then the first two are players 1 and 2, as the game reads them", () => {
+        expect(gamepadLines([pad("Pad A"), null, pad("Pad B"), pad("Pad C")])).toBe("Player 1: Pad A\nPlayer 2: Pad B");
     });
 });

@@ -147,8 +147,8 @@ export type FirmwareSidebarElements = {
 /**
  * Wires the settings panel's "SNES firmware" block: one row per chip, in `SNES_FIRMWARE_CHIPS`
  * order. A chip with a stored genuine file has Replace… and Forget; any other chip has Add….
- * Add… and Replace… check like the dialog (messages at the bottom, since no firmware dialog is
- * open); Forget removes that chip's file at once, without asking.
+ * Add… and Replace… check like the dialog, and say what happened through `showMessage` (the
+ * panel shows it under the rows); Forget removes that chip's file at once, without asking.
  */
 export function createFirmwareSidebar({
     elements,
