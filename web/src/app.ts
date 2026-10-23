@@ -65,6 +65,7 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { gameTitle } from "./ui/game_title";
+import { errorPlace, libraryErrorTitle } from "./ui/errors";
 import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
 import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
@@ -1117,6 +1118,11 @@ function updateAutorunControls() {
 }
 
 // ── Which view shows: the library (no game, or opened over a paused one) or the game ──
+/** The name of the game last picked, for the library's error heading. */
+let lastPickedName: string | null = null;
+/** The running game stopped on an error: its picture stays, with the stopped-game message. */
+let gameCrashed = false;
+
 const appMain = document.querySelector("main.app-main") as HTMLElement;
 const libraryChooseBtn = document.getElementById("library-choose") as HTMLButtonElement;
 const libraryBackBtn = document.getElementById("library-back") as HTMLButtonElement;
@@ -1130,7 +1136,7 @@ let libraryOverGame = false;
 let pausedByLibrary = false;
 
 function updateView() {
-    const view = !running || libraryOverGame ? "library" : "game";
+    const view = (!running && !gameCrashed) || libraryOverGame ? "library" : "game";
     const shownNow = appMain.dataset.view !== view;
     appMain.dataset.view = view;
     // Zoom's limits are measured on the shown picture, so measure again once it shows.
@@ -1165,6 +1171,7 @@ function backToGame() {
 function leaveLibraryForNewGame() {
     libraryOverGame = false;
     pausedByLibrary = false;
+    clearGameStopped();
 }
 
 libraryChooseBtn.addEventListener("click", () => romInput.click());
@@ -1185,6 +1192,16 @@ function libraryKey(event: KeyboardEvent) {
         (document.getElementById("library-search") as HTMLInputElement).focus();
     }
 }
+
+document.getElementById("library-error-choose")!.addEventListener("click", () => romInput.click());
+document.getElementById("game-error-reset")!.addEventListener("click", () => {
+    clearGameStopped();
+    void start();
+});
+document.getElementById("game-error-library")!.addEventListener("click", () => {
+    clearGameStopped();
+    stop();
+});
 libraryBackBtn.addEventListener("click", backToGame);
 libraryOpenBtn.addEventListener("click", () => {
     if (libraryOverGame) backToGame();
@@ -1623,9 +1640,43 @@ const SNES_LEGACY_BUTTON = {
     R: 11
 } as const;
 
+/**
+ * Says what went wrong where the player is: by the file in the library, on the stopped picture,
+ * or as a brief message over a running game. A message that is not an error clears the library's.
+ */
 function setStatus(msg: string, isError = false) {
-    statusEl!.textContent = isError ? msg : "";
-    statusEl!.dataset.state = isError ? "error" : "";
+    const libraryError = document.getElementById("library-error");
+    if (!isError) {
+        statusEl!.textContent = "";
+        statusEl!.dataset.state = "";
+        if (libraryError) libraryError.hidden = true;
+        return;
+    }
+    const view = appMain?.dataset.view === "game" ? "game" : "library";
+    const place = errorPlace(view, msg);
+    if (place === "game") {
+        showGameStopped(msg);
+    } else if (place === "library") {
+        statusEl!.textContent = msg;
+        statusEl!.dataset.state = "error";
+        document.getElementById("library-error-title")!.textContent = libraryErrorTitle(lastPickedName ?? romMetadata?.name ?? null);
+        if (libraryError) libraryError.hidden = false;
+    } else {
+        toastOverlay.show(msg);
+    }
+}
+
+function showGameStopped(message: string) {
+    gameCrashed = true;
+    document.getElementById("game-error-text")!.textContent = message;
+    document.getElementById("game-error")!.hidden = false;
+    updateEmulationButtons();
+}
+
+function clearGameStopped() {
+    gameCrashed = false;
+    const overlay = document.getElementById("game-error");
+    if (overlay) overlay.hidden = true;
 }
 
 async function applyRomBytes(bytes: Uint8Array, name: string) {
@@ -1690,6 +1741,7 @@ async function refreshSaveStateController() {
 
 /** Loads a game file the player chose or dropped, and starts it. */
 async function loadRomFile(file: File) {
+    lastPickedName = file.name;
     requestPointerLockFromUserGesture();
     const bytes = new Uint8Array(await file.arrayBuffer());
     // Only now, with the new game in hand, is the one under the library left behind.
@@ -1718,6 +1770,7 @@ function warnIfAutorunExpectsAnother(name: string) {
 
 /** Plays a game from the library's "Continue playing" row again, from the bytes kept for it. */
 async function loadRecentGame(game: RecentGame) {
+    lastPickedName = game.name;
     requestPointerLockFromUserGesture();
     const bytes = await recentGames.bytesOf(game.name).catch(() => null);
     if (!bytes) {
@@ -1742,6 +1795,7 @@ async function loadRecentGame(game: RecentGame) {
 
 /** Loads one of the bundled test ROMs, by its URL and its path (which names it), and starts it. */
 async function loadBundledRom(url: string, name: string) {
+    lastPickedName = name;
     requestPointerLockFromUserGesture();
     try {
         const response = await fetch(url);
@@ -2950,6 +3004,7 @@ function step(timestamp: number) {
 
         if (!rendered) {
             running = false;
+            paused = false;
             setStatus("Rendering error occurred. Please restart.", true);
             return;
         }

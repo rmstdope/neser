@@ -90,6 +90,10 @@ test.describe("web app shell", () => {
 
         await page.locator("#rom").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a game") });
 
+        const alert = page.locator("#library-error");
+        await expect(alert).toBeVisible();
+        await expect(alert.locator("#library-error-title")).toHaveText("Couldn’t open “notes.txt”");
+        await expect(alert.locator("#library-error-choose")).toHaveText("Choose another…");
         const status = page.locator("#status");
         await expect(status).toHaveText("Unsupported file type .txt");
         await expect(status).toBeVisible();
@@ -221,5 +225,36 @@ test.describe("the library's keys and its news", () => {
         });
         expect(clipped).toBe(false);
         await expect(page.locator("#library-news")).toHaveAttribute("role", "marquee");
+    });
+});
+
+test.describe("errors where you are", () => {
+    test("Given a game whose picture can no longer be drawn, then it stops on its picture with Reset and Back to library", async ({ page }) => {
+        await startFromBundledRom(page);
+        // Drawing a frame now fails, as a broken graphics driver would make it.
+        await page.evaluate(() => {
+            WebGLRenderingContext.prototype.drawArrays = () => {
+                throw new Error("the picture cannot be drawn");
+            };
+        });
+        const overlay = page.locator("#game-error");
+        await expect(overlay).toBeVisible({ timeout: 15_000 });
+        await expect(overlay.locator(".game-error-title")).toHaveText("The game stopped");
+        await expect(overlay.locator("#game-error-text")).toContainText("the picture cannot be drawn");
+        await expect(page.locator("#library")).toBeHidden();
+
+        await overlay.locator("#game-error-library").click();
+        await expect(page.locator("#library")).toBeVisible();
+        await expect(overlay).toBeHidden();
+    });
+
+    test("Given the library's error, when a good game is then chosen, then the error goes", async ({ page }) => {
+        await page.goto("/");
+        await page.locator("#rom").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
+        await expect(page.locator("#library-error")).toBeVisible();
+        await loadRomFromFileInput(page);
+        await waitForRunningState(page);
+        await page.locator("#stop").click();
+        await expect(page.locator("#library-error")).toBeHidden();
     });
 });
