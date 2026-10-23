@@ -19,16 +19,17 @@ describe("Steel Glow theme", () => {
         expect(mainCss).toMatch(/@plugin "daisyui\/theme" \{[^}]*name: "steel";/);
     });
 
-    it("Given the sidebar, When reading the logo, Then it is the wordmark with its system line, not ASCII art", () => {
-        const logo = page.querySelector(".neser-logo");
+    it("Given the top bar, When reading the logo, Then it is the steel mark and the wordmark", () => {
+        const logo = page.querySelector("header .neser-logo");
+        expect(logo?.querySelector(".neser-logo-mark")?.textContent).toBe("N");
         expect(logo?.querySelector(".neser-logo-word")?.textContent).toBe("NESER");
-        expect(logo?.querySelector(".neser-logo-systems")?.textContent).toBe("NES · GB · GBC · GBA · SNES");
-        expect(page.querySelector("aside pre")).toBeNull();
+        expect(page.querySelector("pre")).toBeNull();
     });
 
     it("Given the emulation controls, When reading them, Then Start is the one primary button and none use the old traffic-light colours", () => {
         expect(page.getElementById("start")?.classList.contains("btn-primary")).toBe(true);
-        expect(page.querySelectorAll("#emulation-controls .btn-primary")).toHaveLength(1);
+        expect(page.getElementById("start")!.closest("#library")).not.toBeNull();
+        expect(page.querySelectorAll("#emulation-controls .btn-primary")).toHaveLength(0);
         for (const id of ["pause", "reset", "stop", "save-state", "load-state", "autorun-load"]) {
             const classes = page.getElementById(id)!.classList;
             expect([...classes].filter((c) => /^btn-(success|warning|error|info)$/.test(c)), id).toEqual([]);

@@ -119,7 +119,7 @@ test.describe("Game Boy games run on", () => {
         // Remembered across a reload.
         await chooseHardware(page, "cgb");
         await page.reload();
-        await expect(page.locator("#start")).toBeVisible();
+        await expect(page.locator("#library")).toBeVisible();
         await openSettings(page);
         await expect(choice).toHaveValue("cgb");
         await closeSettings(page);
