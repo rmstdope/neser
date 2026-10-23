@@ -539,7 +539,11 @@ jobs:
   publish-web:
     runs-on: ubuntu-latest
     needs: web-container
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Skipped Rust/Python test jobs upstream would otherwise skip this job via
+    # the implicit success() check, so only web-container's result counts.
+    if: >-
+      !cancelled() && needs.web-container.result == 'success'
+      && github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       actions: read
