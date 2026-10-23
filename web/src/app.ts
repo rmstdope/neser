@@ -67,6 +67,8 @@ import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { gameTitle } from "./ui/game_title";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
+import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
+import { belongsToOpenDialog, isEditableKeyboardTarget } from "./shortcuts/keyboard_target";
 import {
     type KeyBindingRow,
     type KeyBindingSink,
@@ -206,7 +208,11 @@ const snesFirmwareSidebar = createFirmwareSidebar({
     },
     store: snesFirmwareStore,
     isGenuine: snes_dsp_firmware_is_genuine,
-    showMessage: (message) => toastOverlay.show(message)
+    // The rows sit in the settings panel, so their words show there rather than behind it.
+    showMessage: (message) => {
+        const line = document.getElementById("snes-firmware-message");
+        if (line) line.textContent = message;
+    }
 });
 void snesFirmwareSidebar.refresh();
 
@@ -2831,6 +2837,77 @@ muteBtn!.addEventListener("click", async () => {
     }
 });
 updateMuteButton();
+// ── Settings panel: opened from the top bar; the game pauses while it is open ──
+const settingsKeysEl = document.getElementById("settings-keys") as HTMLElement;
+const settingsGamepadsEl = document.getElementById("settings-gamepads") as HTMLElement;
+const settingsDebuggerBtn = document.getElementById("settings-debugger") as HTMLButtonElement;
+const settingsKeySystemButtons = [...document.querySelectorAll<HTMLButtonElement>("#settings-keys-system [data-console]")];
+let settingsKeysConsole: ConsoleKind = "nes";
+let pausedBySettings = false;
+
+/** The Controls tab's key list for the chosen system, one block per player. */
+function renderSettingsKeys() {
+    for (const button of settingsKeySystemButtons) {
+        button.setAttribute("aria-pressed", button.dataset.console === settingsKeysConsole ? "true" : "false");
+    }
+    const players = CONSOLES[settingsKeysConsole].playerKeyBindings;
+    settingsKeysEl.replaceChildren(
+        ...players.map((bindings, index) => {
+            const block = document.createElement("div");
+            block.className = "settings-key-player";
+            if (players.length > 1) {
+                const heading = document.createElement("h4");
+                heading.textContent = `Player ${index + 1}`;
+                block.append(heading);
+            }
+            const list = document.createElement("div");
+            renderKeyList(list, bindings);
+            block.append(list);
+            return block;
+        })
+    );
+}
+
+function renderSettingsGamepads() {
+    settingsGamepadsEl.textContent = gamepadLines([...(navigator.getGamepads?.() ?? [])]);
+}
+// A pad appears once a button is pressed on it, so the open panel follows it as it comes and goes.
+window.addEventListener("gamepadconnected", () => renderSettingsGamepads());
+window.addEventListener("gamepaddisconnected", () => renderSettingsGamepads());
+
+for (const button of settingsKeySystemButtons) {
+    button.addEventListener("click", () => {
+        settingsKeysConsole = button.dataset.console as ConsoleKind;
+        renderSettingsKeys();
+    });
+}
+
+const settingsPanel = createSettingsPanel({
+    dialog: document.getElementById("settings-panel") as HTMLDialogElement,
+    openButton: document.getElementById("settings-open") as HTMLButtonElement,
+    closeButton: document.getElementById("settings-close") as HTMLButtonElement,
+    onOpen: () => {
+        pausedBySettings = running && !paused;
+        if (pausedBySettings) pauseResume();
+        settingsKeysConsole = emulator?.kind ?? settingsKeysConsole;
+        renderSettingsKeys();
+        renderSettingsGamepads();
+        settingsDebuggerBtn.disabled = !(nes && running);
+        // A firmware message is about the file just chosen; each opening starts clear.
+        const firmwareMessage = document.getElementById("snes-firmware-message");
+        if (firmwareMessage) firmwareMessage.textContent = "";
+    },
+    onClose: () => {
+        if (pausedBySettings && running && paused) pauseResume();
+        pausedBySettings = false;
+    },
+});
+
+settingsDebuggerBtn.addEventListener("click", () => {
+    settingsPanel.close();
+    if (!nes?.is_debugger_open()) debuggerToggle();
+});
+
 const emulationControls = document.getElementById("emulation-controls");
 const pauseBtn = document.getElementById("pause") as HTMLButtonElement | null;
 const stopBtn = document.getElementById("stop") as HTMLButtonElement | null;
@@ -2978,14 +3055,6 @@ function applyKeyboardBindings(event: KeyboardEvent, active: ActiveEmulator, pre
     }
 }
 
-function isEditableKeyboardTarget(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) {
-        return false;
-    }
-    const tag = target.tagName.toUpperCase();
-    return target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-}
-
 /** The 1-based port the Super Scope is plugged into, or null when none is. */
 function superScopePort(): number | null {
     if (emulator?.kind !== "snes") {
@@ -3059,7 +3128,7 @@ function applySuperScopeKey(snesInst: WasmSnes, action: "turbo" | "pause", press
 }
 
 async function handleKeyDown(event: KeyboardEvent) {
-    if (isEditableKeyboardTarget(event.target)) {
+    if (isEditableKeyboardTarget(event.target) || belongsToOpenDialog(event.target)) {
         return;
     }
 

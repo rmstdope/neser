@@ -244,8 +244,9 @@ describe("SNES firmware sidebar block", () => {
         return { elements, controller, messages };
     }
 
+    // The stored chips' rows; every other chip has a "not added" row (see the tests below).
     const rowTexts = (rows: HTMLElement) =>
-        [...rows.querySelectorAll("[data-chip]")].map((row) =>
+        [...rows.querySelectorAll("[data-chip][data-stored]")].map((row) =>
             [...row.querySelectorAll("span, button")].map((e) => e.textContent).join(" ")
         );
     const button = (rows: HTMLElement, key: string, text: string) =>
@@ -253,14 +254,40 @@ describe("SNES firmware sidebar block", () => {
             (b) => b.textContent === text
         ) as HTMLButtonElement;
 
-    it("is absent until a firmware is stored", async () => {
+    const allRowTexts = (rows: HTMLElement) =>
+        [...rows.querySelectorAll("[data-chip]")].map((row) =>
+            [...row.querySelectorAll("span, button")].map((e) => e.textContent).join(" ")
+        );
+
+    it("lists every chip in chip order, each one not added until its firmware is stored", async () => {
         const store = memoryStore();
         const { elements, controller } = sidebar(store);
         await controller.refresh();
-        expect(elements.section.classList.contains("hidden")).toBe(true);
+        expect(elements.section.classList.contains("hidden")).toBe(false);
+        expect(allRowTexts(elements.rows)).toEqual([
+            "DSP-1: not added Add…",
+            "DSP-2: not added Add…",
+            "DSP-3: not added Add…",
+            "DSP-4: not added Add…"
+        ]);
         store.files.set("dsp2", genuine("dsp2"));
         await controller.refresh();
-        expect(elements.section.classList.contains("hidden")).toBe(false);
+        expect(allRowTexts(elements.rows)[1]).toBe("DSP-2: stored ✓ Replace… Forget");
+        expect(rowTexts(elements.rows)).toEqual(["DSP-2: stored ✓ Replace… Forget"]);
+    });
+
+    it("Add… on a not-added row stores a genuine file for that chip and says so", async () => {
+        const store = memoryStore();
+        const { elements, controller, messages } = sidebar(store);
+        await controller.refresh();
+        const add = button(elements.rows, "dsp2", "Add…");
+        expect(add.getAttribute("aria-label")).toBe("Add the DSP-2 firmware");
+        add.click();
+        chooseFile(elements.fileInput, "dsp2.rom", 8192, 0x22);
+        await flush();
+        await flush();
+        expect(store.files.has("dsp2")).toBe(true);
+        expect(messages).toEqual(["DSP-2 firmware stored"]);
         expect(rowTexts(elements.rows)).toEqual(["DSP-2: stored ✓ Replace… Forget"]);
     });
 
@@ -272,7 +299,7 @@ describe("SNES firmware sidebar block", () => {
 
         store.files.delete("dsp2");
         await controller.refresh();
-        expect(elements.section.classList.contains("hidden")).toBe(true);
+        expect(rowTexts(elements.rows)).toEqual([]);
     });
 
     it("lists one row per stored chip, DSP-1 first whatever the order they were stored in", async () => {
@@ -348,7 +375,7 @@ describe("SNES firmware sidebar block", () => {
         expect(rowTexts(elements.rows)).toEqual(["DSP-1: stored ✓ Replace… Forget"]);
     });
 
-    it("Forget removes only that chip's file at once; the last one hides the block", async () => {
+    it("Forget removes only that chip's file at once; the last one leaves every chip not added", async () => {
         const store = memoryStore({ dsp1: genuine("dsp1"), dsp2: genuine("dsp2") });
         const { elements, controller } = sidebar(store);
         await controller.refresh();
@@ -365,7 +392,8 @@ describe("SNES firmware sidebar block", () => {
         await flush();
         await flush();
         expect(store.files.size).toBe(0);
-        expect(elements.section.classList.contains("hidden")).toBe(true);
+        expect(rowTexts(elements.rows)).toEqual([]);
+        expect(elements.section.classList.contains("hidden")).toBe(false);
     });
 
     it("Replace… on a row stores a genuine file for that chip and says so", async () => {
@@ -560,10 +588,11 @@ describe("obtaining the firmware for a game", () => {
 });
 
 describe("SNES firmware markup", () => {
-    it("has the agreed sidebar title, hidden by default, with no fixed rows", () => {
+    it("has the agreed title in the settings panel, always shown, with no fixed rows", () => {
         const doc = new DOMParser().parseFromString(indexHtml, "text/html");
         const section = doc.getElementById("snes-firmware-section")!;
-        expect(section.classList.contains("hidden")).toBe(true);
+        expect(section.closest("#settings-panel")).not.toBeNull();
+        expect(section.classList.contains("hidden")).toBe(false);
         expect(section.textContent).toContain("SNES firmware");
         expect(doc.getElementById("snes-firmware-rows")!.children.length).toBe(0);
         expect(doc.getElementById("snes-firmware-replace-file")).not.toBeNull();

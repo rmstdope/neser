@@ -348,6 +348,8 @@ canvas {
   --icon-palette: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Ccircle cx='8' cy='10' r='1'/%3E%3Ccircle cx='12' cy='7.5' r='1'/%3E%3Ccircle cx='16' cy='10' r='1'/%3E%3Cpath d='M12 21a3 3 0 0 1 0-6h2'/%3E%3C/svg%3E");
   --icon-volume: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11'/%3E%3C/svg%3E");
   --icon-mute: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M17 9l5 6M22 9l-5 6'/%3E%3C/svg%3E");
+  --icon-gear: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1'/%3E%3C/svg%3E");
+  --icon-close: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
   --icon-fullscreen: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'/%3E%3C/svg%3E");
 }
 
@@ -393,7 +395,7 @@ canvas {
 }
 
 /* Icon-only controls keep their words as the accessible name and show only the icon. */
-.control-bar .btn-icon-only {
+.btn-icon-only {
   width: 2.25rem;
   padding: 0;
   font-size: 0;
@@ -421,6 +423,8 @@ canvas {
 [data-icon="palette"] { --icon: var(--icon-palette); }
 [data-icon="volume"] { --icon: var(--icon-volume); }
 [data-icon="fullscreen"] { --icon: var(--icon-fullscreen); }
+[data-icon="gear"] { --icon: var(--icon-gear); }
+[data-icon="close"] { --icon: var(--icon-close); }
 #mute.volume-off { --icon: var(--icon-mute); }
 
 /* Start before a game runs, Pause while it runs, a lit Resume while paused. */
@@ -576,6 +580,202 @@ body.handheld .app-topbar {
 .sys-badge[data-system="GBC"] { background: #c7a2f0; }
 .sys-badge[data-system="GBA"] { background: #8fa3f5; }
 .sys-badge[data-system="SNES"] { background: #d9b2e8; }
+
+/* ── Top bar buttons: tips open below, inside the window ─── */
+
+.topbar-btn {
+  position: relative;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  font-size: 0;
+  border: 1px solid var(--line-strong);
+}
+
+.app-topbar [data-tip]:hover::after {
+  top: calc(100% + 10px);
+  bottom: auto;
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* ── Settings: a sheet from the right ────────────────────── */
+
+/* The sheet opens below the top bar, as drawn, so the game's name stays in view. */
+.settings-sheet {
+  position: fixed;
+  inset: 3.5rem 0 0 auto;
+  width: min(400px, 100vw);
+  height: calc(100dvh - 3.5rem);
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  display: none;
+  flex-direction: column;
+  color: #dbe6f3;
+  background: linear-gradient(180deg, #132034, #0b131f);
+  border: 0;
+  border-left: 1px solid var(--line-strong);
+  box-shadow: -30px 0 60px rgba(0, 0, 0, 0.5), var(--glow-soft);
+}
+
+.settings-sheet[open] {
+  display: flex;
+}
+
+/* The backdrop dims the page below the top bar, which stays clear, as drawn. */
+.settings-sheet::backdrop {
+  top: 3.5rem;
+  background: rgba(3, 6, 11, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-tabs [role="tab"] {
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-tabs [role="tab"][aria-selected="true"] {
+  color: #fff;
+  border-color: var(--steel-hi);
+  box-shadow: 0 6px 12px -8px rgba(127, 176, 227, 0.8);
+}
+
+.settings-tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: -2px;
+}
+
+.settings-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 20px 20px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-group:last-child {
+  border-bottom: 0;
+}
+
+.settings-group-title {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-label {
+  font-size: 13px;
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-line;
+}
+
+.settings-message {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ice);
+  white-space: pre-line;
+}
+
+.settings-message:empty {
+  display: none;
+}
+
+.firmware-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.firmware-row-label {
+  flex: 1;
+}
+
+.settings-seg {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: 12px;
+  background: rgba(6, 12, 20, 0.6);
+  border: 1px solid var(--line);
+}
+
+.settings-seg button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-seg button[aria-pressed="true"] {
+  color: #fff;
+  background: linear-gradient(180deg, rgba(127, 176, 227, 0.28), rgba(74, 118, 168, 0.18));
+  box-shadow: inset 0 0 0 1px rgba(127, 176, 227, 0.4), 0 0 14px rgba(80, 150, 230, 0.25);
+}
+
+.settings-key-player h4 {
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.settings-key-caps {
+  display: flex;
+  gap: 4px;
+}
 
 .neser-toast-container {
   position: absolute;

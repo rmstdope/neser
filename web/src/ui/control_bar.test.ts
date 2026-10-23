@@ -31,7 +31,8 @@ describe("the control bar under the picture", () => {
     it("Given the control bar, When reading its controls, Then play and reset come first, save states next, then eject, then picture and sound", () => {
         const ids = [...bar.querySelectorAll("button, input")].map((el) => el.id);
         expect(ids).toEqual(BAR_ORDER);
-        expect(page.querySelectorAll("header button")).toHaveLength(0);
+        // The top bar holds only page-level buttons, never a game control.
+        expect([...page.querySelectorAll("header button")].map((b) => b.id)).toEqual(["settings-open"]);
         expect(page.querySelector("aside #start, aside #stop, aside #save-state")).toBeNull();
     });
 

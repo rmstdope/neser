@@ -2,6 +2,7 @@ import { test, expect, Page } from "@playwright/test";
 import { collectBrowserErrors } from "../helpers/browser-errors.helpers";
 import {
     openApp,
+    openSettings,
     startFromBundledRom,
     waitForRunningState,
     loadRomFromFileInput
@@ -43,6 +44,8 @@ async function openAutorunModal(page: Page) {
     // Loading a ROM auto-starts emulation; stop it so Load Autorun becomes enabled
     await page.locator("#stop").click();
     await expect(page.locator("#stop")).toBeDisabled();
+    // Autorun is a developer tool: it lives in Settings › Developer.
+    await openSettings(page, "Developer");
     await page.locator(AUTORUN_LOAD_BUTTON_SELECTOR).click();
     await expect(page.locator(AUTORUN_MODAL_SELECTOR)).toBeVisible();
 }
