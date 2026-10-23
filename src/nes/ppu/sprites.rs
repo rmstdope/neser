@@ -460,6 +460,60 @@ impl Sprites {
         let is_pattern_lo_cycle = fetch_step == 5;
         let is_pattern_hi_cycle = fetch_step == 7;
 
+        // Update the OAM read latch with the secondary OAM byte being read
+        // during this fetch step. Each 8-cycle slot reads: Y(0-1), tile(2-3), attr(4-5), X(6-7)
+        {
+            let sec_oam_offset = sprite_index * 4;
+            let byte_index = (fetch_step / 2) as usize; // 0=Y, 1=tile, 2=attr, 3=X
+            self.oam_read_latch = self.secondary_oam[sec_oam_offset + byte_index];
+        }
+
+        let (addr, is_real_sprite, attributes) = self.slot_pattern_address(
+            sprite_index,
+            scanline,
+            prerender_scanline,
+            sprite_height,
+            sprite_pattern_table_base,
+        );
+
+        if is_pattern_lo_cycle {
+            // Read pattern low byte - this triggers the A12 rising edge for MMC3
+            let pattern_lo = read_chr(addr);
+
+            if is_real_sprite {
+                self.next_sprite_pattern_shift_lo[sprite_index] = if (attributes & 0x40) != 0 {
+                    pattern_lo.reverse_bits()
+                } else {
+                    pattern_lo
+                };
+                self.next_sprite_attributes[sprite_index] = attributes;
+                let sec_oam_offset = sprite_index * 4;
+                self.next_sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
+            }
+        } else if is_pattern_hi_cycle {
+            // Read pattern high byte
+            let pattern_hi = read_chr(addr + 8);
+
+            if is_real_sprite {
+                self.next_sprite_pattern_shift_hi[sprite_index] = if (attributes & 0x40) != 0 {
+                    pattern_hi.reverse_bits()
+                } else {
+                    pattern_hi
+                };
+            }
+        }
+    }
+
+    /// The low-plane pattern address sprite slot `sprite_index` fetches, whether the slot
+    /// holds a sprite found by evaluation, and that sprite's attributes.
+    fn slot_pattern_address(
+        &self,
+        sprite_index: usize,
+        scanline: u16,
+        prerender_scanline: u16,
+        sprite_height: u8,
+        sprite_pattern_table_base: u16,
+    ) -> (u16, bool, u8) {
         // On pre-render scanline, sprite evaluation doesn't happen, so
         // secondary_oam contains stale data from scanline 239's evaluation.
         // Those sprites were evaluated for scanline 240, not scanline 0.
@@ -482,14 +536,6 @@ impl Sprites {
             // The NES hardware reads these even though no sprite is visible
             (0xFF, 0, 0xFF)
         };
-
-        // Update the OAM read latch with the secondary OAM byte being read
-        // during this fetch step. Each 8-cycle slot reads: Y(0-1), tile(2-3), attr(4-5), X(6-7)
-        {
-            let sec_oam_offset = sprite_index * 4;
-            let byte_index = (fetch_step / 2) as usize; // 0=Y, 1=tile, 2=attr, 3=X
-            self.oam_read_latch = self.secondary_oam[sec_oam_offset + byte_index];
-        }
 
         let next_scanline = if scanline == prerender_scanline {
             0
@@ -539,33 +585,36 @@ impl Sprites {
         };
 
         let addr = pattern_table_base | tile_offset | (tile_row as u16);
+        (addr, is_real_sprite, attributes)
+    }
 
-        if is_pattern_lo_cycle {
-            // Read pattern low byte - this triggers the A12 rising edge for MMC3
-            let pattern_lo = read_chr(addr);
-
-            if is_real_sprite {
-                self.next_sprite_pattern_shift_lo[sprite_index] = if (attributes & 0x40) != 0 {
-                    pattern_lo.reverse_bits()
-                } else {
-                    pattern_lo
-                };
-                self.next_sprite_attributes[sprite_index] = attributes;
-                let sec_oam_offset = sprite_index * 4;
-                self.next_sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
-            }
-        } else if is_pattern_hi_cycle {
-            // Read pattern high byte
-            let pattern_hi = read_chr(addr + 8);
-
-            if is_real_sprite {
-                self.next_sprite_pattern_shift_hi[sprite_index] = if (attributes & 0x40) != 0 {
-                    pattern_hi.reverse_bits()
-                } else {
-                    pattern_hi
-                };
-            }
-        }
+    /// The address on the PPU bus once sprite slot `sprite_index` has fetched its pattern:
+    /// its high plane. A slot without a sprite fetches tile $FF, row 0 (Mesen2 NesPpu.cpp
+    /// LoadSprite, `fetchLastSprite`), which is what a $2007 read during rendering refills
+    /// its buffer from (nr-6wgi).
+    pub fn pattern_bus_address(
+        &self,
+        sprite_index: usize,
+        scanline: u16,
+        prerender_scanline: u16,
+        sprite_height: u8,
+        sprite_pattern_table_base: u16,
+    ) -> u16 {
+        let (addr, is_real_sprite, _) = self.slot_pattern_address(
+            sprite_index,
+            scanline,
+            prerender_scanline,
+            sprite_height,
+            sprite_pattern_table_base,
+        );
+        let lo = if is_real_sprite {
+            addr
+        } else if sprite_height == 8 {
+            sprite_pattern_table_base | 0x0FF0
+        } else {
+            0x1FE0
+        };
+        lo + 8
     }
 
     /// Hand the fetched sprite set to the next scanline (dot 321)

@@ -64,6 +64,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
     tick_vblank_and_nmi(ppu);
     tick_background(ppu);
     tick_sprites(ppu);
+    tick_rendering_bus_address(ppu);
     tick_pixel_output(ppu);
     tick_delayed_updates(ppu);
 }
@@ -485,6 +486,56 @@ fn tick_sprites(ppu: &mut Ppu) {
     }
 }
 
+/// Track the address the rendering fetches put on the PPU bus, which a $2007 read during
+/// rendering refills its buffer from (nr-6wgi). Each address goes out in the first dot of
+/// its fetch, as in Mesen2 NesPpu.cpp (`_ppuBusAddress`): the nametable, attribute and two
+/// pattern fetches of each background tile at dots 8n+1, +3, +5 and +7; per sprite slot the
+/// garbage nametable and attribute fetches at 257+8k and 259+8k and both pattern planes at
+/// 261+8k; the dummy nametable fetches at 337 and 339; and at dot 0 of a visible line, the
+/// pattern address of the tile the dot-339 fetch named, or v at dot 0 of the pre-render
+/// line, since the bus has carried v through vblank. A $2001 write that turns rendering
+/// on or off puts v there (`Ppu::write_mask`).
+fn tick_rendering_bus_address(ppu: &mut Ppu) {
+    let scanline = ppu.timing.scanline();
+    let prerender = ppu.timing.region().prerender_scanline;
+    let is_visible_scanline = scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
+    if !ppu.registers.is_rendering_enabled() || !(is_visible_scanline || scanline == prerender) {
+        return;
+    }
+    let pixel = ppu.timing.pixel();
+    let v = ppu.registers.v();
+    let nametable = 0x2000 | (v & 0x0FFF);
+    let attribute = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+    let address = match pixel {
+        0 if is_visible_scanline => Some(ppu.background.tile_addr()),
+        0 => Some(v & 0x3FFF),
+        1..=256 | 321..=336 => match (pixel - 1) % 8 {
+            0 => Some(nametable),
+            2 => Some(attribute),
+            4 => Some(ppu.background.tile_addr()),
+            6 => Some(ppu.background.tile_addr() | 0x08),
+            _ => None,
+        },
+        257..=320 => match (pixel - 257) % 8 {
+            0 => Some(nametable),
+            2 => Some(attribute),
+            4 => Some(ppu.sprites.pattern_bus_address(
+                usize::from((pixel - 257) / 8),
+                scanline,
+                prerender,
+                ppu.registers.sprite_height(),
+                ppu.registers.sprite_pattern_table_addr(),
+            )),
+            _ => None,
+        },
+        337 | 339 => Some(nametable),
+        _ => None,
+    };
+    if let Some(address) = address {
+        ppu.rendering_bus_address = address;
+    }
+}
+
 /// Phase 5: Pixel composition and screen output.
 fn tick_pixel_output(ppu: &mut Ppu) {
     let scanline = ppu.timing.scanline();
@@ -657,6 +708,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
 /// The v increment after a $2007 read or write lands here too, at the end of
 /// the first PPU cycle after the access (ref Mesen2 `_needVideoRamIncrement`).
 fn tick_delayed_updates(ppu: &mut Ppu) {
+    ppu.ignore_vram_read = ppu.ignore_vram_read.saturating_sub(1);
     ppu.apply_pending_vram_increment();
     match ppu.update_vram_addr_delay {
         0 => {}

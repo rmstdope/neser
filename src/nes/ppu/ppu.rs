@@ -158,6 +158,16 @@ pub struct Ppu {
     update_vram_addr_delay: u8,
     /// The pending VRAM address value when a delayed v=t update is active.
     pending_vram_addr: u16,
+    /// The address of the latest rendering fetch, which is what the PPU address bus carries
+    /// while it renders. A $2007 read during rendering refills its buffer from here, not
+    /// from v (nr-6wgi; Mesen2 NesPpu.cpp `_ppuBusAddress`). Read only while
+    /// `is_actively_rendering`, so it is not saved in save states: the next fetch, at most
+    /// two dots later, sets it again.
+    rendering_bus_address: u16,
+    /// PPU dots left in which a $2007 read is ignored, counting down from 6 after each read
+    /// that was not (nr-6wgi; Mesen2 NesPpu.cpp `_ignoreVramRead`). Not saved in save
+    /// states, like `vram_increment_pending`.
+    ignore_vram_read: u8,
     /// A $2007 read or write has happened and its v increment is still due: the
     /// increment lands one PPU cycle later, after that cycle's pixel is drawn, so a
     /// forced-blank pixel drawn right after the access still shows the colour at the
@@ -317,6 +327,8 @@ impl Ppu {
             vs_palette: None,
             system_palette: NesPalette::default(),
             update_vram_addr_delay: 0,
+            rendering_bus_address: 0,
+            ignore_vram_read: 0,
             pending_vram_addr: 0,
             vram_increment_pending: false,
         }
@@ -372,6 +384,8 @@ impl Ppu {
         self.recent_pixels = [None, None];
         self.vram_increment_pending = false;
         self.update_vram_addr_delay = 0;
+        self.rendering_bus_address = 0;
+        self.ignore_vram_read = 0;
     }
 
     pub fn io_bus(&self) -> u8 {
@@ -459,6 +473,12 @@ impl Ppu {
         self.registers.write_mask(value);
         let grayscale_after = self.registers.is_grayscale();
         let rendering_enabled_after = self.registers.is_rendering_enabled();
+
+        // Outside rendering the PPU bus carries v (Mesen2 NesPpu.cpp UpdateState puts v back
+        // on the bus when rendering is turned off mid-frame).
+        if rendering_enabled_before != rendering_enabled_after {
+            self.rendering_bus_address = self.registers.v();
+        }
 
         // OAMADDR glitch: When rendering is disabled during sprite evaluation (cycles 65-256
         // of visible scanlines), OAMADDR is incremented by 1.
@@ -635,8 +655,17 @@ impl Ppu {
 
     /// Read from data register ($2007)
     pub fn read_data(&mut self) -> u8 {
+        // A read within 6 dots of the last one, on the next CPU cycle, is ignored: it returns
+        // the open bus and changes nothing (nr-6wgi; Mesen2 NesPpu.cpp `_ignoreVramRead`).
+        if self.ignore_vram_read > 0 {
+            return self.registers.io_bus();
+        }
+        self.ignore_vram_read = 6;
         self.apply_pending_vram_increment();
         self.land_pending_vram_addr();
+        if self.is_actively_rendering() {
+            return self.read_data_during_rendering();
+        }
         let addr = self.registers.v();
         let result = match addr {
             0x0000..=0x1FFF => {
@@ -645,12 +674,7 @@ impl Ppu {
                 // (MMC5 extended attribute mode should NOT apply here)
                 Self::notify_chr_fetch_is_ppudata(&self.cartridge);
                 let buffered = self.registers.data_buffer();
-                let value = if self.is_actively_rendering() {
-                    self.memory
-                        .read_chr_without_address_change(addr, &self.cartridge)
-                } else {
-                    self.memory.read_chr(addr, &self.cartridge)
-                };
+                let value = self.memory.read_chr(addr, &self.cartridge);
                 self.registers.set_data_buffer(value);
                 buffered
             }
@@ -696,6 +720,25 @@ impl Ppu {
         } else {
             self.registers.set_io_bus(result);
         }
+        result
+    }
+
+    /// A $2007 read while the PPU renders: the bus carries the latest rendering fetch, so the
+    /// buffer refills from that address, which never reaches palette RAM, and the mapper sees
+    /// no new address (nr-6gs, nr-6wgi; Mesen2 NesPpu.cpp ReadRam reads `_ppuBusAddress`).
+    fn read_data_during_rendering(&mut self) -> u8 {
+        let addr = self.rendering_bus_address & 0x3FFF;
+        let value = if addr < 0x2000 {
+            Self::notify_chr_fetch_is_ppudata(&self.cartridge);
+            self.memory
+                .read_chr_without_address_change(addr, &self.cartridge)
+        } else {
+            self.memory.read_nametable_mapped(addr, &self.cartridge)
+        };
+        let result = self.registers.data_buffer();
+        self.registers.set_data_buffer(value);
+        self.vram_increment_pending = true;
+        self.registers.set_io_bus(result);
         result
     }
 
@@ -2421,8 +2464,95 @@ mod tests {
         }
     }
 
+    // nr-6wgi: Super Spy Hunter's random-number routine reads a $2007 mirror mid-frame. During
+    // rendering the read buffer refills from the address on the PPU bus, the rendering fetch
+    // in progress (NESdev PPU registers: PPUDATA reads during rendering hit an unpredictable
+    // address; Mesen2 NesPpu.cpp ReadRam reads _ppuBusAddress), not from v. NESER refilled it
+    // from v, so the game's random numbers, and its intro starfield, drifted from Mesen2.
     #[test]
-    fn test_ppudata_access_during_rendering_still_reaches_chr_at_v() {
+    fn test_ppudata_read_during_rendering_refills_buffer_from_the_fetch_address() {
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
+                calls: Rc::new(RefCell::new(Vec::new())),
+                chr_writes: Rc::new(RefCell::new(Vec::new())),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_control(0x10); // background patterns at $1000, where the spy CHR answers
+        ppu.write_mask(0x18);
+        // Scanline 10, dot 40: the last fetch was the high plane of tile 0, fine Y 2, at
+        // $1000 + 2 + 8 = $100A; the spy CHR answers each address with its low byte.
+        ppu.run_ppu_cycles(10 * 341 + 40);
+        assert!(ppu.is_actively_rendering());
+
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x1330;
+        ppu.set_debug_state(state);
+        ppu.read_data();
+
+        assert_eq!(
+            ppu.registers.data_buffer(),
+            0x0A,
+            "read buffer filled from the rendering fetch address, not v"
+        );
+    }
+
+    /// A PPU with the given PPUCTRL whose spy CHR answers each address at $1000-$1FFF with
+    /// its low byte, run `dots` dots from power-on with rendering on, ready for a $2007 read
+    /// with v pointing elsewhere ($1330).
+    fn ppu_reading_ppudata_at_dot(control: u8, dots: u64) -> Ppu {
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
+                calls: Rc::new(RefCell::new(Vec::new())),
+                chr_writes: Rc::new(RefCell::new(Vec::new())),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_control(control);
+        ppu.write_mask(0x18);
+        ppu.run_ppu_cycles(dots);
+        assert!(ppu.is_actively_rendering());
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x1330;
+        ppu.set_debug_state(state);
+        ppu
+    }
+
+    #[test]
+    fn test_ppudata_read_in_a_sprite_slot_refills_from_the_dummy_sprite_tile() {
+        // Scanline 10 holds no sprite, so slot 0 fetches tile $FF, row 0, from the sprite
+        // table at $1000 at dot 261 (Mesen2 NesPpu.cpp LoadSprite): high plane $1FF8.
+        let mut ppu = ppu_reading_ppudata_at_dot(0x08, 10 * 341 + 262);
+        ppu.read_data();
+        assert_eq!(ppu.registers.data_buffer(), 0xF8);
+    }
+
+    #[test]
+    fn test_ppudata_read_at_dot_0_refills_from_the_next_tile_pattern_address() {
+        // Dot 0 of line 11 puts the pattern address of the tile the dot-339 fetch named on
+        // the bus (Mesen2 NesPpu.cpp ProcessScanlineFirstCycle): tile 0, fine Y 3, at $1003.
+        let mut ppu = ppu_reading_ppudata_at_dot(0x10, 11 * 341);
+        ppu.read_data();
+        assert_eq!(ppu.registers.data_buffer(), 0x03);
+    }
+
+    #[test]
+    fn test_ppudata_read_right_after_rendering_turns_on_refills_from_v() {
+        // Until the first fetch, the bus still carries v (Mesen2 keeps v on the bus while
+        // rendering is off).
+        let mut ppu = ppu_reading_ppudata_at_dot(0x10, 10 * 341 + 40);
+        ppu.write_mask(0x00);
+        ppu.write_mask(0x18);
+        ppu.read_data();
+        assert_eq!(ppu.registers.data_buffer(), 0x30);
+    }
+
+    #[test]
+    fn test_ppudata_write_during_rendering_still_reaches_chr_at_v() {
         let chr_writes = Rc::new(RefCell::new(Vec::new()));
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             A12PrimingSpyMapper {
@@ -2436,16 +2566,6 @@ mod tests {
         ppu.write_mask(0x18);
         ppu.run_ppu_cycles(10 * 341 + 40);
         assert!(ppu.is_actively_rendering());
-
-        let mut state = ppu.debug_state();
-        state.registers.v = 0x1330;
-        ppu.set_debug_state(state);
-        ppu.read_data();
-        assert_eq!(
-            ppu.registers.data_buffer(),
-            0x30,
-            "read buffer filled from v"
-        );
 
         let mut state = ppu.debug_state();
         state.registers.v = 0x1330;
@@ -2474,6 +2594,39 @@ mod tests {
         ppu.write_data(0x21);
 
         assert_eq!(ppu.memory.read_palette(0x3F01), before);
+    }
+
+    // nr-6wgi: Super Spy Hunter's EOR ($EF),Y crosses a page, so the CPU reads $2F37 and then
+    // $3037, two $2007 mirrors, on consecutive cycles. Mesen2 ignores a $2007 read that comes
+    // within 6 PPU dots of the last one (NesPpu.cpp `_ignoreVramRead`): it returns the open
+    // bus and neither refills the buffer nor moves v. The NESDev wiki only says "$2007 reads
+    // on adjacent cycles may have unexpected behavior" (DMA, Register conflicts). NESER
+    // honoured both reads and returned a different byte, so the game's random numbers
+    // drifted from Mesen2's.
+    #[test]
+    fn test_ppudata_read_on_the_next_cpu_cycle_is_ignored() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.memory.write_nametable(0x2000, 0x11);
+        ppu.memory.write_nametable(0x2001, 0x22);
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x2000;
+        ppu.set_debug_state(state);
+
+        let first = ppu.read_data(); // stale buffer out, $11 in
+        ppu.run_ppu_cycles(3); // one CPU cycle later
+        let second = ppu.read_data();
+
+        assert_eq!(second, first, "the ignored read returns the open bus");
+        assert_eq!(ppu.registers.data_buffer(), 0x11, "buffer not refilled");
+        assert_eq!(ppu.registers.v(), 0x2001, "v moved once");
+
+        ppu.run_ppu_cycles(3); // two CPU cycles after the first read
+        assert_eq!(
+            ppu.read_data(),
+            0x11,
+            "a read two CPU cycles later is honoured"
+        );
+        assert_eq!(ppu.registers.data_buffer(), 0x22);
     }
 
     #[test]
@@ -2873,6 +3026,7 @@ mod tests {
         ppu.write_address(0x3F, false);
         ppu.write_address(0x00, false);
         assert_eq!(ppu.read_data(), 0x10);
+        ppu.run_ppu_cycles(6); // two CPU cycles apart: a $2007 read on the next CPU cycle is ignored
         assert_eq!(ppu.read_data(), 0x20);
     }
 
@@ -2913,6 +3067,7 @@ mod tests {
         ppu.write_address(0x20, false);
         ppu.write_address(0x00, false);
         let _ = ppu.read_data(); // Dummy read for buffer
+        ppu.run_ppu_cycles(6); // two CPU cycles apart: a $2007 read on the next CPU cycle is ignored
         assert_eq!(ppu.read_data(), 0x42);
     }
 
@@ -3452,6 +3607,7 @@ mod tests {
         ppu.write_address(0x28, false);
         ppu.write_address(0x00, false);
         let _ = ppu.read_data(); // Dummy read
+        ppu.run_ppu_cycles(6); // two CPU cycles apart: a $2007 read on the next CPU cycle is ignored
         assert_eq!(ppu.read_data(), 0x42);
     }
 
@@ -3469,6 +3625,7 @@ mod tests {
         ppu.write_address(0x24, false);
         ppu.write_address(0x00, false);
         let _ = ppu.read_data(); // Dummy read
+        ppu.run_ppu_cycles(6); // two CPU cycles apart: a $2007 read on the next CPU cycle is ignored
         let val = ppu.read_data();
         assert_eq!(val, 0x55); // Should be mirrored
     }

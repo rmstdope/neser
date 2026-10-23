@@ -5288,6 +5288,7 @@ fn test_rmw_on_ppu_register_preserves_w_flag() {
     //   - Real write $26: w true→false, t low byte = $26, v = $2526
 
     let (ppu, apu, memory) = create_test_memory();
+    let ppu_handle = ppu.clone();
     let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
     // Setup: Write a value to PPUADDR to set it up and clear w flag
     // First write $20 to $2006 (sets high byte, w becomes true)
@@ -5330,6 +5331,7 @@ fn test_rmw_on_ppu_register_preserves_w_flag() {
     cpu.bus.borrow_mut().write(0x2006, 0x30, false);
     cpu.bus.borrow_mut().write(0x2006, 0x40, false);
     let _ = cpu.bus.borrow_mut().read(0x2007, false); // Dummy read (buffered)
+    ppu_handle.borrow_mut().run_ppu_cycles(6); // two CPU cycles apart: a $2007 read on the next CPU cycle is ignored
     let value = cpu.bus.borrow_mut().read(0x2007, false); // Actual value
 
     assert_eq!(
