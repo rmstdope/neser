@@ -214,6 +214,9 @@ impl Vrc6Audio {
     }
 }
 
+/// Where the nametable RAM starts in `registers_snapshot`, after the register bytes.
+const CIRAM_SNAPSHOT_OFFSET: usize = 47;
+
 /// Mappers 24, 26 - Konami VRC6 (with expansion audio)
 ///
 /// Hardware: Konami's VRC6 mapper with three expansion audio channels
@@ -640,7 +643,8 @@ impl Mapper for VRC6Mapper {
         // [20]: audio.global_shift
         // [21-27]: pulse1 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
         // [28-34]: pulse2 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
-        // [35-40]: saw (enabled, rate, period LE, divider LE, accumulator, step)
+        // [35-46]: saw (enabled, rate, then period LE, divider LE, accumulator, step at 41-46)
+        // [47-2094]: nametable RAM (CIRAM), which VRC6 owns
         let mut snapshot = Vec::with_capacity(41);
         snapshot.push(self.prg_bank_16k);
         snapshot.push(self.prg_bank_8k);
@@ -681,6 +685,8 @@ impl Mapper for VRC6Mapper {
         snapshot.extend_from_slice(&self.audio.saw.divider.to_le_bytes());
         snapshot.push(self.audio.saw.accumulator);
         snapshot.push(self.audio.saw.step);
+        debug_assert_eq!(snapshot.len(), CIRAM_SNAPSHOT_OFFSET);
+        snapshot.extend_from_slice(&self.ciram[..]);
         snapshot
     }
 
@@ -736,6 +742,11 @@ impl Mapper for VRC6Mapper {
             }
         }
 
+        // Snapshots before nr-ayk5.1 end here and keep the current nametable RAM.
+        if let Some(ciram) = data.get(CIRAM_SNAPSHOT_OFFSET..CIRAM_SNAPSHOT_OFFSET + 2048) {
+            self.ciram.copy_from_slice(ciram);
+        }
+
         self.update_banks();
     }
 
@@ -772,6 +783,30 @@ mod tests {
             chr_rom,
             mirroring,
         ))
+    }
+
+    /// VRC6 owns the console's nametable RAM, so a save state must carry it: before
+    /// nr-ayk5.1 a loaded console read zeros from its nametables.
+    #[test]
+    fn registers_snapshot_preserves_mapper_owned_ciram() {
+        let new_mapper = || {
+            create_vrc6_mapper(
+                24,
+                banked_data(8 * 1024, 8),
+                banked_data(1024, 8),
+                NametableLayout::Vertical,
+            )
+            .expect("VRC6 (mapper 24) should be implemented")
+        };
+        let mut mapper = new_mapper();
+        mapper.write_nametable(0x2000, 0xAA);
+        mapper.write_nametable(0x27FF, 0xBB);
+
+        let mut restored = new_mapper();
+        restored.restore_registers(&mapper.registers_snapshot());
+
+        assert_eq!(restored.read_nametable(0x2000), Some(0xAA));
+        assert_eq!(restored.read_nametable(0x27FF), Some(0xBB));
     }
 
     #[test]
