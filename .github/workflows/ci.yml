@@ -47,7 +47,7 @@ jobs:
               - 'web/**'
               - 'tsconfig.json'
               - 'package.json'
-              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
             web_integration:
               - 'web/**'
@@ -55,15 +55,13 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
-              - 'scripts/build_web.sh'
               - 'scripts/find_wasm_bindgen.sh'
-              - 'scripts/run_web.sh'
               - 'scripts/ensure_playwright_deps.sh'
               - 'playwright.config.ts'
               - 'vite.config.ts'
               - 'tsconfig.json'
               - 'package.json'
-              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
             python:
               - 'scripts/**'
@@ -380,14 +378,16 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: true
+      # pnpm's version comes from package.json's packageManager field.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: package-lock.json
+          node-version: "22"
+          cache: pnpm
       - name: Test web frontend
-        run: npm ci && npm test
+        run: pnpm install --frozen-lockfile && pnpm test
 
   # Two shards on separate runners, each with the same setup and build (nr-ks6). fail-fast is off
   # so a red shard does not cancel the other and hide its failures. Not a protected check, so the
@@ -412,14 +412,15 @@ jobs:
           submodules: true
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - name: Install npm dependencies
-        run: npm ci
+          node-version: "22"
+          cache: pnpm
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
       - name: Install wasm-bindgen CLI
         uses: taiki-e/install-action@v2
         with:
@@ -429,12 +430,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ hashFiles('package-lock.json') }}
+          key: playwright-chromium-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
           for i in 1 2 3; do
-            npx playwright install chromium && break
+            pnpm exec playwright install chromium && break
             [ "$i" -eq 3 ] && exit 1
             echo "Playwright install attempt $i failed (transient network); retrying after 15s..." && sleep 15
           done
@@ -445,22 +446,22 @@ jobs:
       # The one wasm build of this job: wasm-release, wasm-bindgen, wasm-opt -O3 and vite, the
       # binary players get. The test step below only serves it (nr-1pl).
       - name: Build web app
-        run: bash scripts/build_web.sh
+        run: pnpm run build
       # Nothing else type-checks web/: Vite and Vitest strip types unchecked. tsc reads the wasm
       # bindings' types from web/pkg/neser.d.ts, which the build above generates (nr-n48). This job
       # runs on src/** as well as web/**, so a change to the wasm surface is checked too.
       - name: Type-check web frontend
-        run: npx tsc --noEmit -p tsconfig.json
+        run: pnpm run typecheck
       - name: Run web integration tests
         # Playwright splits shards by test count in file order, and the slowest specs sort last:
         # an even split gave shard 2 about 280 worker-seconds to shard 1's 170. Shard 1 therefore
         # takes two thirds of the tests. PWTEST_SHARD_WEIGHTS is read by the Playwright 1.60 CLI; a
         # Playwright upgrade that drops it silently falls back to an even split, so check it then.
-        # SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST makes Playwright's webServer serve the build above.
+        # NESER_WEB_PREBUILT makes Playwright's webServer serve the build above.
         env:
           PWTEST_SHARD_WEIGHTS: "2:1"
-          SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST: "1"
-        run: npm run test:integration:web -- --shard=${{ matrix.shard }}/2
+          NESER_WEB_PREBUILT: "1"
+        run: pnpm run test:integration:web -- --shard=${{ matrix.shard }}/2
       # Playwright keeps a trace, the error context and screenshots for every failed test under
       # test-results/; without this upload a red run leaves only the call log (nr-dv5). Each shard
       # uploads under its own name: a second upload to the same name fails.
@@ -487,15 +488,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: web-container
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen-cli@0.2.108
-      - run: bash scripts/build_web.sh
+      - run: pnpm run build
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -514,7 +516,7 @@ jobs:
           done
           docker logs neser-web-test
           exit 1
-      - run: npx playwright install chromium
+      - run: pnpm exec playwright install chromium
       - name: Check Playwright system dependencies
         run: bash scripts/ensure_playwright_deps.sh
       - name: Verify production HTTP and browser behavior

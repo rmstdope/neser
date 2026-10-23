@@ -33,7 +33,7 @@ class WebIntegrationShardsTest(unittest.TestCase):
 
     def test_each_shard_runs_its_share(self) -> None:
         self.assertIn(
-            "run: npm run test:integration:web -- --shard=${{ matrix.shard }}/2",
+            "run: pnpm run test:integration:web -- --shard=${{ matrix.shard }}/2",
             self.job,
         )
 
@@ -91,8 +91,8 @@ class PlaywrightSystemDependenciesTest(unittest.TestCase):
         assert step is not None, "no dependency check step in web-integration"
         self.assertIn(self.CHECK, step.group(1))
         self.assertNotIn("if:", step.group(1))
-        self.assertLess(job.index("npx playwright install chromium"), job.index(self.CHECK))
-        self.assertLess(job.index(self.CHECK), job.index("npm run test:integration:web"))
+        self.assertLess(job.index("pnpm exec playwright install chromium"), job.index(self.CHECK))
+        self.assertLess(job.index(self.CHECK), job.index("pnpm run test:integration:web"))
 
     def test_browser_install_retries_fail_the_step_when_all_fail(self) -> None:
         """Three failed downloads must fail here, not pass on to apt and a misleading test error."""
@@ -105,7 +105,7 @@ class PlaywrightSystemDependenciesTest(unittest.TestCase):
     def test_web_container_checks_deps_after_browser_install(self) -> None:
         ci = CI_YML.read_text(encoding="utf-8")
         build = ci.split("  web-container:\n", 1)[1].split("  publish-web:\n")[0]
-        self.assertLess(build.index("npx playwright install chromium"), build.index(self.CHECK))
+        self.assertLess(build.index("pnpm exec playwright install chromium"), build.index(self.CHECK))
         self.assertLess(build.index(self.CHECK), build.index("node deploy/smoke.mjs"))
 
 

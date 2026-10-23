@@ -2,8 +2,8 @@
 # Makes sure the Chromium Playwright installed can load its system libraries, touching apt only
 # when one is really missing (nr-2e2l).
 #
-# `npx playwright install-deps chromium` goes to the apt mirror every time, and on a slow mirror it
-# took up to eleven minutes in CI, although the GitHub runner image already carries every library
+# `pnpm exec playwright install-deps chromium` goes to the apt mirror every time, and on a slow
+# mirror it took up to eleven minutes in CI, although the GitHub runner image already carries every library
 # Chromium links against: what it added were extra fonts and package upgrades the suite does not
 # need. So this runs `ldd` over the installed Chromium binaries and the shared libraries beside
 # them, with their own directories on LD_LIBRARY_PATH so a bundled library finds its siblings the
@@ -47,7 +47,7 @@ echo "$reason"
 echo "Installing Playwright's system dependencies..."
 attempt=1
 while :; do
-    if npx playwright install-deps chromium; then
+    if pnpm exec playwright install-deps chromium; then
         exit 0
     fi
     if [ "$attempt" -ge 3 ]; then

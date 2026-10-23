@@ -1,7 +1,7 @@
 """Tests for ``ensure_playwright_deps.sh``, which keeps CI off the apt mirror (nr-2e2l).
 
 The GitHub runner image already carries every library Chromium links against, so the script only
-falls back to ``npx playwright install-deps`` when ``ldd`` reports one missing. ``ldd`` and ``npx``
+falls back to ``pnpm exec playwright install-deps`` when ``ldd`` reports one missing. ``ldd`` and ``pnpm``
 are faked on ``PATH``; each fake records its calls in a log file.
 """
 
@@ -29,9 +29,9 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         self.browsers = self.tmp / "ms-playwright"
         self.browsers.mkdir()
         self.bin = self.tmp / "bin"
-        self.npx_log = self.tmp / "npx.log"
+        self.pnpm_log = self.tmp / "pnpm.log"
         self.missing_for = ""
-        self.npx_status = 0
+        self.pnpm_status = 0
         self.ldd_body = ""
 
     def tearDown(self) -> None:
@@ -59,7 +59,7 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
                 "done\n"
             ),
         )
-        _executable(self.bin / "npx", f'echo "$*" >> "{self.npx_log}"\nexit {self.npx_status}\n')
+        _executable(self.bin / "pnpm", f'echo "$*" >> "{self.pnpm_log}"\nexit {self.pnpm_status}\n')
         env = {
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "HOME": str(self.tmp),
@@ -68,14 +68,14 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         }
         return subprocess.run(["sh", str(SCRIPT)], env=env, capture_output=True, text=True, check=False)
 
-    def _npx_calls(self) -> list[str]:
-        return self.npx_log.read_text().splitlines() if self.npx_log.exists() else []
+    def _pnpm_calls(self) -> list[str]:
+        return self.pnpm_log.read_text().splitlines() if self.pnpm_log.exists() else []
 
     def test_all_libraries_present_skips_apt(self) -> None:
         self._install_headless_shell()
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self._npx_calls(), [])
+        self.assertEqual(self._pnpm_calls(), [])
         self.assertIn("skipping apt", result.stdout)
 
     def test_missing_library_runs_install_deps(self) -> None:
@@ -83,7 +83,7 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         self.missing_for = "chrome-headless-shell"
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self._npx_calls(), ["playwright install-deps chromium"])
+        self.assertEqual(self._pnpm_calls(), ["exec playwright install-deps chromium"])
         self.assertIn("libfoo.so.1", result.stdout)
 
     def test_shared_libraries_beside_the_binary_are_checked(self) -> None:
@@ -91,7 +91,7 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         self.missing_for = "libEGL.so"
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self._npx_calls(), ["playwright install-deps chromium"])
+        self.assertEqual(self._pnpm_calls(), ["exec playwright install-deps chromium"])
 
     def test_bundled_libraries_resolve_from_their_own_directory(self) -> None:
         """A bundled library naming a sibling by bare soname finds it, as Chromium itself does.
@@ -111,20 +111,20 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         )
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self._npx_calls(), [])
+        self.assertEqual(self._pnpm_calls(), [])
 
     def test_no_browser_installed_runs_install_deps(self) -> None:
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self._npx_calls(), ["playwright install-deps chromium"])
+        self.assertEqual(self._pnpm_calls(), ["exec playwright install-deps chromium"])
 
     def test_install_deps_failure_fails_after_three_attempts(self) -> None:
         self._install_headless_shell()
         self.missing_for = "chrome-headless-shell"
-        self.npx_status = 1
+        self.pnpm_status = 1
         result = self._run()
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self._npx_calls(), ["playwright install-deps chromium"] * 3)
+        self.assertEqual(self._pnpm_calls(), ["exec playwright install-deps chromium"] * 3)
 
 
 if __name__ == "__main__":

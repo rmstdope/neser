@@ -57,7 +57,7 @@ class WorktreeInstallTests(unittest.TestCase):
         self.assertTrue(_declared("install_shell"))
 
     def test_install_sets_hooks_path(self) -> None:
-        """install_shell sets core.hooksPath to .githooks in a fresh worktree, before the npm and venv steps."""
+        """install_shell sets core.hooksPath to .githooks in a fresh worktree, before the pnpm and venv steps."""
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

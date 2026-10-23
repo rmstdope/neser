@@ -2,10 +2,13 @@ import { defineConfig } from "@playwright/test";
 
 // NESER_WEB_PORT is set per session by .cerebro/cerebro/scripts/smoke-port (port_base/port_env in
 // .cerebro/project.conf), so parallel sessions never reuse each other's server; 8000 otherwise.
-// scripts/run_web.sh reads the same variable, which the web server command inherits.
+// `pnpm run serve` reads the same variable, which the web server command inherits.
 const WEB_APP_PORT = process.env.NESER_WEB_PORT || "8000";
 const WEB_APP_URL = `http://127.0.0.1:${WEB_APP_PORT}`;
-const WEB_APP_SERVER_COMMAND = "bash scripts/build_web.sh && bash scripts/run_web.sh";
+// NESER_WEB_PREBUILT=1 serves a dist/ an earlier step already built with `pnpm run build`, as CI
+// does, so the wasm is compiled once per job (nr-1pl).
+const WEB_APP_SERVER_COMMAND =
+    process.env.NESER_WEB_PREBUILT === "1" ? "pnpm run serve" : "pnpm run build && pnpm run serve";
 
 export default defineConfig({
     testDir: ".",

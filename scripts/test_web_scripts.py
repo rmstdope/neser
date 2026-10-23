@@ -275,24 +275,24 @@ class WebIntegrationJobTest(unittest.TestCase):
                 return index
         self.fail(f"web-integration has no step named {name!r}")
 
-    def test_job_builds_the_web_app_once_with_build_web_sh(self) -> None:
+    def test_job_builds_the_web_app_once_with_pnpm_build(self) -> None:
         job = "".join(self.steps)
-        self.assertEqual(1, job.count("bash scripts/build_web.sh"))
+        self.assertEqual(1, job.count("run: pnpm run build\n"))
         self.assertNotIn("cargo build", job)
         self.assertNotIn("wasm-bindgen target/", job)
 
     def test_test_step_serves_the_prebuilt_artifacts(self) -> None:
         test_step = self.steps[self._step("Run web integration tests")]
-        self.assertRegex(test_step, r'\n {10}SKIP_WASM_BUILD_IF_ARTIFACTS_EXIST: "1"\n')
+        self.assertRegex(test_step, r'\n {10}NESER_WEB_PREBUILT: "1"\n')
 
     def test_build_runs_before_the_tests(self) -> None:
-        build = next(i for i, step in enumerate(self.steps) if "bash scripts/build_web.sh" in step)
+        build = next(i for i, step in enumerate(self.steps) if "run: pnpm run build\n" in step)
         self.assertLess(build, self._step("Run web integration tests"))
 
     def test_typechecks_against_the_bindings_the_build_generated(self) -> None:
         """tsc needs web/pkg/neser.d.ts, which only the build step writes (nr-n48)."""
         typecheck = self._step("Type-check web frontend")
-        self.assertIn("run: npx tsc --noEmit -p tsconfig.json\n", self.steps[typecheck])
+        self.assertIn("run: pnpm run typecheck\n", self.steps[typecheck])
         self.assertLess(self._step("Build web app"), typecheck)
 
     def test_a_tsconfig_change_runs_the_job(self) -> None:
@@ -320,11 +320,11 @@ class GateTypecheckTest(unittest.TestCase):
         self.assertIn(command, lines)
         return lines.index(command)
 
-    def test_builds_the_bindings_then_typechecks_before_npm_test(self) -> None:
-        build = self._line("step sh scripts/build_web.sh --no-bundle")
-        typecheck = self._line("step npx tsc --noEmit -p tsconfig.json")
+    def test_builds_the_bindings_then_typechecks_before_the_unit_tests(self) -> None:
+        build = self._line("step pnpm run build:wasm")
+        typecheck = self._line("step pnpm run typecheck")
         self.assertLess(build, typecheck)
-        self.assertLess(typecheck, self._line("step npm test"))
+        self.assertLess(typecheck, self._line("step pnpm test"))
 
 
 if __name__ == "__main__":
