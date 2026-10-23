@@ -33,9 +33,19 @@ class WebIntegrationShardsTest(unittest.TestCase):
 
     def test_each_shard_runs_its_share(self) -> None:
         self.assertIn(
-            "run: pnpm run test:integration:web -- --shard=${{ matrix.shard }}/2",
+            "run: pnpm run test:integration:web --shard=${{ matrix.shard }}/2",
             self.job,
         )
+
+    def test_no_step_hands_pnpm_a_bare_double_dash(self) -> None:
+        """pnpm, unlike npm, passes a ``--`` on to the script (nr-fli1.1 review).
+
+        Playwright reads every argument after a ``--`` as a test-file filter, so
+        ``pnpm run test:integration:web -- --shard=1/2`` ran the whole suite on each shard.
+        """
+
+        ci = CI_YML.read_text(encoding="utf-8")
+        self.assertEqual([], re.findall(r"pnpm (?:run )?[\w:-]+ -- .*", ci))
 
     def test_shard_count_matches_the_matrix(self) -> None:
         matrix = re.search(r"shard: \[([^\]]*)\]", self.job)

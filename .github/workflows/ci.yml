@@ -461,7 +461,7 @@ jobs:
         env:
           PWTEST_SHARD_WEIGHTS: "2:1"
           NESER_WEB_PREBUILT: "1"
-        run: pnpm run test:integration:web -- --shard=${{ matrix.shard }}/2
+        run: pnpm run test:integration:web --shard=${{ matrix.shard }}/2
       # Playwright keeps a trace, the error context and screenshots for every failed test under
       # test-results/; without this upload a red run leaves only the call log (nr-dv5). Each shard
       # uploads under its own name: a second upload to the same name fails.
