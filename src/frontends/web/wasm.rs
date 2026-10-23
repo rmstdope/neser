@@ -1203,7 +1203,12 @@ mod tests {
     // ── The Keys and controls panel against the key table (nr-ubcv) ──────────────
 
     /// The text of the file whose `playerKeyBindings` the web Keys and controls panel prints.
-    const CONSOLES_TS: &str = include_str!("../../../web/src/console/consoles.ts");
+    /// Read at run time, not embedded: the file is not part of the published crate.
+    fn consoles_ts() -> String {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/src/console/consoles.ts");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+    }
 
     /// Where the panel's strings and `key_binding_table()` disagree, one line per difference;
     /// empty when they agree. Only joypad (`pad`) rows are compared: they are what the panel
@@ -1318,7 +1323,7 @@ mod tests {
     /// in step. A change on one side only lands here, naming what differs.
     #[test]
     fn the_keys_panel_matches_the_core_key_table() {
-        let mismatches = panel_mismatches(CONSOLES_TS, &web_key_binding_rows());
+        let mismatches = panel_mismatches(&consoles_ts(), &web_key_binding_rows());
         assert!(
             mismatches.is_empty(),
             "web/src/console/consoles.ts (the Keys and controls panel) and \
@@ -1329,8 +1334,9 @@ mod tests {
 
     #[test]
     fn a_panel_key_changed_only_in_consoles_ts_is_named() {
-        let doctored = CONSOLES_TS.replacen("R: A\\nT: B", "R: B\\nT: A", 1);
-        assert_ne!(doctored, CONSOLES_TS, "the NES player 1 string moved");
+        let source = consoles_ts();
+        let doctored = source.replacen("R: A\\nT: B", "R: B\\nT: A", 1);
+        assert_ne!(doctored, source, "the NES player 1 string moved");
         let report = panel_mismatches(&doctored, &web_key_binding_rows()).join("\n");
         assert!(report.contains("nes player 1"), "{report}");
         assert!(report.contains("`R: B`"), "{report}");
@@ -1342,15 +1348,16 @@ mod tests {
             .into_iter()
             .filter(|r| !(r.console == "snes" && r.key == "y"))
             .collect();
-        let report = panel_mismatches(CONSOLES_TS, &rows).join("\n");
+        let report = panel_mismatches(&consoles_ts(), &rows).join("\n");
         assert!(report.contains("snes player 1"), "{report}");
         assert!(report.contains("`Y: X`"), "{report}");
     }
 
     #[test]
     fn an_unreadable_panel_line_is_reported() {
-        let doctored = CONSOLES_TS.replacen("\\n4: Select", "\\n4 Select", 1);
-        assert_ne!(doctored, CONSOLES_TS);
+        let source = consoles_ts();
+        let doctored = source.replacen("\\n4: Select", "\\n4 Select", 1);
+        assert_ne!(doctored, source);
         let report = panel_mismatches(&doctored, &web_key_binding_rows()).join("\n");
         assert!(report.contains("`4 Select`"), "{report}");
     }
