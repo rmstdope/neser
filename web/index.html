@@ -122,11 +122,11 @@
                 </div>
 
                 <!-- On a phone: the controls the controller lacks, one tap away (the control bar's are on desktop) -->
-                <div id="handheld-bar" class="handheld-bar" role="toolbar" aria-label="Game">
+                <div id="handheld-bar" class="handheld-bar" role="group" aria-label="Game">
                   <button type="button" id="hh-pause" class="btn btn-sm" data-icon="pause">Pause</button>
                   <button type="button" id="hh-save" class="btn btn-sm" data-icon="save">Save</button>
                   <button type="button" id="hh-load" class="btn btn-sm" data-icon="load">Load</button>
-                  <button type="button" id="hh-more" class="btn btn-sm btn-icon-only" data-icon="more" aria-label="More" aria-controls="handheld-sheet" aria-haspopup="dialog">More</button>
+                  <button type="button" id="hh-more" class="btn btn-sm btn-icon-only" data-icon="more" aria-label="More" aria-controls="handheld-sheet" aria-haspopup="dialog" aria-expanded="false">More</button>
                 </div>
 
                 <!-- Action buttons (right of canvas) -->
@@ -296,13 +296,15 @@
         <span class="hh-row-label" data-icon="filter">Filter</span>
         <div id="hh-filter" class="settings-seg" role="group" aria-label="Filter"></div>
       </div>
-      <button type="button" id="hh-palette" class="hh-row hh-row-button" data-icon="palette"><span class="hh-row-label">Palette</span><span id="hh-palette-name" class="hh-row-value"></span></button>
+      <div class="hh-palette-wrap">
+        <button type="button" id="hh-palette" class="hh-row hh-row-button" data-icon="palette" aria-haspopup="menu"><span class="hh-row-label">Palette</span><span id="hh-palette-name" class="hh-row-value"></span><span class="hh-chevron" aria-hidden="true">›</span></button>
+      </div>
       <div class="hh-row">
-        <span class="hh-row-label" data-icon="volume">Volume</span>
+        <span class="hh-row-icon" data-icon="volume" aria-hidden="true"></span>
         <input id="hh-volume" type="range" min="0" max="100" value="100" class="range range-xs" aria-label="Volume" />
       </div>
-      <button type="button" id="hh-settings" class="hh-row hh-row-button" data-icon="gear"><span class="hh-row-label">Settings</span></button>
-      <button type="button" id="hh-help" class="hh-row hh-row-button" data-icon="help"><span class="hh-row-label">Keys and controls</span></button>
+      <button type="button" id="hh-settings" class="hh-row hh-row-button" data-icon="gear"><span class="hh-row-label">Settings</span><span class="hh-chevron" aria-hidden="true">›</span></button>
+      <button type="button" id="hh-help" class="hh-row hh-row-button" data-icon="help"><span class="hh-row-label">Keys and controls</span><span class="hh-chevron" aria-hidden="true">›</span></button>
     </dialog>
 
     <!-- Autorun modal dialog (native dialog element) -->

@@ -1701,7 +1701,6 @@ body.handheld .app-topbar {
   padding-right: 12px;
 }
 
-body.handheld #fps-counter,
 body.handheld .neser-logo-word,
 body.handheld .game-file {
   display: none !important;
@@ -1714,12 +1713,12 @@ body.handheld #library-open {
   gap: 0;
 }
 
-/* The picture takes focus for the keys; its ring is a quiet steel line, not the browser's own. */
-#screen:focus {
+/* On a phone the picture takes focus for the keys; its ring is a quiet steel line, not the browser's own. */
+body.handheld #screen:focus {
   outline: none;
 }
 
-#screen:focus-visible {
+body.handheld #screen:focus-visible {
   outline: 2px solid var(--line-strong);
 }
 
@@ -1763,7 +1762,17 @@ body.handheld.handheld-portrait.touch-running .handheld-bar {
 /* Sideways the top bar steps aside, and the quick bar is a small pill over the corner holding
    only Pause and ⋯, so nothing covers the game. */
 body.handheld:not(.handheld-portrait).touch-running header {
-  display: none;
+  position: fixed;
+  inset: 0 0 auto 0;
+  visibility: hidden;
+}
+
+/* The frame-rate chip stays, small, at the top right. */
+body.handheld:not(.handheld-portrait).touch-running #fps-counter {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  visibility: visible;
 }
 
 body.handheld:not(.handheld-portrait).touch-running .handheld-bar {
@@ -1804,14 +1813,32 @@ body.handheld:not(.handheld-portrait).touch-running #hh-pause {
   box-shadow: 0 -20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(70, 140, 220, 0.15);
 }
 
+/* As drawn, the dimmed area starts under the top bar, which stays clear and says Paused; a tap on
+   the picture closes the sheet. Sideways there is no top bar to keep clear. */
 .handheld-sheet::backdrop {
+  top: 3.5rem;
   background: rgba(3, 6, 11, 0.6);
 }
 
+body.handheld:not(.handheld-portrait) .handheld-sheet::backdrop {
+  top: 0;
+}
+
+/* The handle the sheet is dragged down by: a short bar in a hit area wide and tall enough for a thumb. */
 .hh-grab {
+  display: grid;
+  place-items: center;
+  width: 120px;
+  height: 28px;
+  margin: -6px auto 4px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.hh-grab::before {
+  content: "";
   width: 40px;
   height: 4px;
-  margin: 0 auto 14px;
   border-radius: 2px;
   background: var(--line-strong);
 }
@@ -1865,6 +1892,31 @@ body.handheld:not(.handheld-portrait).touch-running #hh-pause {
 
 .hh-row-value {
   color: var(--muted);
+}
+
+.hh-chevron {
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.hh-row-icon::before {
+  width: 18px;
+  height: 18px;
+}
+
+/* Palette's short list opens just above its row, inside the sheet. */
+.hh-palette-wrap {
+  position: relative;
+}
+
+/* A console with many looks (the GBA's five) wraps them onto two lines rather than squeezing words. */
+#hh-filter {
+  flex-wrap: wrap;
+}
+
+#hh-filter button {
+  white-space: nowrap;
 }
 
 .hh-row .range {

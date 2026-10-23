@@ -67,6 +67,7 @@ import { gameTitle } from "./ui/game_title";
 import { BROWSER_CANNOT_DRAW, errorPlace, libraryAlert, showLibraryAlert, unsupportedFileMessage } from "./ui/errors";
 import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
 import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
+import { phoneFpsChip, sheetDragCloses } from "./ui/handheld";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
 import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
@@ -1326,11 +1327,17 @@ function updateEmulationButtons() {
     if (pauseBtn) {
         pauseBtn.disabled = !states.pauseEnabled;
         pauseBtn.textContent = states.pauseLabel;
-        const hhPause = document.getElementById("hh-pause");
+        const hhPause = document.getElementById("hh-pause") as HTMLButtonElement | null;
         if (hhPause) {
+            hhPause.disabled = !states.pauseEnabled;
             hhPause.textContent = states.pauseLabel;
             hhPause.dataset.icon = states.lifecycle === "paused" ? "play" : "pause";
         }
+    }
+    // On a phone the frame-rate chip says Paused while the game waits (the drawn sheet's top bar).
+    if (fpsCounterEl && document.body.classList.contains("handheld") && running && paused) {
+        fpsCounterEl.textContent = phoneFpsChip(0, true);
+        (fpsCounterEl as HTMLElement).style.display = "";
     }
     if (stopBtn) {
         stopBtn.disabled = !states.stopEnabled;
@@ -3073,7 +3080,8 @@ function step(timestamp: number) {
             const msg = `${fps.toFixed(1)} fps | emu ${avgWasm.toFixed(1)}ms | gl ${avgRender.toFixed(1)}ms`;
             console.log(msg);
             if (fpsCounterEl) {
-                fpsCounterEl.textContent = msg;
+                // A phone's chip is small, as drawn: the whole number only.
+                fpsCounterEl.textContent = document.body.classList.contains("handheld") ? phoneFpsChip(fps, false) : msg;
                 (fpsCounterEl as HTMLElement).style.display = "";
             }
             fpsFrames = 0;
@@ -4291,8 +4299,13 @@ function updateSaveStateButtons() {
     }
     const hhSave = document.getElementById("hh-save") as HTMLButtonElement | null;
     const hhLoad = document.getElementById("hh-load") as HTMLButtonElement | null;
-    if (hhSave) hhSave.disabled = !saveEnabled;
-    if (hhLoad) hhLoad.disabled = !loadEnabled;
+    // As on the desktop, a console without save states keeps the buttons tappable to say why.
+    for (const [button, enabled] of [[hhSave, saveEnabled], [hhLoad, loadEnabled]] as const) {
+        if (!button) continue;
+        button.disabled = !enabled && !note;
+        if (note) button.setAttribute("aria-disabled", "true");
+        else button.removeAttribute("aria-disabled");
+    }
     if (saveStateSection) saveStateSection.dataset.saveState = saveSlot;
 }
 
@@ -4323,6 +4336,7 @@ screenPlusBtn.addEventListener("click", () => {
 
 // ── On a phone: the quick bar under the picture and the ⋯ sheet ──
 const handheldSheet = document.getElementById("handheld-sheet") as HTMLDialogElement;
+const hhMoreBtn = document.getElementById("hh-more") as HTMLButtonElement;
 let pausedBySheet = false;
 
 function renderHandheldSheet() {
@@ -4355,6 +4369,26 @@ function openHandheldSheet() {
     pausedBySheet = running && !paused;
     if (pausedBySheet) pauseResume();
     handheldSheet.showModal();
+    hhMoreBtn.setAttribute("aria-expanded", "true");
+}
+
+/**
+ * Leaves the sheet for a panel that keeps the game paused (Settings, Keys and controls): the
+ * sheet's pause is handed over, since the sheet's own close comes later and would resume.
+ */
+function leaveSheetKeepingPause(): boolean {
+    const handover = pausedBySheet;
+    pausedBySheet = false;
+    closeHandheldSheet();
+    return handover;
+}
+
+/** Leaves the sheet resuming at once, before an action that restarts or changes the game. */
+function leaveSheetResuming() {
+    const resume = pausedBySheet && running && paused;
+    pausedBySheet = false;
+    closeHandheldSheet();
+    if (resume) pauseResume();
 }
 
 function closeHandheldSheet() {
@@ -4362,26 +4396,57 @@ function closeHandheldSheet() {
 }
 
 handheldSheet.addEventListener("close", () => {
+    hhMoreBtn.setAttribute("aria-expanded", "false");
+    handheldSheet.style.transform = "";
     if (pausedBySheet && running && paused) pauseResume();
     pausedBySheet = false;
 });
+// As drawn, the sheet is dragged down by its handle to close; a short drag springs back.
+const sheetGrab = handheldSheet.querySelector(".hh-grab") as HTMLElement;
+let sheetDragFrom: number | null = null;
+sheetGrab.addEventListener("pointerdown", (event) => {
+    sheetDragFrom = event.clientY;
+    sheetGrab.setPointerCapture(event.pointerId);
+});
+sheetGrab.addEventListener("pointermove", (event) => {
+    if (sheetDragFrom === null) return;
+    handheldSheet.style.transform = `translateY(${Math.max(0, event.clientY - sheetDragFrom)}px)`;
+});
+const endSheetDrag = (event: PointerEvent) => {
+    if (sheetDragFrom === null) return;
+    const dy = event.clientY - sheetDragFrom;
+    sheetDragFrom = null;
+    if (sheetDragCloses(dy)) closeHandheldSheet();
+    else handheldSheet.style.transform = "";
+};
+sheetGrab.addEventListener("pointerup", endSheetDrag);
+sheetGrab.addEventListener("pointercancel", endSheetDrag);
 handheldSheet.addEventListener("click", (event) => {
     if (event.target === handheldSheet) closeHandheldSheet();
 });
 document.getElementById("hh-pause")!.addEventListener("click", pauseResume);
-document.getElementById("hh-save")!.addEventListener("click", () => void saveStateAction());
-document.getElementById("hh-load")!.addEventListener("click", () => void loadStateAction());
-document.getElementById("hh-more")!.addEventListener("click", openHandheldSheet);
+for (const [id, action] of [["hh-save", saveStateAction], ["hh-load", loadStateAction]] as const) {
+    const button = document.getElementById(id)!;
+    button.addEventListener("click", () => {
+        // Not offered for this console: the tap says why instead.
+        if (button.getAttribute("aria-disabled") === "true") {
+            toastOverlay.show(saveStateUnavailableReason ?? "");
+            return;
+        }
+        void action();
+    });
+}
+hhMoreBtn.addEventListener("click", openHandheldSheet);
 document.getElementById("hh-reset")!.addEventListener("click", () => {
-    closeHandheldSheet();
+    leaveSheetResuming();
     void resetAction();
 });
 document.getElementById("hh-hard-reset")!.addEventListener("click", () => {
-    closeHandheldSheet();
+    leaveSheetResuming();
     void hardResetAction();
 });
 document.getElementById("hh-fullscreen")!.addEventListener("click", () => {
-    closeHandheldSheet();
+    leaveSheetResuming();
     void toggleScreenFullscreen();
 });
 document.getElementById("hh-eject")!.addEventListener("click", () => {
@@ -4389,28 +4454,46 @@ document.getElementById("hh-eject")!.addEventListener("click", () => {
     closeHandheldSheet();
     stop();
 });
-// The sheet pauses the game, so its palette row steps the core directly; the change shows on return.
-document.getElementById("hh-palette")!.addEventListener("click", () => {
-    const source = paletteSource();
-    if (!source) return;
-    source.cycle();
-    toastOverlay.show(source.label());
-    syncGbPaletteWithFilter(false);
-    updatePaletteButton();
-    renderHandheldSheet();
-});
+// As on the desktop, Palette opens the short list; in the sheet the game is paused, and the chosen
+// palette shows when it resumes.
+{
+    let sheetPaletteNames: string[] = [];
+    let sheetPaletteOrder: string[] | null = null;
+    createChoiceMenu({
+        anchor: document.getElementById("hh-palette") as HTMLButtonElement,
+        title: "Palette",
+        choices: () => {
+            const source = paletteSource();
+            const current = source?.label() ?? "";
+            sheetPaletteNames = source ? stablePaletteOrder(sheetPaletteOrder, listPalettes(source)) : [];
+            sheetPaletteOrder = sheetPaletteNames.length ? sheetPaletteNames : sheetPaletteOrder;
+            return sheetPaletteNames.map((name) => ({ label: name.replace(/^Palette: /, ""), selected: name === current }));
+        },
+        onPick: (index) => {
+            const source = paletteSource();
+            if (!source || sheetPaletteNames[index] === source.label()) return;
+            cyclePaletteTo(source, sheetPaletteNames[index]);
+            toastOverlay.show(source.label());
+            syncGbPaletteWithFilter(false);
+            updatePaletteButton();
+            renderHandheldSheet();
+        },
+    });
+}
 document.getElementById("hh-volume")!.addEventListener("input", (event) => {
     if (!volumeSlider) return;
     volumeSlider.value = (event.target as HTMLInputElement).value;
     volumeSlider.dispatchEvent(new Event("input"));
 });
 document.getElementById("hh-settings")!.addEventListener("click", () => {
-    closeHandheldSheet();
+    const handover = leaveSheetKeepingPause();
     settingsPanel.open();
+    if (handover) pausedBySettings = true;
 });
 document.getElementById("hh-help")!.addEventListener("click", () => {
-    closeHandheldSheet();
+    const handover = leaveSheetKeepingPause();
     openHelp();
+    if (handover) pausedByHelp = true;
 });
 
 fullscreenBtn.addEventListener("click", async () => {
