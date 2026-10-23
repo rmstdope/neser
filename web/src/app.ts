@@ -70,6 +70,7 @@ import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, v
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
 import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
 import { frameThumbnail } from "./display/thumbnail";
+import { createSavePreviewStore, savedAgo, savedAtLine, type SavePreview } from "./save-state/save_preview";
 import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
 import { belongsToOpenDialog, isEditableKeyboardTarget } from "./shortcuts/keyboard_target";
 import {
@@ -1354,10 +1355,12 @@ function updateEmulatorKindUI() {
     if (autorunSection) {
         autorunSection.style.display = isNes ? "" : "none";
     }
-    // Save-state buttons are shown for consoles with browser save/load support.
-    if (saveStateSection) {
-        saveStateSection.style.display = supportsWebSaveState(emulator?.kind ?? null) ? "" : "none";
-    }
+    // Save and Load stay in the bar; where save states are not supported they say why, disabled.
+    const saveStateNote = emulator?.kind === "gba" && !supportsWebSaveState("gba")
+        ? "Save states are not available for Game Boy Advance games yet"
+        : null;
+    if (saveStateBtn) saveStateBtn.dataset.tip = saveStateNote ?? "Save state";
+    if (loadStateBtn) loadStateBtn.dataset.tip = saveStateNote ?? "Load state";
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
     const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind, filterUntouched);
@@ -1680,6 +1683,7 @@ async function refreshSaveStateController() {
         setStatus("Failed to initialize save state", true);
     }
     updateSaveStateButtons();
+    void refreshLoadPreview();
 }
 
 /** Loads a game file the player chose or dropped, and starts it. */
@@ -3994,8 +3998,50 @@ async function saveStateAction() {
     if (ok) {
         saveSlot = "saved";
         updateSaveStateButtons();
+        void rememberSavePreview();
     }
 }
+
+// ── The Load button's preview: the saved moment's picture and when it was saved ──
+const savePreviews = createSavePreviewStore();
+const loadPreviewEl = document.getElementById("load-preview") as HTMLElement | null;
+let loadPreview: SavePreview | null = null;
+
+/** Keeps a picture of the frame just saved, for the game's Load preview. */
+async function rememberSavePreview() {
+    if (!romMetadata) return;
+    const channels = lastFrame?.format === gl.RGB ? 3 : 4;
+    const thumbnail = lastFrame ? frameThumbnail(lastFrame.frame, channels, width, height) : null;
+    loadPreview = { thumbnail, savedAt: Date.now() };
+    await savePreviews.put(romMetadata.name, loadPreview).catch((err) => console.error("Failed to keep the save's picture", err));
+    renderLoadPreview();
+}
+
+/** Reads the running game's preview, kept from this or an earlier visit. */
+async function refreshLoadPreview() {
+    loadPreview = romMetadata ? await savePreviews.get(romMetadata.name).catch(() => null) : null;
+    renderLoadPreview();
+}
+
+function renderLoadPreview() {
+    if (!loadPreviewEl) return;
+    const ready = loadPreview !== null && saveSlot !== "empty";
+    loadPreviewEl.toggleAttribute("data-ready", ready);
+    loadStateBtn?.toggleAttribute("data-has-preview", ready);
+    if (!ready) return;
+    const img = loadPreviewEl.querySelector("img")!;
+    img.hidden = !loadPreview!.thumbnail;
+    if (loadPreview!.thumbnail) img.src = loadPreview!.thumbnail;
+    loadPreviewEl.querySelector(".load-preview-ago")!.textContent = savedAgo(Date.now(), loadPreview!.savedAt);
+    const at = loadPreviewEl.querySelector(".load-preview-at")!;
+    const key = document.createElement("kbd");
+    key.className = "kbd kbd-sm";
+    key.textContent = "F7";
+    at.replaceChildren(`${savedAtLine(new Date(), loadPreview!.savedAt)} · `, key, " to load");
+}
+// "Saved 2 minutes ago" is worked out again whenever the preview is about to show.
+loadStateBtn?.addEventListener("pointerenter", renderLoadPreview);
+loadStateBtn?.addEventListener("focus", renderLoadPreview);
 
 async function loadStateAction() {
     if (!saveStateController) return;
@@ -4008,6 +4054,7 @@ async function loadStateAction() {
 }
 
 function updateSaveStateButtons() {
+    renderLoadPreview();
     const { saveEnabled, loadEnabled } = computeSaveStateButtons({
         controllerReady: Boolean(saveStateController),
         running,

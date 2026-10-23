@@ -629,6 +629,59 @@ body.handheld .app-topbar {
   color: var(--muted);
 }
 
+/* ── The Load button's preview ─────────────────────────── */
+
+#save-state-section {
+  position: relative;
+}
+
+.load-preview {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  z-index: 40;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  width: 230px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(16, 26, 40, 0.97);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+#save-state-section:has(#load-state:not(:disabled):hover, #load-state:not(:disabled):focus) .load-preview[data-ready] {
+  display: flex;
+}
+
+/* The preview says what the tip would, so the tip stays away while it shows. */
+#load-state[data-has-preview]:hover::after,
+#load-state[data-has-preview]:focus-visible::after {
+  display: none;
+}
+
+.load-preview img {
+  width: 100%;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.load-preview-ago {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.load-preview-at {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .volume-control {
   display: flex;
   align-items: center;
