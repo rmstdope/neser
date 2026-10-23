@@ -26,6 +26,7 @@
         <button id="debugger-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn hidden" data-icon="bug" data-tip="Debugger" data-keys="F5" aria-keyshortcuts="F5" aria-label="Debugger" aria-pressed="false">Debugger</button>
         <button id="library-open" class="btn btn-ghost btn-sm topbar-btn-labeled" data-icon="library" data-tip="Choose a game" aria-controls="library">Library</button>
         <button id="settings-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="gear" data-tip="Settings" aria-label="Settings" aria-controls="settings-panel" aria-haspopup="dialog" aria-expanded="false">Settings</button>
+        <button id="help-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="help" data-tip="Keys and controls" data-keys="H" aria-keyshortcuts="H" aria-label="Keys and controls" aria-controls="help-panel" aria-expanded="false" aria-haspopup="dialog">Keys and controls</button>
       </header>
 
       <!-- data-view says which of the two shows: the library (no game, or chosen from the top bar) or the game -->
@@ -99,7 +100,6 @@
                 <div class="screen-wrap" id="screen-wrap">
                   <canvas id="screen" width="256" height="240" tabindex="0"></canvas>
                   <div id="rec-overlay" class="rec-overlay hidden" aria-hidden="true"></div>
-                  <div id="shortcut-help-overlay" class="shortcut-help-overlay hidden" aria-hidden="true"></div>
                 </div>
 
                 <!-- Action buttons (right of canvas) -->
@@ -235,6 +235,26 @@
           <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
         </div>
       </section>
+    </dialog>
+
+    <!-- Keys and controls: the shortcuts, and the running system's controller with its keys (H) -->
+    <dialog id="help-panel" class="help-sheet" aria-labelledby="help-title">
+      <div class="help-head">
+        <h2 id="help-title">Keys and controls</h2>
+        <span class="help-close-note">Close with <kbd class="kbd kbd-sm">H</kbd> or <kbd class="kbd kbd-sm">Esc</kbd></span>
+        <button type="button" id="help-close" class="btn btn-ghost btn-sm btn-icon-only" data-icon="close" aria-label="Close keys and controls">Close</button>
+      </div>
+      <div class="help-body">
+        <section class="help-col" aria-labelledby="help-shortcuts-title">
+          <h3 id="help-shortcuts-title" class="settings-group-title">Shortcuts</h3>
+          <div id="help-shortcuts" class="help-shortcuts"></div>
+        </section>
+        <section class="help-col" aria-label="Controller">
+          <div id="help-chips" class="help-chips" role="group" aria-label="Controller to show"></div>
+          <div id="help-pad" class="help-pad"></div>
+          <div id="help-gamepad-note" class="help-gamepad-note"><span class="help-gamepad-icon" data-icon="pad" aria-hidden="true"></span><span>Plug in a gamepad and press any button to use it instead.</span></div>
+        </section>
+      </div>
     </dialog>
 
     <!-- Autorun modal dialog (native dialog element) -->

@@ -32,7 +32,7 @@ describe("the control bar under the picture", () => {
         const ids = [...bar.querySelectorAll("button, input")].map((el) => el.id);
         expect(ids).toEqual(BAR_ORDER);
         // The top bar holds only page-level buttons, never a game control.
-        expect([...page.querySelectorAll("header button")].map((b) => b.id)).toEqual(["debugger-open", "library-open", "settings-open"]);
+        expect([...page.querySelectorAll("header button")].map((b) => b.id)).toEqual(["debugger-open", "library-open", "settings-open", "help-open"]);
         expect(page.querySelector("#library #pause, #library #stop, #library #save-state")).toBeNull();
     });
 

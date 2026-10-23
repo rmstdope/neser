@@ -85,12 +85,7 @@ import {
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
-import {
-    buildFullHelpOverlayText,
-    buildShortcutReferenceText,
-    computeShortcutHelpFontSizePx,
-    toggleShortcutHelpVisibility
-} from "./shortcuts/shortcut_help";
+import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
@@ -177,8 +172,6 @@ const screenWrap = canvas.closest(".screen-wrap") as HTMLElement;
 if (!screenWrap) {
     throw new Error("Screen wrapper with class 'screen-wrap' not found");
 }
-const shortcutReference = document.getElementById("shortcut-reference");
-const shortcutHelpOverlay = document.getElementById("shortcut-help-overlay");
 const debuggerPanel = document.getElementById("debugger-panel");
 
 // Use WebGL for rendering with filter support
@@ -1386,7 +1379,6 @@ function updateEmulatorKindUI() {
     }
     filterToggleBtn.disabled = false;
     updateFilterToggleButtonLabel();
-    updateShortcutHelpOverlayText();
 }
 
 /** Update the recording overlay (REC : MM:SS) on the canvas. */
@@ -3227,18 +3219,97 @@ const webShortcutActions = {
     cyclePalette: cyclePaletteAction,
 };
 
-function updateShortcutHelpOverlayText() {
-    if (shortcutHelpOverlay) {
-        shortcutHelpOverlay.textContent = buildFullHelpOverlayText(
-            connectedGamepads.length,
-            emulator?.kind ?? "nes"
-        );
-    }
+// ── Keys and controls (H): the shortcuts, and a controller for the chosen system and player ──
+const helpPanel = document.getElementById("help-panel") as HTMLDialogElement;
+const helpPadEl = document.getElementById("help-pad") as HTMLElement;
+const helpChipsEl = document.getElementById("help-chips") as HTMLElement;
+const helpGamepadNote = document.getElementById("help-gamepad-note") as HTMLElement;
+const helpOpenBtn = document.getElementById("help-open") as HTMLButtonElement;
+let helpConsole: ConsoleKind = "nes";
+let helpPlayer = 0;
+let pausedByHelp = false;
+renderHelpShortcuts(document.getElementById("help-shortcuts") as HTMLElement);
+
+function renderHelpController() {
+    const players = CONSOLES[helpConsole].playerKeyBindings;
+    helpPlayer = Math.min(helpPlayer, players.length - 1);
+    helpChipsEl.replaceChildren(
+        ...helpChips(helpConsole, helpPlayer, players.length).map((chip) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "help-chip";
+            button.textContent = chip.label;
+            button.dataset.console = chip.console;
+            button.dataset.player = String(chip.player);
+            button.toggleAttribute("data-separated", chip.separated);
+            button.setAttribute("aria-pressed", chip.pressed ? "true" : "false");
+            button.addEventListener("click", () => {
+                helpConsole = chip.console;
+                helpPlayer = chip.player;
+                renderHelpController();
+            });
+            return button;
+        })
+    );
+    // The first connected gamepad is player 1's, the second player 2's, as in play.
+    const usesGamepad = selectGamepads([...(navigator.getGamepads?.() ?? [])]).length > helpPlayer;
+    renderPad(helpPadEl, helpPadKeys(helpConsole, helpPlayer), usesGamepad);
+    helpGamepadNote.hidden = usesGamepad;
+    fitHelpPad();
 }
 
+/** Scales the pad's drawing to its column, so its buttons keep their places at any width. */
+function fitHelpPad() {
+    if (!helpPanel.open) return;
+    const column = helpPadEl.parentElement!;
+    const style = getComputedStyle(column);
+    const available = column.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    helpPadEl.style.zoom = String(helpPadZoom(available));
+}
+window.addEventListener("resize", fitHelpPad);
+
+function openHelp() {
+    if (helpPanel.open) return;
+    helpConsole = emulator?.kind ?? helpConsole;
+    helpPlayer = 0;
+    renderHelpController();
+    pausedByHelp = running && !paused;
+    if (pausedByHelp) pauseResume();
+    helpPanel.showModal();
+    helpOpenBtn.setAttribute("aria-expanded", "true");
+    fitHelpPad();
+}
+
+function closeHelp() {
+    if (helpPanel.open) helpPanel.close();
+}
+
+helpPanel.addEventListener("close", () => {
+    helpOpenBtn.setAttribute("aria-expanded", "false");
+    if (pausedByHelp && running && paused) pauseResume();
+    pausedByHelp = false;
+});
+// H closes it as it opened it; Esc closes any modal dialog by itself.
+helpPanel.addEventListener("keydown", (event) => {
+    if (event.code === "KeyH" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        // Stopped here: once the dialog has closed, the page's H shortcut would open it again.
+        event.preventDefault();
+        event.stopPropagation();
+        closeHelp();
+    }
+});
+helpPanel.addEventListener("click", (event) => {
+    if (event.target === helpPanel) closeHelp();
+});
+document.getElementById("help-close")!.addEventListener("click", closeHelp);
+helpOpenBtn.addEventListener("click", openHelp);
+// A pad appears once a button is pressed on it; the open panel follows it.
+window.addEventListener("gamepadconnected", () => helpPanel.open && renderHelpController());
+window.addEventListener("gamepaddisconnected", () => helpPanel.open && renderHelpController());
+
 function toggleShortcutHelp() {
-    updateShortcutHelpOverlayText();
-    toggleShortcutHelpVisibility(shortcutHelpOverlay);
+    if (helpPanel.open) closeHelp();
+    else openHelp();
 }
 
 function updateFilterToggleButtonLabel() {
@@ -3804,7 +3875,6 @@ function updateCanvasSize(newHeight: number) {
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
-    updateShortcutHelpScale();
 }
 
 function updateCanvasSizeForFullscreenViewport() {
@@ -3814,7 +3884,6 @@ function updateCanvasSizeForFullscreenViewport() {
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
-    updateShortcutHelpScale();
 }
 
 function updateHandheldOrientation() {
@@ -3830,7 +3899,6 @@ function updateHandheldCanvasSize() {
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
-    updateShortcutHelpScale();
 }
 
 function resizeCanvasForCurrentDisplayMode() {
@@ -3841,14 +3909,6 @@ function resizeCanvasForCurrentDisplayMode() {
     } else {
         updateCanvasSize(currentHeight);
     }
-}
-
-function updateShortcutHelpScale() {
-    if (!shortcutHelpOverlay) {
-        return;
-    }
-    const fontSizePx = computeShortcutHelpFontSizePx(canvas.clientHeight);
-    shortcutHelpOverlay.style.fontSize = `${fontSizePx}px`;
 }
 
 /** The windowed CSS width a zoom height would get; probes set only this, never the backing store. */
@@ -4150,14 +4210,6 @@ updateFullscreenButton();
 updateZoomButtonState();
 updateFilterToggleButtonLabel();
 updateSaveStateButtons();
-const shortcutReferenceText = buildShortcutReferenceText();
-if (shortcutReference) {
-    shortcutReference.textContent = `Shortcuts: ${shortcutReferenceText}`;
-}
-if (shortcutHelpOverlay) {
-    updateShortcutHelpOverlayText();
-}
-updateShortcutHelpScale();
 renderNewsWave(document.getElementById("library-news") as HTMLElement, SCROLLER_TEXT);
 // WebGL starts with the page, so a browser without it says so before any game is picked.
 if (!webglInitialized && !initWebGL()) {
@@ -4339,7 +4391,6 @@ function resetGamepadState() {
 
 function onGamepadConnectionChanged() {
     updateConnectedGamepads();
-    updateShortcutHelpOverlayText();
     ensureWasmInitialized()
         .then(() => toastOverlay.show(gamepad_init_toast_message(true, connectedGamepads.length)))
         .catch(() => {});
