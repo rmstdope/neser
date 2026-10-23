@@ -564,7 +564,7 @@ The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `we
 | `web/src/save-state/` | Save state persistence using IndexedDB (`save_state_storage.ts`, `save_state_controller.ts`, `save_state_context.ts`), offered where the console table says so: NES, Game Boy and SNES games (`save_state_support.ts`). |
 | `web/src/debugger/` | Browser-based debugger panels — disassembly, OAM viewer, watch expressions, PPU viewer layout/scroll. |
 | `web/src/shortcuts/` | Keyboard shortcut actions and help overlay. |
-| `web/src/ui/` | Toast overlays (`toast_overlay.ts`), gamepad init toast, the control bar's volume (`volume.ts`, key `neser.volume`) and game title (`game_title.ts`) helpers, the settings panel (`settings_panel.ts`), and the library (`library.ts`: grouping, search, system filter, and the release-news wave). |
+| `web/src/ui/` | Toast overlays (`toast_overlay.ts`), gamepad init toast, the control bar's volume (`volume.ts`, key `neser.volume`) and game title (`game_title.ts`) helpers, the settings panel (`settings_panel.ts`), the short lists Filter, Palette, Colours and Reset open (`choice_menu.ts`), and the library (`library.ts`: grouping, search, system filter, and the release-news wave). |
 | `web/integration/` | Playwright-based end-to-end integration tests for the web frontend. |
 
 Each TypeScript module has a corresponding `.test.ts` unit test file (run with `vitest`).
