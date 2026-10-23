@@ -20,7 +20,8 @@ try {
         assert.equal((await page.request.get(path)).status(), 404, path);
     }
     await page.goto("/");
-    await expect(page.locator("#screen")).toBeVisible();
+    // The library is the start screen; the picture shows once a game runs.
+    await expect(page.locator("#library")).toBeVisible();
     await expect(page.locator("#rom")).toHaveAttribute("accept", /\.nes.*\.gba.*\.sfc/, { timeout: 15_000 });
     const wasm = await page.request.get(await page.evaluate(() =>
         performance.getEntriesByType("resource").find(entry => entry.name.endsWith(".wasm")).name));
@@ -31,6 +32,7 @@ try {
         name: "cpu.nes", mimeType: "application/octet-stream", buffer: rom,
     });
     await expect(page.locator("#emulation-controls")).toHaveAttribute("data-emulation-state", "running", { timeout: 15_000 });
+    await expect(page.locator("#screen")).toBeVisible();
     await page.keyboard.press("Escape");
     await page.reload();
     await expect(page.locator("#rom")).toHaveAttribute("accept", /\.nes/);
