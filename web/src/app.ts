@@ -3282,7 +3282,9 @@ helpPanel.addEventListener("close", () => {
 // H closes it as it opened it; Esc closes any modal dialog by itself.
 helpPanel.addEventListener("keydown", (event) => {
     if (event.code === "KeyH" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        // Stopped here: once the dialog has closed, the page's H shortcut would open it again.
         event.preventDefault();
+        event.stopPropagation();
         closeHelp();
     }
 });
