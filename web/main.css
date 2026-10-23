@@ -1524,6 +1524,7 @@ body.handheld .app-topbar {
 .help-pad {
   position: relative;
   width: 440px;
+  margin-inline: auto;
   height: 210px;
   border-radius: 60px;
   background: linear-gradient(180deg, #1b2b42, #101a28);
