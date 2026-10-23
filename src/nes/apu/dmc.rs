@@ -124,10 +124,18 @@ impl Dmc {
         }
     }
 
-    /// Reset DMC channel to initial state
-    pub fn reset(&mut self) {
-        trace_apu!(2; "dmc reset");
+    /// Reset the DMC channel to its initial state.
+    ///
+    /// A soft reset (the reset button) keeps $4012 and $4013; only power-on sets
+    /// them to 0, a 1-byte sample at $C000 (NESdev "CPU power up state", nr-qnjf).
+    pub fn reset(&mut self, soft_reset: bool) {
+        trace_apu!(2; "dmc reset soft_reset={}", soft_reset);
+        let (sample_address, sample_length) = (self.sample_address, self.sample_length);
         *self = Self::with_region(self.region);
+        if soft_reset {
+            self.sample_address = sample_address;
+            self.sample_length = sample_length;
+        }
     }
 
     /// Set the timer phase the program starts with after the CPU's reset sequence.
@@ -836,7 +844,7 @@ mod tests {
         }
         assert_ne!(dmc.debug_timer(), NTSC.dmc_rates[0] - 1);
 
-        dmc.reset();
+        dmc.reset(false);
 
         let expected_timer = NTSC.dmc_rates[0] - 1;
         assert_eq!(
@@ -1206,7 +1214,7 @@ mod sample_tests {
         assert!(dmc.dma_pending());
 
         // Reset
-        dmc.reset();
+        dmc.reset(false);
 
         // Verify all fields back to default
         assert!(!dmc.get_irq_flag());
