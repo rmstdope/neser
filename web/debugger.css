@@ -1,11 +1,11 @@
 /* ── Debugger panel ───────────────────────────────────────── */
 
+/* Docked beside the picture: a column of its own, as tall as the picture and its bar. */
 .debugger-panel {
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 8px;
-  right: 8px;
+  position: relative;
+  flex: none;
+  width: min(600px, 48vw);
+  height: min(760px, calc(100dvh - 120px));
   display: flex;
   flex-direction: column;
   padding: 8px 10px;

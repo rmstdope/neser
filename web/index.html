@@ -23,6 +23,7 @@
         </div>
         <span class="flex-1"></span>
         <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
+        <button id="debugger-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn hidden" data-icon="bug" data-tip="Debugger" data-keys="F5" aria-keyshortcuts="F5" aria-label="Debugger" aria-pressed="false">Debugger</button>
         <button id="library-open" class="btn btn-ghost btn-sm topbar-btn-labeled" data-icon="library" data-tip="Choose a game" aria-controls="library">Library</button>
         <button id="settings-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="gear" data-tip="Settings" aria-label="Settings" aria-controls="settings-panel" aria-haspopup="dialog" aria-expanded="false">Settings</button>
       </header>
@@ -83,6 +84,7 @@
 
         <!-- The game: the picture and the control bar under it -->
         <div id="game-view" class="game-view">
+          <div class="game-stage">
               <!-- Touch controls wrapper: D-pad | Canvas | Action buttons -->
               <div id="touch-controls" class="touch-controls" aria-hidden="true">
                 <!-- D-pad (left of canvas) -->
@@ -98,7 +100,6 @@
                   <canvas id="screen" width="256" height="240" tabindex="0"></canvas>
                   <div id="rec-overlay" class="rec-overlay hidden" aria-hidden="true"></div>
                   <div id="shortcut-help-overlay" class="shortcut-help-overlay hidden" aria-hidden="true"></div>
-                  <div id="debugger-panel" class="debugger-panel hidden" aria-label="Debugger panel"></div>
                 </div>
 
                 <!-- Action buttons (right of canvas) -->
@@ -149,7 +150,9 @@
                   <button id="fullscreen" class="btn btn-ghost btn-sm btn-icon-only" data-icon="fullscreen" data-tip="Fullscreen" aria-keyshortcuts="Control+F" data-keys="Ctrl+F">Fullscreen</button>
                 </div>
               </div>
-
+          </div>
+          <!-- The NES debugger, docked beside the picture (F5, or the bug button in the top bar) -->
+          <div id="debugger-panel" class="debugger-panel hidden" aria-label="Debugger panel"></div>
         </div>
 
         <div class="mt-3 flex items-center gap-2">
@@ -213,8 +216,11 @@
       <section id="settings-tab-developer" class="settings-page" role="tabpanel" aria-labelledby="settings-tab-btn-developer" hidden>
         <div class="settings-group">
           <h3 class="settings-group-title">Debugger</h3>
-          <button type="button" id="settings-debugger" class="btn btn-outline btn-sm" disabled>Open debugger</button>
-          <p class="settings-hint">Or press F5 while an NES game runs.</p>
+          <div class="settings-switch-row">
+            <label for="settings-debugger-button" class="settings-label">Show debugger button</label>
+            <input type="checkbox" id="settings-debugger-button" class="toggle toggle-sm" />
+          </div>
+          <p id="settings-debugger-hint" class="settings-hint">Or press F5 at any time</p>
         </div>
 
         <!-- Autorun controls -->

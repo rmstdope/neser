@@ -65,6 +65,7 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { gameTitle } from "./ui/game_title";
+import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
 import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
@@ -1312,6 +1313,7 @@ function updateEmulationButtons() {
     updateCgbColorButton();
     updatePaletteButton();
     updateGameTitle();
+    updateDebuggerButton();
     updateView();
     updateZoomLevel();
     updateGbHardwareNote();
@@ -1320,6 +1322,8 @@ function updateEmulationButtons() {
 /** Create a fresh emulator instance and update kind-dependent UI. */
 function createEmulatorInstance(kind: ConsoleKind): void {
     resetGamepadState();
+    // A new console starts with the debugger closed; the old panel belonged to the old game.
+    hideDebuggerPanel();
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
     nes = null;
@@ -2473,8 +2477,12 @@ function debuggerWatchUpdateAddress(index: number, value: string) {
 
 function showDebuggerPanel() {
     if (!debuggerPanel) return;
+    const opening = debuggerPanel.classList.contains("hidden");
     debuggerPanel.classList.remove("hidden");
+    // Docked under the picture on a narrow window, it can open below the fold: bring it into view.
+    if (opening) debuggerPanel.scrollIntoView({ block: "nearest" });
     updateDebuggerPanel();
+    updateDebuggerButton();
     setStatus("Debugger paused");
 }
 
@@ -2482,6 +2490,7 @@ function hideDebuggerPanel() {
     if (debuggerPanel) {
         debuggerPanel.classList.add("hidden");
     }
+    updateDebuggerButton();
 }
 
 function debuggerOpen() {
@@ -2614,6 +2623,10 @@ function stop() {
     // The game's last frame becomes its card's picture; the next game must not inherit it.
     captureRecentThumbnail();
     lastFrame = null;
+    // The docked debugger belongs to the game being left: the core lets go of it too, since the
+    // same NES core may run the next game.
+    if (nes?.is_debugger_open()) nes.debugger_continue();
+    hideDebuggerPanel();
     // ── NES-only: Autorun teardown ────────────────────────────────────────
     if (nes && nes.autorun_is_recording()) {
         const recordingBytes = nes.stop_autorun();
@@ -3043,7 +3056,6 @@ updateMuteButton();
 // ── Settings panel: opened from the top bar; the game pauses while it is open ──
 const settingsKeysEl = document.getElementById("settings-keys") as HTMLElement;
 const settingsGamepadsEl = document.getElementById("settings-gamepads") as HTMLElement;
-const settingsDebuggerBtn = document.getElementById("settings-debugger") as HTMLButtonElement;
 const settingsKeySystemButtons = [...document.querySelectorAll<HTMLButtonElement>("#settings-keys-system [data-console]")];
 let settingsKeysConsole: ConsoleKind = "nes";
 let pausedBySettings = false;
@@ -3095,7 +3107,6 @@ const settingsPanel = createSettingsPanel({
         settingsKeysConsole = emulator?.kind ?? settingsKeysConsole;
         renderSettingsKeys();
         renderSettingsGamepads();
-        settingsDebuggerBtn.disabled = !(nes && running);
         // A firmware message is about the file just chosen; each opening starts clear.
         const firmwareMessage = document.getElementById("snes-firmware-message");
         if (firmwareMessage) firmwareMessage.textContent = "";
@@ -3106,10 +3117,23 @@ const settingsPanel = createSettingsPanel({
     },
 });
 
-settingsDebuggerBtn.addEventListener("click", () => {
-    settingsPanel.close();
-    if (!nes?.is_debugger_open()) debuggerToggle();
+// ── The debugger's bug button in the top bar, shown once switched on under Developer ──
+const debuggerButtonSwitch = document.getElementById("settings-debugger-button") as HTMLInputElement;
+debuggerButtonSwitch.checked = readDebuggerButton(browserStorage());
+debuggerButtonSwitch.addEventListener("change", () => {
+    writeDebuggerButton(browserStorage(), debuggerButtonSwitch.checked);
+    updateDebuggerButton();
 });
+document.getElementById("debugger-open")!.addEventListener("click", () => debuggerToggle());
+
+/** The bug button shows while switched on and an NES game runs, pressed while the debugger is open. */
+function updateDebuggerButton() {
+    const button = document.getElementById("debugger-open");
+    const toggle = document.getElementById("settings-debugger-button") as HTMLInputElement | null;
+    if (!button || !toggle) return;
+    button.classList.toggle("hidden", !(toggle.checked && nes && running));
+    button.setAttribute("aria-pressed", nes?.is_debugger_open() ? "true" : "false");
+}
 
 const emulationControls = document.getElementById("emulation-controls");
 const pauseBtn = document.getElementById("pause") as HTMLButtonElement | null;
