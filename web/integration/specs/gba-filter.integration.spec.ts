@@ -7,7 +7,8 @@ import {
     loadRomFromFileInput,
     openApp,
     waitForPausedState,
-    waitForRunningState
+    waitForRunningState,
+    pickNext
 } from "../helpers/lifecycle.helpers";
 
 const FILTER_SELECTOR = "#filter-toggle";
@@ -64,7 +65,7 @@ async function loadShades(page: Page) {
 
 async function pressFilterUntil(page: Page, name: string) {
     const filter = page.locator(FILTER_SELECTOR);
-    for (let i = 0; i < 5 && (await filter.textContent()) !== `Filter: ${name}`; i++) await filter.click();
+    for (let i = 0; i < 5 && (await filter.textContent()) !== `Filter: ${name}`; i++) await pickNext(page, filter);
     await expect(filter).toHaveText(`Filter: ${name}`);
 }
 
@@ -83,7 +84,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await expect(filter).toHaveText("Filter: None");
 
         for (const name of ["AGB-001", "Switch Online", "GBA SP", "LCD Grid", "None"]) {
-            await filter.click();
+            await pickNext(page, filter);
             await expect(filter).toHaveText(`Filter: ${name}`);
         }
 
@@ -93,7 +94,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
 
         await page.locator("#pause").click();
         await waitForPausedState(page);
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: Switch Online");
         await filter.blur();
         await page.keyboard.press("F4");
@@ -123,7 +124,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         });
 
         await loadGbaRom(page);
-        for (let i = 0; i < 4; i++) await filter.click();
+        for (let i = 0; i < 4; i++) await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: LCD Grid");
         await page.waitForTimeout(300);
         await expect(filter).toHaveText("Filter: LCD Grid");
@@ -138,14 +139,14 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await page.route(BORDER_REQUEST, (route) => route.abort());
 
         await loadGbaRom(page);
-        for (let i = 0; i < 3; i++) await filter.click();
+        for (let i = 0; i < 3; i++) await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: GBA SP");
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: GBA SP");
 
         // Back online: the next press moves on from GBA SP, and the look is fetched this time.
         await page.unroute(BORDER_REQUEST);
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: LCD Grid");
         await page.waitForTimeout(500);
         await expect(filter).toHaveText("Filter: LCD Grid");
@@ -219,7 +220,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         const filter = page.locator(FILTER_SELECTOR);
 
         await loadGbaRom(page);
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: AGB-001");
 
         await loadRomFromFileInput(page);

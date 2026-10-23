@@ -1,4 +1,4 @@
-import { expect, Page } from "@playwright/test";
+import { expect, Locator, Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -147,4 +147,18 @@ export async function openSettings(page: Page, tab: SettingsTab = "General") {
 export async function closeSettings(page: Page) {
     await page.locator("#settings-close").click();
     await expect(page.locator("#settings-panel")).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
+}
+
+/**
+ * Opens a button's short list (Filter, Palette, Colours) and picks the entry after the ticked
+ * one, wrapping round: what pressing the button did before it opened a list, and what F4 and F8
+ * still do.
+ */
+export async function pickNext(page: Page, button: Locator) {
+    await button.click();
+    const items = page.locator(".choice-menu [role='menuitemradio']");
+    await expect(items.first()).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    const ticked = await items.evaluateAll((els) => els.findIndex((el) => el.getAttribute("aria-checked") === "true"));
+    const count = await items.count();
+    await items.nth((ticked + 1) % count).click();
 }

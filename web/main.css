@@ -337,6 +337,7 @@ canvas {
   --icon-mute: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9h4l5-4v14l-5-4H4z'/%3E%3Cpath d='M17 9l5 6M22 9l-5 6'/%3E%3C/svg%3E");
   --icon-library: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='6' height='16' rx='1'/%3E%3Crect x='12' y='4' width='4' height='16' rx='1'/%3E%3Cpath d='M18 5l3 14'/%3E%3C/svg%3E");
   --icon-file: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 3h8l4 4v14H6z'/%3E%3Cpath d='M14 3v4h4'/%3E%3C/svg%3E");
+  --icon-chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   --icon-gear: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1'/%3E%3C/svg%3E");
   --icon-close: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
   --icon-fullscreen: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'/%3E%3C/svg%3E");
@@ -413,6 +414,7 @@ canvas {
 [data-icon="volume"] { --icon: var(--icon-volume); }
 [data-icon="fullscreen"] { --icon: var(--icon-fullscreen); }
 [data-icon="gear"] { --icon: var(--icon-gear); }
+[data-icon="chev"] { --icon: var(--icon-chev); }
 [data-icon="library"] { --icon: var(--icon-library); }
 [data-icon="file"] { --icon: var(--icon-file); }
 [data-icon="close"] { --icon: var(--icon-close); }
@@ -514,6 +516,111 @@ body.handheld.touch-running .game-view {
 /* Phones keep the top bar's own height, which the handheld picture size allows for. */
 body.handheld .app-topbar {
   min-height: 0;
+}
+
+/* ── Short lists: Filter, Palette, Colours and Reset ────── */
+
+.control-bar-group,
+.split-btn {
+  position: relative;
+}
+
+.split-btn {
+  display: flex;
+  align-items: center;
+}
+
+.control-bar .split-caret {
+  width: 1.5rem;
+  margin-left: -4px;
+}
+
+/* A button that opens a list says so with a small arrow after its words. */
+.control-bar [aria-haspopup="menu"]:not(.split-caret)::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  margin-left: 2px;
+  background: currentColor;
+  opacity: 0.7;
+  -webkit-mask: var(--icon-chev) center / contain no-repeat;
+  mask: var(--icon-chev) center / contain no-repeat;
+}
+
+.choice-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  z-index: 40;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 14px;
+  background: rgba(16, 26, 40, 0.97);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 30px rgba(70, 140, 220, 0.15);
+}
+
+.choice-menu-title {
+  padding: 8px 10px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.choice-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 9px;
+  text-align: left;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.choice-menu-item:hover,
+.choice-menu-item:focus-visible,
+.choice-menu-item[aria-checked="true"] {
+  background: rgba(127, 176, 227, 0.16);
+  color: #fff;
+}
+
+.choice-menu-item:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: -2px;
+}
+
+.choice-menu-tick {
+  width: 14px;
+  color: var(--steel-hi);
+}
+
+.choice-menu-label {
+  flex: 1;
+}
+
+.choice-menu-note {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.choice-menu-keys {
+  display: flex;
+  gap: 3px;
+  margin-left: 12px;
+}
+
+.choice-menu-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .volume-control {

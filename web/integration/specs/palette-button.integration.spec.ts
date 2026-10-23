@@ -7,7 +7,8 @@ import {
     openApp,
     waitForIdleState,
     waitForPausedState,
-    waitForRunningState
+    waitForRunningState,
+    pickNext
 } from "../helpers/lifecycle.helpers";
 
 const PALETTE_BUTTON_SELECTOR = "#palette-cycle";
@@ -45,7 +46,7 @@ test.describe("Palette button (does what F8 does)", () => {
             "mute"
         ]);
 
-        await palette.click();
+        await pickNext(page, palette);
         await expect(palette).toHaveText("Palette: NesDev");
         await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "Palette: NesDev" })).toBeVisible();
         await expect(palette).toBeFocused();
@@ -54,7 +55,7 @@ test.describe("Palette button (does what F8 does)", () => {
         await expect(palette).toHaveText("Palette: Smooth");
 
         for (const name of ["Classic", "Composite Direct", "Mesen", "Default"]) {
-            await palette.click();
+            await pickNext(page, palette);
             await expect(palette).toHaveText(`Palette: ${name}`);
         }
 
@@ -84,18 +85,18 @@ test.describe("Palette button (does what F8 does)", () => {
         await loadGbRom(page, "dmg-acid2.gb");
         await expect(filter).toHaveText("Filter: Game Boy");
         await expect(palette).toHaveText("Palette: DMG Green");
-        await palette.click();
+        await pickNext(page, palette);
         await expect(palette).toHaveText("Palette: Pocket");
 
         // With the filter off the palette stays, and presses go on cycling.
-        while ((await filter.textContent()) !== "Filter: None") await filter.click();
+        while ((await filter.textContent()) !== "Filter: None") await pickNext(page, filter);
         await expect(palette).toHaveText("Palette: Pocket");
-        await palette.click();
+        await pickNext(page, palette);
         await expect(palette).toHaveText("Palette: Light");
-        await palette.click();
+        await pickNext(page, palette);
         await expect(palette).toHaveText("Palette: Grey");
-        await palette.click();
-        await palette.click();
+        await pickNext(page, palette);
+        await pickNext(page, palette);
         await expect(palette).toHaveText("Palette: Pocket");
 
         // Another original Game Boy game straight after (the same core is reused): it starts
