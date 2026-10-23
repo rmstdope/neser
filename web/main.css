@@ -1704,6 +1704,14 @@ body.handheld .app-topbar {
   z-index: 10;
 }
 
+/* On the library, brief notes sit at the top of the page, under the top bar. */
+.library > .neser-toast-container {
+  position: fixed;
+  top: calc(3.5rem + 12px);
+  bottom: auto;
+  z-index: 60;
+}
+
 .neser-toast {
   max-width: min(420px, 100%);
   box-sizing: border-box;

@@ -16,7 +16,6 @@ import {
     type SnesFirmwareChip,
     chipByKey,
     notStartedMessage,
-    notStartedStatus,
     romDisplayName,
     initializeSnesFirmwareChips
 } from "./firmware/snes_firmware_words";
@@ -51,7 +50,7 @@ import { handleRomSelection } from "./rom/rom_selection";
 import { shouldCreateFreshEmulatorForRomStart } from "./rom/emulator_lifecycle";
 import {
     applyRomExtensionTable,
-    supportedRomExtensionsText,
+    supportedRomExtensions,
     webRomConsoleKindForName,
     webRomExtensionForName
 } from "./rom/rom_extensions";
@@ -65,7 +64,7 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { gameTitle } from "./ui/game_title";
-import { errorPlace, libraryErrorTitle } from "./ui/errors";
+import { BROWSER_CANNOT_DRAW, errorPlace, libraryAlert, showLibraryAlert, unsupportedFileMessage } from "./ui/errors";
 import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
 import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
@@ -178,6 +177,8 @@ const debuggerPanel = document.getElementById("debugger-panel");
 // Use WebGL for rendering with filter support
 const gl = canvas.getContext("webgl", SCREEN_CONTEXT_ATTRIBUTES)!;
 if (!gl) {
+    // Nothing else can start without it, so the library says so of the browser before stopping.
+    showLibraryAlert(document, libraryAlert(BROWSER_CANNOT_DRAW, null));
     throw new Error("WebGL rendering context not available for canvas 'screen'");
 }
 
@@ -1122,6 +1123,8 @@ function updateAutorunControls() {
 let lastPickedName: string | null = null;
 /** The running game stopped on an error: its picture stays, with the stopped-game message. */
 let gameCrashed = false;
+/** WebGL is missing, so no game can be shown; the library says so of the browser. */
+let browserCannotDraw = false;
 
 const appMain = document.querySelector("main.app-main") as HTMLElement;
 const libraryChooseBtn = document.getElementById("library-choose") as HTMLButtonElement;
@@ -1139,6 +1142,9 @@ function updateView() {
     const view = (!running && !gameCrashed) || libraryOverGame ? "library" : "game";
     const shownNow = appMain.dataset.view !== view;
     appMain.dataset.view = view;
+    // Brief notes show wherever the player is: over the picture, or at the top of the library.
+    const toastHost = view === "library" ? document.getElementById("library") : screenWrap;
+    if (toastHost && toastContainer.parentElement !== toastHost) toastHost.appendChild(toastContainer);
     // Zoom's limits are measured on the shown picture, so measure again once it shows.
     if (shownNow && view === "game") updateZoomButtonState();
     libraryOpenBtn.setAttribute("aria-pressed", view === "library" ? "true" : "false");
@@ -1149,6 +1155,12 @@ function updateView() {
 }
 
 function openLibraryOverGame() {
+    // A stopped game has nothing to go back to: the Library is then Back to library.
+    if (gameCrashed) {
+        clearGameStopped();
+        stop();
+        return;
+    }
     if (!running || libraryOverGame) return;
     captureRecentThumbnail();
     libraryOverGame = true;
@@ -1161,6 +1173,7 @@ function openLibraryOverGame() {
 function backToGame() {
     if (!libraryOverGame) return;
     libraryOverGame = false;
+    hideLibraryError();
     if (pausedByLibrary && running && paused) pauseResume();
     pausedByLibrary = false;
     updateView();
@@ -1194,9 +1207,14 @@ function libraryKey(event: KeyboardEvent) {
 }
 
 document.getElementById("library-error-choose")!.addEventListener("click", () => romInput.click());
-document.getElementById("game-error-reset")!.addEventListener("click", () => {
+// A game that stopped on an error starts again on a fresh console: the old one may have panicked,
+// and a panicked core refuses every later call.
+document.getElementById("game-error-reset")!.addEventListener("click", async () => {
+    const kind = emulator?.kind;
     clearGameStopped();
-    void start();
+    if (kind) createEmulatorInstance(kind);
+    await start();
+    if (running) canvas.focus();
 });
 document.getElementById("game-error-library")!.addEventListener("click", () => {
     clearGameStopped();
@@ -1335,7 +1353,11 @@ function createEmulatorInstance(kind: ConsoleKind): void {
     // A new console starts with the debugger closed; the old panel belonged to the old game.
     hideDebuggerPanel();
     // Free the previous WASM instance to avoid leaking its linear memory.
-    emulator?.inst.free();
+    try {
+        emulator?.inst.free();
+    } catch {
+        // A core that panicked cannot be freed; it is simply dropped.
+    }
     nes = null;
     if (kind === "gb") {
         const gb = new WasmGb();
@@ -1647,20 +1669,20 @@ const SNES_LEGACY_BUTTON = {
 function setStatus(msg: string, isError = false) {
     const libraryError = document.getElementById("library-error");
     if (!isError) {
+        // A browser that cannot draw stays said: nothing the player picks changes it.
+        if (browserCannotDraw) return;
         statusEl!.textContent = "";
         statusEl!.dataset.state = "";
         if (libraryError) libraryError.hidden = true;
         return;
     }
-    const view = appMain?.dataset.view === "game" ? "game" : "library";
+    if (msg === BROWSER_CANNOT_DRAW) browserCannotDraw = true;
+    const view = appMain.dataset.view === "game" ? "game" : "library";
     const place = errorPlace(view, msg);
     if (place === "game") {
         showGameStopped(msg);
     } else if (place === "library") {
-        statusEl!.textContent = msg;
-        statusEl!.dataset.state = "error";
-        document.getElementById("library-error-title")!.textContent = libraryErrorTitle(lastPickedName ?? romMetadata?.name ?? null);
-        if (libraryError) libraryError.hidden = false;
+        showLibraryAlert(document, libraryAlert(msg, lastPickedName ?? romMetadata?.name ?? null));
     } else {
         toastOverlay.show(msg);
     }
@@ -1671,12 +1693,22 @@ function showGameStopped(message: string) {
     document.getElementById("game-error-text")!.textContent = message;
     document.getElementById("game-error")!.hidden = false;
     updateEmulationButtons();
+    // The ways on are under the player's hand.
+    (document.getElementById("game-error-reset") as HTMLButtonElement).focus();
 }
 
 function clearGameStopped() {
     gameCrashed = false;
     const overlay = document.getElementById("game-error");
     if (overlay) overlay.hidden = true;
+    // Without a stopped game the library may be the view again, where a failure is then said.
+    updateView();
+}
+
+/** The library alert goes when the player leaves the library, so it never greets them later. */
+function hideLibraryError() {
+    const libraryError = document.getElementById("library-error");
+    if (libraryError) libraryError.hidden = true;
 }
 
 async function applyRomBytes(bytes: Uint8Array, name: string) {
@@ -1714,7 +1746,8 @@ async function refreshSaveStateController() {
             loadStateFn: loadState,
             setStatus: (msg, isError = false) => {
                 setStatus(msg, isError);
-                toastOverlay.show(msg);
+                // An error already says itself where the player is; other news is a brief note.
+                if (!isError) toastOverlay.show(msg);
             }
         });
         if (saveStateController) {
@@ -1936,8 +1969,7 @@ async function start(): Promise<boolean> {
     // Reject unsupported file types before any emulator work.
     if (!consoleKind) {
         const ext = webRomExtensionForName(romName);
-        toastOverlay.show(`Unsupported file type .${ext} — only ${supportedRomExtensionsText()} are supported`);
-        setStatus(`Unsupported file type .${ext}`, true);
+        setStatus(unsupportedFileMessage(ext, supportedRomExtensions()), true);
         updateEmulationButtons();
         return true;
     }
@@ -1973,7 +2005,7 @@ async function start(): Promise<boolean> {
             const firmware = await obtainFirmwareForChip(firmwareChip);
             if (!firmware) {
                 const game = romDisplayName(romName);
-                setStatus(notStartedStatus(firmwareChip, game), true);
+                // As drawn: a brief note, and the game goes back to the library.
                 toastOverlay.show(notStartedMessage(firmwareChip, game));
                 updateEmulationButtons();
                 libraryChooseBtn.focus();
@@ -2033,7 +2065,8 @@ async function start(): Promise<boolean> {
         updateMouseCursorState();
     } catch (err: unknown) {
         drainNesToasts(emulator?.inst ?? null, toastOverlay);
-        setStatus(`Failed to load ROM: ${err}`, true);
+        const noWebGl = err instanceof Error && err.message.includes("WebGL");
+        setStatus(noWebGl ? BROWSER_CANNOT_DRAW : `Failed to load ROM: ${err}`, true);
         updateEmulationButtons();
         // Only reset emulator if wasm/webgl initialization failed
         // Don't reset on simple ROM load errors so we can retry
@@ -4268,7 +4301,7 @@ updateSaveStateButtons();
 renderNewsWave(document.getElementById("library-news") as HTMLElement, SCROLLER_TEXT);
 // WebGL starts with the page, so a browser without it says so before any game is picked.
 if (!webglInitialized && !initWebGL()) {
-    setStatus("Failed to initialize WebGL", true);
+    setStatus(BROWSER_CANNOT_DRAW, true);
 }
 
 screenMinusBtn.addEventListener("click", () => {

@@ -107,7 +107,7 @@ test.describe("GBA screen filters on the web (nr-0pe)", () => {
         await waitForRunningState(page);
         await page.waitForTimeout(500);
         await expect(filter).toHaveText("Filter: LCD Grid");
-        await expect(page.locator("#status")).not.toContainText("Rendering error");
+        await expect(page.locator("#game-error")).toBeHidden();
         expect(errors.pageErrors).toEqual([]);
         expect(glErrors).toEqual([]);
         expect(errors.consoleErrors.filter((e) => /shader|framebuffer|filter/i.test(e))).toEqual([]);
