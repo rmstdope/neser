@@ -19,9 +19,9 @@ export function frameToRgba(frame: Uint8Array, channels: 3 | 4, width: number, h
 }
 
 /**
- * Both canvases are CPU-backed (`willReadFrequently`): a GPU-backed one would make the PNG wait for
- * the GPU process, which a running game keeps busy, and on a software-rendered GPU (CI's
- * SwiftShader) that wait froze the page for seconds after every Save.
+ * Both canvases are CPU-backed (`willReadFrequently`): on a GPU-backed one the PNG can stall on the
+ * canvas's GPU setup or readback, and on a software-rendered GPU (CI's SwiftShader) that froze the
+ * page for seconds after every Save.
  */
 const CPU_BACKED: CanvasRenderingContext2DSettings = { willReadFrequently: true };
 

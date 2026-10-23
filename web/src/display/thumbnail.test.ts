@@ -23,7 +23,10 @@ describe("frameToRgba", () => {
 });
 
 describe("frameThumbnail", () => {
-    afterEach(() => vi.restoreAllMocks());
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
 
     it("Given a running game, When its picture is taken, Then both canvases are CPU-backed so taking it never waits on the busy GPU", () => {
         const asked: unknown[] = [];
@@ -36,6 +39,5 @@ describe("frameThumbnail", () => {
 
         expect(frameThumbnail(new Uint8Array(4 * 4 * 4), 4, 4, 4, 2)).toBe("data:image/png;base64,AAA");
         expect(asked).toEqual([{ willReadFrequently: true }, { willReadFrequently: true }]);
-        vi.unstubAllGlobals();
     });
 });
