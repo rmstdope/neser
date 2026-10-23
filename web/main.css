@@ -535,16 +535,14 @@ body.handheld .app-topbar {
   margin-left: -4px;
 }
 
-/* A button that opens a list says so with a small arrow after its words. */
-.control-bar [aria-haspopup="menu"]:not(.split-caret)::after {
-  content: "";
-  width: 12px;
-  height: 12px;
-  margin-left: 2px;
-  background: currentColor;
-  opacity: 0.7;
-  -webkit-mask: var(--icon-chev) center / contain no-repeat;
-  mask: var(--icon-chev) center / contain no-repeat;
+/* A button that opens a list says so with a small arrow after its words. It is a background,
+   not ::after, which the hover tip uses. */
+.control-bar [aria-haspopup="menu"]:not(.split-caret) {
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b9c7d8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px;
 }
 
 .choice-menu {
