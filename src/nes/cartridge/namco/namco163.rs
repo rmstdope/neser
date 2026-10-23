@@ -11,6 +11,9 @@ use crate::nes::cartridge::BaseMapper;
 use crate::nes::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::nes::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
+/// Where the nametable RAM starts in `registers_snapshot`, after the register bytes.
+const CIRAM_SNAPSHOT_OFFSET: usize = 169;
+
 /// Mapper 19 - Namco 163 (Namco 129/163 with expansion audio)
 ///
 /// Hardware: Namco's advanced mapper with 8 wavetable synthesis channels
@@ -612,7 +615,8 @@ impl Mapper for Namco163Mapper {
         // [165]: audio_update_counter
         // [166]: audio_current_channel
         // [167-168]: audio_last_output (i16 LE)
-        let mut snapshot = Vec::with_capacity(169);
+        // [169-2216]: nametable RAM (CIRAM), which Namco 163 owns
+        let mut snapshot = Vec::with_capacity(CIRAM_SNAPSHOT_OFFSET + 0x800);
         snapshot.extend_from_slice(&self.regs);
         snapshot.extend_from_slice(&self.namco_ram);
         snapshot.push((self.irq_counter & 0xFF) as u8);
@@ -627,6 +631,8 @@ impl Mapper for Namco163Mapper {
         snapshot.push(self.audio_update_counter);
         snapshot.push(self.audio_current_channel as u8);
         snapshot.extend_from_slice(&self.audio_last_output.to_le_bytes());
+        debug_assert_eq!(snapshot.len(), CIRAM_SNAPSHOT_OFFSET);
+        snapshot.extend_from_slice(&self.ciram);
         snapshot
     }
 
@@ -656,6 +662,11 @@ impl Mapper for Namco163Mapper {
             self.audio_update_counter = data[165];
             self.audio_current_channel = data[166] as i8;
             self.audio_last_output = i16::from_le_bytes([data[167], data[168]]);
+        }
+
+        // Snapshots before nr-ayk5.1 end here and keep the current nametable RAM.
+        if let Some(ciram) = data.get(CIRAM_SNAPSHOT_OFFSET..CIRAM_SNAPSHOT_OFFSET + 0x800) {
+            self.ciram.copy_from_slice(ciram);
         }
 
         self.update_banks();
@@ -689,6 +700,31 @@ mod tests {
         mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
         create_mapper(MapperContext::new_for_test(19, prg_rom, chr_rom, mirroring))
+    }
+
+    /// Namco 163 owns the console's nametable RAM (selected by nametable bank values
+    /// $E0-$FF), so a save state must carry it: before nr-ayk5.1 it was left out.
+    #[test]
+    fn registers_snapshot_preserves_mapper_owned_ciram() {
+        let new_mapper = || {
+            create_namco163_mapper(
+                banked_data(8 * 1024, 8),
+                banked_data(1024, 16),
+                NametableLayout::Vertical,
+            )
+            .expect("Namco 163 (mapper 19) should be implemented")
+        };
+        let mut mapper = new_mapper();
+        mapper.write_prg(0xC000, 0xE0); // $2000 -> CIRAM page 0
+        mapper.write_prg(0xC800, 0xE1); // $2400 -> CIRAM page 1
+        mapper.write_nametable(0x2000, 0xAA);
+        mapper.write_nametable(0x27FF, 0xBB);
+
+        let mut restored = new_mapper();
+        restored.restore_registers(&mapper.registers_snapshot());
+
+        assert_eq!(restored.read_nametable(0x2000), Some(0xAA));
+        assert_eq!(restored.read_nametable(0x27FF), Some(0xBB));
     }
 
     #[test]
