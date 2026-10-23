@@ -369,6 +369,8 @@ fn test_ppu_palette_ram_init_zero_mode() {
             // Set PPU address to the palette entry.
             bus.write(0x2006, high, false);
             bus.write(0x2006, low, false);
+            // Two CPU cycles apart: a $2007 read on the next CPU cycle is ignored.
+            nes.ppu().borrow_mut().run_ppu_cycles(6);
 
             let value = bus.read(0x2007, false);
             assert_eq!(
