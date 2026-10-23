@@ -12,7 +12,7 @@ const page = new DOMParser().parseFromString(readFileSync(resolve(webDir, "index
 const mainCss = readFileSync(resolve(webDir, "main.css"), "utf8");
 
 const BAR_ORDER = [
-    "pause", "reset",
+    "pause", "reset", "reset-menu",
     "save-state", "load-state",
     "stop",
     "screen-minus", "screen-plus", "filter-toggle", "palette-cycle", "cgb-color-toggle", "mute", "volume", "fullscreen",

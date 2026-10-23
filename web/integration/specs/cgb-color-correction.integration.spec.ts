@@ -7,7 +7,8 @@ import {
     openApp,
     waitForIdleState,
     waitForPausedState,
-    waitForRunningState
+    waitForRunningState,
+    pickNext
 } from "../helpers/lifecycle.helpers";
 
 const COLORS_BUTTON_SELECTOR = "#cgb-color-toggle";
@@ -35,11 +36,11 @@ test.describe("Colors button (Game Boy Color LCD colour correction)", () => {
         await expect(colors).toBeVisible();
         await expect(colors).toHaveText("Colors: Raw");
 
-        await colors.click();
+        await pickNext(page, colors);
         await expect(colors).toHaveText("Colors: GBC screen");
         await expect(colors).toBeFocused();
 
-        await colors.click();
+        await pickNext(page, colors);
         await expect(colors).toHaveText("Colors: Raw");
         await waitForRunningState(page);
 
@@ -59,7 +60,7 @@ test.describe("Colors button (Game Boy Color LCD colour correction)", () => {
         const colors = page.locator(COLORS_BUTTON_SELECTOR);
 
         await loadGbRom(page, "cgb-acid2.gbc");
-        await colors.click();
+        await pickNext(page, colors);
         await expect(colors).toHaveText("Colors: GBC screen");
 
         await loadRomFromFileInput(page);
@@ -93,7 +94,7 @@ test.describe("Colors button (Game Boy Advance LCD colour correction)", () => {
         await expect(colors).toBeVisible();
         await expect(colors).toHaveText("Colors: Raw");
 
-        await colors.click();
+        await pickNext(page, colors);
         await expect(colors).toHaveText("Colors: GBA screen");
         await expect(page.locator(TOAST_SELECTOR).filter({ hasText: "Colors: GBA screen" })).toBeVisible();
 

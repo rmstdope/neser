@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paletteButtonVisible } from "./palette_button";
+import { paletteButtonVisible, cyclePaletteTo, listPalettes, stablePaletteOrder } from "./palette_button";
 
 const running = { running: true, paused: false };
 
@@ -32,5 +32,42 @@ describe("paletteButtonVisible", () => {
 
     it("is hidden once the game has been stopped", () => {
         expect(paletteButtonVisible({ kind: "nes", label: "Palette: Default", running: false, paused: false })).toBe(false);
+    });
+});
+
+describe("listing and choosing a palette by cycling", () => {
+    const cycler = (names: string[], at = 0) => {
+        let i = at;
+        return { label: () => names[i], cycle: () => void (i = (i + 1) % names.length), at: () => i };
+    };
+
+    it("Given the core can only cycle, When its palettes are listed, Then all are named in order from the current one, and it ends where it began", () => {
+        const source = cycler(["Default", "NesDev", "Smooth"], 1);
+        expect(listPalettes(source)).toEqual(["NesDev", "Smooth", "Default"]);
+        expect(source.at()).toBe(1);
+    });
+
+    it("Given a palette is picked, When cycled to, Then the core lands on it", () => {
+        const source = cycler(["Default", "NesDev", "Smooth"]);
+        expect(cyclePaletteTo(source, "Smooth")).toBe(true);
+        expect(source.label()).toBe("Smooth");
+    });
+
+    it("Given a name the core does not have, When cycled to, Then it stops where it began and says so", () => {
+        const source = cycler(["Default", "NesDev"]);
+        expect(cyclePaletteTo(source, "Nope")).toBe(false);
+        expect(source.label()).toBe("Default");
+    });
+});
+
+describe("stablePaletteOrder", () => {
+    it("Given the order first seen for a game, When the palettes are listed again from another one, Then they keep that order", () => {
+        const first = ["Default", "NesDev", "Smooth", "Classic"];
+        expect(stablePaletteOrder(first, ["Classic", "Default", "NesDev", "Smooth"])).toEqual(first);
+    });
+
+    it("Given no order yet, or a different set of palettes, When listed, Then the new listing becomes the order", () => {
+        expect(stablePaletteOrder(null, ["A", "B"])).toEqual(["A", "B"]);
+        expect(stablePaletteOrder(["A", "B"], ["A", "C"])).toEqual(["A", "C"]);
     });
 });

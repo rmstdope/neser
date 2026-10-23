@@ -118,7 +118,10 @@
                    app's lifecycle (idle|running|paused); icons and hover tips are drawn in main.css. -->
               <div id="emulation-controls" class="control-bar" role="toolbar" aria-label="Game controls" data-emulation-state="idle">
                 <button id="pause" class="btn btn-ghost btn-sm" data-icon="pause" data-tip="Pause or resume" aria-keyshortcuts="Space" data-keys="Space" aria-label="Pause or resume emulation">Pause</button>
-                <button id="reset" class="btn btn-ghost btn-sm" data-icon="reset" data-tip="Reset" aria-keyshortcuts="Control+R" data-keys="Ctrl+R" aria-label="Reset emulation">Reset</button>
+                <div class="split-btn">
+                  <button id="reset" class="btn btn-ghost btn-sm" data-icon="reset" data-tip="Reset" aria-keyshortcuts="Control+R" data-keys="Ctrl+R" aria-label="Reset emulation">Reset</button>
+                  <button id="reset-menu" class="btn btn-ghost btn-sm btn-icon-only split-caret" data-icon="chev" aria-label="Reset options">Reset options</button>
+                </div>
                 <span class="control-bar-sep" aria-hidden="true"></span>
                 <div id="save-state-section" class="control-bar-group" data-save-state="empty">
                   <button id="save-state" class="btn btn-ghost btn-sm" data-icon="save" data-tip="Save state" aria-keyshortcuts="F6" data-keys="F6" disabled>Save</button>
@@ -131,8 +134,8 @@
                   <button id="screen-minus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-out" data-tip="Zoom out">Zoom -</button>
                   <span id="zoom-level" class="zoom-level" aria-live="polite"></span>
                   <button id="screen-plus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-in" data-tip="Zoom in">Zoom +</button>
-                  <button id="filter-toggle" class="btn btn-ghost btn-sm" data-icon="filter" data-tip="Next filter" aria-keyshortcuts="F4" data-keys="F4">Filter</button>
-                  <button id="palette-cycle" class="btn btn-ghost btn-sm whitespace-nowrap" data-icon="palette" data-tip="Next palette" aria-keyshortcuts="F8" data-keys="F8" style="display: none">Palette</button>
+                  <button id="filter-toggle" class="btn btn-ghost btn-sm" data-icon="filter" data-tip="Choose a filter" aria-keyshortcuts="F4" data-keys="F4">Filter</button>
+                  <button id="palette-cycle" class="btn btn-ghost btn-sm whitespace-nowrap" data-icon="palette" data-tip="Choose a palette" aria-keyshortcuts="F8" data-keys="F8" style="display: none">Palette</button>
                   <button id="cgb-color-toggle" class="btn btn-ghost btn-sm" data-icon="palette" data-tip="Colour correction" aria-keyshortcuts="F8" data-keys="F8" style="display: none">Colors: Raw</button>
                   <div class="volume-control">
                     <button id="mute" class="btn btn-ghost btn-sm btn-icon-only" data-icon="volume" data-tip="Mute" aria-pressed="false">Mute</button>

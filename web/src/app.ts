@@ -65,6 +65,7 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { gameTitle } from "./ui/game_title";
+import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
 import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
@@ -127,7 +128,7 @@ import {
     shouldKeepPointerLocked,
 } from "./input/pointer_lock";
 import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from "./ui/emulation_controls";
-import { cycleFilterKey, filterOnConsoleSwitch, filterPipelineNeedsRebuild, type FilterDef } from "./display/filters";
+import { cycleFilterKey, defaultFilterForConsole, filterKeysForConsole, filterOnConsoleSwitch, filterPipelineNeedsRebuild, type FilterDef } from "./display/filters";
 import {
     buttonFilterKey,
     filterFailed,
@@ -138,7 +139,7 @@ import {
 } from "./display/filter_selection";
 import { createGbaPipeline, isGbaLook } from "./display/gba_pipeline";
 import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
-import { paletteButtonVisible } from "./display/palette_button";
+import { cyclePaletteTo, listPalettes, paletteButtonVisible, stablePaletteOrder } from "./display/palette_button";
 import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
@@ -846,7 +847,11 @@ function initWebGL() {
  */
 function cycleFilter() {
     const consoleKind = emulator?.kind ?? "nes";
-    const next = cycleFilterKey(buttonFilterKey(filterSelection), filterKeys, filters, consoleKind);
+    chooseFilter(cycleFilterKey(buttonFilterKey(filterSelection), filterKeys, filters, consoleKind));
+}
+
+/** Draw with the look `next` from now on, once its images are ready. */
+function chooseFilter(next: string) {
     filterSelection = requestFilter(filterSelection, next);
     if (!isGbaLook(next)) {
         showFilter(filterReady(filterSelection, next));
@@ -939,15 +944,57 @@ function updateCgbColorButton() {
     if (emulator?.kind === "gb" || emulator?.kind === "gba") cgbColorToggleBtn.textContent = emulator.inst.color_label();
 }
 
-cgbColorToggleBtn?.addEventListener("click", () => {
+/** Switch the running game's colour correction, as F8 does on a GBA and the old button did. */
+function toggleColorCorrection() {
     if (emulator?.kind === "gba") {
         cyclePaletteAction();
     } else if (emulator?.kind === "gb") {
         cgbColor.click(emulator.inst);
     }
-});
+}
 
-/** The Palette button does what F8 does and names the palette in use. */
+/** The Colors list: the correction off and on, in the core's own words, the current one ticked. */
+function colorChoices(): { labels: string[]; on: boolean } {
+    if (emulator?.kind === "gb") {
+        const inst = emulator.inst;
+        const on = inst.cgb_color_correction();
+        inst.set_cgb_color_correction(false);
+        const off = inst.color_label();
+        inst.set_cgb_color_correction(true);
+        const onLabel = inst.color_label();
+        inst.set_cgb_color_correction(on);
+        return { labels: [off, onLabel], on };
+    }
+    if (emulator?.kind === "gba") {
+        const inst = emulator.inst;
+        const on = inst.color_correction();
+        inst.set_color_correction(false);
+        const off = inst.color_label();
+        inst.set_color_correction(true);
+        const onLabel = inst.color_label();
+        inst.set_color_correction(on);
+        return { labels: [off, onLabel], on };
+    }
+    return { labels: [], on: false };
+}
+
+if (cgbColorToggleBtn) {
+    createChoiceMenu({
+        anchor: cgbColorToggleBtn,
+        title: "Colours",
+        footer: "Switch with",
+        footerKeys: ["F8"],
+        choices: () => {
+            const { labels, on } = colorChoices();
+            return labels.map((label, index) => ({ label: label.replace(/^Colors: /, ""), selected: (index === 1) === on }));
+        },
+        onPick: (index) => {
+            if ((index === 1) !== colorChoices().on) toggleColorCorrection();
+        },
+    });
+}
+
+/** The Palette button names the palette in use and lists them all; F8 steps to the next. */
 const paletteCycleBtn = document.getElementById("palette-cycle") as HTMLButtonElement | null;
 
 /** Show the Palette button only where F8 changes something; its label is the core's. */
@@ -960,7 +1007,48 @@ function updatePaletteButton() {
     if (visible) paletteCycleBtn.textContent = label;
 }
 
-paletteCycleBtn?.addEventListener("click", () => cyclePaletteAction());
+/** The running core's palettes, as a source that can only step to the next one. */
+function paletteSource() {
+    if (emulator?.kind !== "nes" && emulator?.kind !== "gb") return null;
+    const inst = emulator.inst;
+    return { label: () => inst.palette_label(), cycle: () => void inst.cycle_palette() };
+}
+
+if (paletteCycleBtn) {
+    let paletteNames: string[] = [];
+    /** The order the palettes were first listed in for this game, so the list keeps still. */
+    let paletteOrder: string[] | null = null;
+    let paletteOrderGame: string | null = null;
+    paletteCycleBtn.addEventListener("click", () => {
+        if (paletteOrderGame !== (romMetadata?.name ?? null)) {
+            paletteOrder = null;
+            paletteOrderGame = romMetadata?.name ?? null;
+        }
+    }, { capture: true });
+    createChoiceMenu({
+        anchor: paletteCycleBtn,
+        title: "Palette",
+        footer: "Cycle with",
+        footerKeys: ["F8"],
+        choices: () => {
+            const source = paletteSource();
+            const current = source?.label() ?? "";
+            paletteNames = source ? stablePaletteOrder(paletteOrder, listPalettes(source)) : [];
+            paletteOrder = paletteNames.length ? paletteNames : paletteOrder;
+            return paletteNames.map((name) => ({ label: name.replace(/^Palette: /, ""), selected: name === current }));
+        },
+        onPick: (index) => {
+            const source = paletteSource();
+            if (!source || paused || paletteNames[index] === source.label()) return;
+            if (cyclePaletteTo(source, paletteNames[index])) {
+                toastOverlay.show(paletteNames[index]);
+                syncGbPaletteWithFilter(false);
+            }
+            updateCgbColorButton();
+            updatePaletteButton();
+        },
+    });
+}
 
 /** "Game Boy games run on": remembered in this browser, applied when an original Game Boy game starts or is Reset. */
 const gbHardwareSelect = document.getElementById("gb-hardware") as HTMLSelectElement | null;
@@ -1189,6 +1277,8 @@ function updateGameTitle() {
  * based on current emulation state, and applies the result to the DOM.
  */
 function updateEmulationButtons() {
+    // The game's state changed (paused, resumed, stopped), so a list showing it closes.
+    closeOpenChoiceMenus();
     const states = computeButtonStates({
         romLoaded: romBytes !== null,
         running,
@@ -2421,7 +2511,7 @@ function debuggerStepInto() {
 }
 
 /**
- * F8, the Palette button, and the Colors button in a Game Boy Advance game: the running core decides what
+ * F8, and the Colours list in a Game Boy Advance game: the running core decides what
  * that means and returns the corner message ("" when nothing changed). The Game Boy filter sync is a no-op
  * unless an original Game Boy game's palette changed.
  */
@@ -3280,6 +3370,8 @@ async function handleKeyDown(event: KeyboardEvent) {
     }
 
     const handledShortcut = await dispatchWebShortcutAction(event, webShortcutActions);
+    // A shortcut changes what an open list shows, so any open list closes.
+    if (handledShortcut) closeOpenChoiceMenus();
     if (handledShortcut) {
         return;
     }
@@ -3963,7 +4055,44 @@ fullscreenBtn.addEventListener("click", async () => {
     await toggleScreenFullscreen();
 });
 
-filterToggleBtn.addEventListener("click", toggleFilterAction);
+// The Filter button opens the list of the running system's looks; F4 still steps through them.
+createChoiceMenu({
+    anchor: filterToggleBtn,
+    title: () => `Filter · ${gameTitle(romMetadata?.name ?? "", emulator?.kind ?? "nes").system}`,
+    footer: "Cycle with",
+    footerKeys: ["F4"],
+    choices: () => {
+        const kind = emulator?.kind ?? "nes";
+        return filterKeysForConsole(filterKeys, filters, kind).map((key) => ({
+            label: filters[key].name,
+            selected: key === buttonFilterKey(filterSelection),
+            note: key === defaultFilterForConsole(kind) ? "default" : undefined,
+        }));
+    },
+    onPick: (index) => {
+        const key = filterKeysForConsole(filterKeys, filters, emulator?.kind ?? "nes")[index];
+        if (!key || key === buttonFilterKey(filterSelection)) return;
+        filterUntouched = false;
+        chooseFilter(key);
+        updateFilterToggleButtonLabel();
+    },
+});
+
+// Reset is a split button: the button soft-resets, its arrow lists soft and hard reset.
+createChoiceMenu({
+    anchor: document.getElementById("reset-menu") as HTMLButtonElement,
+    kind: "actions",
+    footer: "Hard reset is the same as power off and on.",
+    choices: () => [
+        { label: "Soft reset", selected: false, keys: ["Ctrl", "R"] },
+        { label: "Hard reset", selected: false, keys: ["⇧", "Ctrl", "R"] },
+    ],
+    // Picked from the list, the reset says which it was, since both leave the game running.
+    onPick: (index) => {
+        toastOverlay.show(index === 0 ? "Soft reset" : "Hard reset");
+        void (index === 0 ? resetAction() : hardResetAction());
+    },
+});
 
 saveStateBtn?.addEventListener("click", async () => {
     await saveStateAction();
