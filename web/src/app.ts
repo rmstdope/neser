@@ -4016,10 +4016,16 @@ let loadPreview: SavePreview | null = null;
 /** Keeps a picture of the frame just saved, for the game's Load preview. */
 async function rememberSavePreview() {
     if (!savePreviewKey) return;
-    const channels = lastFrame?.format === gl.RGB ? 3 : 4;
-    const thumbnail = lastFrame ? frameThumbnail(lastFrame.frame, channels, width, height) : null;
-    loadPreview = { thumbnail, savedAt: Date.now() };
-    await savePreviews.put(savePreviewKey, loadPreview).catch((err) => console.error("Failed to keep the save's picture", err));
+    const key = savePreviewKey;
+    const savedAt = Date.now();
+    // The saved frame is copied now; the picture is drawn after "State saved" has had its turn to
+    // show, so taking it never holds up the click.
+    const saved = lastFrame && { frame: lastFrame.frame.slice(), channels: lastFrame.format === gl.RGB ? 3 : 4, width, height } as const;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const thumbnail = saved ? frameThumbnail(saved.frame, saved.channels, saved.width, saved.height) : null;
+    if (key !== savePreviewKey) return;
+    loadPreview = { thumbnail, savedAt };
+    await savePreviews.put(key, loadPreview).catch((err) => console.error("Failed to keep the save's picture", err));
     renderLoadPreview();
 }
 
