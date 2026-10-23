@@ -179,6 +179,8 @@ test.describe("Settings panel, firmware and debugger", () => {
         const dock = (await panel.boundingBox())!;
         expect(dock.y).toBeGreaterThanOrEqual(picture.y + picture.height);
         expect(dock.width).toBeGreaterThan(600);
+        // Opening it brings it into view, rather than below the fold where F5 would seem to do nothing.
+        await expect(panel).toBeInViewport({ ratio: 0.5 });
     });
 
     test("Given the open panel over a running game, when the backdrop is clicked, then it closes and the game carries on", async ({ page }) => {

@@ -2477,7 +2477,10 @@ function debuggerWatchUpdateAddress(index: number, value: string) {
 
 function showDebuggerPanel() {
     if (!debuggerPanel) return;
+    const opening = debuggerPanel.classList.contains("hidden");
     debuggerPanel.classList.remove("hidden");
+    // Docked under the picture on a narrow window, it can open below the fold: bring it into view.
+    if (opening) debuggerPanel.scrollIntoView({ block: "nearest" });
     updateDebuggerPanel();
     updateDebuggerButton();
     setStatus("Debugger paused");
