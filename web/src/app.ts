@@ -2893,6 +2893,9 @@ const settingsPanel = createSettingsPanel({
         renderSettingsKeys();
         renderSettingsGamepads();
         settingsDebuggerBtn.disabled = !(nes && running);
+        // A firmware message is about the file just chosen; each opening starts clear.
+        const firmwareMessage = document.getElementById("snes-firmware-message");
+        if (firmwareMessage) firmwareMessage.textContent = "";
     },
     onClose: () => {
         if (pausedBySettings && running && paused) pauseResume();

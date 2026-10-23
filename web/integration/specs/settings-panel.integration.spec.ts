@@ -83,6 +83,19 @@ test.describe("Settings panel, firmware and debugger", () => {
         await expect(message).toContainText("That isn't a DSP-2 firmware file");
         await expect(message).toContainText('"x.rom" is 100 bytes; the firmware is exactly 8 KB.');
         expect(await message.evaluate((el) => el.closest("#settings-panel") !== null)).toBe(true);
+
+        // The words are about that file only: the next opening starts clear.
+        await closeSettings(page);
+        await openSettings(page);
+        await expect(message).toBeHidden();
+    });
+
+    test("Given the open panel, then the top bar above it stays clear of the dimmed backdrop", async ({ page }) => {
+        await openApp(page);
+        await openSettings(page);
+        const backdropTop = await page.locator("#settings-panel").evaluate((el) => getComputedStyle(el, "::backdrop").top);
+        const header = (await page.locator("header").boundingBox())!;
+        expect(parseFloat(backdropTop)).toBeGreaterThanOrEqual(header.y + header.height - 1);
     });
 
     test("Given an NES game, when Open debugger is pressed, then the panel closes and the debugger shows; with no game it cannot be pressed", async ({ page }) => {

@@ -624,7 +624,9 @@ body.handheld .app-topbar {
   display: flex;
 }
 
+/* The backdrop dims the page below the top bar, which stays clear, as drawn. */
 .settings-sheet::backdrop {
+  top: 3.5rem;
   background: rgba(3, 6, 11, 0.6);
   backdrop-filter: blur(2px);
 }
