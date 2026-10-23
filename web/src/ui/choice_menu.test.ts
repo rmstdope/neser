@@ -112,4 +112,22 @@ describe("createChoiceMenu", () => {
         anchor.click();
         expect(menu()!.querySelector(".choice-menu-footer")!.textContent).toBe("Hard reset is the same as power off and on.");
     });
+
+    it("Given focus in an open list, When something else closes it, Then focus goes back to its button", () => {
+        make();
+        anchor.click();
+        expect(menu()!.contains(document.activeElement)).toBe(true);
+        closeOpenChoiceMenus();
+        expect(document.activeElement).toBe(anchor);
+    });
+
+    it("Given focus elsewhere, When something else closes an open list, Then focus stays where it is", () => {
+        make();
+        anchor.click();
+        const other = document.body.appendChild(document.createElement("button"));
+        other.focus();
+        closeOpenChoiceMenus();
+        expect(document.activeElement).toBe(other);
+        other.remove();
+    });
 });

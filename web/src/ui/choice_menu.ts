@@ -55,7 +55,13 @@ export function createChoiceMenu({
         return menu ? [...menu.querySelectorAll<HTMLButtonElement>(".choice-menu-item")] : [];
     }
 
-    const closeQuietly = () => close(false);
+    // Closed by something else: focus returns to the button only if it was in the list and the
+    // button is still there to take it (Palette and Colours hide on a pause).
+    const closeQuietly = () => {
+        const hadFocus = menu?.contains(document.activeElement) ?? false;
+        close(false);
+        if (hadFocus && anchor.isConnected && !anchor.disabled && (anchor.checkVisibility?.() ?? true)) anchor.focus();
+    };
 
     function close(returnFocus = true) {
         if (!menu) return;
