@@ -518,6 +518,13 @@ body.handheld.touch-running .game-view {
   align-items: stretch;
 }
 
+body.handheld.touch-running .game-stage {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  align-items: stretch;
+}
+
 /* Phones keep the top bar's own height, which the handheld picture size allows for. */
 body.handheld .app-topbar {
   min-height: 0;
