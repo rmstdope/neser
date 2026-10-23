@@ -66,7 +66,7 @@ import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
 import { gameTitle } from "./ui/game_title";
-import { DEFAULT_VOLUME, VOLUME_STORAGE_KEY, parseStoredVolume, volumeIconState, volumeToGain } from "./ui/volume";
+import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import {
     type KeyBindingRow,
     type KeyBindingSink,
@@ -98,7 +98,8 @@ import {
     computeHandheldCanvasSize,
     initialWindowedHeight,
 } from "./display/canvas_size";
-import { probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
+import {
+    zoomLevelLabel, probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
 import {
     browserStorage,
@@ -936,6 +937,7 @@ function updateCgbColorButton() {
         paused,
     });
     cgbColorToggleBtn.style.display = visible ? "" : "none";
+    cgbColorToggleBtn.disabled = paused;
     if (emulator?.kind === "gb" || emulator?.kind === "gba") cgbColorToggleBtn.textContent = emulator.inst.color_label();
 }
 
@@ -956,6 +958,7 @@ function updatePaletteButton() {
     const label = emulator?.kind === "nes" || emulator?.kind === "gb" ? emulator.inst.palette_label() : "";
     const visible = paletteButtonVisible({ kind: emulator?.kind ?? null, label, running, paused });
     paletteCycleBtn.style.display = visible ? "" : "none";
+    paletteCycleBtn.disabled = paused;
     if (visible) paletteCycleBtn.textContent = label;
 }
 
@@ -1035,7 +1038,8 @@ function updateGameTitle() {
     const shown = running && emulator !== null && romMetadata !== null;
     gameTitleEl.classList.toggle("hidden", !shown);
     if (!shown) return;
-    const { system, title, file } = gameTitle(romMetadata!.name, emulator!.kind);
+    const isColor = emulator!.kind === "gb" && emulator!.inst.is_color();
+    const { system, title, file } = gameTitle(romMetadata!.name, emulator!.kind, isColor);
     const systemEl = document.getElementById("game-system")!;
     systemEl.textContent = system;
     systemEl.dataset.system = system;
@@ -2794,21 +2798,13 @@ function updateMuteButton() {
     muteBtn!.dataset.tip = audioMuted ? "Unmute" : "Mute";
 }
 const volumeSlider = document.getElementById("volume") as HTMLInputElement | null;
-try {
-    volumePercent = parseStoredVolume(localStorage.getItem(VOLUME_STORAGE_KEY));
-} catch {
-    volumePercent = DEFAULT_VOLUME;
-}
+volumePercent = readStoredVolume(browserStorage());
 if (volumeSlider) {
     volumeSlider.value = String(volumePercent);
     volumeSlider.addEventListener("input", () => {
         volumePercent = parseStoredVolume(volumeSlider.value);
         if (masterGain) masterGain.gain.value = volumeToGain(volumePercent);
-        try {
-            localStorage.setItem(VOLUME_STORAGE_KEY, String(volumePercent));
-        } catch {
-            // Private windows may refuse storage; the slider still works for this visit.
-        }
+        writeStoredVolume(browserStorage(), volumePercent);
         updateMuteButton();
     });
 }
@@ -3537,6 +3533,8 @@ function isInFullscreen(): boolean {
     return document.fullscreenElement === fullscreenRoot();
 }
 
+const zoomLevelEl = document.getElementById("zoom-level");
+
 function updateZoomButtonState() {
     const inScreenFullscreen = isInFullscreen();
     if (inScreenFullscreen) {
@@ -3557,6 +3555,7 @@ function updateZoomButtonState() {
 
     screenMinusBtn.disabled = !canZoomOut;
     screenPlusBtn.disabled = !canZoomIn;
+    if (zoomLevelEl) zoomLevelEl.textContent = zoomLevelLabel(currentHeight);
 }
 
 function applyZoom(direction: "in" | "out") {

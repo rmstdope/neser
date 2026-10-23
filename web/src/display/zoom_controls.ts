@@ -1,4 +1,10 @@
 export const MIN_CANVAS_HEIGHT = 240;
+
+/** The control bar's zoom level: the picture's height as a multiple of a console's 240 lines. */
+export function zoomLevelLabel(height: number): string {
+    const level = Math.round((height / 240) * 10) / 10;
+    return `${level}×`;
+}
 export const MAX_CANVAS_HEIGHT = 1440;
 
 export function clampCanvasHeight(height: number, minHeight = MIN_CANVAS_HEIGHT, maxHeight = MAX_CANVAS_HEIGHT) {

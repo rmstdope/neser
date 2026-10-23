@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
     advanceZoomState,
+    zoomLevelLabel,
     findNextVisibleZoomHeight,
     nextViewportZoomBlocks,
     probeNextZoomHeight,
@@ -186,4 +187,11 @@ it("probeZoomAvailability reports both directions without touching the backing s
         expect(canvas.backingStoreWrites).toEqual([]);
     }
     expect(clamped.style.width).toBe(cssWidthFor(720));
+});
+
+it("zoomLevelLabel names the picture's height as a multiple of the 240 lines a console draws", () => {
+    expect(zoomLevelLabel(720)).toBe("3×");
+    expect(zoomLevelLabel(600)).toBe("2.5×");
+    expect(zoomLevelLabel(460)).toBe("1.9×");
+    expect(zoomLevelLabel(240)).toBe("1×");
 });

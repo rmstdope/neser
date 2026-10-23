@@ -39,17 +39,27 @@ describe("the control bar under the picture", () => {
         expect(bar.querySelectorAll(".control-bar-sep")).toHaveLength(3);
     });
 
-    it("Given a control with a keyboard shortcut, When hovering it, Then its tip names the key", () => {
-        const tips: Record<string, string> = {
-            pause: "Space", reset: "Control+R", "save-state": "F6", "load-state": "F7",
-            "filter-toggle": "F4", "palette-cycle": "F8", "cgb-color-toggle": "F8", fullscreen: "Control+F",
+    it("Given a control with a keyboard shortcut, When hovered or focused, Then its tip names the key as the help does", () => {
+        const tips: Record<string, [string, string]> = {
+            pause: ["Space", "Space"], reset: ["Control+R", "Ctrl+R"], "save-state": ["F6", "F6"], "load-state": ["F7", "F7"],
+            "filter-toggle": ["F4", "F4"], "palette-cycle": ["F8", "F8"], "cgb-color-toggle": ["F8", "F8"], fullscreen: ["Control+F", "Ctrl+F"],
         };
-        for (const [id, keys] of Object.entries(tips)) {
+        for (const [id, [spec, shown]] of Object.entries(tips)) {
             const el = page.getElementById(id)!;
-            expect(el.getAttribute("aria-keyshortcuts"), id).toBe(keys);
+            expect(el.getAttribute("aria-keyshortcuts"), id).toBe(spec);
+            expect(el.dataset.keys, id).toBe(shown);
             expect(el.dataset.tip, id).toBeTruthy();
         }
         expect(mainCss).toMatch(/\[data-tip\]:hover::after/);
+        expect(mainCss).toMatch(/\[data-tip\]:focus-visible::after/);
+    });
+
+    it("Given the save states and zoom, When reading them, Then they read as drawn: Save, Load, and the zoom level between − and +", () => {
+        expect(page.getElementById("save-state")!.textContent).toBe("Save");
+        expect(page.getElementById("load-state")!.textContent).toBe("Load");
+        const level = page.getElementById("zoom-level")!;
+        expect(level.previousElementSibling!.id).toBe("screen-minus");
+        expect(level.nextElementSibling!.id).toBe("screen-plus");
     });
 
     it("Given every control bar button, When drawn, Then it carries an icon", () => {

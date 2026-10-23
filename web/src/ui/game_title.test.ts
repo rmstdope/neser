@@ -13,7 +13,12 @@ describe("gameTitle", () => {
         expect(gameTitle("a.gb", "gb").system).toBe("GB");
     });
 
-    it("Given a Game Boy Color file, When naming its system, Then the badge says GBC", () => {
+    it("Given the core says the game runs in colour, When naming its system, Then the badge says GBC whatever the file is called", () => {
+        expect(gameTitle("colour game.gb", "gb", true).system).toBe("GBC");
+        expect(gameTitle("Some Game.gbc", "gb", false).system).toBe("GB");
+    });
+
+    it("Given a Game Boy Color file and no word from the core, When naming its system, Then the badge says GBC", () => {
         expect(gameTitle("Some Game.gbc", "gb").system).toBe("GBC");
         expect(gameTitle("Some Game.CGB", "gb").system).toBe("GBC");
     });

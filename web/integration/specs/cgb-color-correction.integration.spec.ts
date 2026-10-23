@@ -45,10 +45,12 @@ test.describe("Colors button (Game Boy Color LCD colour correction)", () => {
 
         await page.locator(PAUSE_BUTTON_SELECTOR).click();
         await waitForPausedState(page);
-        await expect(colors).toBeHidden();
+        // Paused, it keeps its place but cannot be pressed: no new frame would show the change.
+        await expect(colors).toBeVisible();
+        await expect(colors).toBeDisabled();
 
         await page.locator(PAUSE_BUTTON_SELECTOR).click();
-        await expect(colors).toBeVisible();
+        await expect(colors).toBeEnabled();
         await expect(colors).toHaveText("Colors: Raw");
     });
 

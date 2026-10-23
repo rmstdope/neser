@@ -31,7 +31,7 @@
         </header>
 
         <!-- Canvas area -->
-        <main class="flex-1 flex flex-col items-center justify-center p-4">
+        <main class="app-main flex-1 flex flex-col items-center justify-center p-4">
           <!-- Touch controls wrapper: D-pad | Canvas | Action buttons -->
           <div id="touch-controls" class="touch-controls" aria-hidden="true">
             <!-- D-pad (left of canvas) -->
@@ -67,27 +67,28 @@
                app's lifecycle (idle|running|paused); icons and hover tips are drawn in main.css. -->
           <div id="emulation-controls" class="control-bar" role="toolbar" aria-label="Game controls" data-emulation-state="idle">
             <button id="start" class="btn btn-primary btn-sm" data-icon="play" data-tip="Start">Start</button>
-            <button id="pause" class="btn btn-ghost btn-sm" data-icon="pause" data-tip="Pause or resume" aria-keyshortcuts="Space" aria-label="Pause or resume emulation">Pause</button>
-            <button id="reset" class="btn btn-ghost btn-sm" data-icon="reset" data-tip="Reset" aria-keyshortcuts="Control+R" aria-label="Reset emulation">Reset</button>
+            <button id="pause" class="btn btn-ghost btn-sm" data-icon="pause" data-tip="Pause or resume" aria-keyshortcuts="Space" data-keys="Space" aria-label="Pause or resume emulation">Pause</button>
+            <button id="reset" class="btn btn-ghost btn-sm" data-icon="reset" data-tip="Reset" aria-keyshortcuts="Control+R" data-keys="Ctrl+R" aria-label="Reset emulation">Reset</button>
             <span class="control-bar-sep" aria-hidden="true"></span>
             <div id="save-state-section" class="control-bar-group" data-save-state="empty">
-              <button id="save-state" class="btn btn-ghost btn-sm" data-icon="save" data-tip="Save state" aria-keyshortcuts="F6" disabled>Save State</button>
-              <button id="load-state" class="btn btn-ghost btn-sm" data-icon="load" data-tip="Load state" aria-keyshortcuts="F7" disabled>Load State</button>
+              <button id="save-state" class="btn btn-ghost btn-sm" data-icon="save" data-tip="Save state" aria-keyshortcuts="F6" data-keys="F6" disabled>Save</button>
+              <button id="load-state" class="btn btn-ghost btn-sm" data-icon="load" data-tip="Load state" aria-keyshortcuts="F7" data-keys="F7" disabled>Load</button>
             </div>
             <span class="control-bar-sep" aria-hidden="true"></span>
             <button id="stop" class="btn btn-ghost btn-sm" data-icon="eject" data-tip="Eject the game" aria-label="Eject game">Eject</button>
             <span class="control-bar-sep" aria-hidden="true"></span>
             <div class="control-bar-group">
               <button id="screen-minus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-out" data-tip="Zoom out">Zoom -</button>
+              <span id="zoom-level" class="zoom-level" aria-live="polite"></span>
               <button id="screen-plus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-in" data-tip="Zoom in">Zoom +</button>
-              <button id="filter-toggle" class="btn btn-ghost btn-sm" data-icon="filter" data-tip="Next filter" aria-keyshortcuts="F4">Filter</button>
-              <button id="palette-cycle" class="btn btn-ghost btn-sm whitespace-nowrap" data-icon="palette" data-tip="Next palette" aria-keyshortcuts="F8" style="display: none">Palette</button>
-              <button id="cgb-color-toggle" class="btn btn-ghost btn-sm" data-icon="palette" data-tip="Colour correction" aria-keyshortcuts="F8" style="display: none">Colors: Raw</button>
+              <button id="filter-toggle" class="btn btn-ghost btn-sm" data-icon="filter" data-tip="Next filter" aria-keyshortcuts="F4" data-keys="F4">Filter</button>
+              <button id="palette-cycle" class="btn btn-ghost btn-sm whitespace-nowrap" data-icon="palette" data-tip="Next palette" aria-keyshortcuts="F8" data-keys="F8" style="display: none">Palette</button>
+              <button id="cgb-color-toggle" class="btn btn-ghost btn-sm" data-icon="palette" data-tip="Colour correction" aria-keyshortcuts="F8" data-keys="F8" style="display: none">Colors: Raw</button>
               <div class="volume-control">
                 <button id="mute" class="btn btn-ghost btn-sm btn-icon-only" data-icon="volume" data-tip="Mute" aria-pressed="false">Mute</button>
                 <input id="volume" type="range" min="0" max="100" value="100" class="range range-xs" aria-label="Volume" />
               </div>
-              <button id="fullscreen" class="btn btn-ghost btn-sm btn-icon-only" data-icon="fullscreen" data-tip="Fullscreen" aria-keyshortcuts="Control+F">Fullscreen</button>
+              <button id="fullscreen" class="btn btn-ghost btn-sm btn-icon-only" data-icon="fullscreen" data-tip="Fullscreen" aria-keyshortcuts="Control+F" data-keys="Ctrl+F">Fullscreen</button>
             </div>
           </div>
 

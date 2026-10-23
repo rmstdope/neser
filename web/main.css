@@ -436,7 +436,8 @@ canvas {
 }
 
 /* Hover tips: what the control does, and its key when it has one. */
-[data-tip]:hover::after {
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
   content: attr(data-tip);
   position: absolute;
   bottom: calc(100% + 10px);
@@ -454,8 +455,62 @@ canvas {
   z-index: 30;
 }
 
-[data-tip][aria-keyshortcuts]:hover::after {
-  content: attr(data-tip) "  ·  " attr(aria-keyshortcuts);
+[data-tip][data-keys]:hover::after,
+[data-tip][data-keys]:focus-visible::after {
+  content: attr(data-tip) "  ·  " attr(data-keys);
+}
+
+/* Pause and Resume take the same width, so the bar does not move under the pointer. */
+#pause {
+  min-width: 6.5rem;
+  justify-content: flex-start;
+}
+
+.zoom-level {
+  min-width: 2.5rem;
+  text-align: center;
+  font-family: var(--font-mono-ui);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Where the bar would not fit on one row, the transport controls show only their icons. */
+.app-main {
+  container-type: inline-size;
+}
+
+@container (max-width: 1100px) {
+  .control-bar #pause,
+  .control-bar #reset,
+  .control-bar #save-state,
+  .control-bar #load-state,
+  .control-bar #stop {
+    width: 2.25rem;
+    min-width: 0;
+    padding: 0;
+    font-size: 0;
+    justify-content: center;
+  }
+}
+
+@container (max-width: 760px) {
+  .control-bar-sep {
+    display: none;
+  }
+
+  .volume-control .range {
+    width: 56px;
+  }
+}
+
+/* The handheld layout (phones) has the touch controls; the bar returns there in the phone step. */
+body.handheld.touch-running .control-bar {
+  display: none;
+}
+
+/* Phones keep the top bar's own height, which the handheld picture size allows for. */
+body.handheld .app-topbar {
+  min-height: 0;
 }
 
 .volume-control {

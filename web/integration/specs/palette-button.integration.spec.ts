@@ -58,11 +58,13 @@ test.describe("Palette button (does what F8 does)", () => {
             await expect(palette).toHaveText(`Palette: ${name}`);
         }
 
+        // Paused, it keeps its place in the bar but cannot be pressed: no new frame would show the change.
         await page.locator("#pause").click();
         await waitForPausedState(page);
-        await expect(palette).toBeHidden();
-        await page.locator("#pause").click();
         await expect(palette).toBeVisible();
+        await expect(palette).toBeDisabled();
+        await page.locator("#pause").click();
+        await expect(palette).toBeEnabled();
 
         await page.locator("#stop").click();
         await waitForIdleState(page);
