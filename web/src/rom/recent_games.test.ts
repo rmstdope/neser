@@ -1,0 +1,101 @@
+/**
+ * @vitest-environment jsdom
+ */
+import "fake-indexeddb/auto";
+
+import { describe, expect, it, vi } from "vitest";
+
+import { createRecentGamesStore, playedWhen, RECENT_GAMES_LIMIT, renderRecentGames, type RecentGame } from "./recent_games";
+
+const game = (name: string, playedAt: number, extra: Partial<RecentGame> = {}): RecentGame => ({
+    name,
+    system: "NES",
+    bytes: new Uint8Array([1, 2, 3]),
+    fromFile: true,
+    playedAt,
+    thumbnail: null,
+    ...extra,
+});
+
+let dbCount = 0;
+const freshStore = () => createRecentGamesStore(`neser-recent-test-${dbCount++}`);
+
+describe("the recent games store", () => {
+    it("Given games played, When listed, Then the latest played comes first", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1));
+        await store.remember(game("b.gb", 3));
+        await store.remember(game("c.sfc", 2));
+        expect((await store.list()).map((g) => g.name)).toEqual(["b.gb", "c.sfc", "a.nes"]);
+    });
+
+    it("Given a game played again, When remembered, Then it is listed once, at the top, keeping its picture", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1));
+        await store.setThumbnail("a.nes", "data:image/png;base64,AAA");
+        await store.remember(game("b.gb", 2));
+        await store.remember(game("a.nes", 3));
+        const list = await store.list();
+        expect(list.map((g) => g.name)).toEqual(["a.nes", "b.gb"]);
+        expect(list[0].thumbnail).toBe("data:image/png;base64,AAA");
+    });
+
+    it("Given more games than the limit, When remembered, Then the least recently played are forgotten", async () => {
+        const store = freshStore();
+        for (let i = 0; i < RECENT_GAMES_LIMIT + 2; i++) await store.remember(game(`g${i}.nes`, i));
+        const names = (await store.list()).map((g) => g.name);
+        expect(names).toHaveLength(RECENT_GAMES_LIMIT);
+        expect(names).not.toContain("g0.nes");
+        expect(names).not.toContain("g1.nes");
+        expect(names[0]).toBe(`g${RECENT_GAMES_LIMIT + 1}.nes`);
+    });
+
+    it("Given remembered games, When cleared, Then none are left and the bytes come back intact before that", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1, { bytes: new Uint8Array([9, 8, 7]) }));
+        expect([...(await store.list())[0].bytes]).toEqual([9, 8, 7]);
+        await store.clear();
+        expect(await store.list()).toEqual([]);
+    });
+
+    it("Given a picture for a game no longer remembered, When set, Then nothing is stored", async () => {
+        const store = freshStore();
+        await store.setThumbnail("gone.nes", "data:x");
+        expect(await store.list()).toEqual([]);
+    });
+});
+
+describe("playedWhen", () => {
+    const now = new Date(2026, 9, 23, 15, 0);
+    it("Given when a game was played, When said in words, Then it reads Today, Yesterday, then days, then the date", () => {
+        expect(playedWhen(now, new Date(2026, 9, 23, 1, 0))).toBe("Today");
+        expect(playedWhen(now, new Date(2026, 9, 22, 23, 0))).toBe("Yesterday");
+        expect(playedWhen(now, new Date(2026, 9, 20, 12, 0))).toBe("3 days ago");
+        expect(playedWhen(now, new Date(2026, 8, 1, 12, 0))).toBe(new Date(2026, 8, 1).toLocaleDateString());
+    });
+});
+
+describe("renderRecentGames", () => {
+    const now = new Date(2026, 9, 23, 15, 0);
+
+    it("Given recent games, When drawn, Then each is a card with its picture or system, its name and when it was played, and pressing it plays it", () => {
+        const el = document.createElement("div");
+        const onPick = vi.fn();
+        renderRecentGames(el, [game("roms/tetris.gb", now.getTime(), { system: "GB", thumbnail: "data:image/png;base64,AAA" }), game("star.sfc", now.getTime() - 86_400_000, { system: "SNES" })], now, onPick);
+        const cards = [...el.querySelectorAll<HTMLButtonElement>("button.recent-card")];
+        expect(cards.map((c) => c.querySelector(".recent-card-name")!.textContent)).toEqual(["tetris", "star"]);
+        expect(cards.map((c) => c.querySelector(".recent-card-when")!.textContent)).toEqual(["Today", "Yesterday"]);
+        expect(cards[0].querySelector("img")!.getAttribute("src")).toBe("data:image/png;base64,AAA");
+        expect(cards[1].querySelector("img")).toBeNull();
+        expect(cards[1].querySelector(".sys-badge")!.textContent).toBe("SNES");
+        expect(cards[0].getAttribute("aria-label")).toBe("Play tetris again");
+        cards[1].click();
+        expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ name: "star.sfc" }));
+    });
+
+    it("Given no recent games, When drawn, Then the row is empty", () => {
+        const el = document.createElement("div");
+        renderRecentGames(el, [], now, () => {});
+        expect(el.children).toHaveLength(0);
+    });
+});

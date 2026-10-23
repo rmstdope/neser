@@ -67,6 +67,8 @@ import { planFrame } from "./audio/frame_plan";
 import { gameTitle } from "./ui/game_title";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
+import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
+import { frameThumbnail } from "./display/thumbnail";
 import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
 import { belongsToOpenDialog, isEditableKeyboardTarget } from "./shortcuts/keyboard_target";
 import {
@@ -1055,6 +1057,7 @@ function updateView() {
 
 function openLibraryOverGame() {
     if (!running || libraryOverGame) return;
+    captureRecentThumbnail();
     libraryOverGame = true;
     pausedByLibrary = !paused;
     if (pausedByLibrary) pauseResume();
@@ -1100,6 +1103,46 @@ libraryOpenBtn.addEventListener("click", () => {
     if (libraryOverGame) backToGame();
     else openLibraryOverGame();
 });
+
+// ── "Continue playing": the games last played in this browser ──
+const recentGames = createRecentGamesStore();
+const recentEl = document.getElementById("recent") as HTMLElement;
+const recentRowEl = document.getElementById("recent-row") as HTMLElement;
+
+async function refreshRecentGames() {
+    const games = await recentGames.list().catch(() => [] as RecentGame[]);
+    renderRecentGames(recentRowEl, games, new Date(), (game) => void loadRecentGame(game));
+    recentEl.classList.toggle("hidden", games.length === 0);
+}
+
+/** Remembers the game that just started, as played now. */
+function rememberRecentGame() {
+    if (!romMetadata || !romBytes || !emulator) return;
+    const isColor = emulator.kind === "gb" && emulator.inst.is_color();
+    const game: RecentGame = {
+        name: romMetadata.name,
+        system: gameTitle(romMetadata.name, emulator.kind, isColor).system,
+        bytes: romBytes,
+        fromFile: romFromFile,
+        playedAt: Date.now(),
+        thumbnail: null,
+    };
+    void recentGames.remember(game).then(refreshRecentGames, (err) => console.error("Failed to remember the game", err));
+}
+
+/** Keeps a picture of the running game's last frame for its card, before it stops or is left. */
+function captureRecentThumbnail() {
+    if (!running || !lastFrame || !romMetadata) return;
+    const channels = lastFrame.format === gl.RGB ? 3 : 4;
+    const picture = frameThumbnail(lastFrame.frame, channels, width, height);
+    if (!picture) return;
+    void recentGames.setThumbnail(romMetadata.name, picture).then(refreshRecentGames, (err) => console.error("Failed to keep the game's picture", err));
+}
+
+document.getElementById("recent-clear")!.addEventListener("click", () => {
+    void recentGames.clear().then(refreshRecentGames);
+});
+void refreshRecentGames();
 
 // A game file dropped anywhere on the page is loaded and started.
 const dragHasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
@@ -1549,6 +1592,7 @@ async function loadRomFile(file: File) {
     requestPointerLockFromUserGesture();
     const bytes = new Uint8Array(await file.arrayBuffer());
     // Only now, with the new game in hand, is the one under the library left behind.
+    captureRecentThumbnail();
     romFromFile = true;
     leaveLibraryForNewGame();
     const expectedRom = autorunCtx.getExpectedRomName();
@@ -1558,6 +1602,24 @@ async function loadRomFile(file: File) {
     await handleRomSelection({
         bytes,
         name: file.name,
+        running,
+        stop,
+        applyRomBytes,
+        start,
+        focusCanvas: () => canvas.focus()
+    });
+}
+
+/** Plays a game from the library's "Continue playing" row again, from the bytes kept for it. */
+async function loadRecentGame(game: RecentGame) {
+    captureRecentThumbnail();
+    romInput.value = "";
+    romFromFile = game.fromFile;
+    leaveLibraryForNewGame();
+    requestPointerLockFromUserGesture();
+    await handleRomSelection({
+        bytes: game.bytes,
+        name: game.name,
         running,
         stop,
         applyRomBytes,
@@ -1576,6 +1638,7 @@ async function loadBundledRom(url: string, name: string) {
         }
         const bytes = new Uint8Array(await response.arrayBuffer());
         // Only now, with the new game in hand, is the one under the library left behind.
+        captureRecentThumbnail();
         romInput.value = "";
         romFromFile = false;
         leaveLibraryForNewGame();
@@ -1824,6 +1887,7 @@ async function start(): Promise<boolean> {
     updateAutorunControls();
     updateEmulationButtons();
     updateSaveStateButtons();
+    rememberRecentGame();
     requestAnimationFrame(step);
     return true;
 }
@@ -2432,6 +2496,7 @@ function debuggerHexdumpGoToAddress() {
 }
 
 function stop() {
+    captureRecentThumbnail();
     // ── NES-only: Autorun teardown ────────────────────────────────────────
     if (nes && nes.autorun_is_recording()) {
         const recordingBytes = nes.stop_autorun();
