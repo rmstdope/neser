@@ -85,7 +85,7 @@ import {
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
-import { helpPadKeys, renderHelpShortcuts, renderPad } from "./ui/help_panel";
+import { helpChips, helpPadKeys, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
@@ -3222,8 +3222,9 @@ const webShortcutActions = {
 // ── Keys and controls (H): the shortcuts, and a controller for the chosen system and player ──
 const helpPanel = document.getElementById("help-panel") as HTMLDialogElement;
 const helpPadEl = document.getElementById("help-pad") as HTMLElement;
-const helpPlayersEl = document.getElementById("help-players") as HTMLElement;
-const helpSystemButtons = [...document.querySelectorAll<HTMLButtonElement>("#help-systems [data-console]")];
+const helpChipsEl = document.getElementById("help-chips") as HTMLElement;
+const helpGamepadNote = document.getElementById("help-gamepad-note") as HTMLElement;
+const helpOpenBtn = document.getElementById("help-open") as HTMLButtonElement;
 let helpConsole: ConsoleKind = "nes";
 let helpPlayer = 0;
 let pausedByHelp = false;
@@ -3232,33 +3233,28 @@ renderHelpShortcuts(document.getElementById("help-shortcuts") as HTMLElement);
 function renderHelpController() {
     const players = CONSOLES[helpConsole].playerKeyBindings;
     helpPlayer = Math.min(helpPlayer, players.length - 1);
-    for (const button of helpSystemButtons) {
-        button.setAttribute("aria-pressed", button.dataset.console === helpConsole ? "true" : "false");
-    }
-    helpPlayersEl.replaceChildren(
-        ...players.map((_, index) => {
+    helpChipsEl.replaceChildren(
+        ...helpChips(helpConsole, helpPlayer, players.length).map((chip) => {
             const button = document.createElement("button");
             button.type = "button";
-            button.textContent = `Player ${index + 1}`;
-            button.setAttribute("aria-pressed", index === helpPlayer ? "true" : "false");
+            button.className = "help-chip";
+            button.textContent = chip.label;
+            button.dataset.console = chip.console;
+            button.dataset.player = String(chip.player);
+            button.toggleAttribute("data-separated", chip.separated);
+            button.setAttribute("aria-pressed", chip.pressed ? "true" : "false");
             button.addEventListener("click", () => {
-                helpPlayer = index;
+                helpConsole = chip.console;
+                helpPlayer = chip.player;
                 renderHelpController();
             });
             return button;
         })
     );
-    helpPlayersEl.hidden = players.length < 2;
-    renderPad(helpPadEl, helpPadKeys(helpConsole, helpPlayer));
-    (document.getElementById("help-gamepads") as HTMLElement).textContent = gamepadLines([...(navigator.getGamepads?.() ?? [])]);
-}
-
-for (const button of helpSystemButtons) {
-    button.addEventListener("click", () => {
-        helpConsole = button.dataset.console as ConsoleKind;
-        helpPlayer = 0;
-        renderHelpController();
-    });
+    // The first connected gamepad is player 1's, the second player 2's, as in play.
+    const usesGamepad = selectGamepads([...(navigator.getGamepads?.() ?? [])]).length > helpPlayer;
+    renderPad(helpPadEl, helpPadKeys(helpConsole, helpPlayer), usesGamepad);
+    helpGamepadNote.hidden = usesGamepad;
 }
 
 function openHelp() {
@@ -3269,6 +3265,7 @@ function openHelp() {
     pausedByHelp = running && !paused;
     if (pausedByHelp) pauseResume();
     helpPanel.showModal();
+    helpOpenBtn.setAttribute("aria-expanded", "true");
 }
 
 function closeHelp() {
@@ -3276,6 +3273,7 @@ function closeHelp() {
 }
 
 helpPanel.addEventListener("close", () => {
+    helpOpenBtn.setAttribute("aria-expanded", "false");
     if (pausedByHelp && running && paused) pauseResume();
     pausedByHelp = false;
 });
@@ -3292,7 +3290,7 @@ helpPanel.addEventListener("click", (event) => {
     if (event.target === helpPanel) closeHelp();
 });
 document.getElementById("help-close")!.addEventListener("click", closeHelp);
-document.getElementById("help-open")!.addEventListener("click", openHelp);
+helpOpenBtn.addEventListener("click", openHelp);
 // A pad appears once a button is pressed on it; the open panel follows it.
 window.addEventListener("gamepadconnected", () => helpPanel.open && renderHelpController());
 window.addEventListener("gamepaddisconnected", () => helpPanel.open && renderHelpController());

@@ -121,9 +121,12 @@ test.describe("Phase 3 extended UX", () => {
         await waitForPausedState(page);
         const debuggerRow = panel.locator(".help-shortcut").filter({ hasText: "Debugger" });
         await expect(debuggerRow.locator("kbd")).toHaveText(["F5"]);
-        await expect(panel.locator('#help-systems [data-console="nes"]')).toHaveAttribute("aria-pressed", "true");
+        await expect(panel.locator("#help-chips button")).toHaveText(["NES · Player 1", "Player 2", "GB", "GBA", "SNES"]);
+        await expect(panel.locator("#help-chips button").first()).toHaveAttribute("aria-pressed", "true");
+        await expect(panel.locator("#help-gamepad-note")).toHaveText("Plug in a gamepad and press any button to use it instead.");
         await expect(panel.locator('#help-pad [data-button="A"] kbd')).toHaveText(["R"]);
-        await expect(panel.locator("#help-players button")).toHaveText(["Player 1", "Player 2"]);
+        await panel.locator("#help-chips button", { hasText: "Player 2" }).click();
+        await expect(panel.locator('#help-pad [data-button="A"] kbd')).toHaveText(["O"]);
 
         await page.keyboard.press("h");
         await expect(panel).toBeHidden();
@@ -135,10 +138,15 @@ test.describe("Phase 3 extended UX", () => {
         await page.locator("#help-open").click();
         const panel = page.locator("#help-panel");
         await expect(panel).toBeVisible();
-        await panel.locator('#help-systems [data-console="gba"]').click();
+        await panel.locator("#help-chips button", { hasText: /^GBA$/ }).click();
+        await expect(panel.locator("#help-chips button")).toHaveText(["GBA · Player 1", "NES", "GB", "SNES"]);
         await expect(panel.locator('#help-pad [data-button="L"] kbd')).toHaveText(["V"]);
         await expect(panel.locator('#help-pad [data-button="X"]')).toHaveCount(0);
-        await expect(panel.locator("#help-players")).toBeHidden();
+
+        // The Super Nintendo's second player has keys too.
+        await panel.locator("#help-chips button", { hasText: /^SNES$/ }).click();
+        await panel.locator("#help-chips button", { hasText: "Player 2" }).click();
+        await expect(panel.locator('#help-pad [data-button="B"] kbd')).toHaveText(["P"]);
         await page.keyboard.press("Escape");
         await expect(panel).toBeHidden();
     });
@@ -164,5 +172,29 @@ test.describe("Phase 3 extended UX", () => {
 
         expect(consoleErrors).toHaveLength(0);
         expect(pageErrors).toHaveLength(0);
+    });
+
+    test("Given a phone-width window, when the keys and controls panel shows the SNES pad, then no two of its buttons overlap", async ({ page }) => {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await openApp(page);
+        await page.evaluate(() => (document.getElementById("help-open") as HTMLButtonElement).click());
+        const panel = page.locator("#help-panel");
+        await expect(panel).toBeVisible();
+        for (const system of ["NES", "SNES"]) {
+            const chip = panel.locator("#help-chips button", { hasText: new RegExp(`^${system}( · Player 1)?$`) });
+            await chip.click();
+            const boxes = await panel.locator("#help-pad .pad-button").evaluateAll((els) =>
+                els.map((el) => {
+                    const r = el.getBoundingClientRect();
+                    return { name: (el as HTMLElement).dataset.button, l: r.left, r: r.right, t: r.top, b: r.bottom };
+                })
+            );
+            const overlaps = boxes.flatMap((a, i) =>
+                boxes.slice(i + 1).filter((b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b).map((b) => `${a.name}×${b.name}`)
+            );
+            expect(overlaps, system).toEqual([]);
+            const pad = (await panel.locator("#help-pad").boundingBox())!;
+            expect(pad.x + pad.width, system).toBeLessThanOrEqual(390);
+        }
     });
 });

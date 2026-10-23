@@ -18,8 +18,40 @@ export const HELP_SHORTCUTS: readonly { keys: string[]; action: string }[] = [
     { keys: ["Ctrl", "F"], action: "Fullscreen" },
     { keys: ["F5"], action: "Debugger" },
     { keys: ["F10", "F11"], action: "Step over / into" },
-    { keys: ["H"], action: "These keys and controls" },
 ];
+
+/** The systems the chips name, in the order they follow the one in view. */
+const HELP_SYSTEMS: readonly { console: ConsoleKind; label: string }[] = [
+    { console: "nes", label: "NES" },
+    { console: "gb", label: "GB" },
+    { console: "gba", label: "GBA" },
+    { console: "snes", label: "SNES" },
+];
+
+export type HelpChip = { label: string; console: ConsoleKind; player: number; pressed: boolean; separated: boolean };
+
+/**
+ * The one row of chips above the pad, as drawn: the system in view with its first player
+ * ("NES · Player 1"), its other players, then the other systems after a gap.
+ */
+export function helpChips(inView: ConsoleKind, player: number, playerCount: number): HelpChip[] {
+    const own = HELP_SYSTEMS.find((s) => s.console === inView)!;
+    const players = Array.from({ length: playerCount }, (_, index) => ({
+        label: index === 0 ? `${own.label} · Player 1` : `Player ${index + 1}`,
+        console: inView,
+        player: index,
+        pressed: index === player,
+        separated: false,
+    }));
+    const others = HELP_SYSTEMS.filter((s) => s.console !== inView).map((s, index) => ({
+        label: s.label,
+        console: s.console,
+        player: 0,
+        pressed: false,
+        separated: index === 0,
+    }));
+    return [...players, ...others];
+}
 
 function cap(key: string): HTMLElement {
     const kbd = document.createElement("kbd");
@@ -49,14 +81,16 @@ export function renderHelpShortcuts(list: HTMLElement): void {
 /**
  * Draws a controller into `pad` for one player's key text: a D-pad, Select and Start, the face
  * buttons (two, or four where the console has X and Y) and the shoulders where it has them, each
- * with the keys that press it. Buttons the console lacks are left out.
+ * with the keys that press it, or "Gamepad" for a player who has one. Buttons the console lacks are
+ * left out.
  */
-export function renderPad(pad: HTMLElement, keyText: string): void {
+export function renderPad(pad: HTMLElement, keyText: string, usesGamepad = false): void {
     const rows = keyBindingRows(keyText);
     const buttons = new Map(rows.map((row) => [row.action, row.keys]));
     pad.dataset.layout = buttons.has("X") ? "four-button" : "two-button";
     pad.replaceChildren(
-        ...rows.map(({ action, keys }) => {
+        ...rows.map(({ action, keys: keyKeys }) => {
+            const keys = usesGamepad ? ["Gamepad"] : keyKeys;
             const button = document.createElement("div");
             button.className = "pad-button";
             button.dataset.button = action;
@@ -70,6 +104,8 @@ export function renderPad(pad: HTMLElement, keyText: string): void {
             const caps = document.createElement("span");
             caps.className = "pad-keys";
             caps.append(...keys.map(cap));
+            // Read as one thing, "A: R"; its drawn letter and caps are only the picture of it.
+            button.setAttribute("role", "img");
             button.setAttribute("aria-label", `${action}: ${keys.join(", ")}`);
             button.append(shape, name, caps);
             return button;

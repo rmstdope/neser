@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { HELP_SHORTCUTS, renderHelpShortcuts, renderPad } from "./help_panel";
+import { HELP_SHORTCUTS, helpChips, renderHelpShortcuts, renderPad } from "./help_panel";
 
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const page = () => new DOMParser().parseFromString(readFileSync(resolve(webDir, "index.html"), "utf8"), "text/html");
@@ -26,6 +26,35 @@ describe("the keys and controls panel's markup", () => {
         expect(button.getAttribute("aria-label")).toBe("Keys and controls");
         expect(button.getAttribute("aria-keyshortcuts")).toBe("H");
         expect(button.getAttribute("aria-controls")).toBe("help-panel");
+        expect(button.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("Given the controller column, When reading it, Then one row of chips sits above the pad and the drawn gamepad line below it", () => {
+        const doc = page();
+        expect(doc.getElementById("help-chips")!.getAttribute("role")).toBe("group");
+        expect(doc.getElementById("help-gamepad-note")!.textContent!.trim()).toBe("Plug in a gamepad and press any button to use it instead.");
+    });
+});
+
+describe("helpChips", () => {
+    it("Given the NES's first player in view, When the chips are made, Then they read NES · Player 1, Player 2, then the other systems", () => {
+        const chips = helpChips("nes", 0, 2);
+        expect(chips.map((c) => c.label)).toEqual(["NES · Player 1", "Player 2", "GB", "GBA", "SNES"]);
+        expect(chips.map((c) => c.pressed)).toEqual([true, false, false, false, false]);
+        expect(chips.map((c) => [c.console, c.player])).toEqual([["nes", 0], ["nes", 1], ["gb", 0], ["gba", 0], ["snes", 0]]);
+        expect(chips[2].separated).toBe(true);
+    });
+
+    it("Given the second player in view, When the chips are made, Then the system chip names the system and Player 2 is the lit one", () => {
+        const chips = helpChips("snes", 1, 2);
+        expect(chips.map((c) => c.label)).toEqual(["SNES · Player 1", "Player 2", "NES", "GB", "GBA"]);
+        expect(chips.map((c) => c.pressed)).toEqual([false, true, false, false, false]);
+    });
+
+    it("Given a one-player system, When the chips are made, Then there is no player chip and its own chip is lit", () => {
+        const chips = helpChips("gba", 0, 1);
+        expect(chips.map((c) => c.label)).toEqual(["GBA · Player 1", "NES", "GB", "SNES"]);
+        expect(chips[0].pressed).toBe(true);
     });
 });
 
@@ -45,9 +74,8 @@ describe("renderHelpShortcuts", () => {
             ["Ctrl F", "Fullscreen"],
             ["F5", "Debugger"],
             ["F10 F11", "Step over / into"],
-            ["H", "These keys and controls"],
         ]);
-        expect(HELP_SHORTCUTS).toHaveLength(10);
+        expect(HELP_SHORTCUTS).toHaveLength(9);
     });
 });
 
@@ -65,6 +93,15 @@ describe("renderPad", () => {
         expect(keysOf(pad, "Start")).toEqual(["5"]);
         expect(pad.querySelector('[data-button="X"]')).toBeNull();
         expect(pad.dataset.layout).toBe("two-button");
+        expect(pad.querySelector('[data-button="A"]')!.getAttribute("role")).toBe("img");
+        expect(pad.querySelector('[data-button="A"]')!.getAttribute("aria-label")).toBe("A: R");
+    });
+
+    it("Given a player with a gamepad, When the pad is drawn, Then each button shows Gamepad instead of its keys", () => {
+        const pad = document.createElement("div");
+        renderPad(pad, "W/A/S/D: D-Pad\nR: A\nT: B\n4: Select\n5: Start", true);
+        for (const button of ["D-Pad", "A", "B", "Select", "Start"]) expect(keysOf(pad, button), button).toEqual(["Gamepad"]);
+        expect(pad.querySelector('[data-button="A"]')!.getAttribute("aria-label")).toBe("A: Gamepad");
     });
 
     it("Given the SNES, When the pad is drawn, Then it has four face buttons and both shoulders", () => {
