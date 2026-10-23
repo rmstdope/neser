@@ -37,7 +37,8 @@
               <h2 id="library-title">Drop a game anywhere to play</h2>
               <p class="library-lede">NES, Famicom, Game Boy, Game Boy Color, Game Boy Advance and Super Nintendo files. Nothing leaves your browser.</p>
               <div class="library-cta">
-                <button type="button" id="library-choose" class="btn btn-primary" data-icon="file">Choose a file…</button>
+                <button type="button" id="library-choose" class="btn btn-primary" data-icon="file" aria-keyshortcuts="O">Choose a file…</button>
+                <span class="library-key-hint">or press <kbd class="kbd kbd-sm">O</kbd></span>
                 <input type="file" id="rom" class="hidden" aria-label="Game file" />
                 <button type="button" id="library-back" class="btn btn-outline hidden" data-icon="play">Back to the game</button>
               </div>
@@ -54,7 +55,11 @@
               <h3>Bundled test ROMs</h3>
               <span id="library-count" class="badge badge-neutral"></span>
             </div>
-            <input id="library-search" type="search" class="input input-sm w-full" placeholder="Search…" aria-label="Search the bundled test ROMs" />
+            <label class="library-search input input-sm w-full">
+              <span class="library-search-icon" aria-hidden="true"></span>
+              <input id="library-search" type="search" placeholder="Search…" aria-label="Search the bundled test ROMs" aria-keyshortcuts="/" />
+              <kbd class="kbd kbd-sm">/</kbd>
+            </label>
             <div id="library-systems" class="library-systems" role="group" aria-label="System">
               <button type="button" data-system="all" aria-pressed="true">All</button>
               <button type="button" data-system="NES" aria-pressed="false">NES</button>

@@ -1078,6 +1078,18 @@ function leaveLibraryForNewGame() {
 }
 
 libraryChooseBtn.addEventListener("click", () => romInput.click());
+
+/** The library's own keys: O chooses a file, / goes to the search. */
+function libraryKey(event: KeyboardEvent) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.code === "KeyO") {
+        event.preventDefault();
+        romInput.click();
+    } else if (event.key === "/") {
+        event.preventDefault();
+        (document.getElementById("library-search") as HTMLInputElement).focus();
+    }
+}
 libraryBackBtn.addEventListener("click", backToGame);
 libraryOpenBtn.addEventListener("click", () => {
     if (libraryOverGame) backToGame();
@@ -1529,15 +1541,17 @@ async function refreshSaveStateController() {
 
 /** Loads a game file the player chose or dropped, and starts it. */
 async function loadRomFile(file: File) {
+    requestPointerLockFromUserGesture();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // Only now, with the new game in hand, is the one under the library left behind.
     romFromFile = true;
     leaveLibraryForNewGame();
-    requestPointerLockFromUserGesture();
     const expectedRom = autorunCtx.getExpectedRomName();
     if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
         toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file.name}" was loaded — playback may not work correctly`);
     }
     await handleRomSelection({
-        bytes: new Uint8Array(await file.arrayBuffer()),
+        bytes,
         name: file.name,
         running,
         stop,
@@ -1549,9 +1563,6 @@ async function loadRomFile(file: File) {
 
 /** Loads one of the bundled test ROMs, by its URL and its path (which names it), and starts it. */
 async function loadBundledRom(url: string, name: string) {
-    romInput.value = "";
-    romFromFile = false;
-    leaveLibraryForNewGame();
     requestPointerLockFromUserGesture();
     try {
         const response = await fetch(url);
@@ -1559,6 +1570,10 @@ async function loadBundledRom(url: string, name: string) {
             throw new Error(`HTTP ${response.status}`);
         }
         const bytes = new Uint8Array(await response.arrayBuffer());
+        // Only now, with the new game in hand, is the one under the library left behind.
+        romInput.value = "";
+        romFromFile = false;
+        leaveLibraryForNewGame();
         await handleRomSelection({
             bytes,
             name,
@@ -3154,6 +3169,13 @@ async function handleKeyDown(event: KeyboardEvent) {
     // The library over a waiting game: Esc goes back to it, and no key reaches the game meanwhile.
     if (libraryOverGame) {
         if (event.key === "Escape") backToGame();
+        else libraryKey(event);
+        return;
+    }
+
+    // The library on its own: the game's keys and shortcuts wait for a game to show.
+    if (appMain.dataset.view !== "game") {
+        libraryKey(event);
         return;
     }
 
@@ -3758,8 +3780,6 @@ async function restartGbaSession(status: string) {
         frameLimiter.reset();
         if (isTouchDevice()) document.body.classList.add("touch-running");
         if (isHandheldDevice()) updateHandheldCanvasSize();
-        const sidebarToggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
-        if (sidebarToggle) sidebarToggle.checked = false;
         setStatus(status, false);
         updateMouseCursorState();
         updateAutorunControls();

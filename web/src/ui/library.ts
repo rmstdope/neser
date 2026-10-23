@@ -84,6 +84,8 @@ export function renderLibrary(list: HTMLElement, groups: LibraryGroup[], query: 
 
 /** The release news as a wave: one span per letter, numbered for the CSS animation. */
 export function renderNewsWave(el: HTMLElement, text: string): void {
+    // A marquee is the role for text that scrolls by; its name is the whole sentence.
+    el.setAttribute("role", "marquee");
     el.setAttribute("aria-label", text);
     el.replaceChildren(
         ...[...text].map((letter, index) => {

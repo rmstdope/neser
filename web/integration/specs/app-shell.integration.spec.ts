@@ -131,3 +131,89 @@ test.describe("a ROM chosen before the wasm module has loaded", () => {
         await expect(page.locator(".neser-toast", { hasText: "Unsupported file type" })).toHaveCount(0);
     });
 });
+
+test.describe("the library over a running game", () => {
+    const servedList = async (page: import("@playwright/test").Page, roms: string[]) =>
+        page.route("**/roms/roms.json", (route) => route.fulfill({ json: { roms } }));
+
+    test("Given a pick that fails to load, then the game under the library can still be returned to with Back or Esc", async ({ page }) => {
+        await servedList(page, ["test/cpu.nes", "test/missing.nes"]);
+        await page.route("**/roms/test/missing.nes", (route) => route.fulfill({ status: 404, body: "" }));
+        await page.route("**/roms/test/cpu.nes", (route) =>
+            route.fulfill({ body: readFileSync(path.join(process.cwd(), "roms", "nes", "automated_tests", "blargg_nes_cpu_test5", "cpu.nes")) })
+        );
+        await page.goto("/");
+        await page.locator('.library-item[data-path="test/cpu.nes"]').click();
+        await waitForRunningState(page);
+
+        await page.locator("#library-open").click();
+        await page.locator('.library-item[data-path="test/missing.nes"]').click();
+        await expect(page.locator("#status")).toHaveText("Failed to load bundled ROM");
+        await page.locator("#library-back").click();
+        await expect(page.locator("#library")).toBeHidden();
+        await waitForRunningState(page);
+
+        await page.locator("#library-open").click();
+        await page.locator('.library-item[data-path="test/missing.nes"]').click();
+        await expect(page.locator("#status")).toHaveText("Failed to load bundled ROM");
+        await page.keyboard.press("Escape");
+        await expect(page.locator("#library")).toBeHidden();
+    });
+
+    test("Given a game the player paused, when the library opens and Back is pressed, then it is still paused", async ({ page }) => {
+        await startFromBundledRom(page);
+        await page.locator("#pause").click();
+        await waitForPausedState(page);
+        await page.locator("#library-open").click();
+        await page.locator("#library-back").click();
+        await waitForPausedState(page);
+    });
+
+    test("Given a game running under the library, when another is picked, then it replaces the first", async ({ page }) => {
+        await servedList(page, ["test/cpu.nes", "test/other.nes"]);
+        const bytes = readFileSync(path.join(process.cwd(), "roms", "nes", "automated_tests", "blargg_nes_cpu_test5", "cpu.nes"));
+        await page.route("**/roms/test/*.nes", (route) => route.fulfill({ body: bytes }));
+        await page.goto("/");
+        await page.locator('.library-item[data-path="test/cpu.nes"]').click();
+        await waitForRunningState(page);
+        await page.locator("#library-open").click();
+        await page.locator('.library-item[data-path="test/other.nes"]').click();
+        await waitForRunningState(page);
+        await expect(page.locator("#library")).toBeHidden();
+        await expect(page.locator("#library-back")).toBeHidden();
+        await expect(page.locator("#game-name")).toHaveText("other");
+    });
+});
+
+test.describe("the library's keys and its news", () => {
+    test("Given the library after Eject, then the game's shortcuts wait, O chooses a file and / goes to the search", async ({ page }) => {
+        await startFromBundledRom(page);
+        await page.locator("#stop").click();
+        await waitForIdleState(page);
+        await expect(page.locator("#library")).toBeVisible();
+
+        const filterBefore = await page.locator("#filter-toggle").textContent();
+        await page.keyboard.press("F4");
+        await page.keyboard.press("Control+KeyF");
+        await expect(page.locator("#filter-toggle")).toHaveText(filterBefore!);
+        expect(await page.evaluate(() => document.fullscreenElement)).toBeNull();
+
+        await page.keyboard.press("Slash");
+        await expect(page.locator("#library-search")).toBeFocused();
+        await page.locator("#library-search").blur();
+        const chooser = page.waitForEvent("filechooser");
+        await page.keyboard.press("KeyO");
+        await chooser;
+    });
+
+    test("Given reduced motion, then the news is still words, in its own row above the heading", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto("/");
+        const news = (await page.locator("#library-news").boundingBox())!;
+        const heading = (await page.locator("#library-title").boundingBox())!;
+        expect(news.y + news.height).toBeLessThanOrEqual(heading.y);
+        await expect(page.locator("#library-news span").first()).toHaveCSS("display", "inline");
+        await expect(page.locator("#library-news")).toHaveAttribute("role", "marquee");
+    });
+});

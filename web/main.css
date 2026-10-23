@@ -894,18 +894,50 @@ body.handheld .app-topbar {
   50% { transform: translateY(12px); }
 }
 
+/* Without motion the news is plain words in a row of its own, above the heading. */
 @media (prefers-reduced-motion: reduce) {
   .library-news {
+    position: static;
+    order: -1;
+    margin-bottom: auto;
     animation: none;
-    left: 30px;
-    top: 24px;
-    right: 30px;
     white-space: normal;
+    font-size: 15px;
   }
 
   .library-news span {
+    display: inline;
     animation: none;
   }
+}
+
+.library-key-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.library-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  outline: none;
+}
+
+.library-search-icon {
+  width: 14px;
+  height: 14px;
+  background: var(--muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .library-again {
@@ -960,6 +992,11 @@ body.handheld .app-topbar {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
+}
+
+.library-side .input:focus-within {
+  outline: 2px solid var(--ice);
+  outline-offset: 2px;
 }
 
 .library-side .input {
