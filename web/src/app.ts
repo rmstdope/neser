@@ -379,8 +379,8 @@ let filterSelection: FilterSelection = selectionAt(currentFilter);
 let lastFrame: { frame: Uint8Array; format: number } | null = null;
 /** The running game's save-state key (name, size and hash), which its preview is kept under too. */
 let savePreviewKey: string | null = null;
-/** Save states are not offered for the running console: Save and Load say why rather than work. */
-let saveStateUnavailable = false;
+/** Why save states are not offered for the loaded console, if they are not; Save and Load say so. */
+let saveStateUnavailableReason: string | null = null;
 /** True until a look is chosen or a game has loaded: the first game then starts on its console's default. */
 let filterUntouched = true;
 const filterKeys = Object.keys(filters);
@@ -1363,15 +1363,8 @@ function updateEmulatorKindUI() {
     const saveStateNote = emulator?.kind === "gba" && !supportsWebSaveState("gba")
         ? "Save states are not available for Game Boy Advance games yet"
         : null;
-    saveStateUnavailable = saveStateNote !== null;
-    if (saveStateBtn) {
-        saveStateBtn.dataset.tip = saveStateNote ?? "Save state";
-        saveStateBtn.dataset.keys = saveStateNote ? "" : "F6";
-    }
-    if (loadStateBtn) {
-        loadStateBtn.dataset.tip = saveStateNote ?? "Load state";
-        loadStateBtn.dataset.keys = saveStateNote ? "" : "F7";
-    }
+    saveStateUnavailableReason = saveStateNote;
+    updateSaveStateButtons();
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
     const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind, filterUntouched);
@@ -4060,9 +4053,23 @@ function renderLoadPreview() {
     key.textContent = "F7";
     at.replaceChildren(`${savedAtLine(new Date(), loadPreview!.savedAt)} · `, key, " to load");
 }
-// "Saved 2 minutes ago" is worked out again whenever the preview is about to show.
+// "Saved 2 minutes ago" is worked out again whenever the preview is about to show. It shows on hover,
+// and on focus that came from the keyboard: a click's focus does not count, nor a key pressed after it.
+let loadPointerDown = false;
 loadStateBtn?.addEventListener("pointerenter", renderLoadPreview);
-loadStateBtn?.addEventListener("focus", renderLoadPreview);
+loadStateBtn?.addEventListener("pointerdown", () => {
+    loadPointerDown = true;
+    loadStateBtn.removeAttribute("data-key-focus");
+});
+loadStateBtn?.addEventListener("focus", () => {
+    loadStateBtn.toggleAttribute("data-key-focus", !loadPointerDown);
+    loadPointerDown = false;
+    renderLoadPreview();
+});
+loadStateBtn?.addEventListener("blur", () => {
+    loadPointerDown = false;
+    loadStateBtn.removeAttribute("data-key-focus");
+});
 
 async function loadStateAction() {
     if (!saveStateController) return;
@@ -4081,13 +4088,21 @@ function updateSaveStateButtons() {
         running,
         slot: saveSlot,
     });
-    // Unavailable here, the buttons stay hoverable (aria-disabled) so their tip can say why;
-    // a disabled button gets no pointer events. Their actions already do nothing without a controller.
-    for (const [button, enabled] of [[saveStateBtn, saveEnabled], [loadStateBtn, loadEnabled]] as const) {
+    // Unavailable for the running game, the buttons stay hoverable (aria-disabled) so their tip can
+    // say why; a disabled button gets no pointer events. Their actions do nothing without a controller.
+    const note = running ? saveStateUnavailableReason : null;
+    const buttons = [
+        [saveStateBtn, saveEnabled, "Save state", "F6"],
+        [loadStateBtn, loadEnabled, "Load state", "F7"],
+    ] as const;
+    for (const [button, enabled, tip, keys] of buttons) {
         if (!button) continue;
-        button.disabled = !enabled && !saveStateUnavailable;
-        button.toggleAttribute("aria-disabled", saveStateUnavailable);
-        if (saveStateUnavailable) button.setAttribute("aria-disabled", "true");
+        button.disabled = !enabled && !note;
+        if (note) button.setAttribute("aria-disabled", "true");
+        else button.removeAttribute("aria-disabled");
+        button.dataset.tip = note ?? tip;
+        if (note) delete button.dataset.keys;
+        else button.dataset.keys = keys;
     }
     if (saveStateSection) saveStateSection.dataset.saveState = saveSlot;
 }

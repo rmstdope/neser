@@ -30,6 +30,9 @@ test.describe("Save-state preview", () => {
         await page.locator("#load-state").click();
         await page.mouse.move(5, 5);
         await expect(preview).toBeHidden();
+        // Playing on with the keyboard does not bring it back over the game.
+        await page.keyboard.press("ArrowRight");
+        await expect(preview).toBeHidden();
     });
 
     test("Given a reload, when Load is hovered for the state saved before it, then the preview is still there", async ({ page }) => {
@@ -52,13 +55,22 @@ test.describe("Save-state preview", () => {
             await expect(button).toBeVisible();
             await expect(button).toHaveAttribute("aria-disabled", "true");
             await expect(button).toHaveAttribute("data-tip", "Save states are not available for Game Boy Advance games yet");
-            await expect(button).not.toHaveAttribute("data-keys", /.+/);
-            // The reason shows on hover, which a disabled button would never get.
+            await expect(button).not.toHaveAttribute("data-keys");
+            // The reason shows on hover, which a disabled button would never get, and at full strength.
             await button.hover();
-            await expect.poll(() => button.evaluate((el) => getComputedStyle(el, "::after").content)).toContain("not available");
+            await expect
+                .poll(() => button.evaluate((el) => getComputedStyle(el, "::after").content))
+                .toBe('"Save states are not available for Game Boy Advance games yet"');
+            expect(await button.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
+            expect(await button.evaluate((el) => getComputedStyle(el).boxShadow)).not.toContain("rgba(");
         }
         await page.locator("#save-state").click({ force: true });
         await expect(page.locator(".neser-toast").filter({ hasText: "State saved" })).toHaveCount(0);
+
+        // With the game ejected, the reason about Game Boy Advance games goes too.
+        await page.locator("#stop").click();
+        await expect(page.locator("#save-state")).not.toHaveAttribute("aria-disabled");
+        await expect(page.locator("#save-state")).toHaveAttribute("data-tip", "Save state");
     });
 
     test("Given two different games under one file name, then each keeps its own preview, and a game with no preview describes none", async ({ page }) => {

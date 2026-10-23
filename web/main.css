@@ -131,12 +131,12 @@ body {
   font-weight: 600;
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--steel-hi);
   box-shadow: var(--glow);
 }
 
-.btn:active:not(:disabled) {
+.btn:active:not(:disabled):not([aria-disabled="true"]) {
   box-shadow: 0 0 0 1px rgba(127, 176, 227, 0.5), 0 0 26px rgba(80, 150, 230, 0.55);
 }
 
@@ -630,8 +630,9 @@ body.handheld .app-topbar {
 }
 
 /* Save and Load where save states are not offered: greyed, but hoverable so their tip says why. */
+/* The label and icon grey (the icon follows currentColor); the tip keeps its own colours. */
 #emulation-controls .btn[aria-disabled="true"] {
-  opacity: 0.45;
+  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
   cursor: not-allowed;
 }
 
@@ -658,7 +659,7 @@ body.handheld .app-topbar {
   pointer-events: none;
 }
 
-#save-state-section:has(#load-state:not(:disabled):hover, #load-state:not(:disabled):focus-visible) .load-preview[data-ready] {
+#save-state-section:has(#load-state:not(:disabled):hover, #load-state:not(:disabled)[data-key-focus]) .load-preview[data-ready] {
   display: flex;
 }
 
