@@ -80,6 +80,16 @@ test.describe("Phone, held upright", () => {
         await waitForRunningState(page);
     });
 
+    test("Given the open sheet, when a tap lands on its own edge, then it stays open", async ({ page }) => {
+        await startAndOpenSheet(page);
+        const sheet = (await page.locator("#handheld-sheet").boundingBox())!;
+        const row = (await page.locator("#hh-settings").boundingBox())!;
+        await page.touchscreen.tap(sheet.x + 6, row.y + row.height / 2);
+        await page.touchscreen.tap(sheet.x + sheet.width / 2, sheet.y + sheet.height - 6);
+        await expect(page.locator("#handheld-sheet")).toBeVisible();
+        await waitForPausedState(page);
+    });
+
     test("Given a game the player had paused, when the sheet opens and closes, then it stays paused", async ({ page }) => {
         await openApp(page);
         await loadRomFromFileInput(page);
@@ -115,10 +125,21 @@ test.describe("Phone, held upright", () => {
     test("Given the sheet, when Palette is tapped, then the palettes' short list opens, and a pick names the new one", async ({ page }) => {
         await startAndOpenSheet(page);
         await page.locator("#hh-palette").tap();
-        const items = page.locator(".choice-menu [role='menuitemradio'] .choice-menu-label");
+        const items = page.locator(".choice-menu [role='menuitemradio']");
         await expect(items.first()).toBeVisible();
-        await items.filter({ hasText: "Classic" }).tap();
-        await expect(page.locator("#hh-palette-name")).toHaveText("Classic");
+        // Every entry lies on the sheet, where a finger can reach it.
+        const sheet = (await page.locator("#handheld-sheet").boundingBox())!;
+        for (const box of await items.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON()))) {
+            expect(box.top).toBeGreaterThanOrEqual(sheet.y - 1);
+            expect(box.bottom).toBeLessThanOrEqual(sheet.y + sheet.height + 1);
+        }
+        // The last entry, then the first: both are picked by a tap, and the sheet stays.
+        const names = await items.locator(".choice-menu-label").allTextContents();
+        await items.last().tap();
+        await expect(page.locator("#hh-palette-name")).toHaveText(names[names.length - 1]);
+        await page.locator("#hh-palette").tap();
+        await items.first().tap();
+        await expect(page.locator("#hh-palette-name")).toHaveText(names[0]);
         await expect(page.locator("#handheld-sheet")).toBeVisible();
     });
 

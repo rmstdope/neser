@@ -4421,8 +4421,13 @@ const endSheetDrag = (event: PointerEvent) => {
 };
 sheetGrab.addEventListener("pointerup", endSheetDrag);
 sheetGrab.addEventListener("pointercancel", endSheetDrag);
+// A tap on the dimmed picture closes the sheet. The backdrop and the sheet's own padding both
+// report the sheet as their target, so only a tap outside its box counts.
 handheldSheet.addEventListener("click", (event) => {
-    if (event.target === handheldSheet) closeHandheldSheet();
+    if (event.target !== handheldSheet) return;
+    const box = handheldSheet.getBoundingClientRect();
+    const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+    if (!inside) closeHandheldSheet();
 });
 document.getElementById("hh-pause")!.addEventListener("click", pauseResume);
 for (const [id, action] of [["hh-save", saveStateAction], ["hh-load", loadStateAction]] as const) {
