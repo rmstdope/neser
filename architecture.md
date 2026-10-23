@@ -547,11 +547,11 @@ The SNES (Super Nintendo Entertainment System) module now includes active 65816 
 
 ### `web/` — Browser Frontend
 
-The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `web/`, build output: `dist/`). Styled with **Tailwind CSS v4** and **DaisyUI v5**, with a custom `steel` theme (Steel Glow: night-blue glass panels, steel-blue gradients and a soft glow; the agreed drawings are in `docs/ui/steel-glow/`). Uses a DaisyUI drawer layout: a sidebar for picking a ROM, a top bar naming the running game with a gear opening the settings sheet (a `<dialog>` with General, Controls and Developer tabs; the game pauses while it is open), and one control bar under the picture holding every in-game control (play/pause, reset, save states, eject, zoom, filter, palette, volume, fullscreen), drawn with CSS-mask icons and hover tips naming each control's key. TypeScript modules are organized into feature folders under `web/src/`.
+The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `web/`, build output: `dist/`). Styled with **Tailwind CSS v4** and **DaisyUI v5**, with a custom `steel` theme (Steel Glow: night-blue glass panels, steel-blue gradients and a soft glow; the agreed drawings are in `docs/ui/steel-glow/`). The page has a top bar (logo, the running game, Library and Settings) over one of two views, switched by `data-view` on `<main>`: the library (where a game is picked: drop target, file chooser and the searchable bundled test ROMs; picking a game starts it) or the game (the picture and one control bar under it). Settings live in a `<dialog>` sheet with General, Controls and Developer tabs. TypeScript modules are organized into feature folders under `web/src/`.
 
 | Directory/File | Description |
 | -------------- | ------------- |
-| `web/index.html` | Entry point — DaisyUI drawer layout with sidebar, top bar, canvas area, the control bar under the picture, and the autorun and firmware dialogs. Loads `./src/app.ts` as the main module. |
+| `web/index.html` | Entry point — top bar, the library and game views, the settings sheet, and the autorun and firmware dialogs. Loads `./src/app.ts` as the main module. |
 | `web/main.css` | Tailwind CSS entry point with the DaisyUI plugin, the `steel` theme definition, and custom component styles. |
 | `web/debugger.css` | Debugger panel styling, in the steel palette. |
 | `web/src/app.ts` | Application bootstrapper — initializes the WASM module, selects `WasmNes` / `WasmGb` / `WasmGba` by ROM extension, sets up the render loop, and coordinates all subsystems. |
@@ -564,7 +564,7 @@ The web frontend is bundled with **Vite** (config at `vite.config.ts`, root: `we
 | `web/src/save-state/` | Save state persistence using IndexedDB (`save_state_storage.ts`, `save_state_controller.ts`, `save_state_context.ts`), offered where the console table says so: NES, Game Boy and SNES games (`save_state_support.ts`). |
 | `web/src/debugger/` | Browser-based debugger panels — disassembly, OAM viewer, watch expressions, PPU viewer layout/scroll. |
 | `web/src/shortcuts/` | Keyboard shortcut actions and help overlay. |
-| `web/src/ui/` | Toast overlays (`toast_overlay.ts`), gamepad init toast, sine scroller, the volume slider's curve and storage (`volume.ts`, key `neser.volume`), the top bar's game title (`game_title.ts`), and the settings panel (`settings_panel.ts`). |
+| `web/src/ui/` | Toast overlays (`toast_overlay.ts`), gamepad init toast, the control bar's volume (`volume.ts`, key `neser.volume`) and game title (`game_title.ts`) helpers, the settings panel (`settings_panel.ts`), and the library (`library.ts`: grouping, search, system filter, and the release-news wave). |
 | `web/integration/` | Playwright-based end-to-end integration tests for the web frontend. |
 
 Each TypeScript module has a corresponding `.test.ts` unit test file (run with `vitest`).

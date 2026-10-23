@@ -64,9 +64,9 @@ import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normaliz
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
-import { createSineScroller } from "./ui/sine_scroller";
 import { gameTitle } from "./ui/game_title";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
+import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
 import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
 import { belongsToOpenDialog, isEditableKeyboardTarget } from "./shortcuts/keyboard_target";
 import {
@@ -163,7 +163,6 @@ const fpsCounterEl = document.getElementById("fps-counter");
 // by the kernel input-boost policy, which cannot be replicated from userspace.
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const romInput = document.getElementById("rom") as HTMLInputElement;
-const romSelect = document.getElementById("rom-select") as HTMLSelectElement | null;
 const canvasEl = document.getElementById("screen");
 if (!(canvasEl instanceof HTMLCanvasElement)) {
     throw new Error("Canvas element with id 'screen' not found or not a canvas");
@@ -187,11 +186,6 @@ if (!gl) {
 let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
 let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
 const SCROLLER_TEXT = "September 29, 2026: Version 1.3.0 - Super Nintendo support on desktop and web. Star Fox, Super Mario RPG and Mega Man X2 run with their chips. Super Scope and SNES Mouse on your mouse. Game Boy palettes on F8";
-const SCROLLER_SPEED = 1.6;
-const SCROLLER_AMPLITUDE = 17;
-const SCROLLER_FREQUENCY = 0.0587;
-const SCROLLER_FONT_SIZE_PX = 15;
-const SCROLLER_FONT_FAMILY = "'VT323', monospace";
 
 const toastContainer = createToastContainer(screenWrap);
 
@@ -412,11 +406,7 @@ let gbPrevFrameData: Uint8Array | null = null;
 let gbAssetsLoaded = false;
 let frameCount = 0; // For NTSC phase animation
 const frameLimiter = createFrameLimiter(60);
-const idleFrameLimiter = createFrameLimiter(60);
 let webglInitialized = false; // Track WebGL initialization state
-let idleScrollerActive = false;
-let idleScroller: { renderFrame: (ts: number) => Uint8Array } | null = null;
-let idleScrollerStartTime = 0;
 let crosshair: ReturnType<typeof createCrosshair> | null = null; // Light-gun sight overlay
 let crosshairPictureWidth = 256; // The picture width the sight overlay was created for
 // Capture state for playing a Super Scope or SNES Mouse game with the mouse; fresh for every
@@ -1037,6 +1027,98 @@ function updateAutorunControls() {
     updateAutorunStatus();
 }
 
+// ── Which view shows: the library (no game, or opened over a paused one) or the game ──
+const appMain = document.querySelector("main.app-main") as HTMLElement;
+const libraryChooseBtn = document.getElementById("library-choose") as HTMLButtonElement;
+const libraryBackBtn = document.getElementById("library-back") as HTMLButtonElement;
+const libraryOpenBtn = document.getElementById("library-open") as HTMLButtonElement;
+const libraryAgainEl = document.getElementById("library-again") as HTMLElement;
+const libraryAgainNameEl = document.getElementById("library-again-name") as HTMLElement;
+const libraryDropEl = document.getElementById("library-drop") as HTMLElement;
+/** The library is showing over a game that waits under it. */
+let libraryOverGame = false;
+/** Opening the library paused the game, so going back resumes it. */
+let pausedByLibrary = false;
+
+function updateView() {
+    const view = !running || libraryOverGame ? "library" : "game";
+    const shownNow = appMain.dataset.view !== view;
+    appMain.dataset.view = view;
+    // Zoom's limits are measured on the shown picture, so measure again once it shows.
+    if (shownNow && view === "game") updateZoomButtonState();
+    libraryOpenBtn.setAttribute("aria-pressed", view === "library" ? "true" : "false");
+    libraryBackBtn.classList.toggle("hidden", !(running && libraryOverGame));
+    const again = !running && romMetadata !== null;
+    libraryAgainEl.classList.toggle("hidden", !again);
+    if (again) libraryAgainNameEl.textContent = gameTitle(romMetadata!.name, "nes").title;
+}
+
+function openLibraryOverGame() {
+    if (!running || libraryOverGame) return;
+    libraryOverGame = true;
+    pausedByLibrary = !paused;
+    if (pausedByLibrary) pauseResume();
+    updateView();
+    libraryChooseBtn.focus();
+}
+
+function backToGame() {
+    if (!libraryOverGame) return;
+    libraryOverGame = false;
+    if (pausedByLibrary && running && paused) pauseResume();
+    pausedByLibrary = false;
+    updateView();
+    canvas.focus();
+}
+
+/** A new game replaces the one under the library, so there is nothing to go back to. */
+function leaveLibraryForNewGame() {
+    libraryOverGame = false;
+    pausedByLibrary = false;
+}
+
+libraryChooseBtn.addEventListener("click", () => romInput.click());
+
+/** The library's own keys: O chooses a file, / goes to the search. */
+function libraryKey(event: KeyboardEvent) {
+    // The game's Ctrl shortcuts wait with the game, rather than reaching the browser's reload or find.
+    if ((event.ctrlKey || event.metaKey) && (event.code === "KeyR" || event.code === "KeyF")) {
+        event.preventDefault();
+        return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.code === "KeyO") {
+        event.preventDefault();
+        romInput.click();
+    } else if (event.key === "/") {
+        event.preventDefault();
+        (document.getElementById("library-search") as HTMLInputElement).focus();
+    }
+}
+libraryBackBtn.addEventListener("click", backToGame);
+libraryOpenBtn.addEventListener("click", () => {
+    if (libraryOverGame) backToGame();
+    else openLibraryOverGame();
+});
+
+// A game file dropped anywhere on the page is loaded and started.
+const dragHasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
+document.addEventListener("dragover", (event) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    libraryDropEl.classList.add("library-hero-drag");
+});
+document.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget === null) libraryDropEl.classList.remove("library-hero-drag");
+});
+document.addEventListener("drop", (event) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    libraryDropEl.classList.remove("library-hero-drag");
+    const file = event.dataTransfer?.files[0];
+    if (file) void loadRomFile(file);
+});
+
 const gameTitleEl = document.getElementById("game-title");
 /** The top bar names the running game and its system; it is empty while nothing runs. */
 function updateGameTitle() {
@@ -1087,6 +1169,7 @@ function updateEmulationButtons() {
     updateCgbColorButton();
     updatePaletteButton();
     updateGameTitle();
+    updateView();
     updateZoomLevel();
     updateGbHardwareNote();
 }
@@ -1412,7 +1495,6 @@ async function applyRomBytes(bytes: Uint8Array, name: string) {
         bytes: romBytes
     };
     setStatus(`Loaded ROM: ${name} (${romBytes.length} bytes)`);
-    stopIdleScroller();
     await refreshSaveStateController();
     updateEmulationButtons();
 }
@@ -1462,19 +1544,19 @@ async function refreshSaveStateController() {
     updateSaveStateButtons();
 }
 
-romInput!.addEventListener("change", async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    // Clear bundled ROM selection when a file is chosen
-    if (romSelect) romSelect.value = "";
-    romFromFile = true;
+/** Loads a game file the player chose or dropped, and starts it. */
+async function loadRomFile(file: File) {
     requestPointerLockFromUserGesture();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // Only now, with the new game in hand, is the one under the library left behind.
+    romFromFile = true;
+    leaveLibraryForNewGame();
     const expectedRom = autorunCtx.getExpectedRomName();
     if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
         toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file.name}" was loaded — playback may not work correctly`);
     }
     await handleRomSelection({
-        bytes: new Uint8Array(await file.arrayBuffer()),
+        bytes,
         name: file.name,
         running,
         stop,
@@ -1482,42 +1564,40 @@ romInput!.addEventListener("change", async (e) => {
         start,
         focusCanvas: () => canvas.focus()
     });
-});
+}
 
-if (romSelect) {
-    romSelect.addEventListener("change", async (e) => {
-        const sel = e.target as HTMLSelectElement;
-        const value = sel.value;
-        if (!value) return;
-        // Clear file input when a bundled ROM is selected
+/** Loads one of the bundled test ROMs, by its URL and its path (which names it), and starts it. */
+async function loadBundledRom(url: string, name: string) {
+    requestPointerLockFromUserGesture();
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        // Only now, with the new game in hand, is the one under the library left behind.
         romInput.value = "";
         romFromFile = false;
-        requestPointerLockFromUserGesture();
-        try {
-            const response = await fetch(value);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const bytes = new Uint8Array(await response.arrayBuffer());
-            // Prefer the option's display text (e.g. "cpu.nes") over URL parsing,
-            // since data-URL values don't contain a meaningful filename.
-            const selectedOption = sel.options[sel.selectedIndex];
-            const name = selectedOption?.textContent?.trim() || value.split("/").pop() || value;
-            await handleRomSelection({
-                bytes,
-                name,
-                running,
-                stop,
-                applyRomBytes,
-                start,
-                focusCanvas: () => canvas.focus()
-            });
-        } catch (error) {
-            console.error("Failed to load bundled ROM", error);
-            setStatus("Failed to load bundled ROM", true);
-        }
-    });
+        leaveLibraryForNewGame();
+        await handleRomSelection({
+            bytes,
+            name,
+            running,
+            stop,
+            applyRomBytes,
+            start,
+            focusCanvas: () => canvas.focus()
+        });
+    } catch (error) {
+        console.error("Failed to load bundled ROM", error);
+        setStatus("Failed to load bundled ROM", true);
+    }
 }
+
+romInput.addEventListener("change", async () => {
+    const file = romInput.files?.[0];
+    if (file) await loadRomFile(file);
+});
 
 function clearCanvas() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -1634,7 +1714,6 @@ async function start(): Promise<boolean> {
         return true;
     }
 
-    stopIdleScroller();
     setStatus("Initializing emulator...");
     try {
         if (!emulator) {
@@ -1669,7 +1748,7 @@ async function start(): Promise<boolean> {
                 setStatus(notStartedStatus(firmwareChip, game), true);
                 toastOverlay.show(notStartedMessage(firmwareChip, game));
                 updateEmulationButtons();
-                romInput.focus();
+                libraryChooseBtn.focus();
                 return false;
             }
             (emulator!.inst as WasmSnes).set_dsp_firmware(firmwareChip.key, firmware);
@@ -1741,8 +1820,6 @@ async function start(): Promise<boolean> {
     paused = false;
     if (isTouchDevice()) document.body.classList.add("touch-running");
     if (isHandheldDevice()) updateHandheldCanvasSize();
-    const sidebarToggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
-    if (sidebarToggle) sidebarToggle.checked = false;
     setStatus("Running...");
     updateAutorunControls();
     updateEmulationButtons();
@@ -2409,62 +2486,6 @@ function triggerAutorunDownload(bytes: Uint8Array, romName: string | undefined) 
     toastOverlay.show(`Autorun saved: ${fileName}`);
 }
 
-function startIdleScroller() {
-    if (idleScrollerActive || romBytes) {
-        return;
-    }
-    if (!webglInitialized && !initWebGL()) {
-        setStatus("Failed to initialize WebGL", true);
-        return;
-    }
-    if (!idleScroller) {
-        idleScroller = createSineScroller({
-            text: SCROLLER_TEXT,
-            width,
-            height,
-            speed: SCROLLER_SPEED,
-            amplitude: SCROLLER_AMPLITUDE,
-            frequency: SCROLLER_FREQUENCY,
-            fontSizePx: SCROLLER_FONT_SIZE_PX,
-            fontFamily: SCROLLER_FONT_FAMILY
-        });
-    }
-    idleScrollerActive = true;
-    idleScrollerStartTime = 0;
-    idleFrameLimiter.reset();
-    requestAnimationFrame(stepIdleScroller);
-}
-
-function stopIdleScroller() {
-    idleScrollerActive = false;
-    idleScrollerStartTime = 0;
-}
-
-function stepIdleScroller(timestamp: number) {
-    if (!idleScrollerActive || running || paused || romBytes) {
-        return;
-    }
-    if (!idleFrameLimiter.shouldRender(timestamp)) {
-        requestAnimationFrame(stepIdleScroller);
-        return;
-    }
-    if (!idleScrollerStartTime) {
-        idleScrollerStartTime = timestamp;
-    }
-
-    const frame = idleScroller!.renderFrame(timestamp);
-    const rendered = renderFrameWithCurrentPipeline(frame);
-
-    if (!rendered) {
-        idleScrollerActive = false;
-        setStatus("Rendering error occurred. Please restart.", true);
-        return;
-    }
-
-    frameCount = (frameCount + 1) % 3600;
-    requestAnimationFrame(stepIdleScroller);
-}
-
 function bindQuadAttributes(program: ShaderProgram) {
     if (program._aPositionLocation !== -1 && program._aPositionLocation !== null) {
         gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -2921,20 +2942,38 @@ resetBtn.addEventListener("click", () => {
     void resetAction();
 });
 
-async function populateRomSelect() {
-    if (!romSelect) return;
+// ── The library: the bundled test ROMs, searchable and filtered by system ──
+const libraryListEl = document.getElementById("library-list") as HTMLElement;
+const librarySearchEl = document.getElementById("library-search") as HTMLInputElement;
+const libraryCountEl = document.getElementById("library-count") as HTMLElement;
+const librarySystemButtons = [...document.querySelectorAll<HTMLButtonElement>("#library-systems [data-system]")];
+let libraryGroups: LibraryGroup[] = [];
+let librarySystem: LibrarySystem = "all";
+
+function renderLibraryList() {
+    const groups = filterLibrary(libraryGroups, { query: librarySearchEl.value, system: librarySystem });
+    renderLibrary(libraryListEl, groups, librarySearchEl.value, (rom) => void loadBundledRom(rom.url, rom.path));
+    libraryCountEl.textContent = String(libraryGroups.reduce((total, group) => total + group.roms.length, 0));
+}
+
+librarySearchEl.addEventListener("input", renderLibraryList);
+for (const button of librarySystemButtons) {
+    button.addEventListener("click", () => {
+        librarySystem = button.dataset.system as LibrarySystem;
+        for (const other of librarySystemButtons) other.setAttribute("aria-pressed", other === button ? "true" : "false");
+        renderLibraryList();
+    });
+}
+
+async function populateLibrary() {
     const baseUrl = new URL("./roms/", window.location.href).toString();
     try {
-        const entries = await fetchRomList(baseUrl);
-        for (const entry of entries) {
-            const option = document.createElement("option");
-            option.value = entry.url;
-            option.textContent = entry.path;
-            romSelect.appendChild(option);
-        }
+        libraryGroups = groupLibrary(await fetchRomList(baseUrl), webRomConsoleKindForName);
     } catch (error) {
         console.error("Failed to load ROM list", error);
+        libraryGroups = [];
     }
+    renderLibraryList();
 }
 
 // Set initial button states (all disabled until a ROM is loaded)
@@ -2959,7 +2998,7 @@ updateConnectedGamepads();
 ensureRomExtensionTable()
     .then(() => {
         // The built-in ROM list is filtered by the extension table, so it waits for it too.
-        void populateRomSelect();
+        void populateLibrary();
         updateConnectedGamepads();
         showPageLoadGamepadInitToast();
     })
@@ -3129,6 +3168,19 @@ function applySuperScopeKey(snesInst: WasmSnes, action: "turbo" | "pause", press
 
 async function handleKeyDown(event: KeyboardEvent) {
     if (isEditableKeyboardTarget(event.target) || belongsToOpenDialog(event.target)) {
+        return;
+    }
+
+    // The library over a waiting game: Esc goes back to it, and no key reaches the game meanwhile.
+    if (libraryOverGame) {
+        if (event.key === "Escape") backToGame();
+        else libraryKey(event);
+        return;
+    }
+
+    // The library on its own: the game's keys and shortcuts wait for a game to show.
+    if (appMain.dataset.view !== "game") {
+        libraryKey(event);
         return;
     }
 
@@ -3733,8 +3785,6 @@ async function restartGbaSession(status: string) {
         frameLimiter.reset();
         if (isTouchDevice()) document.body.classList.add("touch-running");
         if (isHandheldDevice()) updateHandheldCanvasSize();
-        const sidebarToggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
-        if (sidebarToggle) sidebarToggle.checked = false;
         setStatus(status, false);
         updateMouseCursorState();
         updateAutorunControls();
@@ -3813,7 +3863,11 @@ if (shortcutHelpOverlay) {
     updateShortcutHelpOverlayText();
 }
 updateShortcutHelpScale();
-startIdleScroller();
+renderNewsWave(document.getElementById("library-news") as HTMLElement, SCROLLER_TEXT);
+// WebGL starts with the page, so a browser without it says so before any game is picked.
+if (!webglInitialized && !initWebGL()) {
+    setStatus("Failed to initialize WebGL", true);
+}
 
 screenMinusBtn.addEventListener("click", () => {
     applyZoom("out");

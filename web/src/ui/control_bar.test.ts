@@ -12,7 +12,7 @@ const page = new DOMParser().parseFromString(readFileSync(resolve(webDir, "index
 const mainCss = readFileSync(resolve(webDir, "main.css"), "utf8");
 
 const BAR_ORDER = [
-    "start", "pause", "reset",
+    "pause", "reset",
     "save-state", "load-state",
     "stop",
     "screen-minus", "screen-plus", "filter-toggle", "palette-cycle", "cgb-color-toggle", "mute", "volume", "fullscreen",
@@ -32,8 +32,8 @@ describe("the control bar under the picture", () => {
         const ids = [...bar.querySelectorAll("button, input")].map((el) => el.id);
         expect(ids).toEqual(BAR_ORDER);
         // The top bar holds only page-level buttons, never a game control.
-        expect([...page.querySelectorAll("header button")].map((b) => b.id)).toEqual(["settings-open"]);
-        expect(page.querySelector("aside #start, aside #stop, aside #save-state")).toBeNull();
+        expect([...page.querySelectorAll("header button")].map((b) => b.id)).toEqual(["library-open", "settings-open"]);
+        expect(page.querySelector("#library #pause, #library #stop, #library #save-state")).toBeNull();
     });
 
     it("Given the control bar, When reading the groups, Then thin separators split them", () => {

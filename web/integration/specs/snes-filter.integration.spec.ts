@@ -76,17 +76,6 @@ test.describe("SNES screen filters (nr-gtx)", () => {
         await expect(filter).toHaveText("Filter: None");
     });
 
-    test("Given a Filter press before any game, then the first SNES game keeps the chosen look", async ({ page }) => {
-        await openApp(page);
-        const filter = page.locator(FILTER_SELECTOR);
-
-        await filter.click();
-        await expect(filter).toHaveText("Filter: CRT");
-
-        await loadSnesRom(page);
-        await expect(filter).toHaveText("Filter: CRT");
-    });
-
     test("Given a first NES ROM that fails to load, then the first SNES game still starts on None", async ({ page }) => {
         await openApp(page);
         const filter = page.locator(FILTER_SELECTOR);

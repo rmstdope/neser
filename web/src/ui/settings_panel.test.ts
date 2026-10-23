@@ -41,11 +41,8 @@ describe("the settings panel's markup", () => {
         expect(tabPanel("developer").contains(doc.getElementById("settings-debugger"))).toBe(true);
     });
 
-    it("Given the sidebar, When reading it, Then only picking a game is left there", () => {
-        const aside = page().querySelector("aside")!;
-        expect(aside.querySelector("#gb-hardware, #autorun-section, #snes-firmware-section")).toBeNull();
-        expect(aside.querySelector("#rom")).not.toBeNull();
-        expect(aside.querySelector("#rom-select")).not.toBeNull();
+    it("Given the library, When reading it, Then the settings are not there", () => {
+        expect(page().querySelector("#library #gb-hardware, #library #autorun-section, #library #snes-firmware-section")).toBeNull();
     });
 });
 

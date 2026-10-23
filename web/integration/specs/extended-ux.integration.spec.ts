@@ -109,8 +109,9 @@ test.describe("Phase 3 extended UX", () => {
         await expect(page.locator(AUTORUN_CANCEL_SELECTOR)).toBeHidden();
     });
 
-    test("Given app shell is rendered, when shortcut help key is pressed, then overlay shows shortcuts", async ({ page }) => {
-        await openApp(page);
+    test("Given a game is running, when shortcut help key is pressed, then overlay shows shortcuts", async ({ page }) => {
+        // The overlay sits on the picture, which shows with a game.
+        await startFromBundledRom(page);
 
         const shortcutHelpOverlay = page.locator(SHORTCUT_HELP_OVERLAY_SELECTOR);
 
