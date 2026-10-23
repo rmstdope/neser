@@ -54,6 +54,8 @@ test.describe("Game Boy games run on", () => {
     });
 
     test("Given Game Boy Color, an original Game Boy game runs coloured, a change waits for Reset, and the choice is remembered", async ({ page }) => {
+        // A long walk through the settings panel, opened and closed about twenty times.
+        test.setTimeout(90_000);
         await openApp(page);
         const choice = page.locator(CHOICE_SELECTOR);
         const colors = page.locator(COLORS_BUTTON_SELECTOR);

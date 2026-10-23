@@ -503,6 +503,14 @@ body.handheld.touch-running .control-bar {
   display: none;
 }
 
+/* On a phone the game view fills the space under the top bar, as the touch layout expects. */
+body.handheld.touch-running .game-view {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  align-items: stretch;
+}
+
 /* Phones keep the top bar's own height, which the handheld picture size allows for. */
 body.handheld .app-topbar {
   min-height: 0;
