@@ -394,7 +394,9 @@ jobs:
   web-integration:
     name: web-integration (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The limit covers installing Playwright's system packages, which a slow mirror can stretch
+    # from two minutes to twelve, as well as the tests themselves (7-10 minutes per shard).
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.web_integration == 'true' || github.event_name == 'workflow_call'
     strategy:
