@@ -70,6 +70,45 @@ class WebIntegrationShardsTest(unittest.TestCase):
         self.assertRegex(self.job, pattern)
 
 
+class PlaywrightSystemDependenciesTest(unittest.TestCase):
+    """CI stays off the apt mirror unless Chromium really lacks a library (nr-2e2l).
+
+    ``install-deps`` took up to eleven minutes on a slow mirror while the runner image already
+    had every library Chromium needs; ``scripts/ensure_playwright_deps.sh`` checks with ``ldd``
+    and falls back to apt only when one is missing.
+    """
+
+    CHECK = "run: bash scripts/ensure_playwright_deps.sh"
+
+    def test_no_job_installs_playwright_apt_packages_unconditionally(self) -> None:
+        ci = CI_YML.read_text(encoding="utf-8")
+        self.assertNotIn("--with-deps", ci)
+        self.assertNotIn("install-deps", ci)
+
+    def test_web_integration_checks_deps_on_every_run(self) -> None:
+        job = web_integration_job()
+        step = re.search(r"- name: Check Playwright system dependencies\n((?: {8}.*\n)+)", job)
+        assert step is not None, "no dependency check step in web-integration"
+        self.assertIn(self.CHECK, step.group(1))
+        self.assertNotIn("if:", step.group(1))
+        self.assertLess(job.index("npx playwright install chromium"), job.index(self.CHECK))
+        self.assertLess(job.index(self.CHECK), job.index("npm run test:integration:web"))
+
+    def test_browser_install_retries_fail_the_step_when_all_fail(self) -> None:
+        """Three failed downloads must fail here, not pass on to apt and a misleading test error."""
+
+        job = web_integration_job()
+        step = re.search(r"- name: Install Playwright Chromium\n((?: {8}.*\n)+)", job)
+        assert step is not None, "no browser install step in web-integration"
+        self.assertIn('[ "$i" -eq 3 ] && exit 1', step.group(1))
+
+    def test_web_container_checks_deps_after_browser_install(self) -> None:
+        ci = CI_YML.read_text(encoding="utf-8")
+        build = ci.split("  web-container:\n", 1)[1].split("  publish-web:\n")[0]
+        self.assertLess(build.index("npx playwright install chromium"), build.index(self.CHECK))
+        self.assertLess(build.index(self.CHECK), build.index("node deploy/smoke.mjs"))
+
+
 class WebContainerPublicationTest(unittest.TestCase):
     def test_pr_builds_are_read_only_and_publish_waits_for_the_tested_image(self) -> None:
         ci = CI_YML.read_text(encoding="utf-8")
