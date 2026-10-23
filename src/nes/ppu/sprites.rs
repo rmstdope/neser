@@ -681,6 +681,11 @@ impl Sprites {
         self.oam_decay_enabled = enabled;
     }
 
+    /// Whether OAM decays: the configured setting, kept across a restore.
+    pub fn oam_decay_enabled(&self) -> bool {
+        self.oam_decay_enabled
+    }
+
     /// Check if sprite 0 has a non-transparent pixel at the given screen position
     /// This is used for sprite 0 hit detection and doesn't apply sprite clipping
     /// (clipping is handled separately in hit detection logic)

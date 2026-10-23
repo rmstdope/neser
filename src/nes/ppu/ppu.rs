@@ -1181,7 +1181,8 @@ impl Ppu {
         self.sprites.restore_state(&SpritesState {
             oam_data,
             secondary_oam,
-            oam_decay_enabled: self.timing.region().oam_decay,
+            // A setting (`nes_oam_dram_decay`), not machine state: keep it as configured.
+            oam_decay_enabled: self.sprites.oam_decay_enabled(),
             oam_decay_cycle: state.oam_decay_cycle,
             oam_row_last_refresh_cycle: state.oam_row_last_refresh_cycle,
             sprites_found: state.sprites_found,
@@ -1698,6 +1699,24 @@ mod tests {
         ppu.run_ppu_cycles(3);
 
         assert_eq!(ppu.registers.v(), 0x2100);
+    }
+
+    /// OAM decay is the `nes_oam_dram_decay` setting (off by default), not machine state: a
+    /// restore keeps it as configured. Before nr-ayk5.1 a restore turned it on for every NTSC
+    /// console, so a loaded console lost sprites the running one kept.
+    #[test]
+    fn test_restore_state_keeps_configured_oam_decay_disabled() {
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_oam_dram_decay_enabled(false);
+        ppu.sprites().write_oam(0, 0x42);
+        let state = ppu.capture_state();
+
+        ppu.restore_state(&state);
+        for _ in 0..10_000 {
+            ppu.sprites().tick_oam_decay();
+        }
+
+        assert_eq!(ppu.sprites().read_oam(0), 0x42);
     }
 
     #[test]
