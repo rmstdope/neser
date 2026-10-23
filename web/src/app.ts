@@ -4066,6 +4066,8 @@ loadStateBtn?.addEventListener("focus", () => {
     loadPointerDown = false;
     renderLoadPreview();
 });
+// Pressing Load (Enter or Space too) puts the card away; the loaded game is what matters now.
+loadStateBtn?.addEventListener("click", () => loadStateBtn.removeAttribute("data-key-focus"));
 loadStateBtn?.addEventListener("blur", () => {
     loadPointerDown = false;
     loadStateBtn.removeAttribute("data-key-focus");

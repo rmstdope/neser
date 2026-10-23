@@ -26,6 +26,10 @@ test.describe("Save-state preview", () => {
         await page.keyboard.press("Tab");
         await expect(page.locator("#load-state")).toBeFocused();
         await expect(preview).toBeVisible();
+        // Loading from the keyboard puts the card away too, though focus stays on Load.
+        await page.keyboard.press("Enter");
+        await page.keyboard.press("ArrowRight");
+        await expect(preview).toBeHidden();
         await page.evaluate(() => (document.activeElement as HTMLElement).blur());
         await page.locator("#load-state").click();
         await page.mouse.move(5, 5);
