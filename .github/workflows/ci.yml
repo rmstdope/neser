@@ -176,6 +176,8 @@ jobs:
   # ~382k-line crate four times (canonical cargo-nextest archive pattern).
   rust-test-build:
     runs-on: ubuntu-latest
+    # Worst green run 10 min; the limit stops a stalled apt mirror holding the PR for six hours (nr-nts2).
+    timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.test_assets == 'true' || github.event_name == 'workflow_call'
 
@@ -209,6 +211,8 @@ jobs:
   # filters) so partial-change PRs still skip unrelated suites.
   rust-test-run:
     runs-on: ubuntu-latest
+    # Worst green shard 8 min; the limit stops a stalled apt mirror holding the PR for six hours (nr-nts2).
+    timeout-minutes: 25
     needs: [changes, rust-test-build]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.test_assets == 'true' || github.event_name == 'workflow_call'
     strategy:
@@ -304,6 +308,8 @@ jobs:
   # cannot see lints there -- which is how #3095 landed one (closes #3103).
   rust-lint:
     runs-on: ubuntu-latest
+    # Worst green run 13 min; a slow apt mirror held this job 1h40m on #3363 (nr-nts2).
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v6
