@@ -58,6 +58,7 @@ jobs:
               - 'scripts/build_web.sh'
               - 'scripts/find_wasm_bindgen.sh'
               - 'scripts/run_web.sh'
+              - 'scripts/ensure_playwright_deps.sh'
               - 'playwright.config.ts'
               - 'vite.config.ts'
               - 'tsconfig.json'
@@ -394,9 +395,9 @@ jobs:
   web-integration:
     name: web-integration (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    # The limit covers installing Playwright's system packages, which a slow apt mirror can stretch
-    # from under a minute to thirteen, as well as the tests: shard 1, with two thirds of them, runs
-    # up to ten. Its worst case so far is about 26 minutes.
+    # Shard 1, with two thirds of the tests, runs them in up to ten minutes. The limit was raised
+    # to 30 when installing Playwright's system packages from a slow apt mirror took up to eleven;
+    # that step no longer touches apt unless a library is missing (nr-2e2l).
     timeout-minutes: 30
     needs: changes
     if: needs.changes.outputs.web_integration == 'true' || github.event_name == 'workflow_call'
@@ -433,16 +434,13 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
           for i in 1 2 3; do
-            npx playwright install --with-deps chromium && break
+            npx playwright install chromium && break
             echo "Playwright install attempt $i failed (transient network); retrying after 15s..." && sleep 15
           done
-      - name: Install Playwright system dependencies
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: |
-          for i in 1 2 3; do
-            npx playwright install-deps chromium && break
-            echo "Playwright install-deps attempt $i failed (transient network); retrying after 15s..." && sleep 15
-          done
+      # The runner image already has every library Chromium links against; apt's mirror, which
+      # once took eleven minutes here, is used only if ldd finds one missing (nr-2e2l).
+      - name: Check Playwright system dependencies
+        run: bash scripts/ensure_playwright_deps.sh
       # The one wasm build of this job: wasm-release, wasm-bindgen, wasm-opt -O3 and vite, the
       # binary players get. The test step below only serves it (nr-1pl).
       - name: Build web app
@@ -515,7 +513,9 @@ jobs:
           done
           docker logs neser-web-test
           exit 1
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
+      - name: Check Playwright system dependencies
+        run: bash scripts/ensure_playwright_deps.sh
       - name: Verify production HTTP and browser behavior
         env:
           REVISION: ${{ github.sha }}
