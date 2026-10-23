@@ -2,7 +2,9 @@ import { test, expect, Page } from "@playwright/test";
 import { collectBrowserErrors } from "../helpers/browser-errors.helpers";
 import {
     openApp,
+    openSettings,
     startFromBundledRom,
+    waitForPausedState,
     waitForRunningState,
     loadRomFromFileInput
 } from "../helpers/lifecycle.helpers";
@@ -17,7 +19,6 @@ const AUTORUN_EXTEND_SELECTOR = "#autorun-extend-check";
 const AUTORUN_USE_BUTTON_SELECTOR = "#autorun-use-btn";
 const AUTORUN_STATUS_SELECTOR = "#autorun-status";
 const AUTORUN_CANCEL_SELECTOR = "#autorun-cancel";
-const SHORTCUT_HELP_OVERLAY_SELECTOR = "#shortcut-help-overlay";
 const DEBUGGER_PANEL_SELECTOR = "#debugger-panel";
 
 function createValidAutorunBuffer() {
@@ -43,6 +44,8 @@ async function openAutorunModal(page: Page) {
     // Loading a ROM auto-starts emulation; stop it so Load Autorun becomes enabled
     await page.locator("#stop").click();
     await expect(page.locator("#stop")).toBeDisabled();
+    // Autorun is a developer tool: it lives in Settings › Developer.
+    await openSettings(page, "Developer");
     await page.locator(AUTORUN_LOAD_BUTTON_SELECTOR).click();
     await expect(page.locator(AUTORUN_MODAL_SELECTOR)).toBeVisible();
 }
@@ -106,25 +109,46 @@ test.describe("Phase 3 extended UX", () => {
         await expect(page.locator(AUTORUN_CANCEL_SELECTOR)).toBeHidden();
     });
 
-    test("Given app shell is rendered, when shortcut help key is pressed, then overlay shows shortcuts", async ({ page }) => {
+    test("Given a game is running, when H is pressed, then the keys and controls panel opens with the game paused, and H closes it", async ({ page }) => {
+        await startFromBundledRom(page);
+        const panel = page.locator("#help-panel");
+        await expect(panel).toBeHidden();
+
+        await page.locator("#screen").focus();
+        await page.keyboard.press("h");
+        await expect(panel).toBeVisible();
+        await expect(panel.locator("#help-title")).toHaveText("Keys and controls");
+        await waitForPausedState(page);
+        const debuggerRow = panel.locator(".help-shortcut").filter({ hasText: "Debugger" });
+        await expect(debuggerRow.locator("kbd")).toHaveText(["F5"]);
+        await expect(panel.locator("#help-chips button")).toHaveText(["NES · Player 1", "Player 2", "GB", "GBA", "SNES"]);
+        await expect(panel.locator("#help-chips button").first()).toHaveAttribute("aria-pressed", "true");
+        await expect(panel.locator("#help-gamepad-note")).toHaveText("Plug in a gamepad and press any button to use it instead.");
+        await expect(panel.locator('#help-pad [data-button="A"] kbd')).toHaveText(["R"]);
+        await panel.locator("#help-chips button", { hasText: "Player 2" }).click();
+        await expect(panel.locator('#help-pad [data-button="A"] kbd')).toHaveText(["O"]);
+
+        await page.keyboard.press("h");
+        await expect(panel).toBeHidden();
+        await waitForRunningState(page);
+    });
+
+    test("Given no game, when ? is pressed in the top bar, then the panel shows any system's controller, and Esc closes it", async ({ page }) => {
         await openApp(page);
+        await page.locator("#help-open").click();
+        const panel = page.locator("#help-panel");
+        await expect(panel).toBeVisible();
+        await panel.locator("#help-chips button", { hasText: /^GBA$/ }).click();
+        await expect(panel.locator("#help-chips button")).toHaveText(["GBA · Player 1", "NES", "GB", "SNES"]);
+        await expect(panel.locator('#help-pad [data-button="L"] kbd')).toHaveText(["V"]);
+        await expect(panel.locator('#help-pad [data-button="X"]')).toHaveCount(0);
 
-        const shortcutHelpOverlay = page.locator(SHORTCUT_HELP_OVERLAY_SELECTOR);
-
-        await expect(shortcutHelpOverlay).toHaveAttribute("aria-hidden", "true");
-        await expect(shortcutHelpOverlay).toBeHidden();
-
-        await page.keyboard.press("h");
-
-        await expect(shortcutHelpOverlay).toBeVisible();
-        await expect(shortcutHelpOverlay).toHaveAttribute("aria-hidden", "false");
-        await expect(shortcutHelpOverlay).toContainText("Shortcuts");
-        await expect(shortcutHelpOverlay).toContainText("F5: Debugger Toggle");
-
-        await page.keyboard.press("h");
-
-        await expect(shortcutHelpOverlay).toHaveAttribute("aria-hidden", "true");
-        await expect(shortcutHelpOverlay).toBeHidden();
+        // The Super Nintendo's second player has keys too.
+        await panel.locator("#help-chips button", { hasText: /^SNES$/ }).click();
+        await panel.locator("#help-chips button", { hasText: "Player 2" }).click();
+        await expect(panel.locator('#help-pad [data-button="B"] kbd')).toHaveText(["P"]);
+        await page.keyboard.press("Escape");
+        await expect(panel).toBeHidden();
     });
 
     test("Given emulator is running, when debugger is toggled with shortcut, then panel visibility changes without browser errors", async ({ page }) => {
@@ -149,4 +173,43 @@ test.describe("Phase 3 extended UX", () => {
         expect(consoleErrors).toHaveLength(0);
         expect(pageErrors).toHaveLength(0);
     });
+
+    for (const { width, gamepad } of [
+        { width: 390, gamepad: false },
+        { width: 320, gamepad: false },
+        { width: 780, gamepad: false },
+        { width: 1280, gamepad: true },
+        { width: 390, gamepad: true },
+    ]) {
+        test(`Given a ${width}px window${gamepad ? " and a gamepad" : ""}, when the keys and controls panel shows each pad, then no two buttons overlap and the pad fits the panel`, async ({ page }) => {
+            if (gamepad) {
+                await page.addInitScript(() => {
+                    const pad = { id: "Test pad", index: 0, connected: true, mapping: "standard", buttons: [], axes: [], timestamp: 0 };
+                    Object.defineProperty(navigator, "getGamepads", { value: () => [pad, null, null, null] });
+                });
+            }
+            await page.setViewportSize({ width, height: 844 });
+            await openApp(page);
+            await page.evaluate(() => (document.getElementById("help-open") as HTMLButtonElement).click());
+            const panel = page.locator("#help-panel");
+            await expect(panel).toBeVisible();
+            if (gamepad) await expect(panel.locator("#help-pad .pad-gamepad")).toHaveText("Gamepad");
+            for (const system of ["NES", "GBA", "SNES"]) {
+                await panel.locator("#help-chips button", { hasText: new RegExp(`^${system}( · Player 1)?$`) }).click();
+                const boxes = await panel.locator("#help-pad .pad-button, #help-pad .pad-gamepad").evaluateAll((els) =>
+                    els.map((el) => {
+                        const r = el.getBoundingClientRect();
+                        return { name: (el as HTMLElement).dataset.button ?? "Gamepad", l: r.left, r: r.right, t: r.top, b: r.bottom };
+                    })
+                );
+                const overlaps = boxes.flatMap((a, i) =>
+                    boxes.slice(i + 1).filter((b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b).map((b) => `${a.name}×${b.name}`)
+                );
+                expect(overlaps, system).toEqual([]);
+                // Nothing in the panel runs past it, so it never scrolls sideways.
+                const fits = await panel.evaluate((el) => el.scrollWidth <= el.clientWidth);
+                expect(fits, system).toBe(true);
+            }
+        });
+    }
 });

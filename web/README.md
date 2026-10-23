@@ -90,7 +90,7 @@ web/
 │   ├── rom/                # ROM loading, autorun
 │   ├── save-state/         # Save/load state management
 │   ├── shortcuts/          # Keyboard shortcuts
-│   └── ui/                 # Toast overlays, sine scroller
+│   └── ui/                 # Toast overlays, the control bar helpers, settings panel and library
 └── integration/            # Playwright e2e tests
 ```
 - Optional gamepad input uses the Gamepad API (toggle in UI).

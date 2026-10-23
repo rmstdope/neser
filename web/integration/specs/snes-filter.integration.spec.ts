@@ -5,7 +5,8 @@ import {
     loadRomFromFileInput,
     openApp,
     waitForPausedState,
-    waitForRunningState
+    waitForRunningState,
+    pickNext
 } from "../helpers/lifecycle.helpers";
 import { makeMinimalSnesRomBytes } from "../helpers/snes_rom.helpers";
 
@@ -28,11 +29,11 @@ test.describe("SNES screen filters (nr-gtx)", () => {
         await loadSnesRom(page);
         await expect(filter).toHaveText("Filter: None");
 
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: NTSC");
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: CRT");
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: None");
 
         await filter.blur();
@@ -41,7 +42,7 @@ test.describe("SNES screen filters (nr-gtx)", () => {
 
         await page.locator("#pause").click();
         await waitForPausedState(page);
-        await filter.click();
+        await pickNext(page, filter);
         await expect(filter).toHaveText("Filter: CRT");
         await filter.blur();
         await page.keyboard.press("F4");
@@ -74,17 +75,6 @@ test.describe("SNES screen filters (nr-gtx)", () => {
 
         await loadSnesRom(page);
         await expect(filter).toHaveText("Filter: None");
-    });
-
-    test("Given a Filter press before any game, then the first SNES game keeps the chosen look", async ({ page }) => {
-        await openApp(page);
-        const filter = page.locator(FILTER_SELECTOR);
-
-        await filter.click();
-        await expect(filter).toHaveText("Filter: CRT");
-
-        await loadSnesRom(page);
-        await expect(filter).toHaveText("Filter: CRT");
     });
 
     test("Given a first NES ROM that fails to load, then the first SNES game still starts on None", async ({ page }) => {

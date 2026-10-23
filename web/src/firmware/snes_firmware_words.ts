@@ -66,6 +66,11 @@ export function sidebarStored(chip: SnesFirmwareChip): string {
     return `${chip.label}: stored ✓`;
 }
 
+/** A chip whose firmware the player has not given yet, in the settings panel's list. */
+export function sidebarMissing(chip: SnesFirmwareChip): string {
+    return `${chip.label}: not added`;
+}
+
 /** A game's name in messages: its file name without the last extension. */
 export function romDisplayName(fileName: string): string {
     const dot = fileName.lastIndexOf(".");
@@ -95,11 +100,6 @@ export function wrongSizeDetail(fileName: string, size: number): string {
 /** The second line when a chosen 8 KB file is not the chip's genuine firmware. */
 export function notGenuineDetail(chip: SnesFirmwareChip, fileName: string): string {
     return `"${fileName}" is 8 KB but is not the ${chip.label} firmware.`;
-}
-
-/** The status line, in red, when the player cancels the dialog. */
-export function notStartedStatus(chip: SnesFirmwareChip, game: string): string {
-    return `Failed to load ROM: ${game} needs the ${chip.label} firmware`;
 }
 
 /** The 3-second message when the player cancels the dialog. */

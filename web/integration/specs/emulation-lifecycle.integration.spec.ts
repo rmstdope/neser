@@ -9,7 +9,7 @@ import {
     waitForPausedState
 } from "../helpers/lifecycle.helpers";
 
-const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#pause", "#stop", "#reset", "#status"];
+const ESSENTIAL_CONTROL_SELECTORS = ["#library", "#library-choose", "#library-list"];
 const START_BUTTON_SELECTOR = "#start";
 const PAUSE_BUTTON_SELECTOR = "#pause";
 const STOP_BUTTON_SELECTOR = "#stop";
@@ -24,6 +24,12 @@ test.describe("Phase 1 critical path lifecycle", () => {
         for (const selector of ESSENTIAL_CONTROL_SELECTORS) {
             await expect(page.locator(selector)).toBeVisible();
         }
+        // With no game yet, the library shows instead of the picture and its control bar.
+        await expect(page.locator("#screen")).toBeHidden();
+        await expect(page.locator(PAUSE_BUTTON_SELECTOR)).toBeHidden();
+        await expect(page.locator(START_BUTTON_SELECTOR)).toBeHidden();
+        // The status line holds a message only when there is one; while idle it is empty.
+        await expect(page.locator("#status")).toBeAttached();
 
         await waitForIdleState(page);
     });

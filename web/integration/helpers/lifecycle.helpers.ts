@@ -1,11 +1,9 @@
-import { expect, Page } from "@playwright/test";
+import { expect, Locator, Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const EXPECT_TIMEOUT_MS = 15_000;
 const STATUS_SELECTOR = "#status";
-const ROM_SELECT_ID = "rom-select";
-const ROM_SELECT_SELECTOR = `#${ROM_SELECT_ID}`;
 const BUNDLED_ROM_NAME = "cpu.nes";
 const BUNDLED_ROM_PATH = path.join(
     "roms",
@@ -14,6 +12,9 @@ const BUNDLED_ROM_PATH = path.join(
     "blargg_nes_cpu_test5",
     BUNDLED_ROM_NAME
 );
+
+/** Where the library lists the mock ROM in the one-game list `startFromBundledRom` serves. */
+const BUNDLED_LIBRARY_PATH = `test/${BUNDLED_ROM_NAME}`;
 
 function readMockRomBytes() {
     return readFileSync(path.join(process.cwd(), BUNDLED_ROM_PATH));
@@ -30,29 +31,10 @@ function makeMinimalGbaRomBytes() {
     return rom;
 }
 
-async function injectBundledRomOption(page: Page) {
-    const romDataUrl = `data:application/octet-stream;base64,${readMockRomBytes().toString("base64")}`;
-    await page.evaluate(({ value, romSelectId, bundledRomName }: { value: string; romSelectId: string; bundledRomName: string }) => {
-        const romSelect = document.getElementById(romSelectId);
-        if (!(romSelect instanceof HTMLSelectElement)) {
-            throw new Error("Expected #rom-select to be an HTMLSelectElement");
-        }
-
-        const option = document.createElement("option");
-        option.value = value;
-        option.textContent = bundledRomName;
-        romSelect.appendChild(option);
-    }, {
-        value: romDataUrl,
-        romSelectId: ROM_SELECT_ID,
-        bundledRomName: BUNDLED_ROM_NAME
-    });
-    return romDataUrl;
-}
-
 export async function openApp(page: Page) {
     await page.goto("/");
-    await expect(page.locator("#start")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    await expect(page.locator("#library")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    await expect(page.locator("#library-choose")).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
 }
 
 const EMULATION_CONTROLS_SELECTOR = "#emulation-controls";
@@ -135,20 +117,48 @@ export async function loadGbaRomFromFileInput(page: Page, name = "suite.gba") {
     });
 }
 
+/**
+ * Serve the library a one-game list, open the app, and start that game from the library, as a
+ * player picks a bundled test ROM. The game's bytes are the mock ROM, served at its list URL.
+ */
 export async function startFromBundledRom(page: Page) {
+    await page.route("**/roms/roms.json", (route) => route.fulfill({ json: { roms: [BUNDLED_LIBRARY_PATH] } }));
+    await page.route(`**/roms/${BUNDLED_LIBRARY_PATH}`, (route) =>
+        route.fulfill({ body: readMockRomBytes(), contentType: "application/octet-stream" })
+    );
     await openApp(page);
-    const romValue = await injectBundledRomOption(page);
-
-    await page.evaluate(({ value, romSelectId }: { value: string; romSelectId: string }) => {
-        const romSelect = document.getElementById(romSelectId);
-        if (!(romSelect instanceof HTMLSelectElement)) {
-            throw new Error("Expected #rom-select to be an HTMLSelectElement");
-        }
-        romSelect.value = value;
-        romSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    }, {
-        value: romValue,
-        romSelectId: ROM_SELECT_ID
-    });
+    await page.locator(`.library-item[data-path="${BUNDLED_LIBRARY_PATH}"]`).click();
     await waitForRunningState(page);
+}
+/** The settings panel's tabs, by their visible names. */
+export type SettingsTab = "General" | "Controls" | "Developer";
+
+/** Opens the settings panel (from the top bar) on the given tab, unless it is already open. */
+export async function openSettings(page: Page, tab: SettingsTab = "General") {
+    const panel = page.locator("#settings-panel");
+    if (!(await panel.isVisible())) {
+        await page.locator("#settings-open").click();
+        await expect(panel).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    }
+    await page.getByRole("tab", { name: tab }).click();
+}
+
+/** Closes the settings panel with its close button; a game it paused carries on. */
+export async function closeSettings(page: Page) {
+    await page.locator("#settings-close").click();
+    await expect(page.locator("#settings-panel")).toBeHidden({ timeout: EXPECT_TIMEOUT_MS });
+}
+
+/**
+ * Opens a button's short list (Filter, Palette, Colours) and picks the entry after the ticked
+ * one, wrapping round: what pressing the button did before it opened a list, and what F4 and F8
+ * still do.
+ */
+export async function pickNext(page: Page, button: Locator) {
+    await button.click();
+    const items = page.locator(".choice-menu [role='menuitemradio']");
+    await expect(items.first()).toBeVisible({ timeout: EXPECT_TIMEOUT_MS });
+    const ticked = await items.evaluateAll((els) => els.findIndex((el) => el.getAttribute("aria-checked") === "true"));
+    const count = await items.count();
+    await items.nth((ticked + 1) % count).click();
 }

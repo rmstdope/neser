@@ -22,4 +22,12 @@ describe("the console table", () => {
             expect(CONSOLES[kind].playerKeyBindings.length).toBeGreaterThan(0);
         }
     });
+
+    it("lists the Super Nintendo's second player, on the keys the web binds (I/J/K/L, P B, O A, 9 Select, 0 Start)", () => {
+        expect(CONSOLES.snes.playerKeyBindings[1]).toBe("I/J/K/L: D-Pad\nP: B\nO: A\n9: Select\n0: Start");
+    });
+
+    it("names only the Game Boy Advance's own buttons, on the keys the web binds them to (F B, G A, V L, B R)", () => {
+        expect(CONSOLES.gba.playerKeyBindings).toEqual(["W/A/S/D: D-Pad\nG: A\nF: B\nV: L\nB: R\n4: Select\n5: Start"]);
+    });
 });

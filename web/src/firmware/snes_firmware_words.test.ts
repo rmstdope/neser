@@ -10,7 +10,6 @@ import {
     initializeSnesFirmwareChips,
     notGenuineDetail,
     notStartedMessage,
-    notStartedStatus,
     romDisplayName,
     setSnesFirmwareChips,
     sidebarStored,
@@ -66,9 +65,6 @@ describe("SNES firmware words", () => {
         expect(storedMessage(dsp1)).toBe("DSP-1 firmware stored");
         expect(SIDEBAR_TITLE).toBe("SNES firmware");
         expect(sidebarStored(dsp1)).toBe("DSP-1: stored ✓");
-        expect(notStartedStatus(dsp1, "Super Mario Kart (USA)")).toBe(
-            "Failed to load ROM: Super Mario Kart (USA) needs the DSP-1 firmware"
-        );
         expect(notStartedMessage(dsp1, "Super Mario Kart (USA)")).toBe(
             "Not started: Super Mario Kart (USA) needs the DSP-1 firmware"
         );
@@ -88,9 +84,6 @@ describe("SNES firmware words", () => {
         expect(notGenuineDetail(dsp2, "dsp1b.rom")).toBe("\"dsp1b.rom\" is 8 KB but is not the DSP-2 firmware.");
         expect(storedMessage(dsp2)).toBe("DSP-2 firmware stored");
         expect(sidebarStored(dsp2)).toBe("DSP-2: stored ✓");
-        expect(notStartedStatus(dsp2, "Dungeon Master (Japan)")).toBe(
-            "Failed to load ROM: Dungeon Master (Japan) needs the DSP-2 firmware"
-        );
         expect(notStartedMessage(dsp2, "Dungeon Master (Japan)")).toBe(
             "Not started: Dungeon Master (Japan) needs the DSP-2 firmware"
         );
@@ -106,9 +99,6 @@ describe("SNES firmware words", () => {
         expect(notGenuineDetail(dsp3, "dsp2.rom")).toBe("\"dsp2.rom\" is 8 KB but is not the DSP-3 firmware.");
         expect(storedMessage(dsp3)).toBe("DSP-3 firmware stored");
         expect(sidebarStored(dsp3)).toBe("DSP-3: stored ✓");
-        expect(notStartedStatus(dsp3, "SD Gundam GX (Japan)")).toBe(
-            "Failed to load ROM: SD Gundam GX (Japan) needs the DSP-3 firmware"
-        );
         expect(notStartedMessage(dsp3, "SD Gundam GX (Japan)")).toBe(
             "Not started: SD Gundam GX (Japan) needs the DSP-3 firmware"
         );
@@ -124,9 +114,6 @@ describe("SNES firmware words", () => {
         expect(notGenuineDetail(dsp4, "dsp3.rom")).toBe("\"dsp3.rom\" is 8 KB but is not the DSP-4 firmware.");
         expect(storedMessage(dsp4)).toBe("DSP-4 firmware stored");
         expect(sidebarStored(dsp4)).toBe("DSP-4: stored ✓");
-        expect(notStartedStatus(dsp4, "Top Gear 3000 (USA)")).toBe(
-            "Failed to load ROM: Top Gear 3000 (USA) needs the DSP-4 firmware"
-        );
         expect(notStartedMessage(dsp4, "Top Gear 3000 (USA)")).toBe(
             "Not started: Top Gear 3000 (USA) needs the DSP-4 firmware"
         );

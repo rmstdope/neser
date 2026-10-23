@@ -564,7 +564,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 g,
                 b,
                 color_emphasis,
-                ppu.famicom_emphasis,
+                ppu.timing.region().swaps_red_green_emphasis,
                 ppu.vs_palette.is_some(),
             );
 
@@ -636,7 +636,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 g,
                 b,
                 ppu.registers.color_emphasis(),
-                ppu.famicom_emphasis,
+                ppu.timing.region().swaps_red_green_emphasis,
                 ppu.vs_palette.is_some(),
             );
 

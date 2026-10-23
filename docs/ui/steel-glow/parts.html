@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steel Glow — Parts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="steel.css">
+<style>
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 24px; }
+.tile { position: relative; border-radius: 18px; padding: 22px; background: radial-gradient(500px 300px at 50% -20%, #1a2c46, transparent 70%), var(--bg-0); box-shadow: 0 0 0 1px var(--line); min-height: 200px; }
+.tile > .cap { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+.tile .modal { position: static; transform: none; width: auto; }
+.mini { position: relative; aspect-ratio: 256/240; border-radius: 8px; overflow: hidden; background: #000; }
+.mini canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+.rec { position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; font: 600 11px var(--mono); color: #fff; background: rgba(40,10,18,.75); border: 1px solid rgba(242,113,138,.5); box-shadow: 0 0 14px rgba(242,113,138,.35); }
+.rec .dot { color: #ff4d6d; animation: b 1s steps(1) infinite; } @keyframes b { 50% { opacity: .25; } }
+.play { position: absolute; top: 10px; right: 10px; padding: 4px 10px; border-radius: 999px; font: 600 11px var(--mono); color: var(--ice); background: rgba(10,20,34,.8); border: 1px solid var(--line-strong); }
+.shimmer { position: absolute; inset: 0; display: grid; place-items: center; background: #03060b; }
+.ring { width: 46px; height: 46px; border-radius: 50%; border: 3px solid rgba(127,176,227,.15); border-top-color: var(--steel-hi); box-shadow: 0 0 20px rgba(110,170,235,.4); }
+.swrow { display: flex; flex-wrap: wrap; gap: 10px; }
+.sw { width: 74px; } .sw i { display: block; height: 46px; border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); margin-bottom: 6px; } .sw span { font: 10.5px var(--mono); color: var(--muted); }
+.focus { outline: 2px solid var(--ice); outline-offset: 3px; box-shadow: 0 0 0 6px rgba(127,176,227,.18), var(--glow); }
+.kmap { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; align-items: center; font-size: 13px; }
+.kmap .kbd { min-width: 34px; } .kmap > span:nth-child(even) { justify-self: end; }
+.status-list { margin: 10px 0 0; padding: 0; list-style: none; font: 12px var(--mono); color: var(--ice); }
+.status-list li { padding: 3px 0; display: flex; gap: 8px; } .status-list li::before { content: "›"; color: var(--steel-hi); }
+</style>
+</head>
+<body>
+<div class="sheet">
+<header>
+  <h1>Steel Glow, round 2 — <b>parts &amp; dialogs</b></h1>
+  <p class="intro">The smaller pieces: the SNES firmware dialog and its error, autorun (now under Settings › Developer), the Controls tab, the loading state, the brief messages, and the colour and control palette everything is built from. The words in the firmware and autorun dialogs are today's, unchanged.</p>
+  <nav class="nav"><a href="desktop.html">Desktop</a><a href="phone.html">Phone &amp; tablet</a><a class="here" href="parts.html">Parts &amp; dialogs</a><a href="restyle-only.html">Round 1: restyle only</a></nav>
+</header>
+
+<section class="shot"><h2><span class="n">D1</span>SNES firmware</h2>
+<p>The dialog a DSP game opens the first time, the same dialog when the chosen file is wrong, and the brief message when you cancel it (the game returns to the library instead of a red status line).</p>
+<div class="board">
+  <div class="tile"><div class="cap">Asking</div><div class="modal"><h3>This game needs the DSP-1 firmware</h3><p>Choose your dsp1b.rom file (8 KB). It stays in this browser, so you only do this once.</p><div class="actions"><span class="btn ghost">Cancel</span><span class="btn primary">Choose file…</span></div></div></div>
+  <div class="tile"><div class="cap">Wrong file</div><div class="modal"><h3>That isn't a DSP-1 firmware file</h3><div class="alert err"><i data-i="alert"></i><span>"dsp1.bin" is 12.5 KB; the firmware is exactly 8 KB.</span></div><div class="actions"><span class="btn ghost">Cancel</span><span class="btn primary">Choose another…</span></div></div></div>
+  <div class="tile"><div class="cap">Cancelled · stored</div><div style="display:flex;flex-direction:column;gap:12px;align-items:flex-start">
+    <div class="toast err"><i data-i="alert"></i>Not started: Pilotwings needs the DSP-1 firmware</div>
+    <div class="toast ok"><i data-i="check"></i>DSP-1 firmware stored</div></div></div>
+</div></section>
+
+<section class="shot"><h2><span class="n">D2</span>Autorun (developer tool) <span class="new">new</span></h2>
+<p>Today's autorun checkbox and buttons move from the sidebar to <b>Settings › Developer</b>, next to the debugger switch. While recording, a red <b>REC</b> mark sits in the picture's corner, as today. During playback, a blue mark shows the progress. The dialog keeps today's fields.</p>
+<div class="board">
+  <div class="tile"><div class="cap">Settings › Developer</div>
+    <div class="grp" style="padding-top:0"><div class="h4">Debugger</div><div class="rowx"><span class="lbl">Show debugger button<span class="sub">Or press F5 at any time</span></span><span class="toggle on"></span></div></div>
+    <div class="grp"><div class="h4">Autorun</div>
+      <label class="check"><i class="on"></i>Create autorun</label>
+      <span class="btn" style="width:100%">Load autorun…</span>
+      <ul class="status-list"><li>Recording 1,204 frames</li><li>Checkpoint 2 saved at frame 1,200</li></ul>
+      <span class="btn danger sm" style="align-self:flex-start"><i data-i="x"></i>Cancel autorun</span></div>
+    <div class="grp"><div class="h4">Picture</div><div class="rowx"><span class="lbl">Show frame rate</span><span class="toggle on"></span></div></div></div>
+  <div class="tile"><div class="cap">Configure autorun</div><div class="modal">
+    <h3>Configure Autorun</h3>
+    <div class="h4" style="margin-top:14px">Autorun file (.autorun)</div>
+    <div class="field"><span>platform_quest.autorun</span><span class="btn sm">Change…</span></div>
+    <div class="alert" style="margin-top:12px"><i data-i="info"></i><span>NES · 3,600 frames · 3 checkpoints</span></div>
+    <div class="h4" style="margin-top:14px">Start from checkpoint</div>
+    <div class="field">Checkpoint 2 (frame 2400)<i data-i="chev"></i></div>
+    <label class="check" style="margin-top:14px"><i></i>Extend autorun (record after playback ends)</label>
+    <div class="actions"><span class="btn ghost">Cancel</span><span class="btn primary">Use Autorun</span></div></div></div>
+  <div class="tile"><div class="cap">In the picture</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div class="mini"><canvas data-scene width="256" height="240"></canvas><div class="rec"><span class="dot"></span>REC 00:42</div></div>
+    <div class="mini"><canvas data-scene width="256" height="240"></canvas><div class="play">▶ 2,410 / 3,600</div></div></div></div>
+</div></section>
+
+<section class="shot"><h2><span class="n">D3</span>Controls, loading, and the brief messages</h2>
+<p>The Controls tab lists today's keys for the running system, read-only for now (remapping is a later interaction question). While a game starts, the screen shows a ring instead of a blank canvas. Brief messages stack at the top centre of the stage for three seconds.</p>
+<div class="board">
+  <div class="tile"><div class="cap">Settings › Controls</div>
+    <div class="seg" style="margin-bottom:14px"><span class="on">NES</span><span>GB</span><span>GBA</span><span>SNES</span></div>
+    <div class="kmap">
+      <span>D-Pad</span><span><span class="kbd">W</span> <span class="kbd">A</span> <span class="kbd">S</span> <span class="kbd">D</span></span>
+      <span>A</span><span class="kbd">R</span><span>B</span><span class="kbd">T</span><span>Select</span><span class="kbd">4</span><span>Start</span><span class="kbd">5</span>
+    </div>
+    <div class="grp" style="margin-top:12px"><div class="h4">Gamepads</div><div class="rowx"><i data-i="pad"></i><span class="lbl">Xbox Wireless Controller<span class="sub">Player 1</span></span><span class="chip ok"><span class="dot"></span>Connected</span></div></div></div>
+  <div class="tile"><div class="cap">Starting a game</div><div class="mini" style="max-width:300px;margin:0 auto"><div class="shimmer"><div style="text-align:center"><div class="ring" style="margin:0 auto 14px"></div><div class="muted" style="font-size:13px">Starting Sky Racer…</div></div></div></div></div>
+  <div class="tile"><div class="cap">Brief messages</div><div style="display:flex;flex-direction:column;gap:10px;align-items:center">
+    <div class="toast ok"><i data-i="check"></i>State saved</div>
+    <div class="toast"><i data-i="pad"></i>Press a button on any connected gamepad</div>
+    <div class="toast"><i data-i="palette"></i>Palette: Composite Direct</div>
+    <div class="toast err"><i data-i="alert"></i>Failed to enter fullscreen mode</div></div></div>
+</div></section>
+
+<section class="shot"><h2><span class="n">D4</span>Colours and controls</h2>
+<p>Everything above is built from these. The keyboard focus ring is a bright ice outline with a glow, so tabbing through the page is always visible.</p>
+<div class="board">
+  <div class="tile"><div class="cap">Colours</div><div class="swrow">
+    <div class="sw"><i style="background:#070b12"></i><span>night</span></div><div class="sw"><i style="background:#111c2b"></i><span>panel</span></div><div class="sw"><i style="background:#4a76a8"></i><span>steel</span></div><div class="sw"><i style="background:#7fb0e3"></i><span>steel-hi</span></div>
+    <div class="sw"><i style="background:#b9dcff"></i><span>ice</span></div><div class="sw"><i style="background:#dbe6f3"></i><span>text</span></div><div class="sw"><i style="background:#7d8fa6"></i><span>muted</span></div><div class="sw"><i style="background:#5fd3b0"></i><span>ok</span></div>
+    <div class="sw"><i style="background:#e9b65f"></i><span>warn</span></div><div class="sw"><i style="background:#f2718a"></i><span>error</span></div></div></div>
+  <div class="tile"><div class="cap">Buttons</div><div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+    <span class="btn primary">Primary</span><span class="btn">Default</span><span class="btn hover">Hover</span><span class="btn focus">Keyboard focus</span><span class="btn" disabled>Disabled</span><span class="btn danger">Danger</span><span class="btn ghost">Ghost</span><span class="btn icon"><i data-i="gear"></i></span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:16px">
+    <span class="chip ok"><span class="dot"></span>60.0 fps</span><span class="chip warn"><span class="dot"></span>Paused</span><span class="chip err"><span class="dot"></span>Error</span><span class="sys nes">NES</span><span class="sys gb">GB</span><span class="sys gbc">GBC</span><span class="sys gba">GBA</span><span class="sys snes">SNES</span></div></div>
+  <div class="tile"><div class="cap">Inputs</div><div style="display:flex;flex-direction:column;gap:12px">
+    <div class="field">Game Boy Color<i data-i="chev"></i></div><div class="seg" style="align-self:flex-start"><span>Game Boy</span><span class="on">Game Boy Color</span></div>
+    <div style="display:flex;gap:18px;align-items:center"><span class="toggle on"></span><span class="toggle"></span><label class="check"><i class="on"></i>On</label><label class="check"><i></i>Off</label></div>
+    <div class="slider"><i style="width:60%"></i><b style="left:56%"></b></div></div></div>
+</div></section>
+</div>
+<script src="scenes2.js"></script>
+<script src="scene.js"></script>
+<script src="fit.js"></script>
+</body>
+</html>

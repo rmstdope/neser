@@ -16,7 +16,6 @@ import {
     type SnesFirmwareChip,
     chipByKey,
     notStartedMessage,
-    notStartedStatus,
     romDisplayName,
     initializeSnesFirmwareChips
 } from "./firmware/snes_firmware_words";
@@ -51,7 +50,7 @@ import { handleRomSelection } from "./rom/rom_selection";
 import { shouldCreateFreshEmulatorForRomStart } from "./rom/emulator_lifecycle";
 import {
     applyRomExtensionTable,
-    supportedRomExtensionsText,
+    supportedRomExtensions,
     webRomConsoleKindForName,
     webRomExtensionForName
 } from "./rom/rom_extensions";
@@ -64,7 +63,18 @@ import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normaliz
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
-import { createSineScroller } from "./ui/sine_scroller";
+import { gameTitle } from "./ui/game_title";
+import { BROWSER_CANNOT_DRAW, errorPlace, libraryAlert, showLibraryAlert, unsupportedFileMessage } from "./ui/errors";
+import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
+import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
+import { phoneFpsChip, sheetDragCloses } from "./ui/handheld";
+import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
+import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
+import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
+import { frameThumbnail } from "./display/thumbnail";
+import { createSavePreviewStore, savedAgo, savedAtLine, type SavePreview } from "./save-state/save_preview";
+import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
+import { belongsToOpenDialog, isEditableKeyboardTarget } from "./shortcuts/keyboard_target";
 import {
     type KeyBindingRow,
     type KeyBindingSink,
@@ -76,12 +86,7 @@ import {
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
-import {
-    buildFullHelpOverlayText,
-    buildShortcutReferenceText,
-    computeShortcutHelpFontSizePx,
-    toggleShortcutHelpVisibility
-} from "./shortcuts/shortcut_help";
+import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
@@ -94,8 +99,10 @@ import {
     computeFullscreenCanvasSize,
     computeWindowedCanvasSize,
     computeHandheldCanvasSize,
+    initialWindowedHeight,
 } from "./display/canvas_size";
-import { probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
+import {
+    zoomLevelLabel, probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
 import {
     browserStorage,
@@ -119,7 +126,7 @@ import {
     shouldKeepPointerLocked,
 } from "./input/pointer_lock";
 import { computeButtonStates, computeSaveStateButtons, type SaveSlotState } from "./ui/emulation_controls";
-import { cycleFilterKey, filterOnConsoleSwitch, filterPipelineNeedsRebuild, type FilterDef } from "./display/filters";
+import { cycleFilterKey, defaultFilterForConsole, filterKeysForConsole, filterOnConsoleSwitch, filterPipelineNeedsRebuild, type FilterDef } from "./display/filters";
 import {
     buttonFilterKey,
     filterFailed,
@@ -130,7 +137,7 @@ import {
 } from "./display/filter_selection";
 import { createGbaPipeline, isGbaLook } from "./display/gba_pipeline";
 import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
-import { paletteButtonVisible } from "./display/palette_button";
+import { cyclePaletteTo, listPalettes, paletteButtonVisible, stablePaletteOrder } from "./display/palette_button";
 import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
@@ -157,7 +164,6 @@ const fpsCounterEl = document.getElementById("fps-counter");
 // by the kernel input-boost policy, which cannot be replicated from userspace.
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const romInput = document.getElementById("rom") as HTMLInputElement;
-const romSelect = document.getElementById("rom-select") as HTMLSelectElement | null;
 const canvasEl = document.getElementById("screen");
 if (!(canvasEl instanceof HTMLCanvasElement)) {
     throw new Error("Canvas element with id 'screen' not found or not a canvas");
@@ -167,13 +173,13 @@ const screenWrap = canvas.closest(".screen-wrap") as HTMLElement;
 if (!screenWrap) {
     throw new Error("Screen wrapper with class 'screen-wrap' not found");
 }
-const shortcutReference = document.getElementById("shortcut-reference");
-const shortcutHelpOverlay = document.getElementById("shortcut-help-overlay");
 const debuggerPanel = document.getElementById("debugger-panel");
 
 // Use WebGL for rendering with filter support
 const gl = canvas.getContext("webgl", SCREEN_CONTEXT_ATTRIBUTES)!;
 if (!gl) {
+    // Nothing else can start without it, so the library says so of the browser before stopping.
+    showLibraryAlert(document, libraryAlert(BROWSER_CANNOT_DRAW, null));
     throw new Error("WebGL rendering context not available for canvas 'screen'");
 }
 
@@ -181,11 +187,6 @@ if (!gl) {
 let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
 let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
 const SCROLLER_TEXT = "September 29, 2026: Version 1.3.0 - Super Nintendo support on desktop and web. Star Fox, Super Mario RPG and Mega Man X2 run with their chips. Super Scope and SNES Mouse on your mouse. Game Boy palettes on F8";
-const SCROLLER_SPEED = 1.6;
-const SCROLLER_AMPLITUDE = 17;
-const SCROLLER_FREQUENCY = 0.0587;
-const SCROLLER_FONT_SIZE_PX = 15;
-const SCROLLER_FONT_FAMILY = "'VT323', monospace";
 
 const toastContainer = createToastContainer(screenWrap);
 
@@ -202,7 +203,11 @@ const snesFirmwareSidebar = createFirmwareSidebar({
     },
     store: snesFirmwareStore,
     isGenuine: snes_dsp_firmware_is_genuine,
-    showMessage: (message) => toastOverlay.show(message)
+    // The rows sit in the settings panel, so their words show there rather than behind it.
+    showMessage: (message) => {
+        const line = document.getElementById("snes-firmware-message");
+        if (line) line.textContent = message;
+    }
 });
 void snesFirmwareSidebar.refresh();
 
@@ -369,6 +374,10 @@ let currentFilter = "ntsc"; // Start with NTSC filter as requested
 let filterSelection: FilterSelection = selectionAt(currentFilter);
 /** The last frame drawn, redrawn when a GBA game's look changes while paused. */
 let lastFrame: { frame: Uint8Array; format: number } | null = null;
+/** The running game's save-state key (name, size and hash), which its preview is kept under too. */
+let savePreviewKey: string | null = null;
+/** Why save states are not offered for the loaded console, if they are not; Save and Load say so. */
+let saveStateUnavailableReason: string | null = null;
 /** True until a look is chosen or a game has loaded: the first game then starts on its console's default. */
 let filterUntouched = true;
 const filterKeys = Object.keys(filters);
@@ -402,11 +411,7 @@ let gbPrevFrameData: Uint8Array | null = null;
 let gbAssetsLoaded = false;
 let frameCount = 0; // For NTSC phase animation
 const frameLimiter = createFrameLimiter(60);
-const idleFrameLimiter = createFrameLimiter(60);
 let webglInitialized = false; // Track WebGL initialization state
-let idleScrollerActive = false;
-let idleScroller: { renderFrame: (ts: number) => Uint8Array } | null = null;
-let idleScrollerStartTime = 0;
 let crosshair: ReturnType<typeof createCrosshair> | null = null; // Light-gun sight overlay
 let crosshairPictureWidth = 256; // The picture width the sight overlay was created for
 // Capture state for playing a Super Scope or SNES Mouse game with the mouse; fresh for every
@@ -844,7 +849,11 @@ function initWebGL() {
  */
 function cycleFilter() {
     const consoleKind = emulator?.kind ?? "nes";
-    const next = cycleFilterKey(buttonFilterKey(filterSelection), filterKeys, filters, consoleKind);
+    chooseFilter(cycleFilterKey(buttonFilterKey(filterSelection), filterKeys, filters, consoleKind));
+}
+
+/** Draw with the look `next` from now on, once its images are ready. */
+function chooseFilter(next: string) {
     filterSelection = requestFilter(filterSelection, next);
     if (!isGbaLook(next)) {
         showFilter(filterReady(filterSelection, next));
@@ -933,18 +942,61 @@ function updateCgbColorButton() {
         paused,
     });
     cgbColorToggleBtn.style.display = visible ? "" : "none";
+    cgbColorToggleBtn.disabled = paused;
     if (emulator?.kind === "gb" || emulator?.kind === "gba") cgbColorToggleBtn.textContent = emulator.inst.color_label();
 }
 
-cgbColorToggleBtn?.addEventListener("click", () => {
+/** Switch the running game's colour correction, as F8 does on a GBA and the old button did. */
+function toggleColorCorrection() {
     if (emulator?.kind === "gba") {
         cyclePaletteAction();
     } else if (emulator?.kind === "gb") {
         cgbColor.click(emulator.inst);
     }
-});
+}
 
-/** The Palette button does what F8 does and names the palette in use. */
+/** The Colors list: the correction off and on, in the core's own words, the current one ticked. */
+function colorChoices(): { labels: string[]; on: boolean } {
+    if (emulator?.kind === "gb") {
+        const inst = emulator.inst;
+        const on = inst.cgb_color_correction();
+        inst.set_cgb_color_correction(false);
+        const off = inst.color_label();
+        inst.set_cgb_color_correction(true);
+        const onLabel = inst.color_label();
+        inst.set_cgb_color_correction(on);
+        return { labels: [off, onLabel], on };
+    }
+    if (emulator?.kind === "gba") {
+        const inst = emulator.inst;
+        const on = inst.color_correction();
+        inst.set_color_correction(false);
+        const off = inst.color_label();
+        inst.set_color_correction(true);
+        const onLabel = inst.color_label();
+        inst.set_color_correction(on);
+        return { labels: [off, onLabel], on };
+    }
+    return { labels: [], on: false };
+}
+
+if (cgbColorToggleBtn) {
+    createChoiceMenu({
+        anchor: cgbColorToggleBtn,
+        title: "Colours",
+        footer: "Switch with",
+        footerKeys: ["F8"],
+        choices: () => {
+            const { labels, on } = colorChoices();
+            return labels.map((label, index) => ({ label: label.replace(/^Colors: /, ""), selected: (index === 1) === on }));
+        },
+        onPick: (index) => {
+            if ((index === 1) !== colorChoices().on) toggleColorCorrection();
+        },
+    });
+}
+
+/** The Palette button names the palette in use and lists them all; F8 steps to the next. */
 const paletteCycleBtn = document.getElementById("palette-cycle") as HTMLButtonElement | null;
 
 /** Show the Palette button only where F8 changes something; its label is the core's. */
@@ -953,10 +1005,52 @@ function updatePaletteButton() {
     const label = emulator?.kind === "nes" || emulator?.kind === "gb" ? emulator.inst.palette_label() : "";
     const visible = paletteButtonVisible({ kind: emulator?.kind ?? null, label, running, paused });
     paletteCycleBtn.style.display = visible ? "" : "none";
+    paletteCycleBtn.disabled = paused;
     if (visible) paletteCycleBtn.textContent = label;
 }
 
-paletteCycleBtn?.addEventListener("click", () => cyclePaletteAction());
+/** The running core's palettes, as a source that can only step to the next one. */
+function paletteSource() {
+    if (emulator?.kind !== "nes" && emulator?.kind !== "gb") return null;
+    const inst = emulator.inst;
+    return { label: () => inst.palette_label(), cycle: () => void inst.cycle_palette() };
+}
+
+if (paletteCycleBtn) {
+    let paletteNames: string[] = [];
+    /** The order the palettes were first listed in for this game, so the list keeps still. */
+    let paletteOrder: string[] | null = null;
+    let paletteOrderGame: string | null = null;
+    paletteCycleBtn.addEventListener("click", () => {
+        if (paletteOrderGame !== (romMetadata?.name ?? null)) {
+            paletteOrder = null;
+            paletteOrderGame = romMetadata?.name ?? null;
+        }
+    }, { capture: true });
+    createChoiceMenu({
+        anchor: paletteCycleBtn,
+        title: "Palette",
+        footer: "Cycle with",
+        footerKeys: ["F8"],
+        choices: () => {
+            const source = paletteSource();
+            const current = source?.label() ?? "";
+            paletteNames = source ? stablePaletteOrder(paletteOrder, listPalettes(source)) : [];
+            paletteOrder = paletteNames.length ? paletteNames : paletteOrder;
+            return paletteNames.map((name) => ({ label: name.replace(/^Palette: /, ""), selected: name === current }));
+        },
+        onPick: (index) => {
+            const source = paletteSource();
+            if (!source || paused || paletteNames[index] === source.label()) return;
+            if (cyclePaletteTo(source, paletteNames[index])) {
+                toastOverlay.show(paletteNames[index]);
+                syncGbPaletteWithFilter(false);
+            }
+            updateCgbColorButton();
+            updatePaletteButton();
+        },
+    });
+}
 
 /** "Game Boy games run on": remembered in this browser, applied when an original Game Boy game starts or is Reset. */
 const gbHardwareSelect = document.getElementById("gb-hardware") as HTMLSelectElement | null;
@@ -1025,12 +1119,201 @@ function updateAutorunControls() {
     updateAutorunStatus();
 }
 
+// ── Which view shows: the library (no game, or opened over a paused one) or the game ──
+/** The name of the game last picked, for the library's error heading. */
+let lastPickedName: string | null = null;
+/** The running game stopped on an error: its picture stays, with the stopped-game message. */
+let gameCrashed = false;
+/** WebGL is missing, so no game can be shown; the library says so of the browser. */
+let browserCannotDraw = false;
+
+const appMain = document.querySelector("main.app-main") as HTMLElement;
+const libraryChooseBtn = document.getElementById("library-choose") as HTMLButtonElement;
+const libraryBackBtn = document.getElementById("library-back") as HTMLButtonElement;
+const libraryOpenBtn = document.getElementById("library-open") as HTMLButtonElement;
+const libraryAgainEl = document.getElementById("library-again") as HTMLElement;
+const libraryAgainNameEl = document.getElementById("library-again-name") as HTMLElement;
+const libraryDropEl = document.getElementById("library-drop") as HTMLElement;
+/** The library is showing over a game that waits under it. */
+let libraryOverGame = false;
+/** Opening the library paused the game, so going back resumes it. */
+let pausedByLibrary = false;
+
+function updateView() {
+    const view = (!running && !gameCrashed) || libraryOverGame ? "library" : "game";
+    const shownNow = appMain.dataset.view !== view;
+    appMain.dataset.view = view;
+    // Brief notes show wherever the player is: over the picture, or at the top of the library.
+    const toastHost = view === "library" ? document.getElementById("library") : screenWrap;
+    if (toastHost && toastContainer.parentElement !== toastHost) toastHost.appendChild(toastContainer);
+    // Zoom's limits are measured on the shown picture, so measure again once it shows.
+    if (shownNow && view === "game") updateZoomButtonState();
+    libraryOpenBtn.setAttribute("aria-pressed", view === "library" ? "true" : "false");
+    libraryBackBtn.classList.toggle("hidden", !(running && libraryOverGame));
+    const again = !running && romMetadata !== null;
+    libraryAgainEl.classList.toggle("hidden", !again);
+    if (again) libraryAgainNameEl.textContent = gameTitle(romMetadata!.name, "nes").title;
+}
+
+function openLibraryOverGame() {
+    // A stopped game has nothing to go back to: the Library is then Back to library.
+    if (gameCrashed) {
+        clearGameStopped();
+        stop();
+        return;
+    }
+    if (!running || libraryOverGame) return;
+    captureRecentThumbnail();
+    libraryOverGame = true;
+    pausedByLibrary = !paused;
+    if (pausedByLibrary) pauseResume();
+    updateView();
+    libraryChooseBtn.focus();
+}
+
+function backToGame() {
+    if (!libraryOverGame) return;
+    libraryOverGame = false;
+    hideLibraryError();
+    if (pausedByLibrary && running && paused) pauseResume();
+    pausedByLibrary = false;
+    updateView();
+    canvas.focus();
+}
+
+/** A new game replaces the one under the library, so there is nothing to go back to. */
+function leaveLibraryForNewGame() {
+    libraryOverGame = false;
+    pausedByLibrary = false;
+    clearGameStopped();
+}
+
+libraryChooseBtn.addEventListener("click", () => romInput.click());
+
+/** The library's own keys: O chooses a file, / goes to the search. */
+function libraryKey(event: KeyboardEvent) {
+    // The game's Ctrl shortcuts wait with the game, rather than reaching the browser's reload or find.
+    if ((event.ctrlKey || event.metaKey) && (event.code === "KeyR" || event.code === "KeyF")) {
+        event.preventDefault();
+        return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.code === "KeyO") {
+        event.preventDefault();
+        romInput.click();
+    } else if (event.key === "/") {
+        event.preventDefault();
+        (document.getElementById("library-search") as HTMLInputElement).focus();
+    }
+}
+
+document.getElementById("library-error-choose")!.addEventListener("click", () => romInput.click());
+// A game that stopped on an error starts again on a fresh console: the old one may have panicked,
+// and a panicked core refuses every later call.
+document.getElementById("game-error-reset")!.addEventListener("click", async () => {
+    const kind = emulator?.kind;
+    clearGameStopped();
+    if (kind) createEmulatorInstance(kind);
+    await start();
+    if (running) canvas.focus();
+});
+document.getElementById("game-error-library")!.addEventListener("click", () => {
+    clearGameStopped();
+    stop();
+});
+libraryBackBtn.addEventListener("click", backToGame);
+libraryOpenBtn.addEventListener("click", () => {
+    if (libraryOverGame) backToGame();
+    else openLibraryOverGame();
+});
+
+// ── "Continue playing": the games last played in this browser ──
+const recentGames = createRecentGamesStore();
+const recentEl = document.getElementById("recent") as HTMLElement;
+const recentRowEl = document.getElementById("recent-row") as HTMLElement;
+
+async function refreshRecentGames() {
+    const games = await recentGames.list().catch(() => [] as RecentGame[]);
+    renderRecentGames(recentRowEl, games, new Date(), (game) => void loadRecentGame(game));
+    recentEl.classList.toggle("hidden", games.length === 0);
+}
+
+/** Remembers the game that just started, as played now. */
+function rememberRecentGame() {
+    if (!romMetadata || !romBytes || !emulator) return;
+    const isColor = emulator.kind === "gb" && emulator.inst.is_color();
+    const game: RecentGame & { bytes: Uint8Array } = {
+        name: romMetadata.name,
+        system: gameTitle(romMetadata.name, emulator.kind, isColor).system,
+        bytes: romBytes,
+        fromFile: romFromFile,
+        playedAt: Date.now(),
+        thumbnail: null,
+    };
+    void recentGames.remember(game).then(refreshRecentGames, (err) => console.error("Failed to remember the game", err));
+}
+
+/** Keeps a picture of the running game's last frame for its card, before it stops or is left. */
+function captureRecentThumbnail() {
+    if (!running || !lastFrame || !romMetadata) return;
+    const channels = lastFrame.format === gl.RGB ? 3 : 4;
+    const picture = frameThumbnail(lastFrame.frame, channels, width, height);
+    if (!picture) return;
+    void recentGames.setThumbnail(romMetadata.name, picture).then(refreshRecentGames, (err) => console.error("Failed to keep the game's picture", err));
+}
+
+document.getElementById("recent-clear")!.addEventListener("click", () => {
+    void recentGames.clear().then(refreshRecentGames, (err) => console.error("Failed to clear the recent games", err));
+});
+// Most players leave by closing the tab, so the picture is also taken whenever the page is hidden.
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") captureRecentThumbnail();
+});
+window.addEventListener("pagehide", () => captureRecentThumbnail());
+void refreshRecentGames();
+
+// A game file dropped anywhere on the page is loaded and started.
+const dragHasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
+document.addEventListener("dragover", (event) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    libraryDropEl.classList.add("library-hero-drag");
+});
+document.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget === null) libraryDropEl.classList.remove("library-hero-drag");
+});
+document.addEventListener("drop", (event) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    libraryDropEl.classList.remove("library-hero-drag");
+    const file = event.dataTransfer?.files[0];
+    if (file) void loadRomFile(file);
+});
+
+const gameTitleEl = document.getElementById("game-title");
+/** The top bar names the running game and its system; it is empty while nothing runs. */
+function updateGameTitle() {
+    if (!gameTitleEl) return;
+    const shown = running && emulator !== null && romMetadata !== null;
+    gameTitleEl.classList.toggle("hidden", !shown);
+    if (!shown) return;
+    const isColor = emulator!.kind === "gb" && emulator!.inst.is_color();
+    const { system, title, file } = gameTitle(romMetadata!.name, emulator!.kind, isColor);
+    const systemEl = document.getElementById("game-system")!;
+    systemEl.textContent = system;
+    systemEl.dataset.system = system;
+    document.getElementById("game-name")!.textContent = title;
+    document.getElementById("game-file")!.textContent = file;
+}
+
 /**
  * Centralized emulation button state update.
  * Computes enabled/disabled and label for Start, Pause, Reset, Stop
  * based on current emulation state, and applies the result to the DOM.
  */
 function updateEmulationButtons() {
+    // The game's state changed (paused, resumed, stopped), so a list showing it closes.
+    closeOpenChoiceMenus();
     const states = computeButtonStates({
         romLoaded: romBytes !== null,
         running,
@@ -1044,6 +1327,17 @@ function updateEmulationButtons() {
     if (pauseBtn) {
         pauseBtn.disabled = !states.pauseEnabled;
         pauseBtn.textContent = states.pauseLabel;
+        const hhPause = document.getElementById("hh-pause") as HTMLButtonElement | null;
+        if (hhPause) {
+            hhPause.disabled = !states.pauseEnabled;
+            hhPause.textContent = states.pauseLabel;
+            hhPause.dataset.icon = states.lifecycle === "paused" ? "play" : "pause";
+        }
+    }
+    // On a phone the frame-rate chip says Paused while the game waits (the drawn sheet's top bar).
+    if (fpsCounterEl && document.body.classList.contains("handheld") && running && paused) {
+        fpsCounterEl.textContent = phoneFpsChip(0, true);
+        (fpsCounterEl as HTMLElement).style.display = "";
     }
     if (stopBtn) {
         stopBtn.disabled = !states.stopEnabled;
@@ -1058,14 +1352,24 @@ function updateEmulationButtons() {
     }
     updateCgbColorButton();
     updatePaletteButton();
+    updateGameTitle();
+    updateDebuggerButton();
+    updateView();
+    updateZoomLevel();
     updateGbHardwareNote();
 }
 
 /** Create a fresh emulator instance and update kind-dependent UI. */
 function createEmulatorInstance(kind: ConsoleKind): void {
     resetGamepadState();
+    // A new console starts with the debugger closed; the old panel belonged to the old game.
+    hideDebuggerPanel();
     // Free the previous WASM instance to avoid leaking its linear memory.
-    emulator?.inst.free();
+    try {
+        emulator?.inst.free();
+    } catch {
+        // A core that panicked cannot be freed; it is simply dropped.
+    }
     nes = null;
     if (kind === "gb") {
         const gb = new WasmGb();
@@ -1103,10 +1407,12 @@ function updateEmulatorKindUI() {
     if (autorunSection) {
         autorunSection.style.display = isNes ? "" : "none";
     }
-    // Save-state buttons are shown for consoles with browser save/load support.
-    if (saveStateSection) {
-        saveStateSection.style.display = supportsWebSaveState(emulator?.kind ?? null) ? "" : "none";
-    }
+    // Save and Load stay in the bar; where save states are not supported they say why, disabled.
+    const saveStateNote = emulator?.kind === "gba" && !supportsWebSaveState("gba")
+        ? "Save states are not available for Game Boy Advance games yet"
+        : null;
+    saveStateUnavailableReason = saveStateNote;
+    updateSaveStateButtons();
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
     const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind, filterUntouched);
@@ -1124,7 +1430,6 @@ function updateEmulatorKindUI() {
     }
     filterToggleBtn.disabled = false;
     updateFilterToggleButtonLabel();
-    updateShortcutHelpOverlayText();
 }
 
 /** Update the recording overlay (REC : MM:SS) on the canvas. */
@@ -1332,6 +1637,8 @@ const AUDIO_TARGET_LATENCY = AUDIO_PROFILE.targetLatencySeconds; // seconds
 const AUDIO_MAX_ADJUST = AUDIO_PROFILE.maxAdjust; // +/- playback rate bound
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
+let masterGain: GainNode | null = null;
+let volumePercent = DEFAULT_VOLUME;
 function createEmptyGamepadState(): GamepadButtonState {
     return {
         a: false,
@@ -1367,20 +1674,64 @@ const SNES_LEGACY_BUTTON = {
     R: 11
 } as const;
 
+/**
+ * Says what went wrong where the player is: by the file in the library, on the stopped picture,
+ * or as a brief message over a running game. A message that is not an error clears the library's.
+ */
 function setStatus(msg: string, isError = false) {
-    statusEl!.textContent = isError ? msg : "";
-    statusEl!.style.color = isError ? "#f88" : "";
+    const libraryError = document.getElementById("library-error");
+    if (!isError) {
+        // A browser that cannot draw stays said: nothing the player picks changes it.
+        if (browserCannotDraw) return;
+        statusEl!.textContent = "";
+        statusEl!.dataset.state = "";
+        if (libraryError) libraryError.hidden = true;
+        return;
+    }
+    if (msg === BROWSER_CANNOT_DRAW) browserCannotDraw = true;
+    const view = appMain.dataset.view === "game" ? "game" : "library";
+    const place = errorPlace(view, msg);
+    if (place === "game") {
+        showGameStopped(msg);
+    } else if (place === "library") {
+        showLibraryAlert(document, libraryAlert(msg, lastPickedName ?? romMetadata?.name ?? null));
+    } else {
+        toastOverlay.show(msg);
+    }
+}
+
+function showGameStopped(message: string) {
+    gameCrashed = true;
+    document.getElementById("game-error-text")!.textContent = message;
+    document.getElementById("game-error")!.hidden = false;
+    updateEmulationButtons();
+    // The ways on are under the player's hand.
+    (document.getElementById("game-error-reset") as HTMLButtonElement).focus();
+}
+
+function clearGameStopped() {
+    gameCrashed = false;
+    const overlay = document.getElementById("game-error");
+    if (overlay) overlay.hidden = true;
+    // Without a stopped game the library may be the view again, where a failure is then said.
+    updateView();
+}
+
+/** The library alert goes when the player leaves the library, so it never greets them later. */
+function hideLibraryError() {
+    const libraryError = document.getElementById("library-error");
+    if (libraryError) libraryError.hidden = true;
 }
 
 async function applyRomBytes(bytes: Uint8Array, name: string) {
     romBytes = bytes;
+    savePreviewKey = null;
     romMetadata = {
         name,
         size: romBytes.length,
         bytes: romBytes
     };
     setStatus(`Loaded ROM: ${name} (${romBytes.length} bytes)`);
-    stopIdleScroller();
     await refreshSaveStateController();
     updateEmulationButtons();
 }
@@ -1407,7 +1758,8 @@ async function refreshSaveStateController() {
             loadStateFn: loadState,
             setStatus: (msg, isError = false) => {
                 setStatus(msg, isError);
-                toastOverlay.show(msg);
+                // An error already says itself where the player is; other news is a brief note.
+                if (!isError) toastOverlay.show(msg);
             }
         });
         if (saveStateController) {
@@ -1417,6 +1769,7 @@ async function refreshSaveStateController() {
                 size: romMetadata.size,
                 bytes: romMetadata.bytes
             });
+            savePreviewKey = key;
             saveSlot = (await hasState(db, key)) ? "saved" : "empty";
         } else {
             saveSlot = "empty";
@@ -1428,21 +1781,20 @@ async function refreshSaveStateController() {
         setStatus("Failed to initialize save state", true);
     }
     updateSaveStateButtons();
+    void refreshLoadPreview();
 }
 
-romInput!.addEventListener("change", async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    // Clear bundled ROM selection when a file is chosen
-    if (romSelect) romSelect.value = "";
-    romFromFile = true;
+/** Loads a game file the player chose or dropped, and starts it. */
+async function loadRomFile(file: File) {
+    lastPickedName = file.name;
     requestPointerLockFromUserGesture();
-    const expectedRom = autorunCtx.getExpectedRomName();
-    if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
-        toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file.name}" was loaded — playback may not work correctly`);
-    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // Only now, with the new game in hand, is the one under the library left behind.
+    romFromFile = true;
+    leaveLibraryForNewGame();
+    warnIfAutorunExpectsAnother(file.name);
     await handleRomSelection({
-        bytes: new Uint8Array(await file.arrayBuffer()),
+        bytes,
         name: file.name,
         running,
         stop,
@@ -1450,42 +1802,75 @@ romInput!.addEventListener("change", async (e) => {
         start,
         focusCanvas: () => canvas.focus()
     });
-});
+}
 
-if (romSelect) {
-    romSelect.addEventListener("change", async (e) => {
-        const sel = e.target as HTMLSelectElement;
-        const value = sel.value;
-        if (!value) return;
-        // Clear file input when a bundled ROM is selected
-        romInput.value = "";
-        romFromFile = false;
-        requestPointerLockFromUserGesture();
-        try {
-            const response = await fetch(value);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const bytes = new Uint8Array(await response.arrayBuffer());
-            // Prefer the option's display text (e.g. "cpu.nes") over URL parsing,
-            // since data-URL values don't contain a meaningful filename.
-            const selectedOption = sel.options[sel.selectedIndex];
-            const name = selectedOption?.textContent?.trim() || value.split("/").pop() || value;
-            await handleRomSelection({
-                bytes,
-                name,
-                running,
-                stop,
-                applyRomBytes,
-                start,
-                focusCanvas: () => canvas.focus()
-            });
-        } catch (error) {
-            console.error("Failed to load bundled ROM", error);
-            setStatus("Failed to load bundled ROM", true);
-        }
+/** A loaded autorun names the ROM it was recorded on; another one is allowed, with a warning. */
+function warnIfAutorunExpectsAnother(name: string) {
+    const expectedRom = autorunCtx.getExpectedRomName();
+    const file = name.slice(name.lastIndexOf("/") + 1);
+    if (expectedRom && file.toLowerCase() !== expectedRom.toLowerCase()) {
+        toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file}" was loaded — playback may not work correctly`);
+    }
+}
+
+/** Plays a game from the library's "Continue playing" row again, from the bytes kept for it. */
+async function loadRecentGame(game: RecentGame) {
+    lastPickedName = game.name;
+    requestPointerLockFromUserGesture();
+    const bytes = await recentGames.bytesOf(game.name).catch(() => null);
+    if (!bytes) {
+        setStatus("Failed to load ROM: this game is no longer kept in this browser", true);
+        void refreshRecentGames();
+        return;
+    }
+    romInput.value = "";
+    romFromFile = game.fromFile;
+    leaveLibraryForNewGame();
+    warnIfAutorunExpectsAnother(game.name);
+    await handleRomSelection({
+        bytes,
+        name: game.name,
+        running,
+        stop,
+        applyRomBytes,
+        start,
+        focusCanvas: () => canvas.focus()
     });
 }
+
+/** Loads one of the bundled test ROMs, by its URL and its path (which names it), and starts it. */
+async function loadBundledRom(url: string, name: string) {
+    lastPickedName = name;
+    requestPointerLockFromUserGesture();
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        // Only now, with the new game in hand, is the one under the library left behind.
+        romInput.value = "";
+        romFromFile = false;
+        leaveLibraryForNewGame();
+        await handleRomSelection({
+            bytes,
+            name,
+            running,
+            stop,
+            applyRomBytes,
+            start,
+            focusCanvas: () => canvas.focus()
+        });
+    } catch (error) {
+        console.error("Failed to load bundled ROM", error);
+        setStatus("Failed to load bundled ROM", true);
+    }
+}
+
+romInput.addEventListener("change", async () => {
+    const file = romInput.files?.[0];
+    if (file) await loadRomFile(file);
+});
 
 function clearCanvas() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -1499,6 +1884,10 @@ async function initAudioContext(): Promise<void> {
             sampleRate: AUDIO_SAMPLE_RATE
         });
         nextAudioTime = audioContext.currentTime;
+        // Every sample buffer plays through one gain stage: the volume slider's.
+        masterGain = audioContext.createGain();
+        masterGain.gain.value = volumeToGain(volumePercent);
+        masterGain.connect(audioContext.destination);
         console.log(`Audio initialized: ${audioContext.sampleRate} Hz`);
     }
 }
@@ -1542,7 +1931,7 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
     // Create a buffer source and schedule it
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
-    source.connect(audioContext.destination);
+    source.connect(masterGain ?? audioContext.destination);
 
     // Schedule playback at the next available time
     // Ensure smooth continuous playback by scheduling samples back-to-back
@@ -1592,13 +1981,11 @@ async function start(): Promise<boolean> {
     // Reject unsupported file types before any emulator work.
     if (!consoleKind) {
         const ext = webRomExtensionForName(romName);
-        toastOverlay.show(`Unsupported file type .${ext} — only ${supportedRomExtensionsText()} are supported`);
-        setStatus(`Unsupported file type .${ext}`, true);
+        setStatus(unsupportedFileMessage(ext, supportedRomExtensions()), true);
         updateEmulationButtons();
         return true;
     }
 
-    stopIdleScroller();
     setStatus("Initializing emulator...");
     try {
         if (!emulator) {
@@ -1630,10 +2017,10 @@ async function start(): Promise<boolean> {
             const firmware = await obtainFirmwareForChip(firmwareChip);
             if (!firmware) {
                 const game = romDisplayName(romName);
-                setStatus(notStartedStatus(firmwareChip, game), true);
+                // As drawn: a brief note, and the game goes back to the library.
                 toastOverlay.show(notStartedMessage(firmwareChip, game));
                 updateEmulationButtons();
-                romInput.focus();
+                libraryChooseBtn.focus();
                 return false;
             }
             (emulator!.inst as WasmSnes).set_dsp_firmware(firmwareChip.key, firmware);
@@ -1690,7 +2077,8 @@ async function start(): Promise<boolean> {
         updateMouseCursorState();
     } catch (err: unknown) {
         drainNesToasts(emulator?.inst ?? null, toastOverlay);
-        setStatus(`Failed to load ROM: ${err}`, true);
+        const noWebGl = err instanceof Error && err.message.includes("WebGL");
+        setStatus(noWebGl ? BROWSER_CANNOT_DRAW : `Failed to load ROM: ${err}`, true);
         updateEmulationButtons();
         // Only reset emulator if wasm/webgl initialization failed
         // Don't reset on simple ROM load errors so we can retry
@@ -1705,12 +2093,11 @@ async function start(): Promise<boolean> {
     paused = false;
     if (isTouchDevice()) document.body.classList.add("touch-running");
     if (isHandheldDevice()) updateHandheldCanvasSize();
-    const sidebarToggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
-    if (sidebarToggle) sidebarToggle.checked = false;
     setStatus("Running...");
     updateAutorunControls();
     updateEmulationButtons();
     updateSaveStateButtons();
+    rememberRecentGame();
     requestAnimationFrame(step);
     return true;
 }
@@ -2181,8 +2568,12 @@ function debuggerWatchUpdateAddress(index: number, value: string) {
 
 function showDebuggerPanel() {
     if (!debuggerPanel) return;
+    const opening = debuggerPanel.classList.contains("hidden");
     debuggerPanel.classList.remove("hidden");
+    // Docked under the picture on a narrow window, it can open below the fold: bring it into view.
+    if (opening) debuggerPanel.scrollIntoView({ block: "nearest" });
     updateDebuggerPanel();
+    updateDebuggerButton();
     setStatus("Debugger paused");
 }
 
@@ -2190,6 +2581,7 @@ function hideDebuggerPanel() {
     if (debuggerPanel) {
         debuggerPanel.classList.add("hidden");
     }
+    updateDebuggerButton();
 }
 
 function debuggerOpen() {
@@ -2229,11 +2621,13 @@ function debuggerStepInto() {
 }
 
 /**
- * F8, the Palette button, and the Colors button in a Game Boy Advance game: the running core decides what
+ * F8, and the Colours list in a Game Boy Advance game: the running core decides what
  * that means and returns the corner message ("" when nothing changed). The Game Boy filter sync is a no-op
  * unless an original Game Boy game's palette changed.
  */
 function cyclePaletteAction() {
+    // Paused, no new frame would show the change, so F8 waits as the disabled button does.
+    if (paused) return;
     const message = emulator?.inst.cycle_palette() ?? "";
     if (message !== "") {
         toastOverlay.show(message);
@@ -2317,6 +2711,13 @@ function debuggerHexdumpGoToAddress() {
 }
 
 function stop() {
+    // The game's last frame becomes its card's picture; the next game must not inherit it.
+    captureRecentThumbnail();
+    lastFrame = null;
+    // The docked debugger belongs to the game being left: the core lets go of it too, since the
+    // same NES core may run the next game.
+    if (nes?.is_debugger_open()) nes.debugger_continue();
+    hideDebuggerPanel();
     // ── NES-only: Autorun teardown ────────────────────────────────────────
     if (nes && nes.autorun_is_recording()) {
         const recordingBytes = nes.stop_autorun();
@@ -2369,62 +2770,6 @@ function triggerAutorunDownload(bytes: Uint8Array, romName: string | undefined) 
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
     toastOverlay.show(`Autorun saved: ${fileName}`);
-}
-
-function startIdleScroller() {
-    if (idleScrollerActive || romBytes) {
-        return;
-    }
-    if (!webglInitialized && !initWebGL()) {
-        setStatus("Failed to initialize WebGL", true);
-        return;
-    }
-    if (!idleScroller) {
-        idleScroller = createSineScroller({
-            text: SCROLLER_TEXT,
-            width,
-            height,
-            speed: SCROLLER_SPEED,
-            amplitude: SCROLLER_AMPLITUDE,
-            frequency: SCROLLER_FREQUENCY,
-            fontSizePx: SCROLLER_FONT_SIZE_PX,
-            fontFamily: SCROLLER_FONT_FAMILY
-        });
-    }
-    idleScrollerActive = true;
-    idleScrollerStartTime = 0;
-    idleFrameLimiter.reset();
-    requestAnimationFrame(stepIdleScroller);
-}
-
-function stopIdleScroller() {
-    idleScrollerActive = false;
-    idleScrollerStartTime = 0;
-}
-
-function stepIdleScroller(timestamp: number) {
-    if (!idleScrollerActive || running || paused || romBytes) {
-        return;
-    }
-    if (!idleFrameLimiter.shouldRender(timestamp)) {
-        requestAnimationFrame(stepIdleScroller);
-        return;
-    }
-    if (!idleScrollerStartTime) {
-        idleScrollerStartTime = timestamp;
-    }
-
-    const frame = idleScroller!.renderFrame(timestamp);
-    const rendered = renderFrameWithCurrentPipeline(frame);
-
-    if (!rendered) {
-        idleScrollerActive = false;
-        setStatus("Rendering error occurred. Please restart.", true);
-        return;
-    }
-
-    frameCount = (frameCount + 1) % 3600;
-    requestAnimationFrame(stepIdleScroller);
 }
 
 function bindQuadAttributes(program: ShaderProgram) {
@@ -2704,6 +3049,7 @@ function step(timestamp: number) {
 
         if (!rendered) {
             running = false;
+            paused = false;
             setStatus("Rendering error occurred. Please restart.", true);
             return;
         }
@@ -2734,7 +3080,8 @@ function step(timestamp: number) {
             const msg = `${fps.toFixed(1)} fps | emu ${avgWasm.toFixed(1)}ms | gl ${avgRender.toFixed(1)}ms`;
             console.log(msg);
             if (fpsCounterEl) {
-                fpsCounterEl.textContent = msg;
+                // A phone's chip is small, as drawn: the whole number only.
+                fpsCounterEl.textContent = document.body.classList.contains("handheld") ? phoneFpsChip(fps, false) : msg;
                 (fpsCounterEl as HTMLElement).style.display = "";
             }
             fpsFrames = 0;
@@ -2765,6 +3112,19 @@ const muteBtn = document.getElementById("mute") as HTMLButtonElement | null;
 function updateMuteButton() {
     muteBtn!.textContent = audioMuted ? "Audio: Off" : "Audio: On";
     muteBtn!.setAttribute("aria-pressed", audioMuted ? "true" : "false");
+    muteBtn!.classList.toggle("volume-off", volumeIconState(audioMuted, volumePercent) === "off");
+    muteBtn!.dataset.tip = audioMuted ? "Unmute" : "Mute";
+}
+const volumeSlider = document.getElementById("volume") as HTMLInputElement | null;
+volumePercent = readStoredVolume(browserStorage());
+if (volumeSlider) {
+    volumeSlider.value = String(volumePercent);
+    volumeSlider.addEventListener("input", () => {
+        volumePercent = parseStoredVolume(volumeSlider.value);
+        if (masterGain) masterGain.gain.value = volumeToGain(volumePercent);
+        writeStoredVolume(browserStorage(), volumePercent);
+        updateMuteButton();
+    });
 }
 muteBtn!.addEventListener("click", async () => {
     audioMuted = !audioMuted;
@@ -2786,6 +3146,88 @@ muteBtn!.addEventListener("click", async () => {
     }
 });
 updateMuteButton();
+// ── Settings panel: opened from the top bar; the game pauses while it is open ──
+const settingsKeysEl = document.getElementById("settings-keys") as HTMLElement;
+const settingsGamepadsEl = document.getElementById("settings-gamepads") as HTMLElement;
+const settingsKeySystemButtons = [...document.querySelectorAll<HTMLButtonElement>("#settings-keys-system [data-console]")];
+let settingsKeysConsole: ConsoleKind = "nes";
+let pausedBySettings = false;
+
+/** The Controls tab's key list for the chosen system, one block per player. */
+function renderSettingsKeys() {
+    for (const button of settingsKeySystemButtons) {
+        button.setAttribute("aria-pressed", button.dataset.console === settingsKeysConsole ? "true" : "false");
+    }
+    const players = CONSOLES[settingsKeysConsole].playerKeyBindings;
+    settingsKeysEl.replaceChildren(
+        ...players.map((bindings, index) => {
+            const block = document.createElement("div");
+            block.className = "settings-key-player";
+            if (players.length > 1) {
+                const heading = document.createElement("h4");
+                heading.textContent = `Player ${index + 1}`;
+                block.append(heading);
+            }
+            const list = document.createElement("div");
+            renderKeyList(list, bindings);
+            block.append(list);
+            return block;
+        })
+    );
+}
+
+function renderSettingsGamepads() {
+    settingsGamepadsEl.textContent = gamepadLines([...(navigator.getGamepads?.() ?? [])]);
+}
+// A pad appears once a button is pressed on it, so the open panel follows it as it comes and goes.
+window.addEventListener("gamepadconnected", () => renderSettingsGamepads());
+window.addEventListener("gamepaddisconnected", () => renderSettingsGamepads());
+
+for (const button of settingsKeySystemButtons) {
+    button.addEventListener("click", () => {
+        settingsKeysConsole = button.dataset.console as ConsoleKind;
+        renderSettingsKeys();
+    });
+}
+
+const settingsPanel = createSettingsPanel({
+    dialog: document.getElementById("settings-panel") as HTMLDialogElement,
+    openButton: document.getElementById("settings-open") as HTMLButtonElement,
+    closeButton: document.getElementById("settings-close") as HTMLButtonElement,
+    onOpen: () => {
+        pausedBySettings = running && !paused;
+        if (pausedBySettings) pauseResume();
+        settingsKeysConsole = emulator?.kind ?? settingsKeysConsole;
+        renderSettingsKeys();
+        renderSettingsGamepads();
+        // A firmware message is about the file just chosen; each opening starts clear.
+        const firmwareMessage = document.getElementById("snes-firmware-message");
+        if (firmwareMessage) firmwareMessage.textContent = "";
+    },
+    onClose: () => {
+        if (pausedBySettings && running && paused) pauseResume();
+        pausedBySettings = false;
+    },
+});
+
+// ── The debugger's bug button in the top bar, shown once switched on under Developer ──
+const debuggerButtonSwitch = document.getElementById("settings-debugger-button") as HTMLInputElement;
+debuggerButtonSwitch.checked = readDebuggerButton(browserStorage());
+debuggerButtonSwitch.addEventListener("change", () => {
+    writeDebuggerButton(browserStorage(), debuggerButtonSwitch.checked);
+    updateDebuggerButton();
+});
+document.getElementById("debugger-open")!.addEventListener("click", () => debuggerToggle());
+
+/** The bug button shows while switched on and an NES game runs, pressed while the debugger is open. */
+function updateDebuggerButton() {
+    const button = document.getElementById("debugger-open");
+    const toggle = document.getElementById("settings-debugger-button") as HTMLInputElement | null;
+    if (!button || !toggle) return;
+    button.classList.toggle("hidden", !(toggle.checked && nes && running));
+    button.setAttribute("aria-pressed", nes?.is_debugger_open() ? "true" : "false");
+}
+
 const emulationControls = document.getElementById("emulation-controls");
 const pauseBtn = document.getElementById("pause") as HTMLButtonElement | null;
 const stopBtn = document.getElementById("stop") as HTMLButtonElement | null;
@@ -2799,20 +3241,38 @@ resetBtn.addEventListener("click", () => {
     void resetAction();
 });
 
-async function populateRomSelect() {
-    if (!romSelect) return;
+// ── The library: the bundled test ROMs, searchable and filtered by system ──
+const libraryListEl = document.getElementById("library-list") as HTMLElement;
+const librarySearchEl = document.getElementById("library-search") as HTMLInputElement;
+const libraryCountEl = document.getElementById("library-count") as HTMLElement;
+const librarySystemButtons = [...document.querySelectorAll<HTMLButtonElement>("#library-systems [data-system]")];
+let libraryGroups: LibraryGroup[] = [];
+let librarySystem: LibrarySystem = "all";
+
+function renderLibraryList() {
+    const groups = filterLibrary(libraryGroups, { query: librarySearchEl.value, system: librarySystem });
+    renderLibrary(libraryListEl, groups, librarySearchEl.value, (rom) => void loadBundledRom(rom.url, rom.path));
+    libraryCountEl.textContent = String(libraryGroups.reduce((total, group) => total + group.roms.length, 0));
+}
+
+librarySearchEl.addEventListener("input", renderLibraryList);
+for (const button of librarySystemButtons) {
+    button.addEventListener("click", () => {
+        librarySystem = button.dataset.system as LibrarySystem;
+        for (const other of librarySystemButtons) other.setAttribute("aria-pressed", other === button ? "true" : "false");
+        renderLibraryList();
+    });
+}
+
+async function populateLibrary() {
     const baseUrl = new URL("./roms/", window.location.href).toString();
     try {
-        const entries = await fetchRomList(baseUrl);
-        for (const entry of entries) {
-            const option = document.createElement("option");
-            option.value = entry.url;
-            option.textContent = entry.path;
-            romSelect.appendChild(option);
-        }
+        libraryGroups = groupLibrary(await fetchRomList(baseUrl), webRomConsoleKindForName);
     } catch (error) {
         console.error("Failed to load ROM list", error);
+        libraryGroups = [];
     }
+    renderLibraryList();
 }
 
 // Set initial button states (all disabled until a ROM is loaded)
@@ -2837,7 +3297,7 @@ updateConnectedGamepads();
 ensureRomExtensionTable()
     .then(() => {
         // The built-in ROM list is filtered by the extension table, so it waits for it too.
-        void populateRomSelect();
+        void populateLibrary();
         updateConnectedGamepads();
         showPageLoadGamepadInitToast();
     })
@@ -2860,18 +3320,97 @@ const webShortcutActions = {
     cyclePalette: cyclePaletteAction,
 };
 
-function updateShortcutHelpOverlayText() {
-    if (shortcutHelpOverlay) {
-        shortcutHelpOverlay.textContent = buildFullHelpOverlayText(
-            connectedGamepads.length,
-            emulator?.kind ?? "nes"
-        );
-    }
+// ── Keys and controls (H): the shortcuts, and a controller for the chosen system and player ──
+const helpPanel = document.getElementById("help-panel") as HTMLDialogElement;
+const helpPadEl = document.getElementById("help-pad") as HTMLElement;
+const helpChipsEl = document.getElementById("help-chips") as HTMLElement;
+const helpGamepadNote = document.getElementById("help-gamepad-note") as HTMLElement;
+const helpOpenBtn = document.getElementById("help-open") as HTMLButtonElement;
+let helpConsole: ConsoleKind = "nes";
+let helpPlayer = 0;
+let pausedByHelp = false;
+renderHelpShortcuts(document.getElementById("help-shortcuts") as HTMLElement);
+
+function renderHelpController() {
+    const players = CONSOLES[helpConsole].playerKeyBindings;
+    helpPlayer = Math.min(helpPlayer, players.length - 1);
+    helpChipsEl.replaceChildren(
+        ...helpChips(helpConsole, helpPlayer, players.length).map((chip) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "help-chip";
+            button.textContent = chip.label;
+            button.dataset.console = chip.console;
+            button.dataset.player = String(chip.player);
+            button.toggleAttribute("data-separated", chip.separated);
+            button.setAttribute("aria-pressed", chip.pressed ? "true" : "false");
+            button.addEventListener("click", () => {
+                helpConsole = chip.console;
+                helpPlayer = chip.player;
+                renderHelpController();
+            });
+            return button;
+        })
+    );
+    // The first connected gamepad is player 1's, the second player 2's, as in play.
+    const usesGamepad = selectGamepads([...(navigator.getGamepads?.() ?? [])]).length > helpPlayer;
+    renderPad(helpPadEl, helpPadKeys(helpConsole, helpPlayer), usesGamepad);
+    helpGamepadNote.hidden = usesGamepad;
+    fitHelpPad();
 }
 
+/** Scales the pad's drawing to its column, so its buttons keep their places at any width. */
+function fitHelpPad() {
+    if (!helpPanel.open) return;
+    const column = helpPadEl.parentElement!;
+    const style = getComputedStyle(column);
+    const available = column.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    helpPadEl.style.zoom = String(helpPadZoom(available));
+}
+window.addEventListener("resize", fitHelpPad);
+
+function openHelp() {
+    if (helpPanel.open) return;
+    helpConsole = emulator?.kind ?? helpConsole;
+    helpPlayer = 0;
+    renderHelpController();
+    pausedByHelp = running && !paused;
+    if (pausedByHelp) pauseResume();
+    helpPanel.showModal();
+    helpOpenBtn.setAttribute("aria-expanded", "true");
+    fitHelpPad();
+}
+
+function closeHelp() {
+    if (helpPanel.open) helpPanel.close();
+}
+
+helpPanel.addEventListener("close", () => {
+    helpOpenBtn.setAttribute("aria-expanded", "false");
+    if (pausedByHelp && running && paused) pauseResume();
+    pausedByHelp = false;
+});
+// H closes it as it opened it; Esc closes any modal dialog by itself.
+helpPanel.addEventListener("keydown", (event) => {
+    if (event.code === "KeyH" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        // Stopped here: once the dialog has closed, the page's H shortcut would open it again.
+        event.preventDefault();
+        event.stopPropagation();
+        closeHelp();
+    }
+});
+helpPanel.addEventListener("click", (event) => {
+    if (event.target === helpPanel) closeHelp();
+});
+document.getElementById("help-close")!.addEventListener("click", closeHelp);
+helpOpenBtn.addEventListener("click", openHelp);
+// A pad appears once a button is pressed on it; the open panel follows it.
+window.addEventListener("gamepadconnected", () => helpPanel.open && renderHelpController());
+window.addEventListener("gamepaddisconnected", () => helpPanel.open && renderHelpController());
+
 function toggleShortcutHelp() {
-    updateShortcutHelpOverlayText();
-    toggleShortcutHelpVisibility(shortcutHelpOverlay);
+    if (helpPanel.open) closeHelp();
+    else openHelp();
 }
 
 function updateFilterToggleButtonLabel() {
@@ -2931,14 +3470,6 @@ function applyKeyboardBindings(event: KeyboardEvent, active: ActiveEmulator, pre
     if (applyKeyBindings(rows, keyBindingSink(active), ports, event, pressed)) {
         event.preventDefault();
     }
-}
-
-function isEditableKeyboardTarget(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) {
-        return false;
-    }
-    const tag = target.tagName.toUpperCase();
-    return target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
 /** The 1-based port the Super Scope is plugged into, or null when none is. */
@@ -3014,7 +3545,20 @@ function applySuperScopeKey(snesInst: WasmSnes, action: "turbo" | "pause", press
 }
 
 async function handleKeyDown(event: KeyboardEvent) {
-    if (isEditableKeyboardTarget(event.target)) {
+    if (isEditableKeyboardTarget(event.target) || belongsToOpenDialog(event.target)) {
+        return;
+    }
+
+    // The library over a waiting game: Esc goes back to it, and no key reaches the game meanwhile.
+    if (libraryOverGame) {
+        if (event.key === "Escape") backToGame();
+        else libraryKey(event);
+        return;
+    }
+
+    // The library on its own: the game's keys and shortcuts wait for a game to show.
+    if (appMain.dataset.view !== "game") {
+        libraryKey(event);
         return;
     }
 
@@ -3032,6 +3576,8 @@ async function handleKeyDown(event: KeyboardEvent) {
     }
 
     const handledShortcut = await dispatchWebShortcutAction(event, webShortcutActions);
+    // A shortcut changes what an open list shows, so any open list closes.
+    if (handledShortcut) closeOpenChoiceMenus();
     if (handledShortcut) {
         return;
     }
@@ -3412,7 +3958,8 @@ const saveStateSection = document.getElementById("save-state-section");
 // NES native resolution is 256x240 pixels; aspect ratio updated after NES init.
 let NES_ASPECT_RATIO = width / height;
 const SCALE_STEP = 120; // Change height by 120px each step
-const INITIAL_HEIGHT = 720; // Initial display height in pixels
+// The starting height fits the window with the control bar beneath it, up to 720.
+const INITIAL_HEIGHT = initialWindowedHeight(window.innerHeight);
 let currentHeight = INITIAL_HEIGHT;
 
 function applyCanvasSize(size: { cssWidth: string; cssHeight: string; pixelWidth: number; pixelHeight: number }) {
@@ -3429,7 +3976,6 @@ function updateCanvasSize(newHeight: number) {
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
-    updateShortcutHelpScale();
 }
 
 function updateCanvasSizeForFullscreenViewport() {
@@ -3439,7 +3985,6 @@ function updateCanvasSizeForFullscreenViewport() {
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
-    updateShortcutHelpScale();
 }
 
 function updateHandheldOrientation() {
@@ -3455,7 +4000,6 @@ function updateHandheldCanvasSize() {
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
-    updateShortcutHelpScale();
 }
 
 function resizeCanvasForCurrentDisplayMode() {
@@ -3466,14 +4010,6 @@ function resizeCanvasForCurrentDisplayMode() {
     } else {
         updateCanvasSize(currentHeight);
     }
-}
-
-function updateShortcutHelpScale() {
-    if (!shortcutHelpOverlay) {
-        return;
-    }
-    const fontSizePx = computeShortcutHelpFontSizePx(canvas.clientHeight);
-    shortcutHelpOverlay.style.fontSize = `${fontSizePx}px`;
 }
 
 /** The windowed CSS width a zoom height would get; probes set only this, never the backing store. */
@@ -3489,6 +4025,17 @@ function fullscreenRoot(): HTMLElement {
 function isInFullscreen(): boolean {
     return document.fullscreenElement === fullscreenRoot();
 }
+
+/**
+ * Names the shown picture's height in the running console's own lines; empty with no game.
+ * Looks the element up on each call: `updateEmulationButtons` calls this before the module
+ * reaches this point, where a module-level const would not yet be initialised.
+ */
+function updateZoomLevel() {
+    const zoomLevelEl = document.getElementById("zoom-level");
+    if (zoomLevelEl) zoomLevelEl.textContent = running ? zoomLevelLabel(canvas.clientHeight, height) : "";
+}
+window.addEventListener("resize", () => updateZoomLevel());
 
 function updateZoomButtonState() {
     const inScreenFullscreen = isInFullscreen();
@@ -3510,6 +4057,7 @@ function updateZoomButtonState() {
 
     screenMinusBtn.disabled = !canZoomOut;
     screenPlusBtn.disabled = !canZoomIn;
+    updateZoomLevel();
 }
 
 function applyZoom(direction: "in" | "out") {
@@ -3606,8 +4154,6 @@ async function restartGbaSession(status: string) {
         frameLimiter.reset();
         if (isTouchDevice()) document.body.classList.add("touch-running");
         if (isHandheldDevice()) updateHandheldCanvasSize();
-        const sidebarToggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
-        if (sidebarToggle) sidebarToggle.checked = false;
         setStatus(status, false);
         updateMouseCursorState();
         updateAutorunControls();
@@ -3643,8 +4189,80 @@ async function saveStateAction() {
     if (ok) {
         saveSlot = "saved";
         updateSaveStateButtons();
+        void rememberSavePreview();
     }
 }
+
+// ── The Load button's preview: the saved moment's picture and when it was saved ──
+const savePreviews = createSavePreviewStore();
+const loadPreviewEl = document.getElementById("load-preview") as HTMLElement | null;
+let loadPreview: SavePreview | null = null;
+
+/** Keeps a picture of the frame just saved, for the game's Load preview. */
+async function rememberSavePreview() {
+    if (!savePreviewKey) return;
+    const key = savePreviewKey;
+    const savedAt = Date.now();
+    // The saved frame is copied now; the picture is drawn after "State saved" has had its turn to
+    // show, so taking it never holds up the click.
+    const saved = lastFrame && { frame: lastFrame.frame.slice(), channels: lastFrame.format === gl.RGB ? 3 : 4, width, height } as const;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const thumbnail = saved ? frameThumbnail(saved.frame, saved.channels, saved.width, saved.height) : null;
+    if (key !== savePreviewKey) return;
+    loadPreview = { thumbnail, savedAt };
+    await savePreviews.put(key, loadPreview).catch((err) => console.error("Failed to keep the save's picture", err));
+    renderLoadPreview();
+}
+
+/** Reads the running game's preview, kept from this or an earlier visit. */
+async function refreshLoadPreview() {
+    loadPreview = savePreviewKey ? await savePreviews.get(savePreviewKey).catch(() => null) : null;
+    renderLoadPreview();
+}
+
+function renderLoadPreview() {
+    if (!loadPreviewEl) return;
+    const ready = loadPreview !== null && saveSlot !== "empty";
+    loadPreviewEl.toggleAttribute("data-ready", ready);
+    loadStateBtn?.toggleAttribute("data-has-preview", ready);
+    // Only a preview that shows describes the button, so another game's never lingers.
+    if (ready) loadStateBtn?.setAttribute("aria-describedby", "load-preview");
+    else loadStateBtn?.removeAttribute("aria-describedby");
+    if (!ready) {
+        loadPreviewEl.querySelector("img")!.removeAttribute("src");
+        loadPreviewEl.querySelector(".load-preview-ago")!.textContent = "";
+        loadPreviewEl.querySelector(".load-preview-at")!.textContent = "";
+        return;
+    }
+    const img = loadPreviewEl.querySelector("img")!;
+    img.hidden = !loadPreview!.thumbnail;
+    if (loadPreview!.thumbnail) img.src = loadPreview!.thumbnail;
+    loadPreviewEl.querySelector(".load-preview-ago")!.textContent = savedAgo(Date.now(), loadPreview!.savedAt);
+    const at = loadPreviewEl.querySelector(".load-preview-at")!;
+    const key = document.createElement("kbd");
+    key.className = "kbd kbd-sm";
+    key.textContent = "F7";
+    at.replaceChildren(`${savedAtLine(new Date(), loadPreview!.savedAt)} · `, key, " to load");
+}
+// "Saved 2 minutes ago" is worked out again whenever the preview is about to show. It shows on hover,
+// and on focus that came from the keyboard: a click's focus does not count, nor a key pressed after it.
+let loadPointerDown = false;
+loadStateBtn?.addEventListener("pointerenter", renderLoadPreview);
+loadStateBtn?.addEventListener("pointerdown", () => {
+    loadPointerDown = true;
+    loadStateBtn.removeAttribute("data-key-focus");
+});
+loadStateBtn?.addEventListener("focus", () => {
+    loadStateBtn.toggleAttribute("data-key-focus", !loadPointerDown);
+    loadPointerDown = false;
+    renderLoadPreview();
+});
+// Pressing Load (Enter or Space too) puts the card away; the loaded game is what matters now.
+loadStateBtn?.addEventListener("click", () => loadStateBtn.removeAttribute("data-key-focus"));
+loadStateBtn?.addEventListener("blur", () => {
+    loadPointerDown = false;
+    loadStateBtn.removeAttribute("data-key-focus");
+});
 
 async function loadStateAction() {
     if (!saveStateController) return;
@@ -3657,13 +4275,37 @@ async function loadStateAction() {
 }
 
 function updateSaveStateButtons() {
+    renderLoadPreview();
     const { saveEnabled, loadEnabled } = computeSaveStateButtons({
         controllerReady: Boolean(saveStateController),
         running,
         slot: saveSlot,
     });
-    if (saveStateBtn) saveStateBtn.disabled = !saveEnabled;
-    if (loadStateBtn) loadStateBtn.disabled = !loadEnabled;
+    // Unavailable for the running game, the buttons stay hoverable (aria-disabled) so their tip can
+    // say why; a disabled button gets no pointer events. Their actions do nothing without a controller.
+    const note = running ? saveStateUnavailableReason : null;
+    const buttons = [
+        [saveStateBtn, saveEnabled, "Save state", "F6"],
+        [loadStateBtn, loadEnabled, "Load state", "F7"],
+    ] as const;
+    for (const [button, enabled, tip, keys] of buttons) {
+        if (!button) continue;
+        button.disabled = !enabled && !note;
+        if (note) button.setAttribute("aria-disabled", "true");
+        else button.removeAttribute("aria-disabled");
+        button.dataset.tip = note ?? tip;
+        if (note) delete button.dataset.keys;
+        else button.dataset.keys = keys;
+    }
+    const hhSave = document.getElementById("hh-save") as HTMLButtonElement | null;
+    const hhLoad = document.getElementById("hh-load") as HTMLButtonElement | null;
+    // As on the desktop, a console without save states keeps the buttons tappable to say why.
+    for (const [button, enabled] of [[hhSave, saveEnabled], [hhLoad, loadEnabled]] as const) {
+        if (!button) continue;
+        button.disabled = !enabled && !note;
+        if (note) button.setAttribute("aria-disabled", "true");
+        else button.removeAttribute("aria-disabled");
+    }
     if (saveStateSection) saveStateSection.dataset.saveState = saveSlot;
 }
 
@@ -3678,15 +4320,11 @@ updateFullscreenButton();
 updateZoomButtonState();
 updateFilterToggleButtonLabel();
 updateSaveStateButtons();
-const shortcutReferenceText = buildShortcutReferenceText();
-if (shortcutReference) {
-    shortcutReference.textContent = `Shortcuts: ${shortcutReferenceText}`;
+renderNewsWave(document.getElementById("library-news") as HTMLElement, SCROLLER_TEXT);
+// WebGL starts with the page, so a browser without it says so before any game is picked.
+if (!webglInitialized && !initWebGL()) {
+    setStatus(BROWSER_CANNOT_DRAW, true);
 }
-if (shortcutHelpOverlay) {
-    updateShortcutHelpOverlayText();
-}
-updateShortcutHelpScale();
-startIdleScroller();
 
 screenMinusBtn.addEventListener("click", () => {
     applyZoom("out");
@@ -3696,11 +4334,215 @@ screenPlusBtn.addEventListener("click", () => {
     applyZoom("in");
 });
 
+// ── On a phone: the quick bar under the picture and the ⋯ sheet ──
+const handheldSheet = document.getElementById("handheld-sheet") as HTMLDialogElement;
+const hhMoreBtn = document.getElementById("hh-more") as HTMLButtonElement;
+let pausedBySheet = false;
+
+function renderHandheldSheet() {
+    const kind = emulator?.kind ?? "nes";
+    const filterRow = document.getElementById("hh-filter")!;
+    filterRow.replaceChildren(
+        ...filterKeysForConsole(filterKeys, filters, kind).map((key) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = filters[key].name;
+            button.setAttribute("aria-pressed", key === buttonFilterKey(filterSelection) ? "true" : "false");
+            button.addEventListener("click", () => {
+                filterUntouched = false;
+                chooseFilter(key);
+                updateFilterToggleButtonLabel();
+                renderHandheldSheet();
+            });
+            return button;
+        })
+    );
+    const source = paletteSource();
+    const paletteRow = document.getElementById("hh-palette") as HTMLButtonElement;
+    paletteRow.hidden = source === null;
+    document.getElementById("hh-palette-name")!.textContent = source ? source.label().replace(/^Palette: /, "") : "";
+    (document.getElementById("hh-volume") as HTMLInputElement).value = String(volumePercent);
+}
+
+function openHandheldSheet() {
+    renderHandheldSheet();
+    pausedBySheet = running && !paused;
+    if (pausedBySheet) pauseResume();
+    handheldSheet.showModal();
+    hhMoreBtn.setAttribute("aria-expanded", "true");
+}
+
+/**
+ * Leaves the sheet for a panel that keeps the game paused (Settings, Keys and controls): the
+ * sheet's pause is handed over, since the sheet's own close comes later and would resume.
+ */
+function leaveSheetKeepingPause(): boolean {
+    const handover = pausedBySheet;
+    pausedBySheet = false;
+    closeHandheldSheet();
+    return handover;
+}
+
+/** Leaves the sheet resuming at once, before an action that restarts or changes the game. */
+function leaveSheetResuming() {
+    const resume = pausedBySheet && running && paused;
+    pausedBySheet = false;
+    closeHandheldSheet();
+    if (resume) pauseResume();
+}
+
+function closeHandheldSheet() {
+    if (handheldSheet.open) handheldSheet.close();
+}
+
+handheldSheet.addEventListener("close", () => {
+    hhMoreBtn.setAttribute("aria-expanded", "false");
+    handheldSheet.style.transform = "";
+    if (pausedBySheet && running && paused) pauseResume();
+    pausedBySheet = false;
+});
+// As drawn, the sheet is dragged down by its handle to close; a short drag springs back.
+const sheetGrab = handheldSheet.querySelector(".hh-grab") as HTMLElement;
+let sheetDragFrom: number | null = null;
+sheetGrab.addEventListener("pointerdown", (event) => {
+    sheetDragFrom = event.clientY;
+    sheetGrab.setPointerCapture(event.pointerId);
+});
+sheetGrab.addEventListener("pointermove", (event) => {
+    if (sheetDragFrom === null) return;
+    handheldSheet.style.transform = `translateY(${Math.max(0, event.clientY - sheetDragFrom)}px)`;
+});
+const endSheetDrag = (event: PointerEvent) => {
+    if (sheetDragFrom === null) return;
+    const dy = event.clientY - sheetDragFrom;
+    sheetDragFrom = null;
+    if (sheetDragCloses(dy)) closeHandheldSheet();
+    else handheldSheet.style.transform = "";
+};
+sheetGrab.addEventListener("pointerup", endSheetDrag);
+sheetGrab.addEventListener("pointercancel", endSheetDrag);
+// A tap on the dimmed picture closes the sheet. The backdrop and the sheet's own padding both
+// report the sheet as their target, so only a tap outside its box counts.
+handheldSheet.addEventListener("click", (event) => {
+    if (event.target !== handheldSheet) return;
+    const box = handheldSheet.getBoundingClientRect();
+    const inside = event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+    if (!inside) closeHandheldSheet();
+});
+document.getElementById("hh-pause")!.addEventListener("click", pauseResume);
+for (const [id, action] of [["hh-save", saveStateAction], ["hh-load", loadStateAction]] as const) {
+    const button = document.getElementById(id)!;
+    button.addEventListener("click", () => {
+        // Not offered for this console: the tap says why instead.
+        if (button.getAttribute("aria-disabled") === "true") {
+            toastOverlay.show(saveStateUnavailableReason ?? "");
+            return;
+        }
+        void action();
+    });
+}
+hhMoreBtn.addEventListener("click", openHandheldSheet);
+document.getElementById("hh-reset")!.addEventListener("click", () => {
+    leaveSheetResuming();
+    void resetAction();
+});
+document.getElementById("hh-hard-reset")!.addEventListener("click", () => {
+    leaveSheetResuming();
+    void hardResetAction();
+});
+document.getElementById("hh-fullscreen")!.addEventListener("click", () => {
+    leaveSheetResuming();
+    void toggleScreenFullscreen();
+});
+document.getElementById("hh-eject")!.addEventListener("click", () => {
+    pausedBySheet = false;
+    closeHandheldSheet();
+    stop();
+});
+// As on the desktop, Palette opens the short list; in the sheet the game is paused, and the chosen
+// palette shows when it resumes.
+{
+    let sheetPaletteNames: string[] = [];
+    let sheetPaletteOrder: string[] | null = null;
+    createChoiceMenu({
+        anchor: document.getElementById("hh-palette") as HTMLButtonElement,
+        title: "Palette",
+        choices: () => {
+            const source = paletteSource();
+            const current = source?.label() ?? "";
+            sheetPaletteNames = source ? stablePaletteOrder(sheetPaletteOrder, listPalettes(source)) : [];
+            sheetPaletteOrder = sheetPaletteNames.length ? sheetPaletteNames : sheetPaletteOrder;
+            return sheetPaletteNames.map((name) => ({ label: name.replace(/^Palette: /, ""), selected: name === current }));
+        },
+        onPick: (index) => {
+            const source = paletteSource();
+            if (!source || sheetPaletteNames[index] === source.label()) return;
+            cyclePaletteTo(source, sheetPaletteNames[index]);
+            toastOverlay.show(source.label());
+            syncGbPaletteWithFilter(false);
+            updatePaletteButton();
+            renderHandheldSheet();
+        },
+    });
+}
+document.getElementById("hh-volume")!.addEventListener("input", (event) => {
+    if (!volumeSlider) return;
+    volumeSlider.value = (event.target as HTMLInputElement).value;
+    volumeSlider.dispatchEvent(new Event("input"));
+});
+document.getElementById("hh-settings")!.addEventListener("click", () => {
+    const handover = leaveSheetKeepingPause();
+    settingsPanel.open();
+    if (handover) pausedBySettings = true;
+});
+document.getElementById("hh-help")!.addEventListener("click", () => {
+    const handover = leaveSheetKeepingPause();
+    openHelp();
+    if (handover) pausedByHelp = true;
+});
+
 fullscreenBtn.addEventListener("click", async () => {
     await toggleScreenFullscreen();
 });
 
-filterToggleBtn.addEventListener("click", toggleFilterAction);
+// The Filter button opens the list of the running system's looks; F4 still steps through them.
+createChoiceMenu({
+    anchor: filterToggleBtn,
+    title: () => `Filter · ${gameTitle(romMetadata?.name ?? "", emulator?.kind ?? "nes").system}`,
+    footer: "Cycle with",
+    footerKeys: ["F4"],
+    choices: () => {
+        const kind = emulator?.kind ?? "nes";
+        return filterKeysForConsole(filterKeys, filters, kind).map((key) => ({
+            label: filters[key].name,
+            selected: key === buttonFilterKey(filterSelection),
+            note: key === defaultFilterForConsole(kind) ? "default" : undefined,
+        }));
+    },
+    onPick: (index) => {
+        const key = filterKeysForConsole(filterKeys, filters, emulator?.kind ?? "nes")[index];
+        if (!key || key === buttonFilterKey(filterSelection)) return;
+        filterUntouched = false;
+        chooseFilter(key);
+        updateFilterToggleButtonLabel();
+    },
+});
+
+// Reset is a split button: the button soft-resets, its arrow lists soft and hard reset.
+createChoiceMenu({
+    anchor: document.getElementById("reset-menu") as HTMLButtonElement,
+    kind: "actions",
+    footer: "Hard reset is the same as power off and on.",
+    choices: () => [
+        { label: "Soft reset", selected: false, keys: ["Ctrl", "R"] },
+        { label: "Hard reset", selected: false, keys: ["⇧", "Ctrl", "R"] },
+    ],
+    // Picked from the list, the reset says which it was, since both leave the game running.
+    onPick: (index) => {
+        toastOverlay.show(index === 0 ? "Soft reset" : "Hard reset");
+        void (index === 0 ? resetAction() : hardResetAction());
+    },
+});
 
 saveStateBtn?.addEventListener("click", async () => {
     await saveStateAction();
@@ -3826,7 +4668,6 @@ function resetGamepadState() {
 
 function onGamepadConnectionChanged() {
     updateConnectedGamepads();
-    updateShortcutHelpOverlayText();
     ensureWasmInitialized()
         .then(() => toastOverlay.show(gamepad_init_toast_message(true, connectedGamepads.length)))
         .catch(() => {});

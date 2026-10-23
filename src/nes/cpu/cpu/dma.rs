@@ -1,19 +1,9 @@
 use super::*;
 
 impl Cpu {
-    fn is_controller_port2_read(addr: u16) -> bool {
-        addr == 0x4017
-    }
-
     pub(super) fn should_skip_first_input_clock(read_address: u16, dmc_address: u16) -> bool {
         let is_controller_read = matches!(read_address, 0x4016 | 0x4017);
         is_controller_read && (dmc_address & 0x1F) == (read_address & 0x1F)
-    }
-
-    fn dmc_pending_single_byte_fetch(&self) -> bool {
-        let mut apu = self.apu.borrow_mut();
-        let dmc = apu.dmc_mut().capture_state();
-        dmc.sample_length == 1 && dmc.bytes_remaining == 1
     }
 
     /// If an OAM DMA is pending (triggered by a write to $4014), execute it and
@@ -103,9 +93,7 @@ impl Cpu {
     /// 2. Dummy read cycle: CPU read is repeated (discarded), consumes _needDummyRead
     /// 3. Optional alignment cycle: if not on a "get" cycle, repeat read
     /// 4. Get cycle: actual DMC sample byte read
-    pub(super) fn process_pending_dmc_dma(&mut self, read_address: u16) -> Option<u8> {
-        let mut observed_bus_value = None;
-
+    pub(super) fn process_pending_dmc_dma(&mut self, read_address: u16) {
         // Loop until DMC DMA completes
         while !matches!(self.dmc_dma_phase, DmcDmaPhase::Idle) {
             match self.dmc_dma_phase {
@@ -141,22 +129,16 @@ impl Cpu {
                         let value = self.bus.borrow_mut().read(addr, false);
                         self.after_cpu_cycle(false);
                         self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
-
-                        if Self::is_controller_port2_read(read_address) {
-                            observed_bus_value = Some(value);
-                        }
                     }
 
                     self.dmc_dma_phase = DmcDmaPhase::Idle;
                 }
             }
         }
-
-        observed_bus_value
     }
 
     /// Process any pending DMA (OAM and/or DMC) during a CPU read cycle.
-    /// Returns a DMA read outcome indicating whether to retry the read or return a bus value.
+    /// Returns whether DMA ran, in which case the caller retries the halted read.
     pub(super) fn process_pending_dma(&mut self, read_address: u16) -> DmaReadOutcome {
         // Check if OAM DMA is pending
         let oam_dma_pending = self.bus.borrow().oam_dma_pending();
@@ -178,40 +160,25 @@ impl Cpu {
                 apu.dmc_mut().dma_address()
             };
 
-            let single_byte_dmc_fetch = self.dmc_pending_single_byte_fetch();
-            let skip_first_input_clock = dmc_dma_address
+            // The halted $4016/$4017 read and the resumed one are separate contiguous
+            // reads, so the pad sees one extra clock and the game loses a bit (NESdev
+            // "DMA", Register conflicts; Mesen2 the same, nr-8px). The CPU then re-runs
+            // the halted read on both ports, never taking the DMC byte as its result
+            // (nr-xgb).
+            let use_dummy_halt_read = dmc_dma_address
                 .map(|address| Self::should_skip_first_input_clock(read_address, address))
                 .unwrap_or(false);
-            // The halted $4016 read and the resumed one are separate contiguous reads,
-            // so the pad sees one extra clock and the game loses a bit (NESdev "DMA",
-            // Register conflicts; Mesen2 the same, nr-8px). The $4017 model is unchanged.
-            let use_dummy_halt_read = match read_address {
-                0x4016 => skip_first_input_clock,
-                0x4017 => skip_first_input_clock || !single_byte_dmc_fetch,
-                _ => false,
-            };
 
             // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
-            let halted_read_value = self
+            let _ = self
                 .bus
                 .borrow_mut()
                 .read(read_address, use_dummy_halt_read);
             self.after_cpu_cycle(false);
             self.dmc_dma_phase = DmcDmaPhase::Dummy;
 
-            // Process remaining DMC DMA cycles
-            let observed_bus_value = self.process_pending_dmc_dma(read_address);
-
-            if read_address == 0x4016 {
-                if observed_bus_value.is_none() {
-                    return DmaReadOutcome::RetryRead;
-                }
-                return DmaReadOutcome::ReturnValue(halted_read_value);
-            }
-
-            if let Some(value) = observed_bus_value {
-                return DmaReadOutcome::ReturnValue(value);
-            }
+            // Process remaining DMC DMA cycles, then retry the halted read
+            self.process_pending_dmc_dma(read_address);
 
             return DmaReadOutcome::RetryRead;
         }
