@@ -1611,6 +1611,85 @@ body.handheld .app-topbar {
   }
 }
 
+/* ── Errors where you are ────────────────────────────────── */
+
+.library-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(242, 113, 138, 0.45);
+  background: rgba(242, 113, 138, 0.08);
+  color: #ffd6de;
+}
+
+.library-error[hidden],
+.game-error[hidden] {
+  display: none;
+}
+
+.library-error-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  background: var(--color-error);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v6M12 16.5h.01'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v6M12 16.5h.01'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.library-error-words {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.library-error-title {
+  color: #fff;
+  font-weight: 600;
+}
+
+.game-error {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  border-radius: inherit;
+  background: rgba(30, 8, 14, 0.78);
+  backdrop-filter: grayscale(1) brightness(0.5);
+}
+
+.game-error .library-error-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.game-error-title {
+  font-size: 17px;
+  color: #fff;
+}
+
+.game-error-text {
+  max-width: 340px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.game-error-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .neser-toast-container {
   position: absolute;
   /* Span the picture, so a message wraps inside it however narrow the window. */
@@ -1623,6 +1702,14 @@ body.handheld .app-topbar {
   gap: 8px;
   pointer-events: none;
   z-index: 10;
+}
+
+/* On the library, brief notes sit at the top of the page, under the top bar. */
+.library > .neser-toast-container {
+  position: fixed;
+  top: calc(3.5rem + 12px);
+  bottom: auto;
+  z-index: 60;
 }
 
 .neser-toast {

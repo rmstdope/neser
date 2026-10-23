@@ -45,6 +45,15 @@
                 <button type="button" id="library-back" class="btn btn-outline hidden" data-icon="play">Back to the game</button>
               </div>
             </div>
+            <!-- What went wrong with the file just chosen, with the way forward -->
+            <div id="library-error" class="library-error" role="alert" hidden>
+              <span class="library-error-icon" aria-hidden="true"></span>
+              <div class="library-error-words">
+                <b id="library-error-title" class="library-error-title"></b>
+                <span id="status" class="status-line"></span>
+              </div>
+              <button type="button" id="library-error-choose" class="btn btn-sm">Choose another…</button>
+            </div>
             <!-- The games last played in this browser: pressing one plays it again -->
             <section id="recent" class="recent hidden" aria-labelledby="recent-title">
               <div class="recent-head">
@@ -100,6 +109,16 @@
                 <div class="screen-wrap" id="screen-wrap">
                   <canvas id="screen" width="256" height="240" tabindex="0"></canvas>
                   <div id="rec-overlay" class="rec-overlay hidden" aria-hidden="true"></div>
+                  <!-- The running game stopped: said on its picture, with the ways on -->
+                  <div id="game-error" class="game-error" role="alert" hidden>
+                    <span class="library-error-icon" aria-hidden="true"></span>
+                    <b class="game-error-title">The game stopped</b>
+                    <p id="game-error-text" class="game-error-text"></p>
+                    <div class="game-error-actions">
+                      <button type="button" id="game-error-reset" class="btn btn-sm">Reset</button>
+                      <button type="button" id="game-error-library" class="btn btn-ghost btn-sm">Back to library</button>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- Action buttons (right of canvas) -->
@@ -156,7 +175,6 @@
         </div>
 
         <div class="mt-3 flex items-center gap-2">
-          <span id="status" class="status-line"></span>
           <span class="help-hint touch-hide">Press <kbd class="kbd kbd-sm">H</kbd> for keyboard shortcuts</span>
         </div>
       </main>

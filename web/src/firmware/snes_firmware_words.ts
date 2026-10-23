@@ -102,11 +102,6 @@ export function notGenuineDetail(chip: SnesFirmwareChip, fileName: string): stri
     return `"${fileName}" is 8 KB but is not the ${chip.label} firmware.`;
 }
 
-/** The status line, in red, when the player cancels the dialog. */
-export function notStartedStatus(chip: SnesFirmwareChip, game: string): string {
-    return `Failed to load ROM: ${game} needs the ${chip.label} firmware`;
-}
-
 /** The 3-second message when the player cancels the dialog. */
 export function notStartedMessage(chip: SnesFirmwareChip, game: string): string {
     return `Not started: ${game} needs the ${chip.label} firmware`;
