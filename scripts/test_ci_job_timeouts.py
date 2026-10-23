@@ -27,8 +27,14 @@ def jobs(workflow: str) -> dict[str, str]:
 
 
 # Any spelling of an apt install (``apt-get -y install``, ``apt install``), and Playwright's
-# ``--with-deps`` and ``install-deps``, which run apt-get on the runner too.
-APT_INSTALLS = re.compile(r"\bapt(?:-get)?\b[^\n]*\binstall\b|playwright install(?:-deps\b|\b[^\n]*--with-deps)")
+# ``--with-deps`` and ``install-deps``, which run apt-get on the runner too, as does
+# running ``ensure_playwright_deps.sh`` whenever Chromium lacks a system library (nr-2e2l); a path
+# filter that merely names the script installs nothing.
+APT_INSTALLS = re.compile(
+    r"\bapt(?:-get)?\b[^\n]*\binstall\b"
+    r"|playwright install(?:-deps\b|\b[^\n]*--with-deps)"
+    r"|\b(?:ba)?sh [^\n]*ensure_playwright_deps\.sh"
+)
 
 
 def apt_jobs() -> dict[str, str]:
@@ -69,10 +75,16 @@ class CiJobTimeoutsTest(unittest.TestCase):
             "npx playwright install --with-deps chromium",
             "npx playwright install chromium --with-deps",
             "npx playwright install-deps chromium",
+            "run: bash scripts/ensure_playwright_deps.sh",
         ):
             with self.subTest(line=line):
                 self.assertRegex(line, APT_INSTALLS)
-        for line in ("npx playwright install chromium", "sudo apt-get update", "npm install"):
+        for line in (
+            "npx playwright install chromium",
+            "sudo apt-get update",
+            "npm install",
+            "- 'scripts/ensure_playwright_deps.sh'",
+        ):
             with self.subTest(line=line):
                 self.assertNotRegex(line, APT_INSTALLS)
 
