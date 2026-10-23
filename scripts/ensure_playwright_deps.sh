@@ -6,8 +6,10 @@
 # took up to eleven minutes in CI, although the GitHub runner image already carries every library
 # Chromium links against: what it added were extra fonts and package upgrades the suite does not
 # need. So this runs `ldd` over the installed Chromium binaries and the shared libraries beside
-# them, as Playwright's own host validation does, and runs install-deps only if a library is
-# missing or no Chromium is installed.
+# them, with their own directories on LD_LIBRARY_PATH so a bundled library finds its siblings the
+# way Chromium does, and runs install-deps only if a system library is missing or no Chromium is
+# installed. (Playwright 1.60's own host validation looks only in `chrome-linux`, a directory the
+# linux-x64 builds no longer have, so on CI it checks nothing.)
 #
 # Environment: PLAYWRIGHT_BROWSERS_PATH (default ~/.cache/ms-playwright), and
 # PLAYWRIGHT_DEPS_RETRY_DELAY, the seconds between install-deps attempts (default 15).
@@ -26,7 +28,9 @@ if [ -z "$binaries" ]; then
 else
     # ldd exits non-zero for a file that is not a dynamic executable; only its "not found" lines
     # matter here.
-    missing="$(printf '%s\n' "$binaries" | tr '\n' '\0' | xargs -0 ldd 2>/dev/null |
+    library_path="$(printf '%s\n' "$binaries" | sed 's|/[^/]*$||' | sort -u | paste -sd: -)"
+    missing="$(printf '%s\n' "$binaries" | tr '\n' '\0' |
+        LD_LIBRARY_PATH="$library_path${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" xargs -0 ldd 2>/dev/null |
         grep 'not found' | sort -u || true)"
     if [ -n "$missing" ]; then
         reason="Chromium is missing system libraries:

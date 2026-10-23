@@ -435,6 +435,7 @@ jobs:
         run: |
           for i in 1 2 3; do
             npx playwright install chromium && break
+            [ "$i" -eq 3 ] && exit 1
             echo "Playwright install attempt $i failed (transient network); retrying after 15s..." && sleep 15
           done
       # The runner image already has every library Chromium links against; apt's mirror, which

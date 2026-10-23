@@ -94,6 +94,14 @@ class PlaywrightSystemDependenciesTest(unittest.TestCase):
         self.assertLess(job.index("npx playwright install chromium"), job.index(self.CHECK))
         self.assertLess(job.index(self.CHECK), job.index("npm run test:integration:web"))
 
+    def test_browser_install_retries_fail_the_step_when_all_fail(self) -> None:
+        """Three failed downloads must fail here, not pass on to apt and a misleading test error."""
+
+        job = web_integration_job()
+        step = re.search(r"- name: Install Playwright Chromium\n((?: {8}.*\n)+)", job)
+        assert step is not None, "no browser install step in web-integration"
+        self.assertIn('[ "$i" -eq 3 ] && exit 1', step.group(1))
+
     def test_web_container_checks_deps_after_browser_install(self) -> None:
         ci = CI_YML.read_text(encoding="utf-8")
         build = ci.split("  web-container:\n", 1)[1].split("  publish-web:\n")[0]

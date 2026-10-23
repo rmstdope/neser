@@ -32,6 +32,7 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         self.npx_log = self.tmp / "npx.log"
         self.missing_for = ""
         self.npx_status = 0
+        self.ldd_body = ""
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -49,11 +50,14 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         missing = self.missing_for or "\x01never\x01"
         _executable(
             self.bin / "ldd",
-            'for f in "$@"; do\n'
-            '  echo "$f:"\n'
-            f'  case "$f" in *"{missing}"*) echo "\tlibfoo.so.1 => not found" ;; '
-            '*) echo "\tlibc.so.6 => /lib/libc.so.6" ;; esac\n'
-            "done\n",
+            self.ldd_body
+            or (
+                'for f in "$@"; do\n'
+                '  echo "$f:"\n'
+                f'  case "$f" in *"{missing}"*) echo "\tlibfoo.so.1 => not found" ;; '
+                '*) echo "\tlibc.so.6 => /lib/libc.so.6" ;; esac\n'
+                "done\n"
+            ),
         )
         _executable(self.bin / "npx", f'echo "$*" >> "{self.npx_log}"\nexit {self.npx_status}\n')
         env = {
@@ -88,6 +92,26 @@ class EnsurePlaywrightDepsTest(unittest.TestCase):
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self._npx_calls(), ["playwright install-deps chromium"])
+
+    def test_bundled_libraries_resolve_from_their_own_directory(self) -> None:
+        """A bundled library naming a sibling by bare soname finds it, as Chromium itself does.
+
+        Playwright's own check puts the browser directory on LD_LIBRARY_PATH; without it, ldd
+        would report the sibling missing on every runner and send every run to apt (review of
+        PR #3368, finding 1).
+        """
+
+        shell_dir = self._install_headless_shell().parent
+        self.ldd_body = (
+            'for f in "$@"; do\n'
+            '  echo "$f:"\n'
+            f'  case ":${{LD_LIBRARY_PATH:-}}:" in *":{shell_dir}:"*) echo "\tlibEGL.so => {shell_dir}/libEGL.so" ;; '
+            '*) echo "\tlibEGL.so => not found" ;; esac\n'
+            "done\n"
+        )
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._npx_calls(), [])
 
     def test_no_browser_installed_runs_install_deps(self) -> None:
         result = self._run()
