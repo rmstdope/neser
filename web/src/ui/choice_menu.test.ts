@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createChoiceMenu, type Choice } from "./choice_menu";
+import { closeOpenChoiceMenus, createChoiceMenu, type Choice } from "./choice_menu";
 
 describe("createChoiceMenu", () => {
     let anchor: HTMLButtonElement;
@@ -96,5 +96,20 @@ describe("createChoiceMenu", () => {
         expect(actions).toHaveLength(2);
         expect([...actions[1].querySelectorAll("kbd")].map((k) => k.textContent)).toEqual(["⇧", "Ctrl", "R"]);
         expect(document.activeElement).toBe(actions[0]);
+    });
+
+    it("Given an open list, When something else acts (a shortcut, the game pausing), Then every open list closes without picking", () => {
+        make();
+        anchor.click();
+        closeOpenChoiceMenus();
+        expect(menu()).toBeNull();
+        expect(onPick).not.toHaveBeenCalled();
+        expect(anchor.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("Given a footer with no keys, When drawn, Then it is just the words", () => {
+        make({ footer: "Hard reset is the same as power off and on.", footerKeys: undefined });
+        anchor.click();
+        expect(menu()!.querySelector(".choice-menu-footer")!.textContent).toBe("Hard reset is the same as power off and on.");
     });
 });

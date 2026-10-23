@@ -8,6 +8,14 @@ export type Choice = {
     keys?: string[];
 };
 
+/** Every list's close, so whatever acts elsewhere (a shortcut, the game pausing) can close them all. */
+const openMenuClosers = new Set<() => void>();
+
+/** Closes every open list without picking, leaving focus where it is. */
+export function closeOpenChoiceMenus(): void {
+    for (const close of [...openMenuClosers]) close();
+}
+
 /**
  * A short list that opens above its button: every choice of a setting with the current one
  * ticked (`kind: "settings"`), or a few actions (`kind: "actions"`). Arrow keys move between the
@@ -47,8 +55,11 @@ export function createChoiceMenu({
         return menu ? [...menu.querySelectorAll<HTMLButtonElement>(".choice-menu-item")] : [];
     }
 
+    const closeQuietly = () => close(false);
+
     function close(returnFocus = true) {
         if (!menu) return;
+        openMenuClosers.delete(closeQuietly);
         menu.remove();
         menu = null;
         anchor.setAttribute("aria-expanded", "false");
@@ -110,7 +121,7 @@ export function createChoiceMenu({
         if (footer) {
             const footerEl = document.createElement("div");
             footerEl.className = "choice-menu-footer";
-            footerEl.append(`${footer} `, ...keyCaps(footerKeys ?? []));
+            footerEl.append(footerKeys?.length ? `${footer} ` : footer, ...keyCaps(footerKeys ?? []));
             menu.append(footerEl);
         }
         menu.addEventListener("keydown", (event) => {
@@ -133,6 +144,7 @@ export function createChoiceMenu({
         menu.style.left = `${anchor.offsetLeft}px`;
         anchor.setAttribute("aria-expanded", "true");
         document.addEventListener("pointerdown", onOutsidePointer, true);
+        openMenuClosers.add(closeQuietly);
         const current = list.findIndex((choice) => choice.selected);
         items()[current >= 0 ? current : 0]?.focus();
     }

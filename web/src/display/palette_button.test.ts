@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paletteButtonVisible, cyclePaletteTo, listPalettes } from "./palette_button";
+import { paletteButtonVisible, cyclePaletteTo, listPalettes, stablePaletteOrder } from "./palette_button";
 
 const running = { running: true, paused: false };
 
@@ -57,5 +57,17 @@ describe("listing and choosing a palette by cycling", () => {
         const source = cycler(["Default", "NesDev"]);
         expect(cyclePaletteTo(source, "Nope")).toBe(false);
         expect(source.label()).toBe("Default");
+    });
+});
+
+describe("stablePaletteOrder", () => {
+    it("Given the order first seen for a game, When the palettes are listed again from another one, Then they keep that order", () => {
+        const first = ["Default", "NesDev", "Smooth", "Classic"];
+        expect(stablePaletteOrder(first, ["Classic", "Default", "NesDev", "Smooth"])).toEqual(first);
+    });
+
+    it("Given no order yet, or a different set of palettes, When listed, Then the new listing becomes the order", () => {
+        expect(stablePaletteOrder(null, ["A", "B"])).toEqual(["A", "B"]);
+        expect(stablePaletteOrder(["A", "B"], ["A", "C"])).toEqual(["A", "C"]);
     });
 });

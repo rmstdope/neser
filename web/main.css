@@ -343,7 +343,10 @@ canvas {
   --icon-fullscreen: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'/%3E%3C/svg%3E");
 }
 
+/* Above the picture's brief messages, so an open list is never covered by one. */
 .control-bar {
+  position: relative;
+  z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -543,6 +546,11 @@ body.handheld .app-topbar {
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 12px;
+}
+
+/* A button's tip stays away while its list is open. */
+[aria-expanded="true"][data-tip]::after {
+  display: none;
 }
 
 .choice-menu {

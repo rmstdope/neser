@@ -65,7 +65,7 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { gameTitle } from "./ui/game_title";
-import { createChoiceMenu } from "./ui/choice_menu";
+import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
 import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
@@ -139,7 +139,7 @@ import {
 } from "./display/filter_selection";
 import { createGbaPipeline, isGbaLook } from "./display/gba_pipeline";
 import { cgbColorButtonVisible, createCgbColorControl } from "./display/cgb_color_correction";
-import { cyclePaletteTo, listPalettes, paletteButtonVisible } from "./display/palette_button";
+import { cyclePaletteTo, listPalettes, paletteButtonVisible, stablePaletteOrder } from "./display/palette_button";
 import { SCREEN_CONTEXT_ATTRIBUTES, selectRenderPipeline } from "./display/render_pipeline";
 import commonVertGlsl from "./shaders/common.vert.glsl?raw";
 import stockFragGlsl from "./shaders/stock.frag.glsl?raw";
@@ -994,7 +994,7 @@ if (cgbColorToggleBtn) {
     });
 }
 
-/** The Palette button does what F8 does and names the palette in use. */
+/** The Palette button names the palette in use and lists them all; F8 steps to the next. */
 const paletteCycleBtn = document.getElementById("palette-cycle") as HTMLButtonElement | null;
 
 /** Show the Palette button only where F8 changes something; its label is the core's. */
@@ -1016,6 +1016,15 @@ function paletteSource() {
 
 if (paletteCycleBtn) {
     let paletteNames: string[] = [];
+    /** The order the palettes were first listed in for this game, so the list keeps still. */
+    let paletteOrder: string[] | null = null;
+    let paletteOrderGame: string | null = null;
+    paletteCycleBtn.addEventListener("click", () => {
+        if (paletteOrderGame !== (romMetadata?.name ?? null)) {
+            paletteOrder = null;
+            paletteOrderGame = romMetadata?.name ?? null;
+        }
+    }, { capture: true });
     createChoiceMenu({
         anchor: paletteCycleBtn,
         title: "Palette",
@@ -1023,12 +1032,14 @@ if (paletteCycleBtn) {
         footerKeys: ["F8"],
         choices: () => {
             const source = paletteSource();
-            paletteNames = source ? listPalettes(source) : [];
-            return paletteNames.map((name, index) => ({ label: name.replace(/^Palette: /, ""), selected: index === 0 }));
+            const current = source?.label() ?? "";
+            paletteNames = source ? stablePaletteOrder(paletteOrder, listPalettes(source)) : [];
+            paletteOrder = paletteNames.length ? paletteNames : paletteOrder;
+            return paletteNames.map((name) => ({ label: name.replace(/^Palette: /, ""), selected: name === current }));
         },
         onPick: (index) => {
             const source = paletteSource();
-            if (!source || paused || index === 0) return;
+            if (!source || paused || paletteNames[index] === source.label()) return;
             if (cyclePaletteTo(source, paletteNames[index])) {
                 toastOverlay.show(paletteNames[index]);
                 syncGbPaletteWithFilter(false);
@@ -1266,6 +1277,8 @@ function updateGameTitle() {
  * based on current emulation state, and applies the result to the DOM.
  */
 function updateEmulationButtons() {
+    // The game's state changed (paused, resumed, stopped), so a list showing it closes.
+    closeOpenChoiceMenus();
     const states = computeButtonStates({
         romLoaded: romBytes !== null,
         running,
@@ -2498,7 +2511,7 @@ function debuggerStepInto() {
 }
 
 /**
- * F8, the Palette button, and the Colors button in a Game Boy Advance game: the running core decides what
+ * F8, and the Colours list in a Game Boy Advance game: the running core decides what
  * that means and returns the corner message ("" when nothing changed). The Game Boy filter sync is a no-op
  * unless an original Game Boy game's palette changed.
  */
@@ -3357,6 +3370,8 @@ async function handleKeyDown(event: KeyboardEvent) {
     }
 
     const handledShortcut = await dispatchWebShortcutAction(event, webShortcutActions);
+    // A shortcut changes what an open list shows, so any open list closes.
+    if (handledShortcut) closeOpenChoiceMenus();
     if (handledShortcut) {
         return;
     }
@@ -4067,11 +4082,16 @@ createChoiceMenu({
 createChoiceMenu({
     anchor: document.getElementById("reset-menu") as HTMLButtonElement,
     kind: "actions",
+    footer: "Hard reset is the same as power off and on.",
     choices: () => [
         { label: "Soft reset", selected: false, keys: ["Ctrl", "R"] },
         { label: "Hard reset", selected: false, keys: ["⇧", "Ctrl", "R"] },
     ],
-    onPick: (index) => void (index === 0 ? resetAction() : hardResetAction()),
+    // Picked from the list, the reset says which it was, since both leave the game running.
+    onPick: (index) => {
+        toastOverlay.show(index === 0 ? "Soft reset" : "Hard reset");
+        void (index === 0 ? resetAction() : hardResetAction());
+    },
 });
 
 saveStateBtn?.addEventListener("click", async () => {

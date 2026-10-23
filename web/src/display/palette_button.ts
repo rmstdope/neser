@@ -45,3 +45,13 @@ export function cyclePaletteTo(source: PaletteCycler, target: string, limit = 32
     }
     return false;
 }
+
+/**
+ * The order the Palette list shows: the one first seen for this game, so entries stay in place
+ * however the current palette moves; a listing with other names becomes the new order.
+ */
+export function stablePaletteOrder(firstSeen: string[] | null, listed: string[]): string[] {
+    if (!firstSeen || firstSeen.length !== listed.length) return listed;
+    const names = new Set(listed);
+    return firstSeen.every((name) => names.has(name)) ? firstSeen : listed;
+}

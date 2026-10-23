@@ -91,6 +91,14 @@ test.describe("Short lists in the control bar", () => {
         await items.filter({ hasText: "Classic" }).click();
         await expect(palette).toHaveText("Palette: Classic");
         await expect(page.locator(".neser-toast").filter({ hasText: "Palette: Classic" })).toBeVisible();
+
+        // The list keeps its order, with the new choice ticked in its place.
+        await palette.click();
+        await expect(items).toHaveText(["Default", "NesDev", "Smooth", "Classic", "Composite Direct", "Mesen"]);
+        await expect(page.locator(".choice-menu [aria-checked='true'] .choice-menu-label")).toHaveText("Classic");
+        // A shortcut closes the open list.
+        await page.keyboard.press("F4");
+        await expect(page.locator(".choice-menu")).toHaveCount(0);
     });
 
     test("Given a running game, when Reset's arrow is pressed, then soft and hard reset are listed with their keys, and hard reset keeps the game running", async ({ page }) => {
@@ -99,7 +107,13 @@ test.describe("Short lists in the control bar", () => {
         const actions = page.locator(".choice-menu [role='menuitem']");
         await expect(actions.locator(".choice-menu-label")).toHaveText(["Soft reset", "Hard reset"]);
         await expect(actions.nth(1).locator("kbd")).toHaveText(["⇧", "Ctrl", "R"]);
+        await expect(page.locator(".choice-menu-footer")).toHaveText("Hard reset is the same as power off and on.");
         await actions.nth(1).click();
+        await expect(page.locator(".neser-toast").filter({ hasText: "Hard reset" })).toBeVisible();
         await waitForRunningState(page);
+
+        await page.locator("#reset-menu").click();
+        await page.locator(".choice-menu [role='menuitem']").nth(0).click();
+        await expect(page.locator(".neser-toast").filter({ hasText: "Soft reset" })).toBeVisible();
     });
 });
