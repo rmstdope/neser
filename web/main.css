@@ -629,6 +629,12 @@ body.handheld .app-topbar {
   color: var(--muted);
 }
 
+/* Save and Load where save states are not offered: greyed, but hoverable so their tip says why. */
+#emulation-controls .btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── The Load button's preview ─────────────────────────── */
 
 #save-state-section {
@@ -652,7 +658,7 @@ body.handheld .app-topbar {
   pointer-events: none;
 }
 
-#save-state-section:has(#load-state:not(:disabled):hover, #load-state:not(:disabled):focus) .load-preview[data-ready] {
+#save-state-section:has(#load-state:not(:disabled):hover, #load-state:not(:disabled):focus-visible) .load-preview[data-ready] {
   display: flex;
 }
 

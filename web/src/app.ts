@@ -377,6 +377,10 @@ let currentFilter = "ntsc"; // Start with NTSC filter as requested
 let filterSelection: FilterSelection = selectionAt(currentFilter);
 /** The last frame drawn, redrawn when a GBA game's look changes while paused. */
 let lastFrame: { frame: Uint8Array; format: number } | null = null;
+/** The running game's save-state key (name, size and hash), which its preview is kept under too. */
+let savePreviewKey: string | null = null;
+/** Save states are not offered for the running console: Save and Load say why rather than work. */
+let saveStateUnavailable = false;
 /** True until a look is chosen or a game has loaded: the first game then starts on its console's default. */
 let filterUntouched = true;
 const filterKeys = Object.keys(filters);
@@ -1359,8 +1363,15 @@ function updateEmulatorKindUI() {
     const saveStateNote = emulator?.kind === "gba" && !supportsWebSaveState("gba")
         ? "Save states are not available for Game Boy Advance games yet"
         : null;
-    if (saveStateBtn) saveStateBtn.dataset.tip = saveStateNote ?? "Save state";
-    if (loadStateBtn) loadStateBtn.dataset.tip = saveStateNote ?? "Load state";
+    saveStateUnavailable = saveStateNote !== null;
+    if (saveStateBtn) {
+        saveStateBtn.dataset.tip = saveStateNote ?? "Save state";
+        saveStateBtn.dataset.keys = saveStateNote ? "" : "F6";
+    }
+    if (loadStateBtn) {
+        loadStateBtn.dataset.tip = saveStateNote ?? "Load state";
+        loadStateBtn.dataset.keys = saveStateNote ? "" : "F7";
+    }
     // Switch to a console-appropriate filter if the current one isn't valid
     const kind = emulator?.kind ?? "nes";
     const newFilter = filterOnConsoleSwitch(currentFilter, filterKeys, filters, kind, filterUntouched);
@@ -1630,6 +1641,7 @@ function setStatus(msg: string, isError = false) {
 
 async function applyRomBytes(bytes: Uint8Array, name: string) {
     romBytes = bytes;
+    savePreviewKey = null;
     romMetadata = {
         name,
         size: romBytes.length,
@@ -1672,6 +1684,7 @@ async function refreshSaveStateController() {
                 size: romMetadata.size,
                 bytes: romMetadata.bytes
             });
+            savePreviewKey = key;
             saveSlot = (await hasState(db, key)) ? "saved" : "empty";
         } else {
             saveSlot = "empty";
@@ -4009,17 +4022,17 @@ let loadPreview: SavePreview | null = null;
 
 /** Keeps a picture of the frame just saved, for the game's Load preview. */
 async function rememberSavePreview() {
-    if (!romMetadata) return;
+    if (!savePreviewKey) return;
     const channels = lastFrame?.format === gl.RGB ? 3 : 4;
     const thumbnail = lastFrame ? frameThumbnail(lastFrame.frame, channels, width, height) : null;
     loadPreview = { thumbnail, savedAt: Date.now() };
-    await savePreviews.put(romMetadata.name, loadPreview).catch((err) => console.error("Failed to keep the save's picture", err));
+    await savePreviews.put(savePreviewKey, loadPreview).catch((err) => console.error("Failed to keep the save's picture", err));
     renderLoadPreview();
 }
 
 /** Reads the running game's preview, kept from this or an earlier visit. */
 async function refreshLoadPreview() {
-    loadPreview = romMetadata ? await savePreviews.get(romMetadata.name).catch(() => null) : null;
+    loadPreview = savePreviewKey ? await savePreviews.get(savePreviewKey).catch(() => null) : null;
     renderLoadPreview();
 }
 
@@ -4028,7 +4041,15 @@ function renderLoadPreview() {
     const ready = loadPreview !== null && saveSlot !== "empty";
     loadPreviewEl.toggleAttribute("data-ready", ready);
     loadStateBtn?.toggleAttribute("data-has-preview", ready);
-    if (!ready) return;
+    // Only a preview that shows describes the button, so another game's never lingers.
+    if (ready) loadStateBtn?.setAttribute("aria-describedby", "load-preview");
+    else loadStateBtn?.removeAttribute("aria-describedby");
+    if (!ready) {
+        loadPreviewEl.querySelector("img")!.removeAttribute("src");
+        loadPreviewEl.querySelector(".load-preview-ago")!.textContent = "";
+        loadPreviewEl.querySelector(".load-preview-at")!.textContent = "";
+        return;
+    }
     const img = loadPreviewEl.querySelector("img")!;
     img.hidden = !loadPreview!.thumbnail;
     if (loadPreview!.thumbnail) img.src = loadPreview!.thumbnail;
@@ -4060,8 +4081,14 @@ function updateSaveStateButtons() {
         running,
         slot: saveSlot,
     });
-    if (saveStateBtn) saveStateBtn.disabled = !saveEnabled;
-    if (loadStateBtn) loadStateBtn.disabled = !loadEnabled;
+    // Unavailable here, the buttons stay hoverable (aria-disabled) so their tip can say why;
+    // a disabled button gets no pointer events. Their actions already do nothing without a controller.
+    for (const [button, enabled] of [[saveStateBtn, saveEnabled], [loadStateBtn, loadEnabled]] as const) {
+        if (!button) continue;
+        button.disabled = !enabled && !saveStateUnavailable;
+        button.toggleAttribute("aria-disabled", saveStateUnavailable);
+        if (saveStateUnavailable) button.setAttribute("aria-disabled", "true");
+    }
     if (saveStateSection) saveStateSection.dataset.saveState = saveSlot;
 }
 

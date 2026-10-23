@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { expect, test } from "@playwright/test";
 import { loadGbaRomFromFileInput, openApp, startFromBundledRom, waitForRunningState } from "../helpers/lifecycle.helpers";
 
@@ -19,8 +21,15 @@ test.describe("Save-state preview", () => {
 
         await page.mouse.move(5, 5);
         await expect(preview).toBeHidden();
-        await page.locator("#load-state").focus();
+        // From the keyboard it shows on focus; after a click, focus stays but the preview goes.
+        await page.locator("#save-state").focus();
+        await page.keyboard.press("Tab");
+        await expect(page.locator("#load-state")).toBeFocused();
         await expect(preview).toBeVisible();
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await page.locator("#load-state").click();
+        await page.mouse.move(5, 5);
+        await expect(preview).toBeHidden();
     });
 
     test("Given a reload, when Load is hovered for the state saved before it, then the preview is still there", async ({ page }) => {
@@ -31,6 +40,7 @@ test.describe("Save-state preview", () => {
         await startFromBundledRom(page);
         await page.locator("#load-state").hover();
         await expect(page.locator("#load-preview img")).toBeVisible();
+        await expect(page.locator("#load-preview .load-preview-ago")).toHaveText("Saved just now");
     });
 
     test("Given a Game Boy Advance game, then Save and Load show but cannot be pressed, and say why", async ({ page }) => {
@@ -38,9 +48,33 @@ test.describe("Save-state preview", () => {
         await loadGbaRomFromFileInput(page);
         await waitForRunningState(page);
         for (const id of ["#save-state", "#load-state"]) {
-            await expect(page.locator(id)).toBeVisible();
-            await expect(page.locator(id)).toBeDisabled();
-            await expect(page.locator(id)).toHaveAttribute("data-tip", "Save states are not available for Game Boy Advance games yet");
+            const button = page.locator(id);
+            await expect(button).toBeVisible();
+            await expect(button).toHaveAttribute("aria-disabled", "true");
+            await expect(button).toHaveAttribute("data-tip", "Save states are not available for Game Boy Advance games yet");
+            await expect(button).not.toHaveAttribute("data-keys", /.+/);
+            // The reason shows on hover, which a disabled button would never get.
+            await button.hover();
+            await expect.poll(() => button.evaluate((el) => getComputedStyle(el, "::after").content)).toContain("not available");
         }
+        await page.locator("#save-state").click({ force: true });
+        await expect(page.locator(".neser-toast").filter({ hasText: "State saved" })).toHaveCount(0);
+    });
+
+    test("Given two different games under one file name, then each keeps its own preview, and a game with no preview describes none", async ({ page }) => {
+        const asGame = (path: string) => ({ name: "game.nes", mimeType: "application/octet-stream", buffer: readFileSync(path) });
+        await openApp(page);
+        await page.locator("#rom").setInputFiles(asGame("roms/nes/automated_tests/blargg_nes_cpu_test5/cpu.nes"));
+        await waitForRunningState(page);
+        await page.locator("#save-state").click();
+        await expect(page.locator("#save-state-section")).toHaveAttribute("data-save-state", "saved");
+        await expect(page.locator("#load-preview .load-preview-ago")).toHaveText("Saved just now");
+
+        // Another ROM of the same name has no save and so no preview: nothing is described.
+        await page.locator("#rom").setInputFiles(asGame("roms/nes/automated_tests/blargg_nes_cpu_test5/official.nes"));
+        await waitForRunningState(page);
+        await expect(page.locator("#load-preview")).not.toHaveAttribute("data-ready", "");
+        await expect(page.locator("#load-preview .load-preview-ago")).toHaveText("");
+        await expect(page.locator("#load-state")).not.toHaveAttribute("aria-describedby", /.+/);
     });
 });

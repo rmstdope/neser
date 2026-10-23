@@ -69,12 +69,14 @@ export function savedAgo(now: number, savedAt: number): string {
         return `Saved ${hours} hour${hours === 1 ? "" : "s"} ago`;
     }
     if (day === "Yesterday") return "Saved yesterday";
+    if (day === "Last week") return "Saved last week";
     return day.endsWith("days ago") ? `Saved ${day}` : `Saved on ${day}`;
 }
 
-/** The save's day and time: "Today 14:02", "Yesterday 09:05", or the date and time. */
+/** The save's day and time: "Today 14:02", "Yesterday 09:05", or further back the date and time. */
 export function savedAtLine(now: Date, savedAt: number): string {
     const at = new Date(savedAt);
     const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-    return `${playedWhen(now, at)} ${time}`;
+    const day = playedWhen(now, at);
+    return `${day === "Today" || day === "Yesterday" ? day : at.toLocaleDateString()} ${time}`;
 }

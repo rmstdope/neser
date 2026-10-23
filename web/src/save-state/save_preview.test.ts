@@ -16,6 +16,8 @@ describe("savedAgo", () => {
         expect(savedAgo(now, now - 3 * 3_600_000)).toBe("Saved 3 hours ago");
         expect(savedAgo(now, new Date(2026, 9, 22, 20, 0).getTime())).toBe("Saved yesterday");
         expect(savedAgo(now, new Date(2026, 9, 18, 20, 0).getTime())).toBe("Saved 5 days ago");
+        expect(savedAgo(now, new Date(2026, 9, 14, 20, 0).getTime())).toBe("Saved last week");
+        expect(savedAgo(now, new Date(2026, 8, 1, 20, 0).getTime())).toBe(`Saved on ${new Date(2026, 8, 1).toLocaleDateString()}`);
     });
 });
 
@@ -24,6 +26,9 @@ describe("savedAtLine", () => {
         const now = new Date(2026, 9, 23, 14, 30);
         expect(savedAtLine(now, new Date(2026, 9, 23, 14, 2).getTime())).toBe("Today 14:02");
         expect(savedAtLine(now, new Date(2026, 9, 22, 9, 5).getTime())).toBe("Yesterday 09:05");
+        // Further back, the date itself: "3 days ago 14:02" would not read as a time.
+        expect(savedAtLine(now, new Date(2026, 9, 20, 14, 2).getTime())).toBe(`${new Date(2026, 9, 20).toLocaleDateString()} 14:02`);
+        expect(savedAtLine(now, new Date(2026, 9, 14, 8, 0).getTime())).toBe(`${new Date(2026, 9, 14).toLocaleDateString()} 08:00`);
     });
 });
 
