@@ -67,6 +67,8 @@ import { planFrame } from "./audio/frame_plan";
 import { gameTitle } from "./ui/game_title";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
+import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
+import { frameThumbnail } from "./display/thumbnail";
 import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
 import { belongsToOpenDialog, isEditableKeyboardTarget } from "./shortcuts/keyboard_target";
 import {
@@ -1055,6 +1057,7 @@ function updateView() {
 
 function openLibraryOverGame() {
     if (!running || libraryOverGame) return;
+    captureRecentThumbnail();
     libraryOverGame = true;
     pausedByLibrary = !paused;
     if (pausedByLibrary) pauseResume();
@@ -1100,6 +1103,51 @@ libraryOpenBtn.addEventListener("click", () => {
     if (libraryOverGame) backToGame();
     else openLibraryOverGame();
 });
+
+// ── "Continue playing": the games last played in this browser ──
+const recentGames = createRecentGamesStore();
+const recentEl = document.getElementById("recent") as HTMLElement;
+const recentRowEl = document.getElementById("recent-row") as HTMLElement;
+
+async function refreshRecentGames() {
+    const games = await recentGames.list().catch(() => [] as RecentGame[]);
+    renderRecentGames(recentRowEl, games, new Date(), (game) => void loadRecentGame(game));
+    recentEl.classList.toggle("hidden", games.length === 0);
+}
+
+/** Remembers the game that just started, as played now. */
+function rememberRecentGame() {
+    if (!romMetadata || !romBytes || !emulator) return;
+    const isColor = emulator.kind === "gb" && emulator.inst.is_color();
+    const game: RecentGame & { bytes: Uint8Array } = {
+        name: romMetadata.name,
+        system: gameTitle(romMetadata.name, emulator.kind, isColor).system,
+        bytes: romBytes,
+        fromFile: romFromFile,
+        playedAt: Date.now(),
+        thumbnail: null,
+    };
+    void recentGames.remember(game).then(refreshRecentGames, (err) => console.error("Failed to remember the game", err));
+}
+
+/** Keeps a picture of the running game's last frame for its card, before it stops or is left. */
+function captureRecentThumbnail() {
+    if (!running || !lastFrame || !romMetadata) return;
+    const channels = lastFrame.format === gl.RGB ? 3 : 4;
+    const picture = frameThumbnail(lastFrame.frame, channels, width, height);
+    if (!picture) return;
+    void recentGames.setThumbnail(romMetadata.name, picture).then(refreshRecentGames, (err) => console.error("Failed to keep the game's picture", err));
+}
+
+document.getElementById("recent-clear")!.addEventListener("click", () => {
+    void recentGames.clear().then(refreshRecentGames, (err) => console.error("Failed to clear the recent games", err));
+});
+// Most players leave by closing the tab, so the picture is also taken whenever the page is hidden.
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") captureRecentThumbnail();
+});
+window.addEventListener("pagehide", () => captureRecentThumbnail());
+void refreshRecentGames();
 
 // A game file dropped anywhere on the page is loaded and started.
 const dragHasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
@@ -1551,13 +1599,43 @@ async function loadRomFile(file: File) {
     // Only now, with the new game in hand, is the one under the library left behind.
     romFromFile = true;
     leaveLibraryForNewGame();
-    const expectedRom = autorunCtx.getExpectedRomName();
-    if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
-        toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file.name}" was loaded — playback may not work correctly`);
-    }
+    warnIfAutorunExpectsAnother(file.name);
     await handleRomSelection({
         bytes,
         name: file.name,
+        running,
+        stop,
+        applyRomBytes,
+        start,
+        focusCanvas: () => canvas.focus()
+    });
+}
+
+/** A loaded autorun names the ROM it was recorded on; another one is allowed, with a warning. */
+function warnIfAutorunExpectsAnother(name: string) {
+    const expectedRom = autorunCtx.getExpectedRomName();
+    const file = name.slice(name.lastIndexOf("/") + 1);
+    if (expectedRom && file.toLowerCase() !== expectedRom.toLowerCase()) {
+        toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file}" was loaded — playback may not work correctly`);
+    }
+}
+
+/** Plays a game from the library's "Continue playing" row again, from the bytes kept for it. */
+async function loadRecentGame(game: RecentGame) {
+    requestPointerLockFromUserGesture();
+    const bytes = await recentGames.bytesOf(game.name).catch(() => null);
+    if (!bytes) {
+        setStatus("Failed to load ROM: this game is no longer kept in this browser", true);
+        void refreshRecentGames();
+        return;
+    }
+    romInput.value = "";
+    romFromFile = game.fromFile;
+    leaveLibraryForNewGame();
+    warnIfAutorunExpectsAnother(game.name);
+    await handleRomSelection({
+        bytes,
+        name: game.name,
         running,
         stop,
         applyRomBytes,
@@ -1824,6 +1902,7 @@ async function start(): Promise<boolean> {
     updateAutorunControls();
     updateEmulationButtons();
     updateSaveStateButtons();
+    rememberRecentGame();
     requestAnimationFrame(step);
     return true;
 }
@@ -2432,6 +2511,9 @@ function debuggerHexdumpGoToAddress() {
 }
 
 function stop() {
+    // The game's last frame becomes its card's picture; the next game must not inherit it.
+    captureRecentThumbnail();
+    lastFrame = null;
     // ── NES-only: Autorun teardown ────────────────────────────────────────
     if (nes && nes.autorun_is_recording()) {
         const recordingBytes = nes.stop_autorun();

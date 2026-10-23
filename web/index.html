@@ -43,6 +43,16 @@
                 <button type="button" id="library-back" class="btn btn-outline hidden" data-icon="play">Back to the game</button>
               </div>
             </div>
+            <!-- The games last played in this browser: pressing one plays it again -->
+            <section id="recent" class="recent hidden" aria-labelledby="recent-title">
+              <div class="recent-head">
+                <h3 id="recent-title">Continue playing</h3>
+                <span class="recent-note">kept in this browser</span>
+                <span class="flex-1"></span>
+                <button type="button" id="recent-clear" class="btn btn-ghost btn-xs">Clear</button>
+              </div>
+              <div id="recent-row" class="recent-row"></div>
+            </section>
             <!-- The last game, ready to start again (and to record an autorun from) -->
             <div id="library-again" class="library-again hidden">
               <span class="library-again-label">Last game</span>
