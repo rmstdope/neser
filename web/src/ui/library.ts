@@ -90,7 +90,8 @@ export function renderNewsWave(el: HTMLElement, text: string): void {
     el.replaceChildren(
         ...[...text].map((letter, index) => {
             const span = document.createElement("span");
-            span.textContent = letter === " " ? " " : letter;
+            // A real space: kept wide by the CSS while the letters wave, and a place to wrap when still.
+            span.textContent = letter;
             span.style.setProperty("--i", String(index));
             span.setAttribute("aria-hidden", "true");
             return span;

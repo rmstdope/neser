@@ -879,6 +879,7 @@ body.handheld .app-topbar {
 
 .library-news span {
   display: inline-block;
+  white-space: pre;
   animation: news-wave 2.4s ease-in-out infinite;
   animation-delay: calc(var(--i) * -0.09s);
 }
@@ -907,6 +908,7 @@ body.handheld .app-topbar {
 
   .library-news span {
     display: inline;
+    white-space: pre-wrap;
     animation: none;
   }
 }

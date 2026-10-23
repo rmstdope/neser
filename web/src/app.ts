@@ -1081,6 +1081,11 @@ libraryChooseBtn.addEventListener("click", () => romInput.click());
 
 /** The library's own keys: O chooses a file, / goes to the search. */
 function libraryKey(event: KeyboardEvent) {
+    // The game's Ctrl shortcuts wait with the game, rather than reaching the browser's reload or find.
+    if ((event.ctrlKey || event.metaKey) && (event.code === "KeyR" || event.code === "KeyF")) {
+        event.preventDefault();
+        return;
+    }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.code === "KeyO") {
         event.preventDefault();

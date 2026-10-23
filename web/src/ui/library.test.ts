@@ -82,7 +82,7 @@ describe("renderNewsWave", () => {
         const el = document.createElement("div");
         renderNewsWave(el, "Hi you");
         const spans = [...el.querySelectorAll("span")];
-        expect(spans.map((s) => s.textContent)).toEqual(["H", "i", " ", "y", "o", "u"]);
+        expect(spans.map((s) => s.textContent)).toEqual(["H", "i", " ", "y", "o", "u"]);
         expect(spans[3].style.getPropertyValue("--i")).toBe("3");
         expect(el.getAttribute("aria-label")).toBe("Hi you");
     });

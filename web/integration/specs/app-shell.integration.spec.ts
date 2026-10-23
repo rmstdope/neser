@@ -214,6 +214,12 @@ test.describe("the library's keys and its news", () => {
         const heading = (await page.locator("#library-title").boundingBox())!;
         expect(news.y + news.height).toBeLessThanOrEqual(heading.y);
         await expect(page.locator("#library-news span").first()).toHaveCSS("display", "inline");
+        // Every word shows: nothing runs past the hero's edge.
+        const clipped = await page.locator("#library-drop").evaluate((hero) => {
+            const edge = hero.getBoundingClientRect().right;
+            return [...hero.querySelectorAll("#library-news span")].some((span) => span.getBoundingClientRect().right > edge + 1);
+        });
+        expect(clipped).toBe(false);
         await expect(page.locator("#library-news")).toHaveAttribute("role", "marquee");
     });
 });
