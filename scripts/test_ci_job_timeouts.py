@@ -18,14 +18,17 @@ def jobs(workflow: str) -> dict[str, str]:
 
     text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
     jobs_block = text.split("\njobs:\n", 1)[1]
+    # A body is its blank and four-space lines; a two-space comment introduces the next job,
+    # so it ends this body rather than joining it.
     found: dict[str, str] = {}
-    for match in re.finditer(r"^  ([A-Za-z0-9_-]+):\n((?:(?: {4}.*| *#.*)?\n)*)", jobs_block, re.M):
+    for match in re.finditer(r"^  ([A-Za-z0-9_-]+):\n((?:(?: {4}.*)?\n)*)", jobs_block, re.M):
         found[match.group(1)] = match.group(2)
     return found
 
 
-# Playwright's ``--with-deps`` and ``install-deps`` run apt-get on the runner too.
-APT_INSTALLS = re.compile(r"apt-get install|playwright install(?:-deps| --with-deps)")
+# Any spelling of an apt install (``apt-get -y install``, ``apt install``), and Playwright's
+# ``--with-deps`` and ``install-deps``, which run apt-get on the runner too.
+APT_INSTALLS = re.compile(r"\bapt(?:-get)?\b[^\n]*\binstall\b|playwright install(?:-deps\b|\b[^\n]*--with-deps)")
 
 
 def apt_jobs() -> dict[str, str]:
@@ -57,6 +60,21 @@ class CiJobTimeoutsTest(unittest.TestCase):
                 "release.yml:build",
             }.issubset(apt_jobs())
         )
+
+    def test_every_spelling_of_an_apt_install_counts(self) -> None:
+        for line in (
+            "sudo apt-get update && sudo apt-get install -y libudev-dev",
+            "sudo apt-get -y install libudev-dev",
+            "sudo apt install libudev-dev",
+            "npx playwright install --with-deps chromium",
+            "npx playwright install chromium --with-deps",
+            "npx playwright install-deps chromium",
+        ):
+            with self.subTest(line=line):
+                self.assertRegex(line, APT_INSTALLS)
+        for line in ("npx playwright install chromium", "sudo apt-get update", "npm install"):
+            with self.subTest(line=line):
+                self.assertNotRegex(line, APT_INSTALLS)
 
     def test_every_apt_installing_job_has_a_time_limit(self) -> None:
         missing = sorted(name for name, body in apt_jobs().items() if timeout_of(body) is None)
