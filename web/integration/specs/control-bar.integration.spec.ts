@@ -23,6 +23,13 @@ test.describe("Control bar", () => {
         await waitForRunningState(page);
         await expect(palette).toBeEnabled();
     });
+
+    test("Given a running game, then the zoom level names the shown picture's height in the console's own lines", async ({ page }) => {
+        await startFromBundledRom(page);
+        const level = page.locator("#zoom-level");
+        const ratio = await page.evaluate(() => document.getElementById("screen")!.clientHeight / 224);
+        await expect(level).toHaveText(`${Math.round(ratio * 10) / 10}×`);
+    });
 });
 
 // A device profile names its browser type, which a describe block may not set; the rest applies.

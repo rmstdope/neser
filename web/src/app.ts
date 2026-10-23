@@ -1081,6 +1081,7 @@ function updateEmulationButtons() {
     updateCgbColorButton();
     updatePaletteButton();
     updateGameTitle();
+    updateZoomLevel();
     updateGbHardwareNote();
 }
 
@@ -2263,6 +2264,8 @@ function debuggerStepInto() {
  * unless an original Game Boy game's palette changed.
  */
 function cyclePaletteAction() {
+    // Paused, no new frame would show the change, so F8 waits as the disabled button does.
+    if (paused) return;
     const message = emulator?.inst.cycle_palette() ?? "";
     if (message !== "") {
         toastOverlay.show(message);
@@ -3533,7 +3536,16 @@ function isInFullscreen(): boolean {
     return document.fullscreenElement === fullscreenRoot();
 }
 
-const zoomLevelEl = document.getElementById("zoom-level");
+/**
+ * Names the shown picture's height in the running console's own lines; empty with no game.
+ * Looks the element up on each call: `updateEmulationButtons` calls this before the module
+ * reaches this point, where a module-level const would not yet be initialised.
+ */
+function updateZoomLevel() {
+    const zoomLevelEl = document.getElementById("zoom-level");
+    if (zoomLevelEl) zoomLevelEl.textContent = running ? zoomLevelLabel(canvas.clientHeight, height) : "";
+}
+window.addEventListener("resize", () => updateZoomLevel());
 
 function updateZoomButtonState() {
     const inScreenFullscreen = isInFullscreen();
@@ -3555,7 +3567,7 @@ function updateZoomButtonState() {
 
     screenMinusBtn.disabled = !canZoomOut;
     screenPlusBtn.disabled = !canZoomIn;
-    if (zoomLevelEl) zoomLevelEl.textContent = zoomLevelLabel(currentHeight);
+    updateZoomLevel();
 }
 
 function applyZoom(direction: "in" | "out") {

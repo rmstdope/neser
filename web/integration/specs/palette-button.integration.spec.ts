@@ -63,6 +63,10 @@ test.describe("Palette button (does what F8 does)", () => {
         await waitForPausedState(page);
         await expect(palette).toBeVisible();
         await expect(palette).toBeDisabled();
+        // F8 does what the button does, so it waits too.
+        const pausedLabel = await palette.textContent();
+        await page.keyboard.press("F8");
+        await expect(palette).toHaveText(pausedLabel!);
         await page.locator("#pause").click();
         await expect(palette).toBeEnabled();
 

@@ -1,8 +1,13 @@
 export const MIN_CANVAS_HEIGHT = 240;
 
-/** The control bar's zoom level: the picture's height as a multiple of a console's 240 lines. */
-export function zoomLevelLabel(height: number): string {
-    const level = Math.round((height / 240) * 10) / 10;
+/**
+ * The control bar's zoom level: the shown picture's height as a multiple of the lines the running
+ * console draws (224 for an NES with its usual overscan, 144 for a Game Boy, 160 for a GBA).
+ * Empty when there is nothing to measure.
+ */
+export function zoomLevelLabel(shownHeight: number, sourceLines: number): string {
+    if (shownHeight <= 0 || sourceLines <= 0) return "";
+    const level = Math.round((shownHeight / sourceLines) * 10) / 10;
     return `${level}×`;
 }
 export const MAX_CANVAS_HEIGHT = 1440;
