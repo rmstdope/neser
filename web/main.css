@@ -131,12 +131,12 @@ body {
   font-weight: 600;
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover:not(:disabled):not([aria-disabled="true"]) {
   border-color: var(--steel-hi);
   box-shadow: var(--glow);
 }
 
-.btn:active:not(:disabled) {
+.btn:active:not(:disabled):not([aria-disabled="true"]) {
   box-shadow: 0 0 0 1px rgba(127, 176, 227, 0.5), 0 0 26px rgba(80, 150, 230, 0.55);
 }
 
@@ -625,6 +625,66 @@ body.handheld .app-topbar {
   margin-top: 6px;
   padding: 8px 10px 4px;
   border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Save and Load where save states are not offered: greyed, but hoverable so their tip says why. */
+/* The label and icon grey (the icon follows currentColor); the tip keeps its own colours. */
+#emulation-controls .btn[aria-disabled="true"] {
+  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  cursor: not-allowed;
+}
+
+/* ── The Load button's preview ─────────────────────────── */
+
+#save-state-section {
+  position: relative;
+}
+
+.load-preview {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  z-index: 40;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  width: 230px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(16, 26, 40, 0.97);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+#save-state-section:has(#load-state:not(:disabled):hover, #load-state:not(:disabled)[data-key-focus]) .load-preview[data-ready] {
+  display: flex;
+}
+
+/* The preview says what the tip would, so the tip stays away while it shows. */
+#load-state[data-has-preview]:hover::after,
+#load-state[data-has-preview]:focus-visible::after {
+  display: none;
+}
+
+.load-preview img {
+  width: 100%;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.load-preview-ago {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.load-preview-at {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--muted);
 }
