@@ -76,10 +76,10 @@ class WebContainerPublicationTest(unittest.TestCase):
         build, publish = ci.split("  web-container:\n", 1)[1].split("  publish-web:\n")
         self.assertNotIn("packages: write", build)
         self.assertIn("needs: web-container", publish)
-        self.assertIn(
-            "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
-            publish,
-        )
+        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'", publish)
+        # Without a status function the implicit success() skips publishing
+        # whenever path filtering skipped an upstream test job.
+        self.assertIn("!cancelled() && needs.web-container.result == 'success'", publish)
         self.assertIn("packages: write", publish)
         self.assertIn("docker load --input web-container.tar", publish)
         self.assertIn("node deploy/smoke.mjs", build)
