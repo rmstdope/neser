@@ -127,3 +127,44 @@ export const HELP_PAD_WIDTH = 440;
 export function helpPadZoom(available: number): number {
     return Math.min(1, Math.max(0, available) / HELP_PAD_WIDTH);
 }
+
+/**
+ * Draws the list that carries the pad's keys once the pad is too narrow to carry them itself: one
+ * row per button, in binding order, its symbol (a lettered disc, or the D-pad's cross and the
+ * Select and Start bars beside their names) then its keys as full-size caps.
+ */
+export function renderPadKeyList(list: HTMLElement, keyText: string): void {
+    list.replaceChildren(
+        ...keyBindingRows(keyText).map(({ action, keys }) => {
+            const row = document.createElement("div");
+            row.className = "pad-key-row";
+            const label = document.createElement("span");
+            label.className = "pad-key-label";
+            const symbol = document.createElement("span");
+            symbol.className = "pad-key-symbol";
+            symbol.dataset.button = action;
+            if (action.length === 1) symbol.textContent = action;
+            label.append(symbol);
+            if (action.length !== 1) label.append(action);
+            const caps = document.createElement("span");
+            caps.className = "pad-key-caps";
+            caps.append(...keys.map(cap));
+            row.append(label, caps);
+            return row;
+        })
+    );
+}
+
+/**
+ * Scales the pad by `zoom`. At full size it carries its keys; shrunk, its caps would be too small
+ * to read, so they leave it for `list` beneath, while a gamepad player's single "Gamepad" cap stays
+ * on it at full size.
+ */
+export function applyHelpPadFit(pad: HTMLElement, list: HTMLElement, zoom: number): void {
+    pad.style.zoom = String(zoom);
+    const shrunk = zoom < 1;
+    pad.toggleAttribute("data-keys-listed", shrunk);
+    const gamepad = pad.querySelector<HTMLElement>(".pad-gamepad");
+    list.hidden = !shrunk || gamepad !== null;
+    if (gamepad) gamepad.style.zoom = shrunk && zoom > 0 ? String(1 / zoom) : "";
+}

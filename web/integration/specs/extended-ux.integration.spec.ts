@@ -212,4 +212,53 @@ test.describe("Phase 3 extended UX", () => {
             }
         });
     }
+
+    test("Given a 320px window, when the keys and controls panel opens, then the shrunk pad carries no keys and a list beneath it does, at full size", async ({ page }) => {
+        await page.setViewportSize({ width: 320, height: 844 });
+        await openApp(page);
+        await page.evaluate(() => (document.getElementById("help-open") as HTMLButtonElement).click());
+        const panel = page.locator("#help-panel");
+        const list = panel.locator("#help-pad-keys");
+        await expect(panel).toBeVisible();
+        await panel.locator("#help-chips button", { hasText: /^NES( · Player 1)?$/ }).click();
+        await expect(list).toBeVisible();
+        await expect(panel.locator("#help-pad .pad-keys kbd").first()).toBeHidden();
+        await expect(list.locator(".pad-key-label")).toHaveText(["D-Pad", "A", "B", "Select", "Start"]);
+        await expect(list.locator(".pad-key-row").first().locator("kbd")).toHaveText(["W", "A", "S", "D"]);
+        const height = (selector: string) => panel.locator(selector).first().evaluate((el) => el.getBoundingClientRect().height);
+        expect(await height("#help-pad-keys kbd")).toBe(await height(".help-shortcut kbd"));
+        const order = await panel.evaluate(() => {
+            const bottom = (id: string) => document.getElementById(id)!.getBoundingClientRect();
+            return bottom("help-pad").bottom <= bottom("help-pad-keys").top && bottom("help-pad-keys").bottom <= bottom("help-gamepad-note").top;
+        });
+        expect(order).toBe(true);
+        expect(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+        await panel.locator("#help-chips button", { hasText: /^SNES$/ }).click();
+        await expect(list.locator(".pad-key-label")).toHaveText(["D-Pad", "B", "A", "X", "Y", "L", "R", "Select", "Start"]);
+
+        // Widening the window past the pad's full size moves the keys back onto it, and back again.
+        await page.setViewportSize({ width: 1280, height: 844 });
+        await expect(list).toBeHidden();
+        await expect(panel.locator('#help-pad [data-button="A"] kbd')).toBeVisible();
+        await page.setViewportSize({ width: 320, height: 844 });
+        await expect(list).toBeVisible();
+        await expect(panel.locator('#help-pad [data-button="A"] kbd')).toBeHidden();
+    });
+
+    test("Given a 390px window and a gamepad, when the keys and controls panel opens, then there is no list and the Gamepad cap is full size", async ({ page }) => {
+        await page.addInitScript(() => {
+            const pad = { id: "Test pad", index: 0, connected: true, mapping: "standard", buttons: [], axes: [], timestamp: 0 };
+            Object.defineProperty(navigator, "getGamepads", { value: () => [pad, null, null, null] });
+        });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await openApp(page);
+        await page.evaluate(() => (document.getElementById("help-open") as HTMLButtonElement).click());
+        const panel = page.locator("#help-panel");
+        await expect(panel.locator("#help-pad .pad-gamepad")).toHaveText("Gamepad");
+        await expect(panel.locator("#help-pad-keys")).toBeHidden();
+        await expect(panel.locator("#help-gamepad-note")).toBeHidden();
+        const height = (selector: string) => panel.locator(selector).first().evaluate((el) => el.getBoundingClientRect().height);
+        expect(await height("#help-pad .pad-gamepad kbd")).toBeCloseTo(await height(".help-shortcut kbd"), 0);
+    });
 });

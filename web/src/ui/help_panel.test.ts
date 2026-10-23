@@ -7,7 +7,17 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { HELP_PAD_WIDTH, HELP_SHORTCUTS, helpChips, helpPadZoom, renderHelpShortcuts, renderPad } from "./help_panel";
+import {
+    HELP_PAD_WIDTH,
+    HELP_SHORTCUTS,
+    applyHelpPadFit,
+    helpChips,
+    helpPadKeys,
+    helpPadZoom,
+    renderHelpShortcuts,
+    renderPad,
+    renderPadKeyList,
+} from "./help_panel";
 
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const page = () => new DOMParser().parseFromString(readFileSync(resolve(webDir, "index.html"), "utf8"), "text/html");
@@ -33,6 +43,15 @@ describe("the keys and controls panel's markup", () => {
         const doc = page();
         expect(doc.getElementById("help-chips")!.getAttribute("role")).toBe("group");
         expect(doc.getElementById("help-gamepad-note")!.textContent!.trim()).toBe("Plug in a gamepad and press any button to use it instead.");
+    });
+
+    it("Given the controller column, When reading it, Then the narrow screens' key list sits between the pad and the gamepad line, hidden and not read twice", () => {
+        const doc = page();
+        const list = doc.getElementById("help-pad-keys")!;
+        expect(list.previousElementSibling!.id).toBe("help-pad");
+        expect(list.nextElementSibling!.id).toBe("help-gamepad-note");
+        expect(list.hasAttribute("hidden")).toBe(true);
+        expect(list.getAttribute("aria-hidden")).toBe("true");
     });
 });
 
@@ -123,5 +142,107 @@ describe("helpPadZoom", () => {
     it("Given a narrower column, When fitted, Then the whole pad scales down to its width", () => {
         expect(helpPadZoom(HELP_PAD_WIDTH / 2)).toBe(0.5);
         expect(helpPadZoom(-5)).toBe(0);
+    });
+});
+
+describe("renderPadKeyList", () => {
+    const rows = (list: HTMLElement) =>
+        [...list.querySelectorAll(".pad-key-row")].map((row) => [
+            row.querySelector(".pad-key-label")!.textContent,
+            [...row.querySelectorAll(".pad-key-caps kbd")].map((k) => k.textContent).join(" "),
+        ]);
+
+    it("Given the NES's first player, When the list is drawn, Then it names each button in binding order with its keys", () => {
+        const list = document.createElement("div");
+        renderPadKeyList(list, helpPadKeys("nes", 0));
+        expect(rows(list)).toEqual([
+            ["D-Pad", "W A S D"],
+            ["A", "R"],
+            ["B", "T"],
+            ["Select", "4"],
+            ["Start", "5"],
+        ]);
+    });
+
+    it("Given the SNES, When the list is drawn, Then it has nine rows in the SNES binding order", () => {
+        const list = document.createElement("div");
+        renderPadKeyList(list, helpPadKeys("snes", 0));
+        expect(rows(list).map(([label]) => label)).toEqual(["D-Pad", "B", "A", "X", "Y", "L", "R", "Select", "Start"]);
+    });
+
+    it("Given the GBA, When the list is drawn, Then it has the shoulders and no X or Y", () => {
+        const list = document.createElement("div");
+        renderPadKeyList(list, helpPadKeys("gba", 0));
+        expect(rows(list).map(([label]) => label)).toEqual(["D-Pad", "A", "B", "L", "R", "Select", "Start"]);
+    });
+
+    it("Given the NES's second player, When the list is drawn, Then the D-Pad row carries all four of its keys", () => {
+        const list = document.createElement("div");
+        renderPadKeyList(list, helpPadKeys("nes", 1));
+        expect(rows(list)[0]).toEqual(["D-Pad", "I J K L"]);
+    });
+
+    it("Given a list, When reading a row's label, Then a lettered button is a disc with only its letter and the others a symbol and their name", () => {
+        const list = document.createElement("div");
+        renderPadKeyList(list, helpPadKeys("snes", 0));
+        const label = (button: string) => list.querySelector(`.pad-key-symbol[data-button="${button}"]`)!.closest(".pad-key-label")!;
+        expect(label("A").querySelector(".pad-key-symbol")!.textContent).toBe("A");
+        expect(label("A").textContent).toBe("A");
+        expect(label("L").querySelector(".pad-key-symbol")!.textContent).toBe("L");
+        for (const name of ["D-Pad", "Select", "Start"]) {
+            expect(label(name).querySelector(".pad-key-symbol")!.textContent, name).toBe("");
+            expect(label(name).textContent, name).toBe(name);
+        }
+    });
+
+    it("Given a list, When reading its caps, Then they are the shortcut list's caps", () => {
+        const list = document.createElement("div");
+        renderPadKeyList(list, helpPadKeys("nes", 0));
+        const shortcuts = document.createElement("div");
+        renderHelpShortcuts(shortcuts);
+        expect(list.querySelector("kbd")!.className).toBe(shortcuts.querySelector("kbd")!.className);
+    });
+});
+
+describe("applyHelpPadFit", () => {
+    const drawn = (usesGamepad = false) => {
+        const pad = document.createElement("div");
+        const list = document.createElement("div");
+        list.hidden = true;
+        renderPad(pad, helpPadKeys("nes", 0), usesGamepad);
+        renderPadKeyList(list, helpPadKeys("nes", 0));
+        return { pad, list };
+    };
+
+    it("Given a pad drawn at full size, When fitted, Then its keys stay on it and the list stays hidden", () => {
+        const { pad, list } = drawn();
+        applyHelpPadFit(pad, list, 1);
+        expect(pad.style.zoom).toBe("1");
+        expect(pad.hasAttribute("data-keys-listed")).toBe(false);
+        expect(list.hidden).toBe(true);
+    });
+
+    it("Given a shrunk pad, When fitted, Then its keys move to the list beneath it", () => {
+        const { pad, list } = drawn();
+        applyHelpPadFit(pad, list, 0.6);
+        expect(pad.style.zoom).toBe("0.6");
+        expect(pad.hasAttribute("data-keys-listed")).toBe(true);
+        expect(list.hidden).toBe(false);
+    });
+
+    it("Given a shrunk pad for a gamepad player, When fitted, Then there is no list and the Gamepad cap keeps its full size", () => {
+        const { pad, list } = drawn(true);
+        applyHelpPadFit(pad, list, 0.5);
+        expect(list.hidden).toBe(true);
+        expect((pad.querySelector(".pad-gamepad") as HTMLElement).style.zoom).toBe("2");
+    });
+
+    it("Given a shrunk pad, When the column widens to full size again, Then the keys go back on the pad", () => {
+        const { pad, list } = drawn(true);
+        applyHelpPadFit(pad, list, 0.5);
+        applyHelpPadFit(pad, list, 1);
+        expect(pad.hasAttribute("data-keys-listed")).toBe(false);
+        expect(list.hidden).toBe(true);
+        expect((pad.querySelector(".pad-gamepad") as HTMLElement).style.zoom).toBe("");
     });
 });
