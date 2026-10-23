@@ -316,7 +316,9 @@ test.describe("errors where you are", () => {
         rom[0x7fc0 + 0x3d] = 0x80;
         rom[0] = 0xea;
         await page.locator("#rom").setInputFiles({ name: "Pilotwings.sfc", mimeType: "application/octet-stream", buffer: rom });
-        await page.locator("#snes-firmware-cancel").click();
+        // Esc cancels it as Cancel does, without aiming at a button while the dialog still animates in.
+        await expect(page.locator("#snes-firmware-modal")).toBeVisible();
+        await page.keyboard.press("Escape");
         await expect(page.locator("#library")).toBeVisible();
         await expect(page.locator(".neser-toast", { hasText: /^Not started: .* needs the DSP-1 firmware$/ })).toBeVisible();
         await expect(page.locator("#library-error")).toBeHidden();
