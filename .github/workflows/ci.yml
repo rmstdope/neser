@@ -98,6 +98,9 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.github/workflows/ci.yml'
+              # wasm::tests reads it to check the Keys and controls panel against the key
+              # table, so a PR that changes only the panel must still run the Rust tests (nr-ubcv).
+              - 'web/src/console/consoles.ts'
             nes:
               - 'src/nes/**'
             gb:

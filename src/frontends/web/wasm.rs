@@ -1200,6 +1200,161 @@ mod tests {
         assert_eq!(row("5", "snes", "scopePause").len(), 1);
     }
 
+    // ── The Keys and controls panel against the key table (nr-ubcv) ──────────────
+
+    /// The text of the file whose `playerKeyBindings` the web Keys and controls panel prints.
+    const CONSOLES_TS: &str = include_str!("../../../web/src/console/consoles.ts");
+
+    /// Where the panel's strings and `key_binding_table()` disagree, one line per difference;
+    /// empty when they agree. Only joypad (`pad`) rows are compared: they are what the panel
+    /// lists. A panel line or console entry this cannot read is a difference too, so a
+    /// reshaped consoles.ts fails here instead of passing with nothing compared.
+    fn panel_mismatches(source: &str, rows: &[WebKeyBinding]) -> Vec<String> {
+        // Indexed by `PadButton::id()`.
+        const BUTTONS: [&str; 12] = [
+            "A", "B", "Select", "Start", "Up", "Down", "Left", "Right", "L", "R", "X", "Y",
+        ];
+        // `W/A/S/D: D-Pad` names up, left, down and right, in that order.
+        const D_PAD: [u8; 4] = [4, 6, 5, 7];
+        let strings: std::collections::HashMap<&str, String> = source
+            .lines()
+            .filter_map(|line| {
+                let (name, value) = line.strip_prefix("const ")?.split_once(" = \"")?;
+                Some((name, value.strip_suffix("\";")?.replace("\\n", "\n")))
+            })
+            .collect();
+        let mut out = Vec::new();
+        for console in ["nes", "gb", "gba", "snes"] {
+            let header = format!("    {console}: {{");
+            let names: Vec<&str> = source
+                .lines()
+                .skip_while(|line| *line != header)
+                .find_map(|line| {
+                    line.trim()
+                        .strip_prefix("playerKeyBindings: [")?
+                        .strip_suffix("],")
+                })
+                .map(|list| list.split(", ").collect())
+                .unwrap_or_default();
+            let players = rows
+                .iter()
+                .filter(|r| r.console == console && r.input == "pad")
+                .map(|r| r.player as usize)
+                .max()
+                .unwrap_or(0);
+            if names.len() != players {
+                out.push(format!(
+                    "{console}: the panel lists {} player(s), but key_binding_table() binds \
+                     joypad keys for {players}",
+                    names.len()
+                ));
+            }
+            for (index, name) in names.iter().enumerate() {
+                let who = format!("{console} player {}", index + 1);
+                let Some(text) = strings.get(name) else {
+                    out.push(format!("{who}: cannot find the panel string `{name}`"));
+                    continue;
+                };
+                let bound: Vec<(&str, u8)> = rows
+                    .iter()
+                    .filter(|r| {
+                        r.console == console && r.input == "pad" && r.player as usize == index + 1
+                    })
+                    .map(|r| (r.key, r.button))
+                    .collect();
+                let mut shown: Vec<(String, u8)> = Vec::new();
+                for line in text.lines() {
+                    let pairs: Option<Vec<(String, u8)>> =
+                        line.split_once(": ").and_then(|(keys, button)| {
+                            let keys: Vec<String> =
+                                keys.split('/').map(str::to_lowercase).collect();
+                            if button == "D-Pad" && keys.len() == 4 {
+                                Some(keys.into_iter().zip(D_PAD).collect())
+                            } else {
+                                let id = BUTTONS.iter().position(|b| *b == button)? as u8;
+                                (keys.len() == 1).then(|| vec![(keys[0].clone(), id)])
+                            }
+                        });
+                    let Some(pairs) = pairs else {
+                        out.push(format!("{who}: cannot read the panel line `{line}`"));
+                        continue;
+                    };
+                    for (key, id) in pairs {
+                        if !bound.contains(&(key.as_str(), id)) {
+                            let actual: Vec<&str> = bound
+                                .iter()
+                                .filter(|(k, _)| *k == key)
+                                .map(|(_, b)| BUTTONS[*b as usize])
+                                .collect();
+                            let does = if actual.is_empty() {
+                                "binds nothing to it".to_string()
+                            } else {
+                                format!("binds it to {}", actual.join(", "))
+                            };
+                            out.push(format!(
+                                "{who}: the panel shows `{line}` for key {key}, but \
+                                 key_binding_table() {does}"
+                            ));
+                        }
+                        shown.push((key, id));
+                    }
+                }
+                for (key, id) in bound {
+                    if !shown.iter().any(|(k, i)| k == key && *i == id) {
+                        let button = BUTTONS[id as usize];
+                        out.push(format!(
+                            "{who}: key_binding_table() binds key {key} to {button}, but the \
+                             panel does not show `{}: {button}`",
+                            key.to_uppercase()
+                        ));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The panel and the keys the page applies are written in two places; this keeps them
+    /// in step. A change on one side only lands here, naming what differs.
+    #[test]
+    fn the_keys_panel_matches_the_core_key_table() {
+        let mismatches = panel_mismatches(CONSOLES_TS, &web_key_binding_rows());
+        assert!(
+            mismatches.is_empty(),
+            "web/src/console/consoles.ts (the Keys and controls panel) and \
+             platform::key_bindings (what key_binding_table() gives the page) disagree:\n{}",
+            mismatches.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_panel_key_changed_only_in_consoles_ts_is_named() {
+        let doctored = CONSOLES_TS.replacen("R: A\\nT: B", "R: B\\nT: A", 1);
+        assert_ne!(doctored, CONSOLES_TS, "the NES player 1 string moved");
+        let report = panel_mismatches(&doctored, &web_key_binding_rows()).join("\n");
+        assert!(report.contains("nes player 1"), "{report}");
+        assert!(report.contains("`R: B`"), "{report}");
+    }
+
+    #[test]
+    fn a_binding_missing_from_the_panel_is_named() {
+        let rows: Vec<_> = web_key_binding_rows()
+            .into_iter()
+            .filter(|r| !(r.console == "snes" && r.key == "y"))
+            .collect();
+        let report = panel_mismatches(CONSOLES_TS, &rows).join("\n");
+        assert!(report.contains("snes player 1"), "{report}");
+        assert!(report.contains("`Y: X`"), "{report}");
+    }
+
+    #[test]
+    fn an_unreadable_panel_line_is_reported() {
+        let doctored = CONSOLES_TS.replacen("\\n4: Select", "\\n4 Select", 1);
+        assert_ne!(doctored, CONSOLES_TS);
+        let report = panel_mismatches(&doctored, &web_key_binding_rows()).join("\n");
+        assert!(report.contains("`4 Select`"), "{report}");
+    }
+
     #[test]
     fn test_serialize_debugger_snapshot_json_includes_oam_field() {
         let nes = Nes::new(AppContext::new_with_config(Config::default()));
