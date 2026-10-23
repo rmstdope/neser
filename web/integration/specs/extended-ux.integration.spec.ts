@@ -4,6 +4,7 @@ import {
     openApp,
     openSettings,
     startFromBundledRom,
+    waitForPausedState,
     waitForRunningState,
     loadRomFromFileInput
 } from "../helpers/lifecycle.helpers";
@@ -18,7 +19,6 @@ const AUTORUN_EXTEND_SELECTOR = "#autorun-extend-check";
 const AUTORUN_USE_BUTTON_SELECTOR = "#autorun-use-btn";
 const AUTORUN_STATUS_SELECTOR = "#autorun-status";
 const AUTORUN_CANCEL_SELECTOR = "#autorun-cancel";
-const SHORTCUT_HELP_OVERLAY_SELECTOR = "#shortcut-help-overlay";
 const DEBUGGER_PANEL_SELECTOR = "#debugger-panel";
 
 function createValidAutorunBuffer() {
@@ -109,26 +109,38 @@ test.describe("Phase 3 extended UX", () => {
         await expect(page.locator(AUTORUN_CANCEL_SELECTOR)).toBeHidden();
     });
 
-    test("Given a game is running, when shortcut help key is pressed, then overlay shows shortcuts", async ({ page }) => {
-        // The overlay sits on the picture, which shows with a game.
+    test("Given a game is running, when H is pressed, then the keys and controls panel opens with the game paused, and H closes it", async ({ page }) => {
         await startFromBundledRom(page);
+        const panel = page.locator("#help-panel");
+        await expect(panel).toBeHidden();
 
-        const shortcutHelpOverlay = page.locator(SHORTCUT_HELP_OVERLAY_SELECTOR);
-
-        await expect(shortcutHelpOverlay).toHaveAttribute("aria-hidden", "true");
-        await expect(shortcutHelpOverlay).toBeHidden();
+        await page.locator("#screen").focus();
+        await page.keyboard.press("h");
+        await expect(panel).toBeVisible();
+        await expect(panel.locator("#help-title")).toHaveText("Keys and controls");
+        await waitForPausedState(page);
+        const debuggerRow = panel.locator(".help-shortcut").filter({ hasText: "Debugger" });
+        await expect(debuggerRow.locator("kbd")).toHaveText(["F5"]);
+        await expect(panel.locator('#help-systems [data-console="nes"]')).toHaveAttribute("aria-pressed", "true");
+        await expect(panel.locator('#help-pad [data-button="A"] kbd')).toHaveText(["R"]);
+        await expect(panel.locator("#help-players button")).toHaveText(["Player 1", "Player 2"]);
 
         await page.keyboard.press("h");
+        await expect(panel).toBeHidden();
+        await waitForRunningState(page);
+    });
 
-        await expect(shortcutHelpOverlay).toBeVisible();
-        await expect(shortcutHelpOverlay).toHaveAttribute("aria-hidden", "false");
-        await expect(shortcutHelpOverlay).toContainText("Shortcuts");
-        await expect(shortcutHelpOverlay).toContainText("F5: Debugger Toggle");
-
-        await page.keyboard.press("h");
-
-        await expect(shortcutHelpOverlay).toHaveAttribute("aria-hidden", "true");
-        await expect(shortcutHelpOverlay).toBeHidden();
+    test("Given no game, when ? is pressed in the top bar, then the panel shows any system's controller, and Esc closes it", async ({ page }) => {
+        await openApp(page);
+        await page.locator("#help-open").click();
+        const panel = page.locator("#help-panel");
+        await expect(panel).toBeVisible();
+        await panel.locator('#help-systems [data-console="gba"]').click();
+        await expect(panel.locator('#help-pad [data-button="L"] kbd')).toHaveText(["V"]);
+        await expect(panel.locator('#help-pad [data-button="X"]')).toHaveCount(0);
+        await expect(panel.locator("#help-players")).toBeHidden();
+        await page.keyboard.press("Escape");
+        await expect(panel).toBeHidden();
     });
 
     test("Given emulator is running, when debugger is toggled with shortcut, then panel visibility changes without browser errors", async ({ page }) => {

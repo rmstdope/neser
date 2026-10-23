@@ -39,7 +39,7 @@ export interface ConsoleProfile {
 
 const PLAYER_1_KEYS = "W/A/S/D: D-Pad\nR: A\nT: B\n4: Select\n5: Start";
 const PLAYER_2_KEYS = "I/J/K/L: D-Pad\nO: A\nP: B\n9: Select\n0: Start";
-const AGB_KEYS = "W/A/S/D: D-Pad\nR: Y\nT: X\nF: B\nG: A\nV: L\nB: R\n4: Select\n5: Start";
+const AGB_KEYS = "W/A/S/D: D-Pad\nG: A\nF: B\nV: L\nB: R\n4: Select\n5: Start";
 const SNES_KEYS = "W/A/S/D: D-Pad\nR: B\nT: A\nY: X\nG: Y\nQ: L\nE: R\n4: Select\n5: Start";
 
 export const CONSOLES: Readonly<Record<ConsoleKind, ConsoleProfile>> = {

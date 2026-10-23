@@ -47,7 +47,7 @@ test.describe("Settings panel", () => {
         await openApp(page);
         await openSettings(page);
         await page.keyboard.press("KeyH");
-        await expect(page.locator("#shortcut-help-overlay")).toBeHidden();
+        await expect(page.locator("#help-panel")).toBeHidden();
     });
 
     test("Given an NES game, when Controls opens, then it lists the NES keys for both players", async ({ page }) => {

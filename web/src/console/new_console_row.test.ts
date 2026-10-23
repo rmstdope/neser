@@ -1,4 +1,7 @@
 /**
+ * @vitest-environment jsdom
+ */
+/**
  * Adding a console to the web is one row in the console table (its ROM extensions are a row in
  * Rust's table, which reaches the page through the wasm binding): every module that behaves
  * differently per console must pick a new row up without being edited. The table is replaced
@@ -14,7 +17,7 @@ vi.mock("./consoles", async (importOriginal) => {
         audio: { stereo: true, sampleScale: "gba" },
         filterFamily: "gb",
         defaultFilter: "gameboy",
-        playerKeyBindings: ["NEXT KEYS"],
+        playerKeyBindings: ["Q: Next"],
         saveState: true,
         freshInstanceOnStart: true,
         paletteButton: true,
@@ -70,10 +73,11 @@ describe("a console added as one table row", () => {
         expect(cgbColorButtonVisible({ kind: NEXT, isColor: false, running: true, paused: false })).toBe(true);
     });
 
-    it("shows its row's keys in the help overlay", async () => {
-        const { buildControllerOverlayText } = await import("../shortcuts/shortcut_help");
-        expect(buildControllerOverlayText(0, NEXT)).toBe("Controller (Player 1)\nNEXT KEYS");
-        expect(buildControllerOverlayText(1, NEXT)).toBe("Controller (Player 1)\nGamepad");
+    it("shows its row's keys on the keys and controls panel's controller", async () => {
+        const { helpPadKeys, renderPad } = await import("../ui/help_panel");
+        const pad = document.createElement("div");
+        renderPad(pad, helpPadKeys(NEXT, 0));
+        expect([...pad.querySelectorAll('[data-button="Next"] kbd')].map((k) => k.textContent)).toEqual(["Q"]);
     });
 
     it("plays stereo when its row says so", async () => {

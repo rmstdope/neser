@@ -22,4 +22,8 @@ describe("the console table", () => {
             expect(CONSOLES[kind].playerKeyBindings.length).toBeGreaterThan(0);
         }
     });
+
+    it("names only the Game Boy Advance's own buttons, on the keys the web binds them to (F B, G A, V L, B R)", () => {
+        expect(CONSOLES.gba.playerKeyBindings).toEqual(["W/A/S/D: D-Pad\nG: A\nF: B\nV: L\nB: R\n4: Select\n5: Start"]);
+    });
 });
