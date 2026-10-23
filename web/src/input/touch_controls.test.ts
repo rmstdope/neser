@@ -9,6 +9,7 @@ import {
     resolveButtonFromElement,
     TouchInputManager,
     NES_BUTTON,
+    initTouchControls,
 } from "./touch_controls";
 
 // ---------------------------------------------------------------------------
@@ -525,5 +526,24 @@ describe("TouchInputManager", () => {
     it("ignores touchend for unknown identifier", () => {
         manager.handleTouchEnd(fakeTouch(99, btnA));
         expect(callback).not.toHaveBeenCalled();
+    });
+});
+
+describe("initTouchControls and ordinary buttons", () => {
+    const touchEvent = (type: string, target: Element) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "changedTouches", { value: [] });
+        target.dispatchEvent(event);
+        return event;
+    };
+
+    it("Given a button inside the touch area, When it is touched, Then the touch is left to become a tap on it", () => {
+        document.body.innerHTML = '<div id="area"><div class="touch-btn" data-button="a">A</div><button id="pause">Pause</button></div>';
+        const area = document.getElementById("area")!;
+        const cleanup = initTouchControls(area, () => {});
+        expect(touchEvent("touchstart", document.getElementById("pause")!).defaultPrevented).toBe(false);
+        expect(touchEvent("touchend", document.getElementById("pause")!).defaultPrevented).toBe(false);
+        expect(touchEvent("touchstart", area.querySelector(".touch-btn")!).defaultPrevented).toBe(true);
+        cleanup();
     });
 });
