@@ -1326,6 +1326,11 @@ function updateEmulationButtons() {
     if (pauseBtn) {
         pauseBtn.disabled = !states.pauseEnabled;
         pauseBtn.textContent = states.pauseLabel;
+        const hhPause = document.getElementById("hh-pause");
+        if (hhPause) {
+            hhPause.textContent = states.pauseLabel;
+            hhPause.dataset.icon = states.lifecycle === "paused" ? "play" : "pause";
+        }
     }
     if (stopBtn) {
         stopBtn.disabled = !states.stopEnabled;
@@ -4284,6 +4289,10 @@ function updateSaveStateButtons() {
         if (note) delete button.dataset.keys;
         else button.dataset.keys = keys;
     }
+    const hhSave = document.getElementById("hh-save") as HTMLButtonElement | null;
+    const hhLoad = document.getElementById("hh-load") as HTMLButtonElement | null;
+    if (hhSave) hhSave.disabled = !saveEnabled;
+    if (hhLoad) hhLoad.disabled = !loadEnabled;
     if (saveStateSection) saveStateSection.dataset.saveState = saveSlot;
 }
 
@@ -4310,6 +4319,98 @@ screenMinusBtn.addEventListener("click", () => {
 
 screenPlusBtn.addEventListener("click", () => {
     applyZoom("in");
+});
+
+// ── On a phone: the quick bar under the picture and the ⋯ sheet ──
+const handheldSheet = document.getElementById("handheld-sheet") as HTMLDialogElement;
+let pausedBySheet = false;
+
+function renderHandheldSheet() {
+    const kind = emulator?.kind ?? "nes";
+    const filterRow = document.getElementById("hh-filter")!;
+    filterRow.replaceChildren(
+        ...filterKeysForConsole(filterKeys, filters, kind).map((key) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = filters[key].name;
+            button.setAttribute("aria-pressed", key === buttonFilterKey(filterSelection) ? "true" : "false");
+            button.addEventListener("click", () => {
+                filterUntouched = false;
+                chooseFilter(key);
+                updateFilterToggleButtonLabel();
+                renderHandheldSheet();
+            });
+            return button;
+        })
+    );
+    const source = paletteSource();
+    const paletteRow = document.getElementById("hh-palette") as HTMLButtonElement;
+    paletteRow.hidden = source === null;
+    document.getElementById("hh-palette-name")!.textContent = source ? source.label().replace(/^Palette: /, "") : "";
+    (document.getElementById("hh-volume") as HTMLInputElement).value = String(volumePercent);
+}
+
+function openHandheldSheet() {
+    renderHandheldSheet();
+    pausedBySheet = running && !paused;
+    if (pausedBySheet) pauseResume();
+    handheldSheet.showModal();
+}
+
+function closeHandheldSheet() {
+    if (handheldSheet.open) handheldSheet.close();
+}
+
+handheldSheet.addEventListener("close", () => {
+    if (pausedBySheet && running && paused) pauseResume();
+    pausedBySheet = false;
+});
+handheldSheet.addEventListener("click", (event) => {
+    if (event.target === handheldSheet) closeHandheldSheet();
+});
+document.getElementById("hh-pause")!.addEventListener("click", pauseResume);
+document.getElementById("hh-save")!.addEventListener("click", () => void saveStateAction());
+document.getElementById("hh-load")!.addEventListener("click", () => void loadStateAction());
+document.getElementById("hh-more")!.addEventListener("click", openHandheldSheet);
+document.getElementById("hh-reset")!.addEventListener("click", () => {
+    closeHandheldSheet();
+    void resetAction();
+});
+document.getElementById("hh-hard-reset")!.addEventListener("click", () => {
+    closeHandheldSheet();
+    void hardResetAction();
+});
+document.getElementById("hh-fullscreen")!.addEventListener("click", () => {
+    closeHandheldSheet();
+    void toggleScreenFullscreen();
+});
+document.getElementById("hh-eject")!.addEventListener("click", () => {
+    pausedBySheet = false;
+    closeHandheldSheet();
+    stop();
+});
+// The sheet pauses the game, so its palette row steps the core directly; the change shows on return.
+document.getElementById("hh-palette")!.addEventListener("click", () => {
+    const source = paletteSource();
+    if (!source) return;
+    source.cycle();
+    toastOverlay.show(source.label());
+    syncGbPaletteWithFilter(false);
+    updatePaletteButton();
+    renderHandheldSheet();
+});
+document.getElementById("hh-volume")!.addEventListener("input", (event) => {
+    if (!volumeSlider) return;
+    volumeSlider.value = (event.target as HTMLInputElement).value;
+    volumeSlider.dispatchEvent(new Event("input"));
+});
+document.getElementById("hh-settings")!.addEventListener("click", () => {
+    closeHandheldSheet();
+    settingsPanel.open();
+});
+document.getElementById("hh-help")!.addEventListener("click", () => {
+    closeHandheldSheet();
+    openHelp();
 });
 
 fullscreenBtn.addEventListener("click", async () => {

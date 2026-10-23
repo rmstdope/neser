@@ -389,6 +389,8 @@ export function initTouchControls(
     const manager = new TouchInputManager(callback);
 
     function forEachChanged(e: Event, handler: (t: Touch) => void) {
+        // A real button in the touch area (the phone's quick bar) takes its touch as a tap.
+        if (e.target instanceof Element && e.target.closest("button")) return;
         e.preventDefault();
         const te = e as TouchEvent;
         for (const touch of Array.from(te.changedTouches)) {

@@ -121,6 +121,14 @@
                   </div>
                 </div>
 
+                <!-- On a phone: the controls the controller lacks, one tap away (the control bar's are on desktop) -->
+                <div id="handheld-bar" class="handheld-bar" role="toolbar" aria-label="Game">
+                  <button type="button" id="hh-pause" class="btn btn-sm" data-icon="pause">Pause</button>
+                  <button type="button" id="hh-save" class="btn btn-sm" data-icon="save">Save</button>
+                  <button type="button" id="hh-load" class="btn btn-sm" data-icon="load">Load</button>
+                  <button type="button" id="hh-more" class="btn btn-sm btn-icon-only" data-icon="more" aria-label="More" aria-controls="handheld-sheet" aria-haspopup="dialog">More</button>
+                </div>
+
                 <!-- Action buttons (right of canvas) -->
                 <div class="touch-action-area">
                   <div class="touch-meta-buttons">
@@ -174,7 +182,7 @@
           <div id="debugger-panel" class="debugger-panel hidden" aria-label="Debugger panel"></div>
         </div>
 
-        <div class="mt-3 flex items-center gap-2">
+        <div class="page-foot mt-3 flex items-center gap-2">
           <span class="help-hint touch-hide">Press <kbd class="kbd kbd-sm">H</kbd> for keyboard shortcuts</span>
         </div>
       </main>
@@ -273,6 +281,28 @@
           <div id="help-gamepad-note" class="help-gamepad-note"><span class="help-gamepad-icon" data-icon="pad" aria-hidden="true"></span><span>Plug in a gamepad and press any button to use it instead.</span></div>
         </section>
       </div>
+    </dialog>
+
+    <!-- On a phone: everything that is not on the controller, in a sheet from the bottom (⋯) -->
+    <dialog id="handheld-sheet" class="handheld-sheet" aria-label="Game options">
+      <div class="hh-grab" aria-hidden="true"></div>
+      <div class="hh-tiles">
+        <button type="button" id="hh-reset" class="hh-tile" data-icon="reset">Reset</button>
+        <button type="button" id="hh-hard-reset" class="hh-tile" data-icon="reset">Hard reset</button>
+        <button type="button" id="hh-fullscreen" class="hh-tile" data-icon="fullscreen">Fullscreen</button>
+        <button type="button" id="hh-eject" class="hh-tile" data-icon="eject">Eject</button>
+      </div>
+      <div class="hh-row">
+        <span class="hh-row-label" data-icon="filter">Filter</span>
+        <div id="hh-filter" class="settings-seg" role="group" aria-label="Filter"></div>
+      </div>
+      <button type="button" id="hh-palette" class="hh-row hh-row-button" data-icon="palette"><span class="hh-row-label">Palette</span><span id="hh-palette-name" class="hh-row-value"></span></button>
+      <div class="hh-row">
+        <span class="hh-row-label" data-icon="volume">Volume</span>
+        <input id="hh-volume" type="range" min="0" max="100" value="100" class="range range-xs" aria-label="Volume" />
+      </div>
+      <button type="button" id="hh-settings" class="hh-row hh-row-button" data-icon="gear"><span class="hh-row-label">Settings</span></button>
+      <button type="button" id="hh-help" class="hh-row hh-row-button" data-icon="help"><span class="hh-row-label">Keys and controls</span></button>
     </dialog>
 
     <!-- Autorun modal dialog (native dialog element) -->
