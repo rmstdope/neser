@@ -1694,6 +1694,42 @@ body.handheld .app-topbar {
 
 /* ── Phones: the quick bar and the ⋯ sheet ───────────────── */
 
+/* A phone's top bar keeps to one row: the logo mark, the game's badge and name, and icon buttons. */
+body.handheld .app-topbar {
+  gap: 8px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+body.handheld #fps-counter,
+body.handheld .neser-logo-word,
+body.handheld .game-file {
+  display: none !important;
+}
+
+body.handheld #library-open {
+  width: 2.25rem;
+  padding: 0;
+  font-size: 0;
+  gap: 0;
+}
+
+/* The picture takes focus for the keys; its ring is a quiet steel line, not the browser's own. */
+#screen:focus {
+  outline: none;
+}
+
+#screen:focus-visible {
+  outline: 2px solid var(--line-strong);
+}
+
+/* Sideways on a phone the picture stands on black, without the steel frame. */
+body.handheld:not(.handheld-portrait).touch-running .screen-wrap {
+  background: #000;
+  box-shadow: none;
+  border-radius: 0;
+}
+
 /* While a phone plays, the game has the whole screen; the line for the keyboard hint steps aside. */
 body.handheld.touch-running .page-foot {
   display: none;
