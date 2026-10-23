@@ -53,9 +53,7 @@ test.describe("Game Boy games run on", () => {
         await expect(page.locator(NOTE_SELECTOR)).toBeHidden();
     });
 
-    test("Given Game Boy Color, an original Game Boy game runs coloured, a change waits for Reset, and the choice is remembered", async ({ page }) => {
-        // A long walk through the settings panel, opened and closed about twenty times.
-        test.setTimeout(90_000);
+    test("Given Game Boy Color, an original Game Boy game runs coloured, and a change while it runs waits for Reset", async ({ page }) => {
         await openApp(page);
         const choice = page.locator(CHOICE_SELECTOR);
         const colors = page.locator(COLORS_BUTTON_SELECTOR);
@@ -82,6 +80,14 @@ test.describe("Game Boy games run on", () => {
         await closeSettings(page);
         await expect(colors).toBeVisible();
         await expect(palette).toHaveText("Palette: Brown");
+    });
+
+    test("Given a change of console while a game runs, then Reset and the hard reset each start it on the chosen one", async ({ page }) => {
+        await openApp(page);
+        const colors = page.locator(COLORS_BUTTON_SELECTOR);
+        const palette = page.locator(PALETTE_BUTTON_SELECTOR);
+        await chooseHardware(page, "cgb");
+        await loadGbRom(page, "dmg-acid2.gb");
 
         // Reset starts it over on the chosen console, and the line goes.
         await chooseHardware(page, "dmg");
@@ -95,13 +101,16 @@ test.describe("Game Boy games run on", () => {
 
         // The hard reset (Ctrl+Shift+R) applies the choice too.
         await chooseHardware(page, "cgb");
-        await expectNote(page, true);
         await page.keyboard.press("Control+Shift+KeyR");
         await expectNote(page, false);
         await expect(colors).toBeVisible();
         await expect(palette).toHaveText(/^Palette: Auto \(/);
-        await chooseHardware(page, "dmg");
-        await page.locator("#reset").click();
+    });
+
+    test("Given a change of console, then the next original Game Boy game starts on it, and with no game the line never shows", async ({ page }) => {
+        await openApp(page);
+        const colors = page.locator(COLORS_BUTTON_SELECTOR);
+        await loadGbRom(page, "dmg-acid2.gb");
         await expect(colors).toBeHidden();
 
         // Loading another original Game Boy game after a change starts it on the chosen console.
@@ -113,20 +122,21 @@ test.describe("Game Boy games run on", () => {
 
         // Never shown with no game.
         await chooseHardware(page, "dmg");
-        await expectNote(page, true);
         await page.locator("#stop").click();
         await waitForIdleState(page);
         await expectNote(page, false);
+    });
 
-        // Remembered across a reload.
+    test("Given Game Boy Color is chosen, then the choice is remembered across a reload", async ({ page }) => {
+        await openApp(page);
         await chooseHardware(page, "cgb");
         await page.reload();
         await expect(page.locator("#library")).toBeVisible();
         await openSettings(page);
-        await expect(choice).toHaveValue("cgb");
+        await expect(page.locator(CHOICE_SELECTOR)).toHaveValue("cgb");
         await closeSettings(page);
         await loadGbRom(page, "dmg-acid2.gb");
-        await expect(colors).toBeVisible();
+        await expect(page.locator(COLORS_BUTTON_SELECTOR)).toBeVisible();
     });
 
     test("Given a state saved on the Game Boy Color, when it is loaded after a Reset onto the Game Boy, then it is restored on the Game Boy Color", async ({ page }) => {
