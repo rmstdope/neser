@@ -18,18 +18,25 @@ export function frameToRgba(frame: Uint8Array, channels: 3 | 4, width: number, h
     return out;
 }
 
+/**
+ * Both canvases are CPU-backed (`willReadFrequently`): a GPU-backed one would make the PNG wait for
+ * the GPU process, which a running game keeps busy, and on a software-rendered GPU (CI's
+ * SwiftShader) that wait froze the page for seconds after every Save.
+ */
+const CPU_BACKED: CanvasRenderingContext2DSettings = { willReadFrequently: true };
+
 /** A PNG data URL of the frame, scaled to `thumbWidth` wide; null where no 2D canvas is available. */
 export function frameThumbnail(frame: Uint8Array, channels: 3 | 4, width: number, height: number, thumbWidth = 192): string | null {
     const source = document.createElement("canvas");
     source.width = width;
     source.height = height;
-    const sourceContext = source.getContext("2d");
+    const sourceContext = source.getContext("2d", CPU_BACKED);
     if (!sourceContext) return null;
     sourceContext.putImageData(new ImageData(frameToRgba(frame, channels, width, height), width, height), 0, 0);
     const thumb = document.createElement("canvas");
     thumb.width = thumbWidth;
     thumb.height = Math.round((thumbWidth * height) / width);
-    const thumbContext = thumb.getContext("2d");
+    const thumbContext = thumb.getContext("2d", CPU_BACKED);
     if (!thumbContext) return null;
     thumbContext.imageSmoothingEnabled = false;
     thumbContext.drawImage(source, 0, 0, thumb.width, thumb.height);
