@@ -1234,6 +1234,7 @@ mod tests {
             let names: Vec<&str> = source
                 .lines()
                 .skip_while(|line| *line != header)
+                .take_while(|line| *line != "    },")
                 .find_map(|line| {
                     line.trim()
                         .strip_prefix("playerKeyBindings: [")?
@@ -1241,6 +1242,12 @@ mod tests {
                 })
                 .map(|list| list.split(", ").collect())
                 .unwrap_or_default();
+            if names.is_empty() {
+                out.push(format!(
+                    "{console}: cannot find playerKeyBindings on one line in its block of consoles.ts"
+                ));
+                continue;
+            }
             let players = rows
                 .iter()
                 .filter(|r| r.console == console && r.input == "pad")
@@ -1351,6 +1358,23 @@ mod tests {
         let report = panel_mismatches(&consoles_ts(), &rows).join("\n");
         assert!(report.contains("snes player 1"), "{report}");
         assert!(report.contains("`Y: X`"), "{report}");
+    }
+
+    #[test]
+    fn a_console_list_this_cannot_read_is_named_for_its_own_console() {
+        let source = consoles_ts();
+        let doctored = source.replacen(
+            "playerKeyBindings: [PLAYER_1_KEYS],",
+            "playerKeyBindings: [\n            PLAYER_1_KEYS,\n        ],",
+            1,
+        );
+        assert_ne!(doctored, source, "gb's list moved");
+        let report = panel_mismatches(&doctored, &web_key_binding_rows()).join("\n");
+        assert!(
+            report.contains("gb: cannot find playerKeyBindings"),
+            "{report}"
+        );
+        assert!(!report.contains("gb player 1"), "{report}");
     }
 
     #[test]
