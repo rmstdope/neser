@@ -81,6 +81,25 @@ describe("the recent games store", () => {
     });
 });
 
+describe("a database from before the bytes had their own store", () => {
+    it("Given the old one-store database, When the store opens it, Then it upgrades and remembers games again", async () => {
+        const name = `neser-recent-old-${dbCount++}`;
+        await new Promise<void>((resolve, reject) => {
+            const request = indexedDB.open(name, 1);
+            request.onupgradeneeded = () => request.result.createObjectStore("games", { keyPath: "name" });
+            request.onsuccess = () => {
+                request.result.close();
+                resolve();
+            };
+            request.onerror = () => reject(request.error);
+        });
+        const store = createRecentGamesStore(name);
+        await store.remember(game("a.nes", 1));
+        expect((await store.list()).map((g) => g.name)).toEqual(["a.nes"]);
+        expect(await store.bytesOf("a.nes")).not.toBeNull();
+    });
+});
+
 describe("playedWhen", () => {
     const now = new Date(2026, 9, 23, 15, 0);
     it("Given when a game was played, When said in words, Then it reads Today, Yesterday, days, Last week, then the date", () => {

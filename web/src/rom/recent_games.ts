@@ -2,7 +2,8 @@
 // its bytes (so it plays again without the file), when it was last played, and a small picture
 // of its last frame. Kept in its own IndexedDB database, like the SNES firmware.
 
-const DB_VERSION = 1;
+// Version 2 added the bytes store; a version 1 database (one store) is upgraded in place.
+const DB_VERSION = 2;
 /** What a card shows, one record per game, small enough to list on every visit. */
 const GAMES = "games";
 /** Each game's ROM bytes, keyed by its name, read only when its card is played. */
@@ -133,7 +134,7 @@ export function createRecentGamesStore(name = "neser-recent"): RecentGamesStore 
     };
 }
 
-/** When a game was last played, in words: Today, Yesterday, "3 days ago" within a week, else the date. */
+/** When a game was last played, in words: Today, Yesterday, "3 days ago" within a week, "Last week" within two, else the date. */
 export function playedWhen(now: Date, then: Date): string {
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const days = Math.round((startOfDay(now) - startOfDay(then)) / 86_400_000);
