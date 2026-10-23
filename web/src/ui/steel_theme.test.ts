@@ -26,11 +26,10 @@ describe("Steel Glow theme", () => {
         expect(page.querySelector("aside pre")).toBeNull();
     });
 
-    it("Given the emulation controls, When reading them, Then Start is the one primary button and Stop the one danger button", () => {
+    it("Given the emulation controls, When reading them, Then Start is the one primary button and none use the old traffic-light colours", () => {
         expect(page.getElementById("start")?.classList.contains("btn-primary")).toBe(true);
-        expect(page.getElementById("stop")?.classList.contains("btn-error")).toBe(true);
-        expect(page.querySelectorAll("aside .btn-primary")).toHaveLength(1);
-        for (const id of ["pause", "reset", "save-state", "load-state", "autorun-load"]) {
+        expect(page.querySelectorAll("#emulation-controls .btn-primary")).toHaveLength(1);
+        for (const id of ["pause", "reset", "stop", "save-state", "load-state", "autorun-load"]) {
             const classes = page.getElementById(id)!.classList;
             expect([...classes].filter((c) => /^btn-(success|warning|error|info)$/.test(c)), id).toEqual([]);
         }

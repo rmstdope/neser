@@ -65,7 +65,7 @@ describe("computeButtonStates", () => {
     it("shows default labels when not recording", () => {
         const s = computeButtonStates({ romLoaded: true, running: false, paused: false, isRecording: false });
         expect(s.startLabel).toBe("Start");
-        expect(s.stopLabel).toBe("Stop");
+        expect(s.stopLabel).toBe("Eject");
         expect(s.pauseLabel).toBe("Pause");
     });
 });

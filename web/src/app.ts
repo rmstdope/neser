@@ -65,6 +65,8 @@ import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
 import { createSineScroller } from "./ui/sine_scroller";
+import { gameTitle } from "./ui/game_title";
+import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import {
     type KeyBindingRow,
     type KeyBindingSink,
@@ -94,8 +96,10 @@ import {
     computeFullscreenCanvasSize,
     computeWindowedCanvasSize,
     computeHandheldCanvasSize,
+    initialWindowedHeight,
 } from "./display/canvas_size";
-import { probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
+import {
+    zoomLevelLabel, probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
 import {
     browserStorage,
@@ -933,6 +937,7 @@ function updateCgbColorButton() {
         paused,
     });
     cgbColorToggleBtn.style.display = visible ? "" : "none";
+    cgbColorToggleBtn.disabled = paused;
     if (emulator?.kind === "gb" || emulator?.kind === "gba") cgbColorToggleBtn.textContent = emulator.inst.color_label();
 }
 
@@ -953,6 +958,7 @@ function updatePaletteButton() {
     const label = emulator?.kind === "nes" || emulator?.kind === "gb" ? emulator.inst.palette_label() : "";
     const visible = paletteButtonVisible({ kind: emulator?.kind ?? null, label, running, paused });
     paletteCycleBtn.style.display = visible ? "" : "none";
+    paletteCycleBtn.disabled = paused;
     if (visible) paletteCycleBtn.textContent = label;
 }
 
@@ -1025,6 +1031,22 @@ function updateAutorunControls() {
     updateAutorunStatus();
 }
 
+const gameTitleEl = document.getElementById("game-title");
+/** The top bar names the running game and its system; it is empty while nothing runs. */
+function updateGameTitle() {
+    if (!gameTitleEl) return;
+    const shown = running && emulator !== null && romMetadata !== null;
+    gameTitleEl.classList.toggle("hidden", !shown);
+    if (!shown) return;
+    const isColor = emulator!.kind === "gb" && emulator!.inst.is_color();
+    const { system, title, file } = gameTitle(romMetadata!.name, emulator!.kind, isColor);
+    const systemEl = document.getElementById("game-system")!;
+    systemEl.textContent = system;
+    systemEl.dataset.system = system;
+    document.getElementById("game-name")!.textContent = title;
+    document.getElementById("game-file")!.textContent = file;
+}
+
 /**
  * Centralized emulation button state update.
  * Computes enabled/disabled and label for Start, Pause, Reset, Stop
@@ -1058,6 +1080,8 @@ function updateEmulationButtons() {
     }
     updateCgbColorButton();
     updatePaletteButton();
+    updateGameTitle();
+    updateZoomLevel();
     updateGbHardwareNote();
 }
 
@@ -1332,6 +1356,8 @@ const AUDIO_TARGET_LATENCY = AUDIO_PROFILE.targetLatencySeconds; // seconds
 const AUDIO_MAX_ADJUST = AUDIO_PROFILE.maxAdjust; // +/- playback rate bound
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
+let masterGain: GainNode | null = null;
+let volumePercent = DEFAULT_VOLUME;
 function createEmptyGamepadState(): GamepadButtonState {
     return {
         a: false,
@@ -1499,6 +1525,10 @@ async function initAudioContext(): Promise<void> {
             sampleRate: AUDIO_SAMPLE_RATE
         });
         nextAudioTime = audioContext.currentTime;
+        // Every sample buffer plays through one gain stage: the volume slider's.
+        masterGain = audioContext.createGain();
+        masterGain.gain.value = volumeToGain(volumePercent);
+        masterGain.connect(audioContext.destination);
         console.log(`Audio initialized: ${audioContext.sampleRate} Hz`);
     }
 }
@@ -1542,7 +1572,7 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
     // Create a buffer source and schedule it
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
-    source.connect(audioContext.destination);
+    source.connect(masterGain ?? audioContext.destination);
 
     // Schedule playback at the next available time
     // Ensure smooth continuous playback by scheduling samples back-to-back
@@ -2234,6 +2264,8 @@ function debuggerStepInto() {
  * unless an original Game Boy game's palette changed.
  */
 function cyclePaletteAction() {
+    // Paused, no new frame would show the change, so F8 waits as the disabled button does.
+    if (paused) return;
     const message = emulator?.inst.cycle_palette() ?? "";
     if (message !== "") {
         toastOverlay.show(message);
@@ -2765,6 +2797,19 @@ const muteBtn = document.getElementById("mute") as HTMLButtonElement | null;
 function updateMuteButton() {
     muteBtn!.textContent = audioMuted ? "Audio: Off" : "Audio: On";
     muteBtn!.setAttribute("aria-pressed", audioMuted ? "true" : "false");
+    muteBtn!.classList.toggle("volume-off", volumeIconState(audioMuted, volumePercent) === "off");
+    muteBtn!.dataset.tip = audioMuted ? "Unmute" : "Mute";
+}
+const volumeSlider = document.getElementById("volume") as HTMLInputElement | null;
+volumePercent = readStoredVolume(browserStorage());
+if (volumeSlider) {
+    volumeSlider.value = String(volumePercent);
+    volumeSlider.addEventListener("input", () => {
+        volumePercent = parseStoredVolume(volumeSlider.value);
+        if (masterGain) masterGain.gain.value = volumeToGain(volumePercent);
+        writeStoredVolume(browserStorage(), volumePercent);
+        updateMuteButton();
+    });
 }
 muteBtn!.addEventListener("click", async () => {
     audioMuted = !audioMuted;
@@ -3412,7 +3457,8 @@ const saveStateSection = document.getElementById("save-state-section");
 // NES native resolution is 256x240 pixels; aspect ratio updated after NES init.
 let NES_ASPECT_RATIO = width / height;
 const SCALE_STEP = 120; // Change height by 120px each step
-const INITIAL_HEIGHT = 720; // Initial display height in pixels
+// The starting height fits the window with the control bar beneath it, up to 720.
+const INITIAL_HEIGHT = initialWindowedHeight(window.innerHeight);
 let currentHeight = INITIAL_HEIGHT;
 
 function applyCanvasSize(size: { cssWidth: string; cssHeight: string; pixelWidth: number; pixelHeight: number }) {
@@ -3490,6 +3536,17 @@ function isInFullscreen(): boolean {
     return document.fullscreenElement === fullscreenRoot();
 }
 
+/**
+ * Names the shown picture's height in the running console's own lines; empty with no game.
+ * Looks the element up on each call: `updateEmulationButtons` calls this before the module
+ * reaches this point, where a module-level const would not yet be initialised.
+ */
+function updateZoomLevel() {
+    const zoomLevelEl = document.getElementById("zoom-level");
+    if (zoomLevelEl) zoomLevelEl.textContent = running ? zoomLevelLabel(canvas.clientHeight, height) : "";
+}
+window.addEventListener("resize", () => updateZoomLevel());
+
 function updateZoomButtonState() {
     const inScreenFullscreen = isInFullscreen();
     if (inScreenFullscreen) {
@@ -3510,6 +3567,7 @@ function updateZoomButtonState() {
 
     screenMinusBtn.disabled = !canZoomOut;
     screenPlusBtn.disabled = !canZoomIn;
+    updateZoomLevel();
 }
 
 function applyZoom(direction: "in" | "out") {

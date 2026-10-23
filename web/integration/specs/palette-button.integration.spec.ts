@@ -33,10 +33,10 @@ test.describe("Palette button (does what F8 does)", () => {
         await waitForRunningState(page);
         await expect(palette).toBeVisible();
         await expect(palette).toHaveText("Palette: Default");
-        await expect(palette).toHaveAttribute("title", "Change palette (F8)");
+        await expect(palette).toHaveAttribute("aria-keyshortcuts", "F8");
 
-        // Sits right after Filter and before Mute.
-        const order = await page.locator("header button").evaluateAll((els) =>
+        // Sits right after Filter and before Mute in the control bar.
+        const order = await page.locator("#emulation-controls button").evaluateAll((els) =>
             els.filter((el) => (el as HTMLElement).offsetParent !== null).map((el) => el.id)
         );
         expect(order.slice(order.indexOf("filter-toggle"), order.indexOf("mute") + 1)).toEqual([
@@ -58,11 +58,17 @@ test.describe("Palette button (does what F8 does)", () => {
             await expect(palette).toHaveText(`Palette: ${name}`);
         }
 
+        // Paused, it keeps its place in the bar but cannot be pressed: no new frame would show the change.
         await page.locator("#pause").click();
         await waitForPausedState(page);
-        await expect(palette).toBeHidden();
-        await page.locator("#pause").click();
         await expect(palette).toBeVisible();
+        await expect(palette).toBeDisabled();
+        // F8 does what the button does, so it waits too.
+        const pausedLabel = await palette.textContent();
+        await page.keyboard.press("F8");
+        await expect(palette).toHaveText(pausedLabel!);
+        await page.locator("#pause").click();
+        await expect(palette).toBeEnabled();
 
         await page.locator("#stop").click();
         await waitForIdleState(page);

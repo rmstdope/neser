@@ -26,8 +26,8 @@ describe("paletteButtonVisible", () => {
         }
     });
 
-    it("is hidden while paused, since no new frame would show the change", () => {
-        expect(paletteButtonVisible({ kind: "nes", label: "Palette: Default", running: true, paused: true })).toBe(false);
+    it("stays in its place while paused (the app disables it, since no new frame would show the change)", () => {
+        expect(paletteButtonVisible({ kind: "nes", label: "Palette: Default", running: true, paused: true })).toBe(true);
     });
 
     it("is hidden once the game has been stopped", () => {

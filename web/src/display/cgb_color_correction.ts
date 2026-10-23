@@ -3,9 +3,9 @@ import { CONSOLES, type ConsoleKind } from "../console/consoles";
 /**
  * The Colors button is shown only while a game is running whose colours can
  * be corrected: on the Game Boy core, Game Boy Color games and black-and-white
- * games the Game Boy Color colourises; and every Game Boy Advance game. It is
- * hidden while paused, because no new frame would be drawn and a press must
- * change the picture at once.
+ * games the Game Boy Color colourises; and every Game Boy Advance game. Paused,
+ * it keeps its place in the control bar and the app disables it, because no new
+ * frame would be drawn and a press must change the picture at once.
  */
 export function cgbColorButtonVisible(state: {
     kind: ConsoleKind | null;
@@ -15,7 +15,7 @@ export function cgbColorButtonVisible(state: {
 }): boolean {
     const correction = state.kind === null ? "never" : CONSOLES[state.kind].colorCorrection;
     const correctable = correction === "always" || (correction === "color-only" && state.isColor);
-    return correctable && state.running && !state.paused;
+    return correctable && state.running;
 }
 
 /** The part of the Game Boy core the colour state talks to. */

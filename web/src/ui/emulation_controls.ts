@@ -36,7 +36,7 @@ export function computeButtonStates(state: EmulationControlState): ButtonStates 
         stopEnabled: emulationActive,
         startLabel: isRecording ? "Start Recording" : "Start",
         pauseLabel: lifecycle === "paused" ? "Resume" : "Pause",
-        stopLabel: isRecording ? "Stop Recording" : "Stop",
+        stopLabel: isRecording ? "Stop Recording" : "Eject",
     };
 }
 

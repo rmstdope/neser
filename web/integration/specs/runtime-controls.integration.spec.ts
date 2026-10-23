@@ -81,6 +81,21 @@ test.describe("Phase 2 runtime controls", () => {
         await expect(muteButton).toContainText(/Audio.*On/i);
     });
 
+    test("Given the volume slider, when it is turned down, then the speaker shows off at zero and the level survives a reload", async ({ page }) => {
+        await openApp(page);
+        const volume = page.locator("#volume");
+        const muteButton = page.locator(MUTE_BUTTON_SELECTOR);
+        await expect(volume).toHaveValue("100");
+
+        await volume.fill("0");
+        await expect(muteButton).toHaveClass(/volume-off/);
+        await volume.fill("40");
+        await expect(muteButton).not.toHaveClass(/volume-off/);
+
+        await page.reload();
+        await expect(page.locator("#volume")).toHaveValue("40");
+    });
+
     test("Given filter toggle exists, when toggled repeatedly, then filter cycles without crashes", async ({ page }) => {
         // Start emulation first so we test filter toggling during active rendering
         // (avoids double page navigation which can exceed the 45s test timeout on CI)

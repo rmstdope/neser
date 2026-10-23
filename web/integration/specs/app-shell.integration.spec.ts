@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { loadRomFromFileInput, waitForRunningState } from "../helpers/lifecycle.helpers";
 
-const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#pause", "#stop"];
+const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#stop", "#emulation-controls"];
 
 test.describe("web app shell", () => {
     test("renders essential controls", async ({ page }) => {
@@ -10,6 +10,22 @@ test.describe("web app shell", () => {
         for (const selector of ESSENTIAL_CONTROL_SELECTORS) {
             await expect(page.locator(selector)).toBeVisible();
         }
+        // Before a game runs the control bar offers Start; Pause takes its place once one runs.
+        await expect(page.locator("#pause")).toBeHidden();
+    });
+
+    test("swaps Start for Pause in the control bar once a game runs, and names the game in the top bar", async ({ page }) => {
+        await page.goto("/");
+        await loadRomFromFileInput(page);
+        await waitForRunningState(page);
+        await expect(page.locator("#start")).toBeHidden();
+        await expect(page.locator("#pause")).toBeVisible();
+        await expect(page.locator("#game-title")).toBeVisible();
+        await expect(page.locator("#game-system")).not.toBeEmpty();
+
+        await page.locator("#stop").click();
+        await expect(page.locator("#start")).toBeVisible();
+        await expect(page.locator("#game-title")).toBeHidden();
     });
 
     test("shows a refused file's message as one line in the theme's error colour, and no REC badge while idle", async ({ page }) => {

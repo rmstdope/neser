@@ -24,13 +24,9 @@ describe("cgbColorButtonVisible", () => {
         expect(cgbColorButtonVisible({ kind: "gba", isColor: false, running: true, paused: false })).toBe(true);
     });
 
-    it("is hidden while a Game Boy Advance game is paused or stopped", () => {
-        expect(cgbColorButtonVisible({ kind: "gba", isColor: false, running: true, paused: true })).toBe(false);
+    it("keeps its place while a Game Boy Advance game is paused, and is hidden once it is stopped", () => {
+        expect(cgbColorButtonVisible({ kind: "gba", isColor: false, running: true, paused: true })).toBe(true);
         expect(cgbColorButtonVisible({ kind: "gba", isColor: false, running: false, paused: false })).toBe(false);
-    });
-
-    it("is hidden while the colour game is paused, since no new frame would show the change", () => {
-        expect(cgbColorButtonVisible({ kind: "gb", isColor: true, running: true, paused: true })).toBe(false);
     });
 
     it("is hidden once the colour game has been stopped", () => {
@@ -85,5 +81,9 @@ describe("createCgbColorControl", () => {
         control.click(core);
         expect(core.cgb_color_correction()).toBe(false);
         expect(control.enabled()).toBe(false);
+    });
+
+    it("stays in its place while paused (the app disables it), so the control bar does not shift", () => {
+        expect(cgbColorButtonVisible({ kind: "gb", isColor: true, running: true, paused: true })).toBe(true);
     });
 });

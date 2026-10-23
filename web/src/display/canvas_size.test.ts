@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { assignBackingStoreSize, computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize } from "./canvas_size";
+import { assignBackingStoreSize, computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize, initialWindowedHeight, WINDOWED_CHROME_HEIGHT } from "./canvas_size";
 
 // NES native resolution (256x240) aspect ratio
 const NES_AR = 256 / 240;
@@ -165,4 +165,16 @@ it("assignBackingStoreSize assigns both dimensions once when both change", () =>
     const canvas = recordingCanvas(768, 720);
     expect(assignBackingStoreSize(canvas, 896, 840)).toBe(true);
     expect(canvas.writes).toEqual(["width=896", "height=840"]);
+});
+
+it("initialWindowedHeight - the picture starts at 720 when the window has room for it and the control bar", () => {
+    expect(initialWindowedHeight(1200)).toBe(720);
+});
+
+it("initialWindowedHeight - a shorter window starts the picture smaller so the control bar stays on screen", () => {
+    expect(initialWindowedHeight(900)).toBe(900 - WINDOWED_CHROME_HEIGHT);
+});
+
+it("initialWindowedHeight - never starts below the NES's own 240 lines", () => {
+    expect(initialWindowedHeight(300)).toBe(240);
 });
