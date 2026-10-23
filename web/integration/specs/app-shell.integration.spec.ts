@@ -251,7 +251,7 @@ test.describe("errors where you are", () => {
         await expect(overlay).toBeHidden();
     });
 
-    test("Given a stopped game, when Reset is pressed, then it starts again on a fresh console with focus on the picture", async ({ page }) => {
+    test("Given a stopped game, when Reset is pressed, then it starts again with focus on the picture", async ({ page }) => {
         await startFromBundledRom(page);
         await page.evaluate(() => {
             const draw = WebGLRenderingContext.prototype.drawArrays;
@@ -264,6 +264,8 @@ test.describe("errors where you are", () => {
         });
         const overlay = page.locator("#game-error");
         await expect(overlay).toBeVisible({ timeout: 15_000 });
+        // A broken draw leaves the core whole; the panicked core Reset also replaces cannot be
+        // caused from this production build, and was checked against the dev server by hand.
         await page.evaluate(() => (window as unknown as { restoreDraw: () => void }).restoreDraw());
         await overlay.locator("#game-error-reset").click();
         await expect(overlay).toBeHidden();
