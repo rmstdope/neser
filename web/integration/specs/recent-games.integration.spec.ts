@@ -8,7 +8,8 @@ test.describe("Continue playing", () => {
 
         await loadRomFromFileInput(page);
         await waitForRunningState(page);
-        await page.waitForTimeout(500);
+        // Frames are drawn once the frame counter shows.
+        await expect(page.locator("#fps-counter")).toBeVisible();
         await page.locator("#stop").click();
         await waitForIdleState(page);
 
@@ -18,6 +19,9 @@ test.describe("Continue playing", () => {
         await expect(card.locator(".recent-card-when")).toHaveText("Today");
         await expect(card.locator(".sys-badge")).toHaveText("NES");
         await expect(card.locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
+        // The picture keeps to its frame, whatever the console's shape.
+        const frame = (await card.locator(".recent-card-picture").boundingBox())!;
+        expect(Math.abs(frame.width / frame.height - 16 / 11)).toBeLessThan(0.02);
 
         await page.reload();
         await expect(card).toBeVisible();
@@ -31,5 +35,18 @@ test.describe("Continue playing", () => {
         await expect(page.locator("#recent")).toBeHidden();
         await page.reload();
         await expect(page.locator("#recent")).toBeHidden();
+    });
+
+    test("Given a game left by hiding the page, then its card still has a picture", async ({ page }) => {
+        await openApp(page);
+        await loadRomFromFileInput(page);
+        await waitForRunningState(page);
+        await expect(page.locator("#fps-counter")).toBeVisible();
+        await page.evaluate(() => {
+            Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+            document.dispatchEvent(new Event("visibilitychange"));
+        });
+        await page.reload();
+        await expect(page.getByRole("button", { name: "Play cpu again" }).locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
     });
 });

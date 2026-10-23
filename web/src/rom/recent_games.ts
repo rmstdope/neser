@@ -3,17 +3,22 @@
 // of its last frame. Kept in its own IndexedDB database, like the SNES firmware.
 
 const DB_VERSION = 1;
-const STORE = "games";
+/** What a card shows, one record per game, small enough to list on every visit. */
+const GAMES = "games";
+/** Each game's ROM bytes, keyed by its name, read only when its card is played. */
+const BYTES = "bytes";
 
 /** How many games the row remembers; the least recently played beyond this are forgotten. */
 export const RECENT_GAMES_LIMIT = 8;
 
 export type RecentGame = {
-    /** The name it was loaded under: a file name, or a bundled ROM's path. */
+    /**
+     * The name it was loaded under: a file name, or a bundled ROM's path. It is the key, so two
+     * different files of the same name share one card, the later one replacing the earlier.
+     */
     name: string;
     /** The system badge it ran as (NES, GB, GBC, GBA, SNES). */
     system: string;
-    bytes: Uint8Array;
     /** Chosen from a file (rather than the bundled list), which autorun recording needs. */
     fromFile: boolean;
     /** When it was last started, in milliseconds since the epoch. */
@@ -23,10 +28,12 @@ export type RecentGame = {
 };
 
 export type RecentGamesStore = {
-    /** Every remembered game, the latest played first. */
+    /** Every remembered game, the latest played first, without its bytes. */
     list(): Promise<RecentGame[]>;
+    /** A remembered game's ROM bytes; null once it is forgotten. */
+    bytesOf(name: string): Promise<Uint8Array | null>;
     /** Remembers a game as just played, keeping a picture it already had, and forgets the oldest beyond the limit. */
-    remember(game: RecentGame): Promise<void>;
+    remember(game: RecentGame & { bytes: Uint8Array }): Promise<void>;
     /** Sets a remembered game's picture; a game no longer remembered is left alone. */
     setThumbnail(name: string, thumbnail: string): Promise<void>;
     /** Forgets every game. */
@@ -41,20 +48,24 @@ function openDb(name: string): Promise<IDBDatabase> {
         const request = globalThis.indexedDB.open(name, DB_VERSION);
         request.onerror = () => reject(request.error);
         request.onupgradeneeded = () => {
-            if (!request.result.objectStoreNames.contains(STORE)) {
-                request.result.createObjectStore(STORE, { keyPath: "name" });
-            }
+            const db = request.result;
+            if (!db.objectStoreNames.contains(GAMES)) db.createObjectStore(GAMES, { keyPath: "name" });
+            if (!db.objectStoreNames.contains(BYTES)) db.createObjectStore(BYTES);
         };
         request.onsuccess = () => resolve(request.result);
     });
 }
 
-/** Runs `action` in one transaction and resolves once it has committed. */
-function transact<T>(db: IDBDatabase, mode: IDBTransactionMode, action: (store: IDBObjectStore, done: (value: T) => void) => void) {
+/** Runs `action` in one transaction over both stores and resolves once it has committed. */
+function transact<T>(
+    db: IDBDatabase,
+    mode: IDBTransactionMode,
+    action: (games: IDBObjectStore, bytes: IDBObjectStore, done: (value: T) => void) => void
+) {
     return new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(STORE, mode);
+        const tx = db.transaction([GAMES, BYTES], mode);
         let result: T;
-        action(tx.objectStore(STORE), (value) => {
+        action(tx.objectStore(GAMES), tx.objectStore(BYTES), (value) => {
             result = value;
         });
         tx.oncomplete = () => resolve(result);
@@ -63,15 +74,9 @@ function transact<T>(db: IDBDatabase, mode: IDBTransactionMode, action: (store: 
     });
 }
 
-function allGames(store: IDBObjectStore, done: (games: RecentGame[]) => void) {
-    const request = store.getAll();
-    request.onsuccess = () => {
-        const games = (request.result as RecentGame[]).map((game) => ({
-            ...game,
-            bytes: game.bytes instanceof Uint8Array ? game.bytes : new Uint8Array(game.bytes as ArrayBuffer),
-        }));
-        done(games.sort((a, b) => b.playedAt - a.playedAt));
-    };
+function allGames(games: IDBObjectStore, done: (list: RecentGame[]) => void) {
+    const request = games.getAll();
+    request.onsuccess = () => done((request.result as RecentGame[]).sort((a, b) => b.playedAt - a.playedAt));
 }
 
 /** The recent games store in the database `name` (default `neser-recent`). */
@@ -80,35 +85,49 @@ export function createRecentGamesStore(name = "neser-recent"): RecentGamesStore 
     const db = () => (dbPromise ??= openDb(name));
     return {
         async list() {
-            return transact<RecentGame[]>(await db(), "readonly", (store, done) => allGames(store, done));
+            return transact<RecentGame[]>(await db(), "readonly", (games, _bytes, done) => allGames(games, done));
         },
-        async remember(game) {
-            await transact<void>(await db(), "readwrite", (store) => {
-                const existing = store.get(game.name);
+        async bytesOf(gameName) {
+            const value = await transact<unknown>(await db(), "readonly", (_games, bytes, done) => {
+                const request = bytes.get(gameName);
+                request.onsuccess = () => done(request.result);
+            });
+            if (!value) return null;
+            return value instanceof Uint8Array ? value : new Uint8Array(value as ArrayBuffer);
+        },
+        async remember({ bytes: romBytes, ...game }) {
+            await transact<void>(await db(), "readwrite", (games, bytes) => {
+                const existing = games.get(game.name);
                 existing.onsuccess = () => {
                     const thumbnail = game.thumbnail ?? (existing.result as RecentGame | undefined)?.thumbnail ?? null;
-                    store.put({ ...game, thumbnail });
-                    allGames(store, (games) => {
+                    games.put({ ...game, thumbnail });
+                    bytes.put(romBytes, game.name);
+                    allGames(games, (list) => {
                         const kept = new Set(
-                            [game, ...games.filter((g) => g.name !== game.name)].slice(0, RECENT_GAMES_LIMIT).map((g) => g.name)
+                            [game, ...list.filter((g) => g.name !== game.name)].slice(0, RECENT_GAMES_LIMIT).map((g) => g.name)
                         );
-                        for (const old of games) if (!kept.has(old.name)) store.delete(old.name);
+                        for (const old of list) {
+                            if (kept.has(old.name)) continue;
+                            games.delete(old.name);
+                            bytes.delete(old.name);
+                        }
                     });
                 };
             });
         },
         async setThumbnail(gameName, thumbnail) {
-            await transact<void>(await db(), "readwrite", (store) => {
-                const existing = store.get(gameName);
+            await transact<void>(await db(), "readwrite", (games) => {
+                const existing = games.get(gameName);
                 existing.onsuccess = () => {
                     const game = existing.result as RecentGame | undefined;
-                    if (game) store.put({ ...game, thumbnail });
+                    if (game) games.put({ ...game, thumbnail });
                 };
             });
         },
         async clear() {
-            await transact<void>(await db(), "readwrite", (store) => {
-                store.clear();
+            await transact<void>(await db(), "readwrite", (games, bytes) => {
+                games.clear();
+                bytes.clear();
             });
         },
     };
@@ -121,6 +140,7 @@ export function playedWhen(now: Date, then: Date): string {
     if (days <= 0) return "Today";
     if (days === 1) return "Yesterday";
     if (days < 7) return `${days} days ago`;
+    if (days < 14) return "Last week";
     return new Date(then.getFullYear(), then.getMonth(), then.getDate()).toLocaleDateString();
 }
 

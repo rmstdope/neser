@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createRecentGamesStore, playedWhen, RECENT_GAMES_LIMIT, renderRecentGames, type RecentGame } from "./recent_games";
 
-const game = (name: string, playedAt: number, extra: Partial<RecentGame> = {}): RecentGame => ({
+const game = (name: string, playedAt: number, extra: Partial<RecentGame & { bytes: Uint8Array }> = {}): RecentGame & { bytes: Uint8Array } => ({
     name,
     system: "NES",
     bytes: new Uint8Array([1, 2, 3]),
@@ -50,12 +50,28 @@ describe("the recent games store", () => {
         expect(names[0]).toBe(`g${RECENT_GAMES_LIMIT + 1}.nes`);
     });
 
-    it("Given remembered games, When cleared, Then none are left and the bytes come back intact before that", async () => {
+    it("Given remembered games, When listed, Then only what the cards need comes back, and a game's bytes only when asked for", async () => {
         const store = freshStore();
         await store.remember(game("a.nes", 1, { bytes: new Uint8Array([9, 8, 7]) }));
-        expect([...(await store.list())[0].bytes]).toEqual([9, 8, 7]);
+        const [listed] = await store.list();
+        expect("bytes" in listed).toBe(false);
+        expect([...(await store.bytesOf("a.nes"))!]).toEqual([9, 8, 7]);
+        expect(await store.bytesOf("never.nes")).toBeNull();
+    });
+
+    it("Given remembered games, When cleared, Then neither the cards nor the bytes are left", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1));
         await store.clear();
         expect(await store.list()).toEqual([]);
+        expect(await store.bytesOf("a.nes")).toBeNull();
+    });
+
+    it("Given a game forgotten beyond the limit, When its bytes are asked for, Then they are gone too", async () => {
+        const store = freshStore();
+        for (let i = 0; i < RECENT_GAMES_LIMIT + 1; i++) await store.remember(game(`g${i}.nes`, i));
+        expect(await store.bytesOf("g0.nes")).toBeNull();
+        expect(await store.bytesOf(`g${RECENT_GAMES_LIMIT}.nes`)).not.toBeNull();
     });
 
     it("Given a picture for a game no longer remembered, When set, Then nothing is stored", async () => {
@@ -67,10 +83,11 @@ describe("the recent games store", () => {
 
 describe("playedWhen", () => {
     const now = new Date(2026, 9, 23, 15, 0);
-    it("Given when a game was played, When said in words, Then it reads Today, Yesterday, then days, then the date", () => {
+    it("Given when a game was played, When said in words, Then it reads Today, Yesterday, days, Last week, then the date", () => {
         expect(playedWhen(now, new Date(2026, 9, 23, 1, 0))).toBe("Today");
         expect(playedWhen(now, new Date(2026, 9, 22, 23, 0))).toBe("Yesterday");
         expect(playedWhen(now, new Date(2026, 9, 20, 12, 0))).toBe("3 days ago");
+        expect(playedWhen(now, new Date(2026, 9, 14, 12, 0))).toBe("Last week");
         expect(playedWhen(now, new Date(2026, 8, 1, 12, 0))).toBe(new Date(2026, 8, 1).toLocaleDateString());
     });
 });

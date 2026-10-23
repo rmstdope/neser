@@ -1119,7 +1119,7 @@ async function refreshRecentGames() {
 function rememberRecentGame() {
     if (!romMetadata || !romBytes || !emulator) return;
     const isColor = emulator.kind === "gb" && emulator.inst.is_color();
-    const game: RecentGame = {
+    const game: RecentGame & { bytes: Uint8Array } = {
         name: romMetadata.name,
         system: gameTitle(romMetadata.name, emulator.kind, isColor).system,
         bytes: romBytes,
@@ -1140,8 +1140,13 @@ function captureRecentThumbnail() {
 }
 
 document.getElementById("recent-clear")!.addEventListener("click", () => {
-    void recentGames.clear().then(refreshRecentGames);
+    void recentGames.clear().then(refreshRecentGames, (err) => console.error("Failed to clear the recent games", err));
 });
+// Most players leave by closing the tab, so the picture is also taken whenever the page is hidden.
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") captureRecentThumbnail();
+});
+window.addEventListener("pagehide", () => captureRecentThumbnail());
 void refreshRecentGames();
 
 // A game file dropped anywhere on the page is loaded and started.
@@ -1592,13 +1597,9 @@ async function loadRomFile(file: File) {
     requestPointerLockFromUserGesture();
     const bytes = new Uint8Array(await file.arrayBuffer());
     // Only now, with the new game in hand, is the one under the library left behind.
-    captureRecentThumbnail();
     romFromFile = true;
     leaveLibraryForNewGame();
-    const expectedRom = autorunCtx.getExpectedRomName();
-    if (expectedRom && file.name.toLowerCase() !== expectedRom.toLowerCase()) {
-        toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file.name}" was loaded — playback may not work correctly`);
-    }
+    warnIfAutorunExpectsAnother(file.name);
     await handleRomSelection({
         bytes,
         name: file.name,
@@ -1610,15 +1611,30 @@ async function loadRomFile(file: File) {
     });
 }
 
+/** A loaded autorun names the ROM it was recorded on; another one is allowed, with a warning. */
+function warnIfAutorunExpectsAnother(name: string) {
+    const expectedRom = autorunCtx.getExpectedRomName();
+    const file = name.slice(name.lastIndexOf("/") + 1);
+    if (expectedRom && file.toLowerCase() !== expectedRom.toLowerCase()) {
+        toastOverlay.show(`⚠ Autorun expects "${expectedRom}" but "${file}" was loaded — playback may not work correctly`);
+    }
+}
+
 /** Plays a game from the library's "Continue playing" row again, from the bytes kept for it. */
 async function loadRecentGame(game: RecentGame) {
-    captureRecentThumbnail();
+    requestPointerLockFromUserGesture();
+    const bytes = await recentGames.bytesOf(game.name).catch(() => null);
+    if (!bytes) {
+        setStatus("Failed to load ROM: this game is no longer kept in this browser", true);
+        void refreshRecentGames();
+        return;
+    }
     romInput.value = "";
     romFromFile = game.fromFile;
     leaveLibraryForNewGame();
-    requestPointerLockFromUserGesture();
+    warnIfAutorunExpectsAnother(game.name);
     await handleRomSelection({
-        bytes: game.bytes,
+        bytes,
         name: game.name,
         running,
         stop,
@@ -1638,7 +1654,6 @@ async function loadBundledRom(url: string, name: string) {
         }
         const bytes = new Uint8Array(await response.arrayBuffer());
         // Only now, with the new game in hand, is the one under the library left behind.
-        captureRecentThumbnail();
         romInput.value = "";
         romFromFile = false;
         leaveLibraryForNewGame();
@@ -2496,7 +2511,9 @@ function debuggerHexdumpGoToAddress() {
 }
 
 function stop() {
+    // The game's last frame becomes its card's picture; the next game must not inherit it.
     captureRecentThumbnail();
+    lastFrame = null;
     // ── NES-only: Autorun teardown ────────────────────────────────────────
     if (nes && nes.autorun_is_recording()) {
         const recordingBytes = nes.stop_autorun();
