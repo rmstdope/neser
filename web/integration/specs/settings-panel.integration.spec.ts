@@ -50,7 +50,7 @@ test.describe("Settings panel", () => {
         await expect(page.locator("#help-panel")).toBeHidden();
     });
 
-    test("Given an NES game, when Controls opens, then it lists the NES keys for both players", async ({ page }) => {
+    test("Given an NES game, when Controls opens, then it lists the NES keys for both players, and the SNES keys for both of its players", async ({ page }) => {
         await openApp(page);
         await loadRomFromFileInput(page);
         await waitForRunningState(page);
@@ -61,8 +61,9 @@ test.describe("Settings panel", () => {
         await expect(keys.locator("h4")).toHaveText(["Player 1", "Player 2"]);
         await expect(keys.locator(".settings-key-action").first()).toHaveText("D-Pad");
 
+        // The Super Nintendo has a second player too, on its own keys.
         await page.locator('#settings-keys-system [data-console="snes"]').click();
-        await expect(keys.locator("h4")).toHaveCount(0);
+        await expect(keys.locator("h4")).toHaveText(["Player 1", "Player 2"]);
         const xRow = keys.locator(".settings-key-row").filter({ has: page.locator(".settings-key-action", { hasText: /^X$/ }) });
         await expect(xRow.locator("kbd")).toHaveText(["Y"]);
     });

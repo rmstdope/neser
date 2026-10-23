@@ -1453,6 +1453,8 @@ body.handheld .app-topbar {
   flex-direction: column;
   gap: 12px;
   padding: 18px 22px;
+  /* A grid column may be narrower than the pad's drawing, which is then scaled to it. */
+  min-width: 0;
 }
 
 .help-col + .help-col {
@@ -1518,8 +1520,10 @@ body.handheld .app-topbar {
 
 /* A controller drawn in CSS: D-pad on the left, Select and Start in the middle, the face buttons on
    the right, shoulders along the top; each button carries its keys. */
+/* Drawn at a fixed width (HELP_PAD_WIDTH); a narrower column scales the whole drawing (zoom). */
 .help-pad {
   position: relative;
+  width: 440px;
   height: 210px;
   border-radius: 60px;
   background: linear-gradient(180deg, #1b2b42, #101a28);
@@ -1585,17 +1589,20 @@ body.handheld .app-topbar {
 .help-pad[data-layout="four-button"] .pad-button[data-button="A"] { right: 4%; top: 36%; }
 .help-pad[data-layout="four-button"] .pad-button[data-button="B"] { right: 15%; top: 56%; }
 
+/* A player with a gamepad: one label where the keys were. */
+.pad-gamepad {
+  position: absolute;
+  left: 50%;
+  bottom: 10%;
+  transform: translateX(-50%);
+}
+
 @media (max-width: 760px) {
   .help-body {
     grid-template-columns: 1fr;
   }
 
-  /* A phone-width pad keeps its drawn proportions: the controller is laid out at its desktop
-     width and scaled down to fit, so no buttons run into each other. */
-  .help-pad {
-    width: 420px;
-    zoom: min(1, calc((100vw - 64px) / 420px));
-  }
+
 
   .help-col + .help-col {
     border-left: 0;

@@ -174,27 +174,42 @@ test.describe("Phase 3 extended UX", () => {
         expect(pageErrors).toHaveLength(0);
     });
 
-    test("Given a phone-width window, when the keys and controls panel shows the SNES pad, then no two of its buttons overlap", async ({ page }) => {
-        await page.setViewportSize({ width: 390, height: 844 });
-        await openApp(page);
-        await page.evaluate(() => (document.getElementById("help-open") as HTMLButtonElement).click());
-        const panel = page.locator("#help-panel");
-        await expect(panel).toBeVisible();
-        for (const system of ["NES", "SNES"]) {
-            const chip = panel.locator("#help-chips button", { hasText: new RegExp(`^${system}( · Player 1)?$`) });
-            await chip.click();
-            const boxes = await panel.locator("#help-pad .pad-button").evaluateAll((els) =>
-                els.map((el) => {
-                    const r = el.getBoundingClientRect();
-                    return { name: (el as HTMLElement).dataset.button, l: r.left, r: r.right, t: r.top, b: r.bottom };
-                })
-            );
-            const overlaps = boxes.flatMap((a, i) =>
-                boxes.slice(i + 1).filter((b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b).map((b) => `${a.name}×${b.name}`)
-            );
-            expect(overlaps, system).toEqual([]);
-            const pad = (await panel.locator("#help-pad").boundingBox())!;
-            expect(pad.x + pad.width, system).toBeLessThanOrEqual(390);
-        }
-    });
+    for (const { width, gamepad } of [
+        { width: 390, gamepad: false },
+        { width: 320, gamepad: false },
+        { width: 780, gamepad: false },
+        { width: 1280, gamepad: true },
+        { width: 390, gamepad: true },
+    ]) {
+        test(`Given a ${width}px window${gamepad ? " and a gamepad" : ""}, when the keys and controls panel shows each pad, then no two buttons overlap and the pad fits the panel`, async ({ page }) => {
+            if (gamepad) {
+                await page.addInitScript(() => {
+                    const pad = { id: "Test pad", index: 0, connected: true, mapping: "standard", buttons: [], axes: [], timestamp: 0 };
+                    Object.defineProperty(navigator, "getGamepads", { value: () => [pad, null, null, null] });
+                });
+            }
+            await page.setViewportSize({ width, height: 844 });
+            await openApp(page);
+            await page.evaluate(() => (document.getElementById("help-open") as HTMLButtonElement).click());
+            const panel = page.locator("#help-panel");
+            await expect(panel).toBeVisible();
+            if (gamepad) await expect(panel.locator("#help-pad .pad-gamepad")).toHaveText("Gamepad");
+            for (const system of ["NES", "GBA", "SNES"]) {
+                await panel.locator("#help-chips button", { hasText: new RegExp(`^${system}( · Player 1)?$`) }).click();
+                const boxes = await panel.locator("#help-pad .pad-button, #help-pad .pad-gamepad").evaluateAll((els) =>
+                    els.map((el) => {
+                        const r = el.getBoundingClientRect();
+                        return { name: (el as HTMLElement).dataset.button ?? "Gamepad", l: r.left, r: r.right, t: r.top, b: r.bottom };
+                    })
+                );
+                const overlaps = boxes.flatMap((a, i) =>
+                    boxes.slice(i + 1).filter((b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b).map((b) => `${a.name}×${b.name}`)
+                );
+                expect(overlaps, system).toEqual([]);
+                // Nothing in the panel runs past it, so it never scrolls sideways.
+                const fits = await panel.evaluate((el) => el.scrollWidth <= el.clientWidth);
+                expect(fits, system).toBe(true);
+            }
+        });
+    }
 });

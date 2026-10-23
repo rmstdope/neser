@@ -81,8 +81,8 @@ export function renderHelpShortcuts(list: HTMLElement): void {
 /**
  * Draws a controller into `pad` for one player's key text: a D-pad, Select and Start, the face
  * buttons (two, or four where the console has X and Y) and the shoulders where it has them, each
- * with the keys that press it, or "Gamepad" for a player who has one. Buttons the console lacks are
- * left out.
+ * with the keys that press it. A player who has a gamepad sees one "Gamepad" label in place of the
+ * keys. Buttons the console lacks are left out.
  */
 export function renderPad(pad: HTMLElement, keyText: string, usesGamepad = false): void {
     const rows = keyBindingRows(keyText);
@@ -90,7 +90,7 @@ export function renderPad(pad: HTMLElement, keyText: string, usesGamepad = false
     pad.dataset.layout = buttons.has("X") ? "four-button" : "two-button";
     pad.replaceChildren(
         ...rows.map(({ action, keys: keyKeys }) => {
-            const keys = usesGamepad ? ["Gamepad"] : keyKeys;
+            const keys = usesGamepad ? [] : keyKeys;
             const button = document.createElement("div");
             button.className = "pad-button";
             button.dataset.button = action;
@@ -106,9 +106,24 @@ export function renderPad(pad: HTMLElement, keyText: string, usesGamepad = false
             caps.append(...keys.map(cap));
             // Read as one thing, "A: R"; its drawn letter and caps are only the picture of it.
             button.setAttribute("role", "img");
-            button.setAttribute("aria-label", `${action}: ${keys.join(", ")}`);
+            button.setAttribute("aria-label", `${action}: ${usesGamepad ? "Gamepad" : keys.join(", ")}`);
             button.append(shape, name, caps);
             return button;
         })
     );
+    if (usesGamepad) {
+        const label = document.createElement("div");
+        label.className = "pad-gamepad";
+        label.setAttribute("aria-hidden", "true");
+        label.append(cap("Gamepad"));
+        pad.append(label);
+    }
+}
+
+/** The width the pad is drawn at; narrower columns scale the whole drawing down to fit. */
+export const HELP_PAD_WIDTH = 440;
+
+/** How far to scale the pad so its drawing fits a column `available` pixels wide (never up). */
+export function helpPadZoom(available: number): number {
+    return Math.min(1, Math.max(0, available) / HELP_PAD_WIDTH);
 }

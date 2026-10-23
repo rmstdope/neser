@@ -85,7 +85,7 @@ import {
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
-import { helpChips, helpPadKeys, renderHelpShortcuts, renderPad } from "./ui/help_panel";
+import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
@@ -3255,7 +3255,18 @@ function renderHelpController() {
     const usesGamepad = selectGamepads([...(navigator.getGamepads?.() ?? [])]).length > helpPlayer;
     renderPad(helpPadEl, helpPadKeys(helpConsole, helpPlayer), usesGamepad);
     helpGamepadNote.hidden = usesGamepad;
+    fitHelpPad();
 }
+
+/** Scales the pad's drawing to its column, so its buttons keep their places at any width. */
+function fitHelpPad() {
+    if (!helpPanel.open) return;
+    const column = helpPadEl.parentElement!;
+    const style = getComputedStyle(column);
+    const available = column.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    helpPadEl.style.zoom = String(helpPadZoom(available));
+}
+window.addEventListener("resize", fitHelpPad);
 
 function openHelp() {
     if (helpPanel.open) return;
@@ -3266,6 +3277,7 @@ function openHelp() {
     if (pausedByHelp) pauseResume();
     helpPanel.showModal();
     helpOpenBtn.setAttribute("aria-expanded", "true");
+    fitHelpPad();
 }
 
 function closeHelp() {

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { HELP_SHORTCUTS, helpChips, renderHelpShortcuts, renderPad } from "./help_panel";
+import { HELP_PAD_WIDTH, HELP_SHORTCUTS, helpChips, helpPadZoom, renderHelpShortcuts, renderPad } from "./help_panel";
 
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const page = () => new DOMParser().parseFromString(readFileSync(resolve(webDir, "index.html"), "utf8"), "text/html");
@@ -97,10 +97,11 @@ describe("renderPad", () => {
         expect(pad.querySelector('[data-button="A"]')!.getAttribute("aria-label")).toBe("A: R");
     });
 
-    it("Given a player with a gamepad, When the pad is drawn, Then each button shows Gamepad instead of its keys", () => {
+    it("Given a player with a gamepad, When the pad is drawn, Then one Gamepad label replaces the keys on every button", () => {
         const pad = document.createElement("div");
         renderPad(pad, "W/A/S/D: D-Pad\nR: A\nT: B\n4: Select\n5: Start", true);
-        for (const button of ["D-Pad", "A", "B", "Select", "Start"]) expect(keysOf(pad, button), button).toEqual(["Gamepad"]);
+        for (const button of ["D-Pad", "A", "B", "Select", "Start"]) expect(keysOf(pad, button), button).toEqual([]);
+        expect([...pad.querySelectorAll(".pad-gamepad kbd")].map((k) => k.textContent)).toEqual(["Gamepad"]);
         expect(pad.querySelector('[data-button="A"]')!.getAttribute("aria-label")).toBe("A: Gamepad");
     });
 
@@ -110,5 +111,17 @@ describe("renderPad", () => {
         expect(pad.dataset.layout).toBe("four-button");
         for (const button of ["A", "B", "X", "Y", "L", "R"]) expect(pad.querySelector(`[data-button="${button}"]`), button).not.toBeNull();
         expect(keysOf(pad, "L")).toEqual(["Q"]);
+    });
+});
+
+describe("helpPadZoom", () => {
+    it("Given a column at least as wide as the drawing, When fitted, Then the pad keeps its size", () => {
+        expect(helpPadZoom(HELP_PAD_WIDTH)).toBe(1);
+        expect(helpPadZoom(900)).toBe(1);
+    });
+
+    it("Given a narrower column, When fitted, Then the whole pad scales down to its width", () => {
+        expect(helpPadZoom(HELP_PAD_WIDTH / 2)).toBe(0.5);
+        expect(helpPadZoom(-5)).toBe(0);
     });
 });
