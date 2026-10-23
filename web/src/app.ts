@@ -1322,6 +1322,8 @@ function updateEmulationButtons() {
 /** Create a fresh emulator instance and update kind-dependent UI. */
 function createEmulatorInstance(kind: ConsoleKind): void {
     resetGamepadState();
+    // A new console starts with the debugger closed; the old panel belonged to the old game.
+    hideDebuggerPanel();
     // Free the previous WASM instance to avoid leaking its linear memory.
     emulator?.inst.free();
     nes = null;
@@ -2618,6 +2620,10 @@ function stop() {
     // The game's last frame becomes its card's picture; the next game must not inherit it.
     captureRecentThumbnail();
     lastFrame = null;
+    // The docked debugger belongs to the game being left: the core lets go of it too, since the
+    // same NES core may run the next game.
+    if (nes?.is_debugger_open()) nes.debugger_continue();
+    hideDebuggerPanel();
     // ── NES-only: Autorun teardown ────────────────────────────────────────
     if (nes && nes.autorun_is_recording()) {
         const recordingBytes = nes.stop_autorun();

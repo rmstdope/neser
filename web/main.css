@@ -935,6 +935,19 @@ body.handheld .app-topbar {
   flex: 1;
 }
 
+/* Too narrow for a column beside the picture: the debugger docks under it, full width. */
+@media (max-width: 900px) {
+  .game-view:has(#debugger-panel:not(.hidden)) {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .game-view:has(#debugger-panel:not(.hidden)) .debugger-panel {
+    width: 100%;
+    height: min(760px, 80dvh);
+  }
+}
+
 .firmware-row {
   display: flex;
   align-items: center;
