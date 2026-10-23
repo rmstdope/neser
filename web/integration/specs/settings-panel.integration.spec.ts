@@ -98,18 +98,33 @@ test.describe("Settings panel, firmware and debugger", () => {
         expect(parseFloat(backdropTop)).toBeGreaterThanOrEqual(header.y + header.height - 1);
     });
 
-    test("Given an NES game, when Open debugger is pressed, then the panel closes and the debugger shows; with no game it cannot be pressed", async ({ page }) => {
+    test("Given the debugger button switched on, then the bug button shows with an NES game, docks the debugger beside the picture, and is remembered", async ({ page }) => {
         await openApp(page);
         await openSettings(page, "Developer");
-        await expect(page.locator("#settings-debugger")).toBeDisabled();
-        await page.keyboard.press("Escape");
+        await page.getByLabel("Show debugger button").check();
+        await closeSettings(page);
+        const bug = page.locator("#debugger-open");
+        await expect(bug).toBeHidden();
 
         await loadRomFromFileInput(page);
         await waitForRunningState(page);
+        await expect(bug).toBeVisible();
+        await bug.click();
+        const panel = page.locator("#debugger-panel");
+        await expect(panel).toBeVisible();
+        await expect(bug).toHaveAttribute("aria-pressed", "true");
+        const picture = (await page.locator("#screen").boundingBox())!;
+        const dock = (await panel.boundingBox())!;
+        expect(dock.x).toBeGreaterThanOrEqual(picture.x + picture.width);
+
+        await page.locator("#screen").focus();
+        await page.keyboard.press("F5");
+        await expect(panel).toBeHidden();
+        await expect(bug).toHaveAttribute("aria-pressed", "false");
+
+        await page.reload();
         await openSettings(page, "Developer");
-        await page.locator("#settings-debugger").click();
-        await expect(page.locator("#settings-panel")).toBeHidden();
-        await expect(page.locator("#debugger-panel")).toBeVisible();
+        await expect(page.getByLabel("Show debugger button")).toBeChecked();
     });
 
     test("Given the open panel over a running game, when the backdrop is clicked, then it closes and the game carries on", async ({ page }) => {

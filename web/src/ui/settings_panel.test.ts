@@ -38,7 +38,7 @@ describe("the settings panel's markup", () => {
         expect(tabPanel("general").contains(doc.getElementById("snes-firmware-section"))).toBe(true);
         expect(tabPanel("controls").contains(doc.getElementById("settings-keys"))).toBe(true);
         expect(tabPanel("developer").contains(doc.getElementById("autorun-section"))).toBe(true);
-        expect(tabPanel("developer").contains(doc.getElementById("settings-debugger"))).toBe(true);
+        expect(tabPanel("developer").contains(doc.getElementById("settings-debugger-button"))).toBe(true);
     });
 
     it("Given the library, When reading it, Then the settings are not there", () => {
