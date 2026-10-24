@@ -165,10 +165,10 @@ describe("frames and pads", () => {
         join.play.press(1, NES_A, true);
         join.play.press(2, NES_START, true);
         await run(100);
-        expect(host.core.pads().at(-1)).toEqual([0, (1 << NES_A) | (1 << NES_START)]);
+        expect(host.core.pads()[host.core.pads().length - 1]).toEqual([0, (1 << NES_A) | (1 << NES_START)]);
         join.play.press(2, NES_START, false);
         await run(100);
-        expect(host.core.pads().at(-1)).toEqual([0, 1 << NES_A]);
+        expect(host.core.pads()[host.core.pads().length - 1]).toEqual([0, 1 << NES_A]);
     });
 
     it("does not run frames before it begins, nor after playing together has ended", async () => {
@@ -253,7 +253,7 @@ describe("windows", () => {
             expect(join.play.view()).toMatchObject({ phase: "paused", pausedBy: "them", pauseReason: reason });
             host.play.windowClosed(window);
             await run(3500);
-            expect(join.counts.at(-1)).toBe("resume");
+            expect(join.counts[join.counts.length - 1]).toBe("resume");
             expect(join.play.view().phase).toBe("playing");
         }
     });

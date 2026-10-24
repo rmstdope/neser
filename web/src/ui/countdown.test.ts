@@ -19,7 +19,7 @@ const number = () => overlay()?.querySelector(".netplay-countdown-number")?.text
 describe("the count before playing together", () => {
     it.each([1, 2] as const)("tells player %i who they are above 3, 2, 1, one second each, then lets the game run", (player) => {
         const onDone = vi.fn();
-        runCountdown({ screen, player, onDone });
+        runCountdown({ screen, label: `You are player ${player}`, onDone });
         expect(overlay()!.querySelector(".netplay-countdown-player")!.textContent).toBe(`You are player ${player}`);
         expect(number()).toBe("3");
         vi.advanceTimersByTime(999);
@@ -34,14 +34,20 @@ describe("the count before playing together", () => {
         expect(onDone).toHaveBeenCalledOnce();
     });
 
+    it.each(["Resuming", "You reset the game", "The other player reset the game"])("shows %s above the count while playing together", (label) => {
+        runCountdown({ screen, label, onDone: () => {} });
+        expect(overlay()!.querySelector(".netplay-countdown-player")!.textContent).toBe(label);
+        expect(number()).toBe("3");
+    });
+
     it("says nothing after 1", () => {
-        runCountdown({ screen, player: 1, onDone: () => {} });
+        runCountdown({ screen, label: "You are player 1", onDone: () => {} });
         vi.advanceTimersByTime(3000);
         expect(screen.textContent).toBe("");
     });
 
     it("is announced to a screen reader", () => {
-        runCountdown({ screen, player: 2, onDone: () => {} });
+        runCountdown({ screen, label: "You are player 2", onDone: () => {} });
         expect(overlay()!.getAttribute("role")).toBe("status");
     });
 });
@@ -49,7 +55,7 @@ describe("the count before playing together", () => {
 describe("a count that is called off", () => {
     it("goes at once, without letting the game run", () => {
         const onDone = vi.fn();
-        const cancel = runCountdown({ screen, player: 2, onDone });
+        const cancel = runCountdown({ screen, label: "You are player 2", onDone });
         vi.advanceTimersByTime(1500);
         cancel();
         expect(overlay()).toBeNull();

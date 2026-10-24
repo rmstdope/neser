@@ -3593,7 +3593,7 @@ async function startNetplayGame({ role, game }: NetplayStart) {
     updateEmulationButtons();
     cancelCountdown = runCountdown({
         screen: screenWrap,
-        player: role === "host" ? 1 : 2,
+        label: `You are player ${role === "host" ? 1 : 2}`,
         onDone: () => {
             cancelCountdown = null;
             netplayCounting = false;
