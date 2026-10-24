@@ -104,6 +104,16 @@ describe("audio fade", () => {
         expect(gain.at(end + 2 * CHUNK)).toBe(0);
     });
 
+    it("does not dip for a frame handed over late while the sound so far still plays", () => {
+        // One frame held, as when the faster of two computers waits a tick for the slower one.
+        const gain = new Gain();
+        const fade = createAudioFade(gain);
+        const end = playChunks(fade, 1, 30);
+        fade.chunk(end - LEAD + CHUNK, end, end + CHUNK);
+        const after = playChunks(fade, end + CHUNK, 30);
+        for (let t = 1 + F; t < after - LEAD; t += 0.001) expect(gain.at(t)).toBeCloseTo(1, 6);
+    });
+
     it("fades a lone short chunk in and out within it", () => {
         const gain = new Gain();
         const fade = createAudioFade(gain);

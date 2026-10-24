@@ -8,6 +8,8 @@ import type { PlayData, PlayMessage, ResyncState } from "./session";
 // released pads) and a stand-in core that records what it was asked to play.
 
 const ONE_WAY_MS = 10;
+/** The link's one-way delay now: `ONE_WAY_MS` unless a test makes it a LAN's. */
+let oneWayMs = ONE_WAY_MS;
 const FRAME_MS = 1000 / 60;
 const DELAY = 2;
 /** The games are compared after every tenth frame. */
@@ -141,7 +143,7 @@ let join: Side;
 function deliverer(to: () => Side) {
     let lastAt = 0;
     return (data: PlayData) => {
-        const at = Math.max(performance.now() + ONE_WAY_MS, lastAt);
+        const at = Math.max(performance.now() + oneWayMs, lastAt);
         lastAt = at;
         setTimeout(() => {
             to().play.hear(data);
@@ -208,6 +210,7 @@ async function run(ms: number) {
 
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+    oneWayMs = ONE_WAY_MS;
     host = side(1, () => join);
     join = side(2, () => host);
     host.play.begin();
@@ -918,5 +921,82 @@ describe("resyncing", () => {
         expect(host.play.view()).toMatchObject({ phase: "ended", ended: "left" });
         expect(join.play.view()).toMatchObject({ phase: "ended", ended: "left" });
         expect(host.gaveUp + join.gaveUp).toBe(0);
+    });
+});
+
+/**
+ * Plays `ms` with each side's animation frames at its own steady, fractional interval, as two
+ * displays tick: `run` rounds every interval to the millisecond, which hides small differences.
+ * Returns, for each side from `watchFrom` ms on, the most frames it ran in one tick and the most
+ * ticks in a row it ran none.
+ */
+async function runSteady(ms: number, watchFrom = 0) {
+    const start = performance.now();
+    const end = start + ms;
+    const next = new Map<Side, number>([
+        [host, start],
+        [join, start],
+    ]);
+    const most = new Map<Side, { frames: number; held: number; heldNow: number }>([
+        [host, { frames: 0, held: 0, heldNow: 0 }],
+        [join, { frames: 0, held: 0, heldNow: 0 }],
+    ]);
+    while (performance.now() < end) {
+        await vi.advanceTimersByTimeAsync(1);
+        const t = performance.now();
+        for (const s of [host, join]) {
+            if (s.hidden || t < next.get(s)!) continue;
+            next.set(s, next.get(s)! + s.tickEvery);
+            const ran = s.play.tick();
+            if (t - start < watchFrom) continue;
+            const seen = most.get(s)!;
+            seen.frames = Math.max(seen.frames, ran);
+            seen.heldNow = ran === 0 ? seen.heldNow + 1 : 0;
+            seen.held = Math.max(seen.held, seen.heldNow);
+        }
+    }
+    return most;
+}
+
+describe("two computers at slightly different speeds (nr-ayk5.7)", () => {
+    // Lockstep evens them out a single frame at a time: the faster game shows one frame twice when
+    // it gets the input delay ahead, or the slower one runs two frames in one tick to catch up. On
+    // a 60 Hz display one frame is the least either can do, and too little to see or to empty the
+    // sound's lead, so nothing more is needed; this pins that it stays that small.
+    for (const [where, latency] of [
+        ["on one LAN", 1],
+        ["over a slower link", ONE_WAY_MS],
+    ] as const) {
+        it(`stay in step a frame at a time, with nothing shown, ${where}`, async () => {
+            oneWayMs = latency;
+            host.tickEvery = 1000 / 61;
+            join.tickEvery = 1000 / 60;
+            const shown: string[] = [];
+            for (const s of [host, join]) {
+                s.play.subscribe((view) => {
+                    if (view.waiting) shown.push("waiting");
+                    if (view.catchingUp) shown.push("catching up");
+                });
+            }
+            const most = await runSteady(30_000, 2000);
+            for (const s of [host, join]) {
+                expect(most.get(s)!.frames).toBeLessThanOrEqual(2);
+                expect(most.get(s)!.held).toBeLessThanOrEqual(1);
+            }
+            expect(shown).toEqual([]);
+            const both = Math.min(host.core.frames, join.core.frames);
+            expect(both).toBeGreaterThan(30 * 60 - 60);
+            expect(host.core.pads().slice(0, both)).toEqual(join.core.pads().slice(0, both));
+        });
+    }
+
+    it("leave two computers at the same speed alone", async () => {
+        oneWayMs = 1;
+        const most = await runSteady(10_000, 1000);
+        for (const s of [host, join]) {
+            expect(most.get(s)!.frames).toBe(1);
+            expect(most.get(s)!.held).toBe(0);
+            expect(Math.abs(s.core.frames - 600)).toBeLessThan(5);
+        }
     });
 });
