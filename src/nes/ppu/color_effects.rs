@@ -22,9 +22,9 @@ const EMPHASIS_ATTENUATION: f64 = 0.84;
 ///
 /// RGB PPUs in the Vs. System force each emphasised channel to maximum brightness instead.
 ///
-/// On NES: bit layout is 0x01 = red, 0x02 = green, 0x04 = blue.
-/// On Famicom: green and blue are swapped (0x02 = blue, 0x04 = green).
-/// Set `swap_green_blue` to `true` for Famicom emphasis behavior.
+/// `color_emphasis` is PPUMASK bits 5-7: on the 2C02 (NTSC NES and Famicom) 0x01 = red,
+/// 0x02 = green, 0x04 = blue. The PAL and Dendy PPUs swap the first two (0x01 = green,
+/// 0x02 = red), which `swap_red_green` selects.
 #[inline(always)]
 pub(crate) fn apply_color_emphasis(
     color_value: u8,
@@ -32,16 +32,15 @@ pub(crate) fn apply_color_emphasis(
     g: u8,
     b: u8,
     color_emphasis: u8,
-    swap_green_blue: bool,
+    swap_red_green: bool,
     rgb_ppu: bool,
 ) -> (u8, u8, u8) {
     if color_emphasis == 0 {
         return (r, g, b);
     }
 
-    // On Famicom the green and blue emphasis bits are swapped vs NES.
-    let emphasis = if swap_green_blue {
-        (color_emphasis & 0x01) | ((color_emphasis & 0x04) >> 1) | ((color_emphasis & 0x02) << 1)
+    let emphasis = if swap_red_green {
+        (color_emphasis & 0x04) | ((color_emphasis & 0x01) << 1) | ((color_emphasis & 0x02) >> 1)
     } else {
         color_emphasis
     };
@@ -130,25 +129,21 @@ mod tests {
         );
     }
 
+    // nesdev Colour emphasis: on PAL and Dendy, bit 5 emphasises green, bit 6 red, bit 7 blue.
     #[test]
-    fn test_famicom_emphasis_bit_0x02_emphasizes_blue_not_green() {
-        // On Famicom, bit 0x02 = blue (swapped from NES green)
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x02, true, false);
-        assert_eq!((r, g, b), (84, 84, 100));
-    }
-
-    #[test]
-    fn test_famicom_emphasis_bit_0x04_emphasizes_green_not_blue() {
-        // On Famicom, bit 0x04 = green (swapped from NES blue)
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x04, true, false);
-        assert_eq!((r, g, b), (84, 100, 84));
-    }
-
-    #[test]
-    fn test_famicom_emphasis_red_unchanged() {
-        // Red (bit 0x01) is the same on both NES and Famicom
-        let (r, g, b) = apply_color_emphasis(0x00, 100, 100, 100, 0x01, true, false);
-        assert_eq!((r, g, b), (100, 84, 84));
+    fn swapped_red_green_emphasis_reorders_only_the_first_two_bits() {
+        for (emphasis, expected) in [
+            (0x01, (84, 100, 84)),
+            (0x02, (100, 84, 84)),
+            (0x04, (84, 84, 100)),
+            (0x03, (84, 84, 70)),
+        ] {
+            assert_eq!(
+                apply_color_emphasis(0x00, 100, 100, 100, emphasis, true, false),
+                expected,
+                "emphasis ${emphasis:02X}"
+            );
+        }
     }
 
     /// Mesen2 `NesDefaultVideoFilter::GenerateFullColorPalette` (2C02): each emphasis bit

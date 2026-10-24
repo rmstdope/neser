@@ -109,8 +109,9 @@ impl Dmc {
             shift_register: 0,
             bits_remaining: 8,
             silence_flag: true,
-            sample_address: 0,
-            sample_length: 0,
+            // $4012 and $4013 power up as 0: a 1-byte sample at $C000.
+            sample_address: 0xC000,
+            sample_length: 1,
             current_address: 0,
             bytes_remaining: 0,
             dma_pending: false,
@@ -123,10 +124,18 @@ impl Dmc {
         }
     }
 
-    /// Reset DMC channel to initial state
-    pub fn reset(&mut self) {
-        trace_apu!(2; "dmc reset");
+    /// Reset the DMC channel to its initial state.
+    ///
+    /// A soft reset (the reset button) keeps $4012 and $4013; only power-on sets
+    /// them to 0, a 1-byte sample at $C000 (NESdev "CPU power up state", nr-qnjf).
+    pub fn reset(&mut self, soft_reset: bool) {
+        trace_apu!(2; "dmc reset soft_reset={}", soft_reset);
+        let (sample_address, sample_length) = (self.sample_address, self.sample_length);
         *self = Self::with_region(self.region);
+        if soft_reset {
+            self.sample_address = sample_address;
+            self.sample_length = sample_length;
+        }
     }
 
     /// Set the timer phase the program starts with after the CPU's reset sequence.
@@ -835,7 +844,7 @@ mod tests {
         }
         assert_ne!(dmc.debug_timer(), NTSC.dmc_rates[0] - 1);
 
-        dmc.reset();
+        dmc.reset(false);
 
         let expected_timer = NTSC.dmc_rates[0] - 1;
         assert_eq!(
@@ -987,6 +996,24 @@ mod sample_tests {
                 "write on cycle {write_cycle}: DMA not seen {cycles_until_seen} cycles after it"
             );
         }
+    }
+
+    /// $4012 and $4013 power up as 0, which means a sample of 1 byte at $C000
+    /// (NESdev "APU DMC": address $C000 + A*64, length L*16 + 1). A game that
+    /// enables the DMC before writing them therefore gets a one-byte load DMA, as
+    /// in Mesen2. Without it, Metal Mech ran 3 CPU cycles ahead of Mesen2 from its
+    /// first $4015 write and took an NMI in frame 4 that Mesen2 does not (nr-nb0).
+    #[test]
+    fn test_enable_at_power_on_fetches_one_byte_from_c000() {
+        let mut dmc = Dmc::new();
+        dmc.set_enabled(true, 0);
+
+        assert!(dmc.has_bytes_remaining(), "power-on sample has no bytes");
+        let seen = (0..3).map(|_| run_dmc_cycle(&mut dmc)).last();
+        assert_eq!(seen, Some(true), "no load DMA after enabling at power-on");
+        assert_eq!(dmc.dma_address(), Some(0xC000));
+        dmc.complete_dma_read(0x55);
+        assert!(!dmc.has_bytes_remaining(), "power-on sample is not 1 byte");
     }
 
     /// Mesen2 clocks the DMC timer through all 8 cycles of the CPU's reset sequence,
@@ -1187,7 +1214,7 @@ mod sample_tests {
         assert!(dmc.dma_pending());
 
         // Reset
-        dmc.reset();
+        dmc.reset(false);
 
         // Verify all fields back to default
         assert!(!dmc.get_irq_flag());

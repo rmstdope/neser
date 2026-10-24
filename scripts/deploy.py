@@ -79,7 +79,7 @@ def build(tag: str | None = None) -> None:
         print(f"Building current branch: {git_current_ref()}")
 
     print("Building web app...")
-    run(["bash", "scripts/build_web.sh"])
+    run(["pnpm", "run", "build"])
 
     if HTACCESS_SRC.exists():
         print("Copying .htaccess into dist/")

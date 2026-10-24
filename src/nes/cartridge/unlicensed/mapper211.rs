@@ -149,7 +149,7 @@ impl Mapper211 {
             irq_xor: 0,
             mul_a: 0,
             mul_b: 0,
-            a12: A12RisingEdgeDetector::new(3),
+            a12: A12RisingEdgeDetector::new(0),
         };
         m.update_banks();
         m
@@ -432,6 +432,12 @@ impl Mapper for Mapper211 {
         self.irq_pending
     }
 
+    fn ppu_nametable_address(&mut self, addr: u16) {
+        // A nametable fetch drives A12 low, so the next pattern fetch from $1xxx is a rise.
+        // IRQ source 1 counts every rise, unfiltered (eight per line with sprites at $1000).
+        self.a12.update(addr);
+    }
+
     fn ppu_address_changed(&mut self, addr: u16) {
         let a12_rose = self.a12.update(addr);
         if (self.irq_source == IrqSource::PpuA12Rise && a12_rose)
@@ -529,7 +535,7 @@ impl Mapper for Mapper211 {
         self.irq_xor = 0;
         self.mul_a = 0;
         self.mul_b = 0;
-        self.a12 = A12RisingEdgeDetector::new(3);
+        self.a12 = A12RisingEdgeDetector::new(0);
         self.base.set_mirroring(NametableLayout::Vertical);
         self.update_banks();
     }
@@ -543,6 +549,31 @@ mod tests {
 
     const PRG_8K_BANKS: usize = 11;
     const CHR_1K_BANKS: usize = 13;
+
+    /// nr-55b: IRQ source 1 counts every PPU A12 rise, unfiltered. With sprites at $1000,
+    /// each of the eight sprite slots fetches two garbage nametable bytes (A12 low) and then
+    /// its pattern bytes (A12 high), within a few CPU cycles: eight rises per line. With
+    /// prescaler mask $07 counting down, one line steps the counter once, 0 → $FF.
+    #[test]
+    fn a12_irq_source_counts_every_rise_between_sprite_slot_nametable_fetches() {
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xC001, 0x85); // count down, prescaler mask $07, source A12 rise
+        mapper.write_prg(0xC004, 0x00);
+        mapper.write_prg(0xC005, 0x00);
+        mapper.write_prg(0xC003, 0x00);
+        for slot in 0..8u16 {
+            mapper.ppu_nametable_address(0x2000);
+            mapper.ppu_nametable_address(0x2000);
+            mapper.ppu_address_changed(0x1000 | (slot << 4));
+            mapper.ppu_address_changed(0x1008 | (slot << 4));
+            mapper.cpu_cycle();
+            mapper.cpu_cycle();
+        }
+        assert!(
+            mapper.irq_pending(),
+            "eight rises must step the counter once"
+        );
+    }
 
     fn make_mapper() -> Mapper211 {
         let prg = banked_data(8 * 1024, PRG_8K_BANKS);

@@ -274,7 +274,7 @@ fn tick_background(ppu: &mut Ppu) {
         // Also pre-fetch loads at pixels 329, 337 (cycles 329, 337)
         // Note: pixel 321 is % 8 == 1 but should NOT load (fetch not complete yet)
         if is_shift_reload_pixel {
-            ppu.background.load_shift_registers(ppu.registers.v());
+            ppu.background.load_shift_registers();
         }
     }
 
@@ -458,6 +458,12 @@ fn tick_sprites(ppu: &mut Ppu) {
     {
         let sprite_pattern_table = ppu.registers.sprite_pattern_table_addr();
         let cartridge = &ppu.cartridge;
+        // Each sprite slot opens with two garbage nametable fetches (second cycles at
+        // slot dots 1 and 3), which pull A12 low between the sprite pattern fetches.
+        if matches!((pixel - SPRITE_TILE_LOAD_START) % 8, 1 | 3) {
+            ppu.memory
+                .notify_nametable_address(ppu.registers.v(), cartridge);
+        }
         ppu.sprites.fetch_sprite_pattern(
             pixel,
             scanline,
@@ -558,7 +564,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 g,
                 b,
                 color_emphasis,
-                ppu.famicom_emphasis,
+                ppu.timing.region().swaps_red_green_emphasis,
                 ppu.vs_palette.is_some(),
             );
 
@@ -630,7 +636,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 g,
                 b,
                 ppu.registers.color_emphasis(),
-                ppu.famicom_emphasis,
+                ppu.timing.region().swaps_red_green_emphasis,
                 ppu.vs_palette.is_some(),
             );
 
@@ -652,26 +658,17 @@ fn tick_pixel_output(ppu: &mut Ppu) {
 /// the first PPU cycle after the access (ref Mesen2 `_needVideoRamIncrement`).
 fn tick_delayed_updates(ppu: &mut Ppu) {
     ppu.apply_pending_vram_increment();
-    if ppu.update_vram_addr_delay > 0 {
-        ppu.update_vram_addr_delay -= 1;
-        if ppu.update_vram_addr_delay == 0 {
-            let old_v = ppu.registers.v();
-            let new_v = ppu.pending_vram_addr;
-            ppu.registers.set_v(new_v);
-
-            // Notify mapper of the delayed address change exactly once
-            // (this also handles MMC3 A12 tracking). While rendering, the bus carries the
-            // rendering fetches, not v, so the mapper sees nothing (nr-6gs).
-            if !ppu.is_actively_rendering() {
-                ppu.prime_a12_and_notify_mapper(old_v, new_v);
-            }
-
+    match ppu.update_vram_addr_delay {
+        0 => {}
+        1 => {
+            ppu.land_pending_vram_addr();
             trace_ppu!(3; "delayed v=t applied v={:04X} y={} x={}",
-                new_v,
+                ppu.registers.v(),
                 ppu.timing.scanline(),
                 ppu.timing.pixel(),
             );
         }
+        _ => ppu.update_vram_addr_delay -= 1,
     }
 }
 

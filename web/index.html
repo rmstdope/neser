@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="night">
+<html lang="en" data-theme="steel">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,141 +8,304 @@
     <link rel="stylesheet" href="./debugger.css" />
   </head>
   <body>
-    <!-- DaisyUI drawer: sidebar + main content -->
-    <div class="drawer lg:drawer-open">
-      <input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
+    <div class="app-shell flex flex-col min-h-screen">
+      <!-- Top bar: the logo, the running game, and the page-level buttons -->
+      <header class="app-topbar flex items-center gap-3 px-4 py-2 min-h-14 border-b">
+        <div class="neser-logo select-none">
+          <div class="neser-logo-mark" aria-hidden="true">N</div>
+          <div class="neser-logo-word">NESER</div>
+        </div>
+        <!-- The running game: its system and name (filled in by app.ts when a game starts) -->
+        <div id="game-title" class="game-title hidden">
+          <span id="game-system" class="sys-badge"></span>
+          <span id="game-name" class="game-name"></span>
+          <span id="game-file" class="game-file"></span>
+        </div>
+        <span class="flex-1"></span>
+        <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
+        <button id="debugger-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn hidden" data-icon="bug" data-tip="Debugger" data-keys="F5" aria-keyshortcuts="F5" aria-label="Debugger" aria-pressed="false">Debugger</button>
+        <button id="library-open" class="btn btn-ghost btn-sm topbar-btn-labeled" data-icon="library" data-tip="Choose a game" aria-controls="library">Library</button>
+        <button id="settings-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="gear" data-tip="Settings" aria-label="Settings" aria-controls="settings-panel" aria-haspopup="dialog" aria-expanded="false">Settings</button>
+        <button id="help-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="help" data-tip="Keys and controls" data-keys="H" aria-keyshortcuts="H" aria-label="Keys and controls" aria-controls="help-panel" aria-expanded="false" aria-haspopup="dialog">Keys and controls</button>
+      </header>
 
-      <!-- Main content area -->
-      <div class="drawer-content flex flex-col min-h-screen">
-        <!-- Top bar -->
-        <header class="flex items-center gap-2 px-4 py-2 bg-base-200 border-b border-base-300 flex-wrap">
-          <!-- Hamburger for mobile/tablet -->
-          <label for="sidebar-toggle" class="btn btn-ghost btn-sm lg:hidden" aria-label="Open sidebar">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
-          </label>
-          <div class="flex flex-wrap items-center gap-2">
-            <button id="screen-minus" class="btn btn-outline btn-sm">Zoom -</button>
-            <button id="screen-plus" class="btn btn-outline btn-sm">Zoom +</button>
-            <button id="fullscreen" class="btn btn-outline btn-sm">Fullscreen</button>
-            <button id="filter-toggle" class="btn btn-outline btn-sm">Filter</button>
-            <button id="palette-cycle" class="btn btn-outline btn-sm whitespace-nowrap" title="Change palette (F8)" style="display: none">Palette</button>
-            <button id="cgb-color-toggle" class="btn btn-outline btn-sm" style="display: none">Colors: Raw</button>
-            <button id="mute" class="btn btn-outline btn-sm" aria-pressed="false">Mute</button>
-          </div>
-        </header>
-
-        <!-- Canvas area -->
-        <main class="flex-1 flex flex-col items-center justify-center p-4">
-          <!-- Touch controls wrapper: D-pad | Canvas | Action buttons -->
-          <div id="touch-controls" class="touch-controls" aria-hidden="true">
-            <!-- D-pad (left of canvas) -->
-            <div class="touch-dpad-area">
-              <div class="touch-joystick" data-touch-zone="joystick" aria-label="Directional joystick">
-                <div class="touch-joystick-base"></div>
-                <div class="touch-joystick-knob"></div>
+      <!-- data-view says which of the two shows: the library (no game, or chosen from the top bar) or the game -->
+      <main class="app-main flex-1 flex flex-col items-center justify-center p-4" data-view="library">
+        <!-- The library: where a game is picked; picking one starts it -->
+        <section id="library" class="library" aria-labelledby="library-title">
+          <div class="library-main">
+            <div id="library-drop" class="library-hero">
+              <div id="library-news" class="library-news"></div>
+              <h2 id="library-title">Drop a game anywhere to play</h2>
+              <p class="library-lede">NES, Famicom, Game Boy, Game Boy Color, Game Boy Advance and Super Nintendo files. Nothing leaves your browser.</p>
+              <div class="library-cta">
+                <button type="button" id="library-choose" class="btn btn-primary" data-icon="file" aria-keyshortcuts="O">Choose a file…</button>
+                <span class="library-key-hint">or press <kbd class="kbd kbd-sm">O</kbd></span>
+                <input type="file" id="rom" class="hidden" aria-label="Game file" />
+                <button type="button" id="library-back" class="btn btn-outline hidden" data-icon="play">Back to the game</button>
               </div>
             </div>
-
-            <!-- Canvas (center) -->
-            <div class="screen-wrap" id="screen-wrap">
-              <canvas id="screen" width="256" height="240" tabindex="0"></canvas>
-              <div id="rec-overlay" class="rec-overlay hidden" aria-hidden="true"></div>
-              <div id="shortcut-help-overlay" class="shortcut-help-overlay hidden" aria-hidden="true"></div>
-              <div id="debugger-panel" class="debugger-panel hidden" aria-label="Debugger panel"></div>
-            </div>
-
-            <!-- Action buttons (right of canvas) -->
-            <div class="touch-action-area">
-              <div class="touch-meta-buttons">
-                <div class="touch-meta-btn" data-button="select" aria-label="Select button">SELECT</div>
-                <div class="touch-meta-btn" data-button="start" aria-label="Start button">START</div>
+            <!-- What went wrong with the file just chosen, with the way forward -->
+            <div id="library-error" class="library-error" role="alert" hidden>
+              <span class="library-error-icon" aria-hidden="true"></span>
+              <div class="library-error-words">
+                <b id="library-error-title" class="library-error-title"></b>
+                <span id="status" class="status-line"></span>
               </div>
-              <div class="touch-action-buttons">
-                <div class="touch-btn touch-btn-b" data-button="b" aria-label="B button">B</div>
-                <div class="touch-btn touch-btn-a" data-button="a" aria-label="A button">A</div>
+              <button type="button" id="library-error-choose" class="btn btn-sm">Choose another…</button>
+            </div>
+            <!-- The games last played in this browser: pressing one plays it again -->
+            <section id="recent" class="recent hidden" aria-labelledby="recent-title">
+              <div class="recent-head">
+                <h3 id="recent-title">Continue playing</h3>
+                <span class="recent-note">kept in this browser</span>
+                <span class="flex-1"></span>
+                <button type="button" id="recent-clear" class="btn btn-ghost btn-xs">Clear</button>
               </div>
+              <div id="recent-row" class="recent-row"></div>
+            </section>
+            <!-- The last game, ready to start again (and to record an autorun from) -->
+            <div id="library-again" class="library-again hidden">
+              <span class="library-again-label">Last game</span>
+              <span id="library-again-name" class="library-again-name"></span>
+              <button id="start" class="btn btn-primary btn-sm" data-icon="play">Start</button>
             </div>
           </div>
-
-          <div class="mt-3 flex items-center gap-2">
-            <span id="status" class="status"></span>
-            <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
-            <span class="badge badge-neutral touch-hide">Press 'h' for help</span>
-          </div>
-        </main>
-
-        <!-- Footer removed -->
-      </div>
-
-      <!-- Sidebar -->
-      <div class="drawer-side z-40">
-        <label for="sidebar-toggle" class="drawer-overlay" aria-label="Close sidebar"></label>
-        <aside class="w-60 min-h-screen bg-base-200 border-r border-base-300 flex flex-col p-4 gap-4">
-          <!-- NESER ASCII art logo -->
-          <div class="text-center select-none">
-            <pre class="font-mono text-xs leading-tight text-[#00f0ff]"> _   _ _____ ____  _____ ____
-| \ | | ____/ ___|| ____|  _ \
-|  \| |  _| \___ \|  _| | |_) |
-| |\  | |___ ___) | |___|  _ &lt;
-|_| \_|_____|____/|_____|_| \_\</pre>
-          </div>
-
-          <!-- ROM controls -->
-          <div class="flex flex-col gap-2">
-            <label for="rom" class="label text-xs">ROM file</label>
-            <input type="file" id="rom" class="file-input file-input-bordered file-input-sm w-full" />
-            <select id="rom-select" class="select select-bordered select-sm w-full" aria-label="Select ROM from server">
-              <option value="">Select bundled ROM…</option>
-            </select>
-          </div>
-
-          <!-- The console original Game Boy games run on, remembered in this browser (nr-zdy.4) -->
-          <div class="flex flex-col gap-2">
-            <label for="gb-hardware" class="label text-xs font-bold p-0">Game Boy games run on</label>
-            <select id="gb-hardware" class="select select-bordered select-sm w-full">
-              <option value="dmg">Game Boy</option>
-              <option value="cgb">Game Boy Color</option>
-            </select>
-            <span id="gb-hardware-note" class="text-xs opacity-60 hidden">Applies when you press Reset</span>
-          </div>
-
-          <!-- SNES firmware: one row per chip with a file stored in this browser (nr-auv, nr-608) -->
-          <div id="snes-firmware-section" class="hidden flex flex-col gap-2">
-            <span class="label text-xs font-bold p-0">SNES firmware</span>
-            <div id="snes-firmware-rows" class="flex flex-col gap-1"></div>
-            <input type="file" id="snes-firmware-replace-file" class="hidden" aria-label="Replacement SNES firmware file" />
-          </div>
-
-          <!-- Autorun controls -->
-          <div id="autorun-section" class="flex flex-col gap-2">
-            <label class="label cursor-pointer justify-start gap-2 p-0">
-              <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" disabled />
-              <span class="label-text text-xs">Create autorun</span>
+          <div class="library-side">
+            <div class="library-side-head">
+              <h3>Bundled test ROMs</h3>
+              <span id="library-count" class="badge badge-neutral"></span>
+            </div>
+            <label class="library-search input input-sm w-full">
+              <span class="library-search-icon" aria-hidden="true"></span>
+              <input id="library-search" type="search" placeholder="Search…" aria-label="Search the bundled test ROMs" aria-keyshortcuts="/" />
+              <kbd class="kbd kbd-sm">/</kbd>
             </label>
-            <button id="autorun-load" class="btn btn-info btn-outline btn-sm w-full" disabled>Load autorun</button>
-            <ul id="autorun-status" class="text-xs text-info list-none space-y-0.5"></ul>
-            <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
-          </div>
-
-          <!-- Emulation controls; data-emulation-state is the app's lifecycle (idle|running|paused) -->
-          <div id="emulation-controls" class="flex flex-col gap-2" data-emulation-state="idle">
-            <button id="start" class="btn btn-success btn-sm w-full">Start</button>
-            <div class="flex gap-2">
-              <button id="pause" class="btn btn-outline btn-sm flex-1" aria-label="Pause or resume emulation">Pause</button>
-              <button id="reset" class="btn btn-warning btn-outline btn-sm flex-1" aria-label="Reset emulation">Reset</button>
+            <div id="library-systems" class="library-systems" role="group" aria-label="System">
+              <button type="button" data-system="all" aria-pressed="true">All</button>
+              <button type="button" data-system="NES" aria-pressed="false">NES</button>
+              <button type="button" data-system="GB" aria-pressed="false">GB</button>
+              <button type="button" data-system="GBA" aria-pressed="false">GBA</button>
+              <button type="button" data-system="SNES" aria-pressed="false">SNES</button>
             </div>
-            <button id="stop" class="btn btn-error btn-outline btn-sm w-full" aria-label="Stop emulation">Stop</button>
-            <div id="save-state-section" class="flex gap-2" data-save-state="empty">
-              <button id="save-state" class="btn btn-warning btn-outline btn-sm flex-1" disabled>Save State</button>
-              <button id="load-state" class="btn btn-warning btn-outline btn-sm flex-1" disabled>Load State</button>
-            </div>
+            <div id="library-list" class="library-list"></div>
           </div>
+        </section>
 
-          <!-- Spacer to push content up -->
-          <div class="flex-1"></div>
-        </aside>
-      </div>
+        <!-- The game: the picture and the control bar under it -->
+        <div id="game-view" class="game-view">
+          <div class="game-stage">
+              <!-- Touch controls wrapper: D-pad | Canvas | Action buttons -->
+              <div id="touch-controls" class="touch-controls" aria-hidden="true">
+                <!-- D-pad (left of canvas) -->
+                <div class="touch-dpad-area">
+                  <div class="touch-joystick" data-touch-zone="joystick" aria-label="Directional joystick">
+                    <div class="touch-joystick-base"></div>
+                    <div class="touch-joystick-knob"></div>
+                  </div>
+                </div>
+
+                <!-- Canvas (center) -->
+                <div class="screen-wrap" id="screen-wrap">
+                  <canvas id="screen" width="256" height="240" tabindex="0"></canvas>
+                  <div id="rec-overlay" class="rec-overlay hidden" aria-hidden="true"></div>
+                  <!-- The running game stopped: said on its picture, with the ways on -->
+                  <div id="game-error" class="game-error" role="alert" hidden>
+                    <span class="library-error-icon" aria-hidden="true"></span>
+                    <b class="game-error-title">The game stopped</b>
+                    <p id="game-error-text" class="game-error-text"></p>
+                    <div class="game-error-actions">
+                      <button type="button" id="game-error-reset" class="btn btn-sm">Reset</button>
+                      <button type="button" id="game-error-library" class="btn btn-ghost btn-sm">Back to library</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- On a phone: the controls the controller lacks, one tap away (the control bar's are on desktop) -->
+                <div id="handheld-bar" class="handheld-bar" role="group" aria-label="Game">
+                  <button type="button" id="hh-pause" class="btn btn-sm" data-icon="pause">Pause</button>
+                  <button type="button" id="hh-save" class="btn btn-sm" data-icon="save">Save</button>
+                  <button type="button" id="hh-load" class="btn btn-sm" data-icon="load">Load</button>
+                  <button type="button" id="hh-more" class="btn btn-sm btn-icon-only" data-icon="more" aria-label="More" aria-controls="handheld-sheet" aria-haspopup="dialog" aria-expanded="false">More</button>
+                </div>
+
+                <!-- Action buttons (right of canvas) -->
+                <div class="touch-action-area">
+                  <div class="touch-meta-buttons">
+                    <div class="touch-meta-btn" data-button="select" aria-label="Select button">SELECT</div>
+                    <div class="touch-meta-btn" data-button="start" aria-label="Start button">START</div>
+                  </div>
+                  <div class="touch-action-buttons">
+                    <div class="touch-btn touch-btn-b" data-button="b" aria-label="B button">B</div>
+                    <div class="touch-btn touch-btn-a" data-button="a" aria-label="A button">A</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- The control bar: every in-game control under the picture. data-emulation-state is the
+                   app's lifecycle (idle|running|paused); icons and hover tips are drawn in main.css. -->
+              <div id="emulation-controls" class="control-bar" role="toolbar" aria-label="Game controls" data-emulation-state="idle">
+                <button id="pause" class="btn btn-ghost btn-sm" data-icon="pause" data-tip="Pause or resume" aria-keyshortcuts="Space" data-keys="Space" aria-label="Pause or resume emulation">Pause</button>
+                <div class="split-btn">
+                  <button id="reset" class="btn btn-ghost btn-sm" data-icon="reset" data-tip="Reset" aria-keyshortcuts="Control+R" data-keys="Ctrl+R" aria-label="Reset emulation">Reset</button>
+                  <button id="reset-menu" class="btn btn-ghost btn-sm btn-icon-only split-caret" data-icon="chev" aria-label="Reset options">Reset options</button>
+                </div>
+                <span class="control-bar-sep" aria-hidden="true"></span>
+                <div id="save-state-section" class="control-bar-group" data-save-state="empty">
+                  <button id="save-state" class="btn btn-ghost btn-sm" data-icon="save" data-tip="Save state" aria-keyshortcuts="F6" data-keys="F6" disabled>Save</button>
+                  <button id="load-state" class="btn btn-ghost btn-sm" data-icon="load" data-tip="Load state" aria-keyshortcuts="F7" data-keys="F7" disabled>Load</button>
+                  <div id="load-preview" class="load-preview" role="tooltip">
+                    <img alt="The saved moment" />
+                    <span class="load-preview-ago"></span>
+                    <span class="load-preview-at"></span>
+                  </div>
+                </div>
+                <span class="control-bar-sep" aria-hidden="true"></span>
+                <button id="stop" class="btn btn-ghost btn-sm" data-icon="eject" data-tip="Eject the game" aria-label="Eject game">Eject</button>
+                <span class="control-bar-sep" aria-hidden="true"></span>
+                <div class="control-bar-group">
+                  <button id="screen-minus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-out" data-tip="Zoom out">Zoom -</button>
+                  <span id="zoom-level" class="zoom-level" aria-live="polite"></span>
+                  <button id="screen-plus" class="btn btn-ghost btn-sm btn-icon-only" data-icon="zoom-in" data-tip="Zoom in">Zoom +</button>
+                  <button id="filter-toggle" class="btn btn-ghost btn-sm" data-icon="filter" data-tip="Choose a filter" aria-keyshortcuts="F4" data-keys="F4">Filter</button>
+                  <button id="palette-cycle" class="btn btn-ghost btn-sm whitespace-nowrap" data-icon="palette" data-tip="Choose a palette" aria-keyshortcuts="F8" data-keys="F8" style="display: none">Palette</button>
+                  <button id="cgb-color-toggle" class="btn btn-ghost btn-sm" data-icon="palette" data-tip="Colour correction" aria-keyshortcuts="F8" data-keys="F8" style="display: none">Colors: Raw</button>
+                  <div class="volume-control">
+                    <button id="mute" class="btn btn-ghost btn-sm btn-icon-only" data-icon="volume" data-tip="Mute" aria-pressed="false">Mute</button>
+                    <input id="volume" type="range" min="0" max="100" value="100" class="range range-xs" aria-label="Volume" />
+                  </div>
+                  <button id="fullscreen" class="btn btn-ghost btn-sm btn-icon-only" data-icon="fullscreen" data-tip="Fullscreen" aria-keyshortcuts="Control+F" data-keys="Ctrl+F">Fullscreen</button>
+                </div>
+              </div>
+          </div>
+          <!-- The NES debugger, docked beside the picture (F5, or the bug button in the top bar) -->
+          <div id="debugger-panel" class="debugger-panel hidden" aria-label="Debugger panel"></div>
+        </div>
+
+        <div class="page-foot mt-3 flex items-center gap-2">
+          <span class="help-hint touch-hide">Press <kbd class="kbd kbd-sm">H</kbd> for keyboard shortcuts</span>
+        </div>
+      </main>
     </div>
+
+    <!-- Settings: the things set once, in a sheet from the right. The game pauses while it is open. -->
+    <dialog id="settings-panel" class="settings-sheet" aria-labelledby="settings-title">
+      <div class="settings-head">
+        <h2 id="settings-title">Settings</h2>
+        <button type="button" id="settings-close" class="btn btn-ghost btn-sm btn-icon-only" data-icon="close" aria-label="Close settings">Close</button>
+      </div>
+      <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button type="button" role="tab" id="settings-tab-btn-general" aria-controls="settings-tab-general" aria-selected="true">General</button>
+        <button type="button" role="tab" id="settings-tab-btn-controls" aria-controls="settings-tab-controls" aria-selected="false" tabindex="-1">Controls</button>
+        <button type="button" role="tab" id="settings-tab-btn-developer" aria-controls="settings-tab-developer" aria-selected="false" tabindex="-1">Developer</button>
+      </div>
+
+      <section id="settings-tab-general" class="settings-page" role="tabpanel" aria-labelledby="settings-tab-btn-general">
+        <!-- The console original Game Boy games run on, remembered in this browser (nr-zdy.4) -->
+        <div class="settings-group">
+          <h3 class="settings-group-title">Game Boy</h3>
+          <label for="gb-hardware" class="settings-label">Game Boy games run on</label>
+          <select id="gb-hardware" class="select select-sm w-full">
+            <option value="dmg">Game Boy</option>
+            <option value="cgb">Game Boy Color</option>
+          </select>
+          <span id="gb-hardware-note" class="settings-hint hidden">Applies when you press Reset</span>
+        </div>
+
+        <!-- SNES firmware: one row per chip, stored in this browser or not yet added (nr-auv, nr-608) -->
+        <div id="snes-firmware-section" class="settings-group">
+          <h3 class="settings-group-title">SNES firmware</h3>
+          <div id="snes-firmware-rows" class="flex flex-col gap-2"></div>
+          <p id="snes-firmware-message" class="settings-message" role="status" aria-live="polite"></p>
+          <p class="settings-hint">Firmware files stay in this browser. A game asks for its chip the first time it needs it.</p>
+          <input type="file" id="snes-firmware-replace-file" class="hidden" aria-label="Replacement SNES firmware file" />
+        </div>
+      </section>
+
+      <section id="settings-tab-controls" class="settings-page" role="tabpanel" aria-labelledby="settings-tab-btn-controls" hidden>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Keyboard</h3>
+          <div id="settings-keys-system" class="settings-seg" role="group" aria-label="System">
+            <button type="button" data-console="nes" aria-pressed="true">NES</button>
+            <button type="button" data-console="gb" aria-pressed="false">GB</button>
+            <button type="button" data-console="gba" aria-pressed="false">GBA</button>
+            <button type="button" data-console="snes" aria-pressed="false">SNES</button>
+          </div>
+          <div id="settings-keys" class="settings-keys"></div>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Gamepads</h3>
+          <p id="settings-gamepads" class="settings-hint"></p>
+        </div>
+      </section>
+
+      <section id="settings-tab-developer" class="settings-page" role="tabpanel" aria-labelledby="settings-tab-btn-developer" hidden>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Debugger</h3>
+          <div class="settings-switch-row">
+            <label for="settings-debugger-button" class="settings-label">Show debugger button</label>
+            <input type="checkbox" id="settings-debugger-button" class="toggle toggle-sm" />
+          </div>
+          <p id="settings-debugger-hint" class="settings-hint">Or press F5 at any time</p>
+        </div>
+
+        <!-- Autorun controls -->
+        <div id="autorun-section" class="settings-group">
+          <h3 class="settings-group-title">Autorun</h3>
+          <label class="label cursor-pointer justify-start gap-2 p-0">
+            <input type="checkbox" id="autorun-create" class="checkbox checkbox-sm" disabled />
+            <span class="label-text text-sm">Create autorun</span>
+          </label>
+          <button id="autorun-load" class="btn btn-outline btn-sm w-full" disabled>Load autorun</button>
+          <ul id="autorun-status" class="text-xs list-none space-y-0.5"></ul>
+          <button id="autorun-cancel" class="btn btn-error btn-outline btn-sm w-full hidden" aria-label="Cancel autorun">✕ Cancel Autorun</button>
+        </div>
+      </section>
+    </dialog>
+
+    <!-- Keys and controls: the shortcuts, and the running system's controller with its keys (H) -->
+    <dialog id="help-panel" class="help-sheet" aria-labelledby="help-title">
+      <div class="help-head">
+        <h2 id="help-title">Keys and controls</h2>
+        <span class="help-close-note">Close with <kbd class="kbd kbd-sm">H</kbd> or <kbd class="kbd kbd-sm">Esc</kbd></span>
+        <button type="button" id="help-close" class="btn btn-ghost btn-sm btn-icon-only" data-icon="close" aria-label="Close keys and controls">Close</button>
+      </div>
+      <div class="help-body">
+        <section class="help-col" aria-labelledby="help-shortcuts-title">
+          <h3 id="help-shortcuts-title" class="settings-group-title">Shortcuts</h3>
+          <div id="help-shortcuts" class="help-shortcuts"></div>
+        </section>
+        <section class="help-col" aria-label="Controller">
+          <div id="help-chips" class="help-chips" role="group" aria-label="Controller to show"></div>
+          <div id="help-pad" class="help-pad"></div>
+          <div id="help-gamepad-note" class="help-gamepad-note"><span class="help-gamepad-icon" data-icon="pad" aria-hidden="true"></span><span>Plug in a gamepad and press any button to use it instead.</span></div>
+        </section>
+      </div>
+    </dialog>
+
+    <!-- On a phone: everything that is not on the controller, in a sheet from the bottom (⋯) -->
+    <dialog id="handheld-sheet" class="handheld-sheet" aria-label="Game options">
+      <div class="hh-grab" aria-hidden="true"></div>
+      <div class="hh-tiles">
+        <button type="button" id="hh-reset" class="hh-tile" data-icon="reset">Reset</button>
+        <button type="button" id="hh-hard-reset" class="hh-tile" data-icon="reset">Hard reset</button>
+        <button type="button" id="hh-fullscreen" class="hh-tile" data-icon="fullscreen">Fullscreen</button>
+        <button type="button" id="hh-eject" class="hh-tile" data-icon="eject">Eject</button>
+      </div>
+      <div class="hh-row">
+        <span class="hh-row-label" data-icon="filter">Filter</span>
+        <div id="hh-filter" class="settings-seg" role="group" aria-label="Filter"></div>
+      </div>
+      <div class="hh-palette-wrap">
+        <button type="button" id="hh-palette" class="hh-row hh-row-button" data-icon="palette" aria-haspopup="menu"><span class="hh-row-label">Palette</span><span id="hh-palette-name" class="hh-row-value"></span><span class="hh-chevron" aria-hidden="true">›</span></button>
+      </div>
+      <div class="hh-row">
+        <span class="hh-row-icon" data-icon="volume" aria-hidden="true"></span>
+        <input id="hh-volume" type="range" min="0" max="100" value="100" class="range range-xs" aria-label="Volume" />
+      </div>
+      <button type="button" id="hh-settings" class="hh-row hh-row-button" data-icon="gear"><span class="hh-row-label">Settings</span><span class="hh-chevron" aria-hidden="true">›</span></button>
+      <button type="button" id="hh-help" class="hh-row hh-row-button" data-icon="help"><span class="hh-row-label">Keys and controls</span><span class="hh-chevron" aria-hidden="true">›</span></button>
+    </dialog>
 
     <!-- Autorun modal dialog (native dialog element) -->
     <dialog id="autorun-modal" class="modal" aria-labelledby="autorun-modal-label">

@@ -248,7 +248,7 @@ impl Apu {
         // At reset, triangle is preserved, but length counter is disabled
         self.triangle.reset();
         self.noise.reset();
-        self.dmc.reset();
+        self.dmc.reset(soft_reset);
         self.sample_accumulator = 0.0;
         self.clear_pending_samples();
         self.apu_cycle = 0;
@@ -1209,6 +1209,57 @@ mod tests {
             !apu.frame_counter().get_mode(),
             "Power-on reset should behave as if $4017 was written with $00"
         );
+    }
+
+    /// Enable the DMC as a $4015 write on an even CPU cycle would, run until the
+    /// CPU sees the load DMA, and return the address it reads and how many bytes
+    /// the sample had (counting fetches until none remain).
+    fn dmc_sample_after_enable(apu: &mut Apu) -> (u16, u32) {
+        let dmc = apu.dmc_mut();
+        dmc.set_enabled(true, 0);
+        let mut first_address = None;
+        let mut fetched = 0u32;
+        for _ in 0..200_000 {
+            dmc.process_clock();
+            dmc.clock_timer();
+            if dmc.cpu_dma_pending() {
+                let address = dmc.dma_address().expect("DMA pending without an address");
+                first_address.get_or_insert(address);
+                dmc.complete_dma_read(0x55);
+                fetched += 1;
+                if !dmc.has_bytes_remaining() {
+                    break;
+                }
+            }
+        }
+        (
+            first_address.expect("no load DMA after enabling the DMC"),
+            fetched,
+        )
+    }
+
+    /// NESdev "CPU power up state": a reset leaves $4012 and $4013 unchanged; only
+    /// power-on sets them to 0, which means a 1-byte sample at $C000 (nr-qnjf).
+    #[test]
+    fn test_soft_reset_keeps_dmc_sample_address_and_length() {
+        let mut apu = Apu::new_for_testing();
+        apu.dmc_mut().write_sample_address(0x10); // $C000 + $10 * 64 = $C400
+        apu.dmc_mut().write_sample_length(0x01); // $01 * 16 + 1 = 17 bytes
+
+        apu.reset(0, true);
+
+        assert_eq!(dmc_sample_after_enable(&mut apu), (0xC400, 17));
+    }
+
+    #[test]
+    fn test_power_on_reset_sets_dmc_sample_to_one_byte_at_c000() {
+        let mut apu = Apu::new_for_testing();
+        apu.dmc_mut().write_sample_address(0x10);
+        apu.dmc_mut().write_sample_length(0x01);
+
+        apu.reset(0, false);
+
+        assert_eq!(dmc_sample_after_enable(&mut apu), (0xC000, 1));
     }
 
     #[test]

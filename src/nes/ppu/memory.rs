@@ -180,6 +180,18 @@ impl Memory {
         addr: u16,
         cartridge: &Option<Rc<RefCell<Cartridge>>>,
     ) -> u8 {
+        self.read_nametable_mapped_on_bus(addr, addr & 0x2FFF, cartridge)
+    }
+
+    /// Read from nametable like `read_nametable_mapped`, telling the mapper `bus_addr` is on
+    /// the PPU bus: a PPUDATA read of $3000-$3FFF puts that address there while the byte
+    /// comes from the $2xxx nametable it mirrors (nr-e10).
+    pub fn read_nametable_mapped_on_bus(
+        &self,
+        addr: u16,
+        bus_addr: u16,
+        cartridge: &Option<Rc<RefCell<Cartridge>>>,
+    ) -> u8 {
         let masked_addr = addr & 0x2FFF;
         debug_assert!(
             masked_addr >= 0x2000,
@@ -189,12 +201,23 @@ impl Memory {
         if let Some(cart) = cartridge {
             let mut cart = cart.borrow_mut();
             let mapper = cart.mapper_mut();
+            mapper.ppu_nametable_address(bus_addr);
             if let Some(value) = mapper.read_nametable(masked_addr) {
                 return value;
             }
         }
 
         self.read_nametable(masked_addr)
+    }
+
+    /// Tell the mapper the PPU put a nametable address on its bus without reading it: the
+    /// garbage nametable fetches of the sprite slots, whose byte nothing uses.
+    pub fn notify_nametable_address(&self, addr: u16, cartridge: &Option<Rc<RefCell<Cartridge>>>) {
+        if let Some(cart) = cartridge {
+            cart.borrow_mut()
+                .mapper_mut()
+                .ppu_nametable_address(0x2000 | (addr & 0x0FFF));
+        }
     }
 
     /// Write to nametable at the specified address (with mirroring)

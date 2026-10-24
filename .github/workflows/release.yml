@@ -13,6 +13,8 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: ci
     runs-on: ${{ matrix.os }}
+    # Worst green build 18 min (x86_64-apple-darwin); stops a stalled apt mirror or runner holding the release (nr-nts2).
+    timeout-minutes: 45
     strategy:
       matrix:
         include:

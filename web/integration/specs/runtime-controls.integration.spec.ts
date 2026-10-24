@@ -58,7 +58,8 @@ test.describe("Phase 2 runtime controls", () => {
     });
 
     test("Given mute button exists, when toggled, then state and aria-pressed update correctly", async ({ page }) => {
-        await openApp(page);
+        // The control bar shows with a game, so these run with one.
+        await startFromBundledRom(page);
 
         const muteButton = page.locator(MUTE_BUTTON_SELECTOR);
 
@@ -79,6 +80,22 @@ test.describe("Phase 2 runtime controls", () => {
         await muteButton.click({ timeout: 5000 });
         await expect(muteButton).toHaveAttribute("aria-pressed", "false");
         await expect(muteButton).toContainText(/Audio.*On/i);
+    });
+
+    test("Given the volume slider, when it is turned down, then the speaker shows off at zero and the level survives a reload", async ({ page }) => {
+        // The control bar shows with a game, so these run with one.
+        await startFromBundledRom(page);
+        const volume = page.locator("#volume");
+        const muteButton = page.locator(MUTE_BUTTON_SELECTOR);
+        await expect(volume).toHaveValue("100");
+
+        await volume.fill("0");
+        await expect(muteButton).toHaveClass(/volume-off/);
+        await volume.fill("40");
+        await expect(muteButton).not.toHaveClass(/volume-off/);
+
+        await page.reload();
+        await expect(page.locator("#volume")).toHaveValue("40");
     });
 
     test("Given filter toggle exists, when toggled repeatedly, then filter cycles without crashes", async ({ page }) => {
@@ -164,7 +181,8 @@ test.describe("Phase 2 runtime controls", () => {
             expect(after.height - before.height, `${label}: canvas.height assignments`).toBeLessThanOrEqual(1);
         };
 
-        await openApp(page);
+        // The control bar shows with a game, so these run with one.
+        await startFromBundledRom(page);
 
         // getContext with the type already created returns that context, so this reads the app's own.
         const antialias = await page.evaluate(

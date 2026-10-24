@@ -55,6 +55,11 @@ export function supportedRomExtensionsText(): string {
     return romExtensionTable.map(([extension]) => `.${extension}`).join(", ");
 }
 
+/** Every supported extension, without its dot, in the table's order. */
+export function supportedRomExtensions(): string[] {
+    return romExtensionTable.map(([extension]) => extension);
+}
+
 /** The ROM file input's accept list: every supported extension, then raw binaries. */
 export function romPickerAccept(): string {
     return [...romExtensionTable.map(([extension]) => `.${extension}`), "application/octet-stream"].join(",");

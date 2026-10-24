@@ -70,10 +70,10 @@ step py -m ruff check scripts
 step py -m ruff format --check scripts
 step py -m mypy --config-file scripts/pyproject.toml scripts
 # tsc types the wasm bindings from web/pkg/neser.d.ts, which wasm-bindgen generates and git
-# ignores, so the pkg is built first; --no-bundle stops before vite (nr-n48).
-step sh scripts/build_web.sh --no-bundle
-step npx tsc --noEmit -p tsconfig.json
-step npm test
+# ignores, so the pkg is built first; build:wasm stops before vite (nr-n48).
+step pnpm run build:wasm
+step pnpm run typecheck
+step pnpm test
 
 echo
 echo "full gate passed"

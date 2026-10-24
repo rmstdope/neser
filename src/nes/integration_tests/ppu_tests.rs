@@ -168,16 +168,18 @@ mod tests {
     // Re-pinned in nr-m6o when the $2007 v increment moved one PPU cycle later: frame 20
     // of both ROMs now differs from Mesen2's capture in 383 pixels, all in columns 0-2
     // (2975 before).
+    // Re-pinned in nr-pt7 when the second $2006 write moved v three PPU cycles late with
+    // rendering off too: frame 20 of both ROMs now equals Mesen2's capture, 0 differing pixels.
     setup_rom_crc_test!(
         test_full_palette,
         "roms/nes/automated_tests/full_palette/full_palette.nes",
-        [(20, 854186034)]
+        [(20, 1582429482)]
     );
 
     setup_rom_crc_test!(
         test_full_palette_smooth,
         "roms/nes/automated_tests/full_palette/full_palette_smooth.nes",
-        [(20, 3493986253)]
+        [(20, 994103098)]
     );
 
     setup_rom_crc_test!(

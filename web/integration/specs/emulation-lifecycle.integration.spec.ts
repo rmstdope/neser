@@ -9,7 +9,7 @@ import {
     waitForPausedState
 } from "../helpers/lifecycle.helpers";
 
-const ESSENTIAL_CONTROL_SELECTORS = ["#screen", "#start", "#pause", "#stop", "#reset", "#status"];
+const ESSENTIAL_CONTROL_SELECTORS = ["#library", "#library-choose", "#library-list"];
 const START_BUTTON_SELECTOR = "#start";
 const PAUSE_BUTTON_SELECTOR = "#pause";
 const STOP_BUTTON_SELECTOR = "#stop";
@@ -24,6 +24,12 @@ test.describe("Phase 1 critical path lifecycle", () => {
         for (const selector of ESSENTIAL_CONTROL_SELECTORS) {
             await expect(page.locator(selector)).toBeVisible();
         }
+        // With no game yet, the library shows instead of the picture and its control bar.
+        await expect(page.locator("#screen")).toBeHidden();
+        await expect(page.locator(PAUSE_BUTTON_SELECTOR)).toBeHidden();
+        await expect(page.locator(START_BUTTON_SELECTOR)).toBeHidden();
+        // The status line holds a message only when there is one; while idle it is empty.
+        await expect(page.locator("#status")).toBeAttached();
 
         await waitForIdleState(page);
     });
@@ -43,6 +49,42 @@ test.describe("Phase 1 critical path lifecycle", () => {
 
         await page.locator(PAUSE_BUTTON_SELECTOR).click();
         await waitForRunningState(page);
+    });
+
+    test("Given a running game, when it is paused and resumed within one frame, then a single frame loop carries on", async ({ page }) => {
+        // Each frame loop emulates and draws a whole frame per animation frame. On CI's software
+        // renderer a frame takes long enough for a pause and a resume (Settings, Help, the
+        // pause button) to land inside one; every extra loop then doubled the work until the
+        // browser stopped answering ("Failed to find browser context", nr-oi18).
+        await startFromBundledRom(page);
+        await waitForRunningState(page);
+
+        // From here frames are handed out by hand: the loop's next request lands in a queue.
+        await page.evaluate(() => {
+            const w = window as unknown as { __frames: FrameRequestCallback[] };
+            w.__frames = [];
+            window.requestAnimationFrame = (callback) => w.__frames.push(callback);
+        });
+        const pendingFrames = () => page.evaluate(() => (window as unknown as { __frames: FrameRequestCallback[] }).__frames.length);
+        const runOneFrame = () =>
+            page.evaluate(() => {
+                const w = window as unknown as { __frames: FrameRequestCallback[] };
+                const due = w.__frames;
+                w.__frames = [];
+                const now = performance.now();
+                due.forEach((callback) => callback(now));
+                return w.__frames.length;
+            });
+        await expect.poll(pendingFrames).toBe(1);
+
+        await page.evaluate(() => {
+            const pause = document.querySelector<HTMLButtonElement>("#pause")!;
+            pause.click();
+            pause.click();
+        });
+
+        expect(await runOneFrame()).toBe(1);
+        expect(await runOneFrame()).toBe(1);
     });
 
     test("Given a ROM is loaded, when each emulation control is hit-tested while enabled, then nothing covers it", async ({ page }) => {
