@@ -13,6 +13,8 @@ const PLAYING: PlayView = {
     waiting: false,
     catchingUp: false,
     ended: null,
+    speed: null,
+    slowNote: null,
 };
 
 let screen: HTMLElement;

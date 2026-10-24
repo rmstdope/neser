@@ -3143,6 +3143,8 @@ function renderNtscPass(frame: Uint8Array) {
 function step(timestamp: number) {
     if (!running || paused) return;
     lastFrameTime = timestamp;
+    // Playing together, every animation frame tells how fast this computer is (nr-ayk5.7).
+    play?.animationFrame(timestamp);
     const { shouldStep, shouldRender } = planFrame({
         shouldRender: frameLimiter.shouldRender(timestamp)
     });
@@ -3787,6 +3789,7 @@ function beginPlaying(role: Role, inputDelay: number) {
             giveUp: () => netplaySession.endUnsynced(),
         },
         core: playCore,
+        fullSpeed: gameFrameRate,
         count: (label, onDone) => {
             netplayCounting = true;
             updateEmulationButtons();
@@ -3815,9 +3818,38 @@ function beginPlaying(role: Role, inputDelay: number) {
     updatePlayLocks();
 }
 
+/** The game's own frames a second; before a game is set up, a typical one. */
+function gameFrameRate(): number {
+    return emulator?.inst.frame_rate_hz() ?? 60;
+}
+
+const SLOW_NOTES = {
+    me: "Your computer can't keep full speed, so both games run a little slower.",
+    them: "The other player's computer can't keep full speed, so both games run a little slower.",
+} as const;
+const SLOW_NOTE_MS = 5000;
+/** Takes the slow-speed note away while it shows. */
+let dismissSlowNote: (() => void) | null = null;
+let slowNoteShown = false;
+
+/** Both games run at the speed the slower computer keeps; the first time, a note says why, once (nr-ayk5.7). */
+function showPlaySpeed(view: PlayView) {
+    frameLimiter.setTargetFps(view.speed ?? gameFrameRate());
+    if (view.slowNote && !slowNoteShown) {
+        slowNoteShown = true;
+        dismissSlowNote = toastOverlay.show(SLOW_NOTES[view.slowNote], SLOW_NOTE_MS);
+    }
+    // Paused, a window open, a count, a resync or the end: the note goes, not to come back.
+    if (view.phase !== "playing") {
+        dismissSlowNote?.();
+        dismissSlowNote = null;
+    }
+}
+
 /** The shared game runs only while it is played; paused, counting or ended, its loop rests. */
 function playViewChanged(view: PlayView) {
     playScreen?.draw(view);
+    showPlaySpeed(view);
     if (running) {
         if (view.phase === "playing" && paused) {
             paused = false;
@@ -3841,8 +3873,12 @@ function leavePlay() {
     playRole = null;
     playFrame = null;
     releasePlayPorts();
-    // Playing alone, the sound is never faded.
+    // Playing alone, the sound is never faded, and the game runs at its own speed.
     if (audioContext) audioFade?.reset(audioContext.currentTime);
+    dismissSlowNote?.();
+    dismissSlowNote = null;
+    slowNoteShown = false;
+    if (emulator) frameLimiter.setTargetFps(gameFrameRate());
     updatePlayLocks();
     updateSaveStateButtons();
 }
