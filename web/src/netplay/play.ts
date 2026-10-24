@@ -173,7 +173,8 @@ export function createPlay({
     function resetNow(soft: boolean, by: "me" | "them", frame: number) {
         core.reset(soft);
         lastResetFrame = frame;
-        pausingWindow = null;
+        // A window whose pause still waits for a frame keeps it: closing that window resumes, as ever.
+        if (!(pausingWindow && command === COMMANDS[pausingWindow])) pausingWindow = null;
         closedBeforeItsPause = null;
         // A reset press of this player's not yet carried by a frame is answered by this one.
         if (isReset(command)) command = 0;
@@ -194,7 +195,8 @@ export function createPlay({
         if (pauser < 0) return;
         // The other player's press made before this pause reached them is the same pause.
         if (lastPauseFrame !== null && frame - lastPauseFrame <= delay) {
-            closedBeforeItsPause = null;
+            // A closed window's pause was this one, dropped: there is nothing left to resume.
+            if (pauser === mine && closedBeforeItsPause === PAUSES[commands[pauser]]) closedBeforeItsPause = null;
             return;
         }
         lastPauseFrame = frame;
@@ -260,7 +262,7 @@ export function createPlay({
         const at = lockstep.next_frame();
         // Sent once the other game stopped there; this one is still on its way.
         if (message.at > at) {
-            if (state.phase === "playing") early = message;
+            if (state.phase !== "ended") early = message;
             return;
         }
         // For a frame this game has passed: it cannot be played where it was meant.

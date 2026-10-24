@@ -386,32 +386,32 @@ describe("falling behind", () => {
     });
 });
 
+/** One side alone, fed the other's pads by hand; what it sends is kept. */
+function alone(player: 1 | 2) {
+    const core = new Core();
+    const counts: CountLabel[] = [];
+    const sent: PlayMessage[] = [];
+    const play = createPlay({
+        player,
+        lockstep: new Rules(player, DELAY),
+        link: { sendPacket: () => {}, sendPlay: (message) => sent.push(message) },
+        core,
+        count: (label, onDone) => {
+            counts.push(label);
+            const timer = setTimeout(onDone, 3000);
+            return () => clearTimeout(timer);
+        },
+    });
+    play.begin();
+    return { play, core, counts, sent };
+}
+/** The other player's pads for frames 0 on, with a pause carried by frame 4: both stop after it. */
+const PAUSED_AFTER_4 = [0, 0, 0, 0, 1 << 12, 0, 0, 0];
+const pads = (list: number[]) => new TextEncoder().encode(JSON.stringify(list));
+
 // Review of PR #3390: what reaches a game that is still on its way to the frame both stop at, and
 // presses made close to a pause, a count or another press.
 describe("messages for a frame this game has not reached yet", () => {
-    /** One side alone, fed the other's pads by hand; what it sends is kept. */
-    function alone(player: 1 | 2) {
-        const core = new Core();
-        const counts: CountLabel[] = [];
-        const sent: PlayMessage[] = [];
-        const play = createPlay({
-            player,
-            lockstep: new Rules(player, DELAY),
-            link: { sendPacket: () => {}, sendPlay: (message) => sent.push(message) },
-            core,
-            count: (label, onDone) => {
-                counts.push(label);
-                const timer = setTimeout(onDone, 3000);
-                return () => clearTimeout(timer);
-            },
-        });
-        play.begin();
-        return { play, core, counts, sent };
-    }
-    /** The other player's pads for frames 0 on, with a pause carried by frame 4: both stop after it. */
-    const PAUSED_AFTER_4 = [0, 0, 0, 0, 1 << 12, 0, 0, 0];
-    const pads = (list: number[]) => new TextEncoder().encode(JSON.stringify(list));
-
     it("plays a reset there once it arrives, so both games reset after the same frame", () => {
         const s = alone(2);
         s.play.receive(pads(PAUSED_AFTER_4));
@@ -514,5 +514,74 @@ describe("presses close together", () => {
         expect(join.core.resets()).toHaveLength(1);
         expect(host.counts).toHaveLength(1);
         expect(join.counts).toHaveLength(1);
+    });
+});
+
+// Second review of PR #3390: what a reset or a count does to a window's pause, and a message that
+// arrives while this game still counts.
+describe("a window, a count and a reset together", () => {
+    const P = 1 << 12;
+    const RESET = 5 << 12;
+    /** Ticks until the phase is `phase`, at most `limit` times. */
+    function tickUntil(s: ReturnType<typeof alone>, phase: string, limit = 20) {
+        for (let i = 0; i < limit && s.play.view().phase !== phase; i++) s.play.tick();
+        expect(s.play.view().phase).toBe(phase);
+    }
+
+    it("holds a message that arrives while this game still counts, and plays it at the frame it is for", () => {
+        const s = alone(2);
+        s.play.receive(pads([0, 0, RESET, 0, P, 0, 0, 0]));
+        tickUntil(s, "counting");
+        s.play.message({ t: "reset", soft: false, at: 5 });
+        vi.advanceTimersByTime(3000);
+        tickUntil(s, "counting");
+        expect(s.core.resets()).toEqual([
+            { reset: true, afterFrames: 3 },
+            { reset: false, afterFrames: 5 },
+        ]);
+    });
+
+    it("still resumes after a window closed before its pause, when another player's repeated press is dropped first", () => {
+        const s = alone(2);
+        s.play.receive(pads([0, 0, P, 0, P]));
+        tickUntil(s, "paused");
+        s.play.resume();
+        vi.advanceTimersByTime(3000);
+        expect(s.play.view().phase).toBe("playing");
+        s.play.windowOpened("settings");
+        s.play.tick();
+        s.play.windowClosed("settings");
+        s.play.tick();
+        s.play.receive(pads([0, 0, P, 0, P, 0, 0, 0, 0, 0, 0]));
+        tickUntil(s, "counting");
+        expect(s.sent.filter((m) => m.t === "resume")).toHaveLength(2);
+    });
+
+    it("resumes on closing a window whose pause was waiting while a reset was played", () => {
+        const s = alone(2);
+        s.play.receive(pads([0, 0, P, 0, 0, 0, 0, 0, 0, 0]));
+        tickUntil(s, "paused");
+        s.play.resume();
+        s.play.windowOpened("keys");
+        s.play.message({ t: "reset", soft: true, at: 3 });
+        expect(s.counts).toEqual(["resume", "reset-them"]);
+        vi.advanceTimersByTime(3000);
+        tickUntil(s, "paused");
+        expect(s.play.view()).toMatchObject({ pausedBy: "me", pauseReason: "keys" });
+        s.play.windowClosed("keys");
+        expect(s.play.view()).toMatchObject({ phase: "counting", count: "resume" });
+    });
+
+    it("does not pause for a window opened and closed during a count", async () => {
+        await run(200);
+        host.play.pause();
+        await run(300);
+        host.play.resume();
+        await run(500);
+        host.play.windowOpened("keys");
+        host.play.windowClosed("keys");
+        await run(3500);
+        expect(host.play.view().phase).toBe("playing");
+        expect(join.play.view().phase).toBe("playing");
     });
 });
