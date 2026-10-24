@@ -2553,3 +2553,69 @@ body.handheld .netplay-chip-long {
   font-weight: 800;
   line-height: 1;
 }
+
+/* ── Playing together (nr-ayk5.5): paused, waiting, catching up and ended, over the dimmed picture ── */
+
+.netplay-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  text-align: center;
+  pointer-events: all;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.netplay-screen h3 {
+  margin: 0;
+  font-size: clamp(16px, 4vmin, 22px);
+  font-weight: 700;
+}
+
+.netplay-screen p {
+  margin: 0;
+  max-width: 80%;
+  color: #c9d6e6;
+  font-size: 13px;
+}
+
+.netplay-screen .netplay-actions {
+  justify-content: center;
+}
+
+/* A phone's picture is small: the buttons stack, the main one first, as drawn. */
+body.handheld .netplay-screen .netplay-actions {
+  flex-direction: column;
+  align-items: center;
+  margin-top: 8px;
+}
+
+body.handheld .netplay-screen .btn-primary {
+  order: -1;
+}
+
+.netplay-confirm {
+  padding: 18px;
+}
+
+.netplay-confirm h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.netplay-confirm p {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* The top-bar chip while the other player's game holds this one. */
+#netplay-open[data-tone="wait"] { border-color: #e9b65f; }
+.netplay-dot[data-tone="wait"] { background: var(--np-warn, #e9b65f); }
