@@ -422,7 +422,8 @@ canvas {
 
 /* Hover tips: what the control does, and its key when it has one. */
 [data-tip]:hover::after,
-[data-tip]:focus-visible::after {
+[data-tip]:focus-visible::after,
+.settings-group[data-play-locked][data-tip]:focus-within::after {
   content: attr(data-tip);
   position: absolute;
   bottom: calc(100% + 10px);
@@ -2619,3 +2620,27 @@ body.handheld .netplay-screen .btn-primary {
 /* The top-bar chip while the other player's game holds this one. */
 #netplay-open[data-tone="wait"] { border-color: #e9b65f; }
 .netplay-dot[data-tone="wait"] { background: var(--np-warn, #e9b65f); }
+
+/* Greyed in place while playing together; the tip says why, on hover and on Tab. */
+.topbar-btn[aria-disabled="true"],
+.topbar-btn-labeled[aria-disabled="true"],
+.hh-tile[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-group[data-play-locked] {
+  position: relative;
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-group[data-play-locked] * {
+  cursor: not-allowed;
+}
+
+.help-netplay {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}

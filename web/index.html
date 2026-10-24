@@ -97,9 +97,10 @@
         <div id="game-view" class="game-view">
           <div class="game-stage">
               <!-- Touch controls wrapper: D-pad | Canvas | Action buttons -->
-              <div id="touch-controls" class="touch-controls" aria-hidden="true">
+              <!-- The touch pads are for fingers alone; the picture between them, and what shows over it, is for everyone -->
+              <div id="touch-controls" class="touch-controls">
                 <!-- D-pad (left of canvas) -->
-                <div class="touch-dpad-area">
+                <div class="touch-dpad-area" aria-hidden="true">
                   <div class="touch-joystick" data-touch-zone="joystick" aria-label="Directional joystick">
                     <div class="touch-joystick-base"></div>
                     <div class="touch-joystick-knob"></div>
@@ -131,7 +132,7 @@
                 </div>
 
                 <!-- Action buttons (right of canvas) -->
-                <div class="touch-action-area">
+                <div class="touch-action-area" aria-hidden="true">
                   <div class="touch-meta-buttons">
                     <div class="touch-meta-btn" data-button="select" aria-label="Select button">SELECT</div>
                     <div class="touch-meta-btn" data-button="start" aria-label="Start button">START</div>
@@ -286,6 +287,7 @@
           <div id="help-shortcuts" class="help-shortcuts"></div>
         </section>
         <section class="help-col" aria-label="Controller">
+          <p id="help-netplay" class="help-netplay" hidden></p>
           <div id="help-chips" class="help-chips" role="group" aria-label="Controller to show"></div>
           <div id="help-pad" class="help-pad"></div>
           <div id="help-gamepad-note" class="help-gamepad-note"><span class="help-gamepad-icon" data-icon="pad" aria-hidden="true"></span><span>Plug in a gamepad and press any button to use it instead.</span></div>
