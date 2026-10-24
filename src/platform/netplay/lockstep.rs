@@ -223,14 +223,23 @@ impl Lockstep {
         self.desync
     }
 
-    /// The first remote frame not yet received: what the peer must still send.
-    fn ack(&self) -> u32 {
-        let known = self
-            .remote_inputs
+    /// How many remote pads from `next_frame` on are known, without a gap. More than
+    /// `input_delay` means the peer has run frames this side has not: this side is behind.
+    pub fn remote_frames_known(&self) -> u32 {
+        self.remote_inputs
             .iter()
             .position(Option::is_none)
-            .unwrap_or(self.remote_inputs.len());
-        self.next_frame + known as u32
+            .unwrap_or(self.remote_inputs.len()) as u32
+    }
+
+    /// The input delay both sides play with.
+    pub fn input_delay(&self) -> u32 {
+        self.config.input_delay
+    }
+
+    /// The first remote frame not yet received: what the peer must still send.
+    fn ack(&self) -> u32 {
+        self.next_frame + self.remote_frames_known()
     }
 
     fn is_hash_frame(&self, frame: u32) -> bool {
@@ -354,6 +363,20 @@ mod tests {
                 pads: [0x11, 0x21]
             })
         );
+    }
+
+    #[test]
+    fn a_side_whose_peer_ran_ahead_knows_more_than_its_delay() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        assert_eq!(a.remote_frames_known(), 2, "the released frames");
+        b.advance(0x21);
+        b.advance(0x22);
+        a.receive(&b.packet().encode()).unwrap();
+        assert_eq!(a.remote_frames_known(), 4, "b ran two frames a has not");
+        a.advance(0x11);
+        a.advance(0x12);
+        assert_eq!(a.remote_frames_known(), 2, "a has caught up");
     }
 
     #[test]

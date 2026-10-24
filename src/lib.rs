@@ -19,6 +19,9 @@ pub mod wasm_gb;
 #[path = "frontends/web/wasm_gba.rs"]
 pub mod wasm_gba;
 #[cfg(feature = "wasm")]
+#[path = "frontends/web/wasm_lockstep.rs"]
+pub mod wasm_lockstep;
+#[cfg(feature = "wasm")]
 #[path = "frontends/web/wasm_snes.rs"]
 pub mod wasm_snes;
 #[cfg(all(test, feature = "wasm", target_arch = "wasm32"))]

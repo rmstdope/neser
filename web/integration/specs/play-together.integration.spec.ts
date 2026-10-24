@@ -69,6 +69,54 @@ async function connect(host: Page, joiner: Page) {
     await expect(panel(joiner)).toContainText("Connected to the host.", { timeout: CONNECT_TIMEOUT_MS });
 }
 
+/**
+ * The shared game runs. Eject is greyed out while playing together (aria-disabled, which
+ * Playwright reads as disabled), so this does not wait for it as `waitForRunningState` does.
+ */
+async function waitForPlaying(page: Page) {
+    await expect(page.locator("#emulation-controls")).toHaveAttribute("data-emulation-state", "running", { timeout: CONNECT_TIMEOUT_MS });
+    await expect(page.locator("#pause")).toHaveText("Pause");
+    await expect(page.locator("#pause")).toBeEnabled();
+}
+
+/** Both games show their count at the same time, saying what each is told, and then both play on. */
+async function bothCount(host: Page, joiner: Page, hostWords: string, joinerWords: string) {
+    await Promise.all([
+        expect(host.locator(".netplay-countdown")).toContainText(hostWords, { timeout: CONNECT_TIMEOUT_MS }),
+        expect(joiner.locator(".netplay-countdown")).toContainText(joinerWords, { timeout: CONNECT_TIMEOUT_MS }),
+    ]);
+    for (const page of [host, joiner]) await waitForPlaying(page);
+}
+
+function endedScreen(page: Page) {
+    return page.locator(".netplay-screen", { hasText: "Playing together has ended" });
+}
+
+/** Answers "End playing together?" with End playing together. */
+async function confirmEnd(page: Page) {
+    const question = page.locator(".netplay-confirm");
+    await expect(question).toContainText("The game stops for both of you. You'll need new codes to play together again.");
+    await expect(question.getByRole("button", { name: "Keep playing" })).toBeFocused();
+    await question.getByRole("button", { name: "End playing together" }).click();
+}
+
+/** The host runs a NES game, the two connect, the host starts it, and both are playing after the count. */
+async function startPlaying(host: Page, browser: Browser): Promise<Page> {
+    await openApp(host);
+    await loadRomFromFileInput(host);
+    await waitForRunningState(host);
+    const joiner = await secondBrowser(browser);
+    await openApp(joiner);
+    await connect(host, joiner);
+    await panel(host).getByRole("button", { name: "Start game" }).click();
+    for (const page of [host, joiner]) {
+        await expect(page.locator(".netplay-countdown")).toBeVisible({ timeout: CONNECT_TIMEOUT_MS });
+        await expect(page.locator(".netplay-countdown")).toBeHidden({ timeout: 5_000 });
+        await waitForPlaying(page);
+    }
+    return joiner;
+}
+
 test.describe("Play together", () => {
     test("Given a host running a NES game and a joiner in the library, when they swap codes, then both are connected with a Great response time, and the host's chip shows when the joiner leaves", async ({
         page: host,
@@ -116,13 +164,15 @@ test.describe("Play together", () => {
         page: host,
         browser
     }) => {
+        // Two browsers connect, count down and play through several shared steps.
+        test.slow();
         await openApp(host);
         await loadRomFromFileInput(host);
         await waitForRunningState(host);
         const joiner = await secondBrowser(browser);
         await openApp(joiner);
         await loadGbaRomFromFileInput(joiner);
-        await waitForRunningState(joiner);
+        await waitForPlaying(joiner);
 
         await openPlayTogether(joiner);
         await panel(joiner).getByRole("button", { name: /Join a game/ }).click();
@@ -141,27 +191,117 @@ test.describe("Play together", () => {
         }
         for (const page of [host, joiner]) {
             await expect(page.locator(".netplay-countdown")).toBeHidden({ timeout: 5_000 });
-            await waitForRunningState(page);
+            await waitForPlaying(page);
         }
         await expect(joiner.locator("#game-name")).toHaveText(hostName!);
         await expect(joiner.locator("#netplay-open")).toHaveText(/^Connected · \d+ ms$/);
         await expect(joiner.locator("#save-state")).toBeDisabled();
         await expect(joiner.locator("#recent")).not.toContainText(hostName!);
 
-        // Playing together ends: the received game goes with it.
+        // Playing together ends (nr-ayk5.5): Disconnect asks first, both stop on the last picture,
+        // and the joiner's Back to library lets the received game go.
         await openPlayTogether(host);
         await panel(host).getByRole("button", { name: "Disconnect" }).click();
-        await expect(joiner.locator("#netplay-open")).toHaveText("Disconnected", { timeout: CONNECT_TIMEOUT_MS });
+        await confirmEnd(host);
+        await expect(endedScreen(joiner)).toContainText("The other player ended it.", { timeout: CONNECT_TIMEOUT_MS });
+        await expect(joiner.locator("#netplay-open")).toHaveText("Disconnected");
+        await endedScreen(joiner).getByRole("button", { name: "Back to library" }).click();
         await waitForIdleState(joiner);
         await expect(joiner.locator("#library")).toBeVisible();
-        await host.keyboard.press("Escape");
+        await expect(endedScreen(host)).toContainText("You ended it.");
+        await endedScreen(host).getByRole("button", { name: "Resume" }).click();
         await waitForRunningState(host);
+    });
+
+    test("Given two players playing together, then the controls that would make the games differ are greyed with their reason, and the Keys and controls panel says which player each is", async ({
+        page: host,
+        browser
+    }) => {
+        // Two browsers connect, count down and play through several shared steps.
+        test.slow();
+        const joiner = await startPlaying(host, browser);
+        for (const page of [host, joiner]) {
+            for (const id of ["#save-state", "#load-state", "#stop", "#library-open"]) {
+                await expect(page.locator(id)).toHaveAttribute("aria-disabled", "true");
+                await expect(page.locator(id)).toHaveAttribute("data-tip", "Not available while playing together");
+            }
+        }
+        await host.locator("#screen").click();
+        await host.keyboard.press("F6");
+        await expect(host.locator(".neser-toast")).toHaveText("Not available while playing together");
+        await joiner.locator("#stop").click({ force: true });
+        await waitForPlaying(joiner);
+        await joiner.keyboard.press("h");
+        await expect(joiner.locator("#help-netplay")).toHaveText("Playing together — your keys and gamepads control player 2.");
+        await expect(host.locator(".netplay-screen")).toContainText("The other player is in Keys and controls.", { timeout: CONNECT_TIMEOUT_MS });
+        await joiner.keyboard.press("Escape");
+        await bothCount(host, joiner, "Resuming", "Resuming");
+    });
+
+    test("Given two players playing together, when either pauses, resets, opens Settings or ends it, then both games do so and each is told who did", async ({
+        page: host,
+        browser
+    }) => {
+        // Two browsers connect, count down and play through several shared steps.
+        test.slow();
+        const joiner = await startPlaying(host, browser);
+
+        await joiner.locator("#pause").click();
+        await expect(host.locator(".netplay-screen")).toContainText("The other player paused the game.", { timeout: CONNECT_TIMEOUT_MS });
+        await expect(joiner.locator(".netplay-screen")).toContainText("You paused the game.");
+        await expect(joiner.locator(".netplay-screen").getByRole("button", { name: "Resume" })).toBeFocused();
+        for (const page of [host, joiner]) {
+            await expect(page.locator("#emulation-controls")).toHaveAttribute("data-emulation-state", "paused");
+            await expect(page.locator("#pause")).toHaveText("Resume");
+        }
+        await host.locator(".netplay-screen").getByRole("button", { name: "Resume" }).click();
+        await bothCount(host, joiner, "Resuming", "Resuming");
+
+        await host.locator("#settings-open").click();
+        await expect(joiner.locator(".netplay-screen")).toContainText("The other player is in Settings.", { timeout: CONNECT_TIMEOUT_MS });
+        await host.keyboard.press("Escape");
+        await bothCount(host, joiner, "Resuming", "Resuming");
+
+        await host.locator("#reset").click();
+        await bothCount(host, joiner, "You reset the game", "The other player reset the game");
+
+        await host.locator("#pause").click();
+        await expect(joiner.locator(".netplay-screen")).toContainText("The other player paused the game.", { timeout: CONNECT_TIMEOUT_MS });
+        await joiner.locator(".netplay-screen").getByRole("button", { name: "End playing together" }).click();
+        const question = joiner.locator(".netplay-confirm");
+        await expect(question).toContainText("End playing together?");
+        await expect(question.getByRole("button", { name: "Keep playing" })).toBeFocused();
+        await joiner.keyboard.press("Escape");
+        await expect(question).toBeHidden();
+        await expect(joiner.locator(".netplay-screen")).toContainText("The other player paused the game.");
+        await joiner.locator(".netplay-screen").getByRole("button", { name: "End playing together" }).click();
+        await confirmEnd(joiner);
+        await expect(endedScreen(joiner).locator("p")).toHaveText(["You ended it.", "The host's game isn't kept on this computer."]);
+        await expect(endedScreen(host).locator("p")).toHaveText(["The other player ended it.", "You can keep playing on your own from here."], {
+            timeout: CONNECT_TIMEOUT_MS
+        });
+        await expect(host.locator("#save-state")).not.toHaveAttribute("aria-disabled", "true");
+        await host.keyboard.press("Space");
+        await waitForRunningState(host);
+        await expect(host.locator(".netplay-screen")).toHaveCount(0);
+    });
+
+    test("Given two players playing together, when one closes their page, then the other's game stops and says they left", async ({
+        page: host,
+        browser
+    }) => {
+        // Two browsers connect, count down and play through several shared steps.
+        test.slow();
+        const joiner = await startPlaying(host, browser);
+        await joiner.close();
+        await expect(endedScreen(host)).toContainText("The other player left.", { timeout: CONNECT_TIMEOUT_MS });
+        await expect(host.locator("#netplay-open")).toHaveText("Disconnected");
     });
 
     test("Given a Game Boy Advance game, when Play together opens, then hosting is greyed out with its reason", async ({ page }) => {
         await openApp(page);
         await loadGbaRomFromFileInput(page);
-        await waitForRunningState(page);
+        await waitForPlaying(page);
 
         await openPlayTogether(page);
         const host = panel(page).locator("[data-choice=host]");

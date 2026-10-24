@@ -6,6 +6,7 @@ use crate::nes::input::ArkanoidState;
 use crate::wasm::{WasmNes, gamepad_init_toast_message, key_binding_table, rom_extension_table};
 use crate::wasm_gb::WasmGb;
 use crate::wasm_gba::WasmGba;
+use crate::wasm_lockstep::WasmLockstep;
 use crate::wasm_snes::WasmSnes;
 use wasm_bindgen_test::*;
 
@@ -2236,4 +2237,42 @@ fn debugger_run_to_next_frame_advances_with_a_jammed_cpu() {
 
     assert_ne!(snapshot_number(&mut nes, "frame_count"), frame);
     assert!(nes.is_debugger_open());
+}
+
+// ── WasmLockstep (nr-ayk5.5): the page's handle on the lockstep rules ──
+
+#[wasm_bindgen_test]
+fn wasm_lockstep_two_sides_advance_together() {
+    let mut host = WasmLockstep::new(1, 2).expect("player 1");
+    let mut joiner = WasmLockstep::new(2, 2).expect("player 2");
+    assert_eq!(host.input_delay(), 2);
+    assert_eq!(host.advance(0x11), vec![0, 0, 0]);
+    assert_eq!(host.advance(0x12), vec![1, 0, 0]);
+    assert_eq!(joiner.advance(0x21), vec![0, 0, 0]);
+    assert_eq!(joiner.advance(0x22), vec![1, 0, 0]);
+    assert!(
+        host.advance(0x13).is_empty(),
+        "frame 2 needs the joiner's pad"
+    );
+    assert!(joiner.receive(&host.packet()));
+    assert!(host.receive(&joiner.packet()));
+    assert_eq!(
+        host.advance(0x13),
+        vec![2, 0x11, 0x21],
+        "player 1 first, on both"
+    );
+    assert_eq!(joiner.advance(0x23), vec![2, 0x11, 0x21]);
+    assert_eq!(host.next_frame(), 3);
+    assert_eq!(joiner.remote_frames_known(), 1);
+}
+
+#[wasm_bindgen_test]
+fn wasm_lockstep_refuses_what_it_cannot_play() {
+    assert!(WasmLockstep::new(3, 2).is_err(), "only players 1 and 2");
+    assert!(
+        WasmLockstep::new(1, 0).is_err(),
+        "an input delay of 0 could never run"
+    );
+    let mut side = WasmLockstep::new(1, 2).expect("player 1");
+    assert!(!side.receive(&[9, 9, 9]), "not a packet");
 }

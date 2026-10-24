@@ -3,6 +3,7 @@ import init, {
     WasmGb,
     WasmGba,
     WasmSnes,
+    WasmLockstep,
     gamepad_init_toast_message,
     key_binding_table,
     rom_extension_table,
@@ -90,7 +91,9 @@ import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } f
 import { THIS_BUILD } from "./netplay/build_id";
 import { webRtcLinks } from "./netplay/peer_link";
 import { NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
-import { createNetplaySession, type NetplayStart } from "./netplay/session";
+import { createNetplaySession, type NetplayStart, type Role } from "./netplay/session";
+import { createPlay, type CountLabel, type Play, type PlayCore, type PlayView } from "./netplay/play";
+import { createPlayScreen, type PlayScreen } from "./ui/play_screen";
 import { createPlayTogether } from "./ui/play_together";
 import { runCountdown } from "./ui/countdown";
 import { createCrosshair } from "./display/crosshair";
@@ -931,6 +934,47 @@ let currentFirmware: { chip: string; image: Uint8Array } | null = null;
 let receivedGame: GamePackage | null = null;
 /** The 3-2-1 count before playing together is on; nothing may skip or interrupt it. */
 let netplayCounting = false;
+/**
+ * Playing together (nr-ayk5.5): the game both browsers play, from the start until it is left —
+ * the host playing on alone, or the joiner going back to the library.
+ */
+let play: Play | null = null;
+let playScreen: PlayScreen | null = null;
+let playRole: Role | null = null;
+/** The picture of the shared game's last frame, which the frame loop draws. */
+let playFrame: Uint8Array | null = null;
+/** This player ended playing together, rather than the other ending it or leaving. */
+let endingHere = false;
+const PLAY_LOCKED = "Not available while playing together";
+
+/** Playing together, and not yet ended. */
+function playing(): boolean {
+    return play !== null && play.view().phase !== "ended";
+}
+
+/** What playing together greys out: while it lasts, and for the joiner until they go back to the library. */
+function playLocked(): boolean {
+    return play !== null && (play.view().phase !== "ended" || playRole === "join");
+}
+
+/** Playing together has ended and this is the joiner: only Back to library is left. */
+function playEndedForJoiner(): boolean {
+    return play?.view().phase === "ended" && playRole === "join";
+}
+
+/** A greyed-out control was used: it says why, briefly, over the game. */
+function refusedWhilePlaying(): boolean {
+    if (!playLocked()) return false;
+    toastOverlay.show(PLAY_LOCKED);
+    return true;
+}
+
+/** While playing together every local pad press drives this player, whichever port it aims at. */
+function playPress(controller: number, button: number, pressed: boolean): boolean {
+    if (!playing()) return false;
+    play!.press(controller, button, pressed);
+    return true;
+}
 /** Game Boy Color LCD colour correction; lives for the page, not across reloads (like Filter). */
 const cgbColor = createCgbColorControl({
     refreshButton: () => updateCgbColorButton(),
@@ -1173,6 +1217,7 @@ function updateView() {
 }
 
 function openLibraryOverGame() {
+    if (refusedWhilePlaying()) return;
     // A stopped game has nothing to go back to: the Library is then Back to library.
     if (gameCrashed) {
         clearGameStopped();
@@ -1362,6 +1407,12 @@ function updateEmulationButtons() {
     }
     if (resetBtn) {
         resetBtn.disabled = !states.resetEnabled;
+    }
+    // The joiner's game has stopped for good once playing together ends: only Back to library is left.
+    if (playEndedForJoiner()) {
+        for (const button of [pauseBtn, resetBtn, document.getElementById("hh-pause")]) {
+            if (button) (button as HTMLButtonElement).disabled = true;
+        }
     }
     // The count before playing together cannot be skipped or interrupted.
     if (netplayCounting) {
@@ -2157,6 +2208,13 @@ function resumeFrameLoop() {
 }
 
 function pauseResume() {
+    // Playing together, Pause pauses both games and Resume resumes both; once it has ended, the
+    // host's Resume plays on alone.
+    if (play) {
+        if (playing()) play.pause();
+        else if (playRole === "host") playAlone();
+        return;
+    }
     if (!emulator || !running || netplayCounting) return;
     paused = !paused;
     if (!paused) {
@@ -2651,6 +2709,7 @@ function debuggerClose() {
 }
 
 function debuggerToggle() {
+    if (refusedWhilePlaying()) return;
     if (!nes || !running) return;
     if (nes.is_debugger_open()) {
         debuggerClose();
@@ -2762,6 +2821,8 @@ function debuggerHexdumpGoToAddress() {
 }
 
 function stop() {
+    // A host that ejects after playing together has ended leaves it behind with the game.
+    if (play?.view().phase === "ended") leavePlay();
     // The game's last frame becomes its card's picture; the next game must not inherit it.
     captureRecentThumbnail();
     lastFrame = null;
@@ -3078,9 +3139,17 @@ function step(timestamp: number) {
         }
 
         const wasmT0 = performance.now();
-        const frame = emulator!.kind === "gba"
-            ? emulator!.inst.render_frame_rgb()
-            : emulator!.inst.render_frame_rgba();
+        let frame: Uint8Array;
+        if (play) {
+            // A frame of the shared game runs only once both pads for it are known.
+            if (play.tick() === 0 || !playFrame) {
+                scheduleFrameLoop();
+                return;
+            }
+            frame = playFrame;
+        } else {
+            frame = emulator!.kind === "gba" ? emulator!.inst.render_frame_rgb() : emulator!.inst.render_frame_rgba();
+        }
         const sourceFormat = frameTextureFormat();
         const wasmElapsedMs = performance.now() - wasmT0;
 
@@ -3246,8 +3315,11 @@ const settingsPanel = createSettingsPanel({
     openButton: document.getElementById("settings-open") as HTMLButtonElement,
     closeButton: document.getElementById("settings-close") as HTMLButtonElement,
     onOpen: () => {
-        pausedBySettings = running && !paused;
-        if (pausedBySettings) pauseResume();
+        if (playing()) play!.windowOpened("settings");
+        else {
+            pausedBySettings = running && !paused;
+            if (pausedBySettings) pauseResume();
+        }
         settingsKeysConsole = emulator?.kind ?? settingsKeysConsole;
         renderSettingsKeys();
         renderSettingsGamepads();
@@ -3256,7 +3328,8 @@ const settingsPanel = createSettingsPanel({
         if (firmwareMessage) firmwareMessage.textContent = "";
     },
     onClose: () => {
-        if (pausedBySettings && running && paused) pauseResume();
+        if (playing()) play!.windowClosed("settings");
+        else if (pausedBySettings && running && paused) pauseResume();
         pausedBySettings = false;
     },
 });
@@ -3427,11 +3500,23 @@ function openHelp() {
     helpConsole = emulator?.kind ?? helpConsole;
     helpPlayer = 0;
     renderHelpController();
-    pausedByHelp = running && !paused;
-    if (pausedByHelp) pauseResume();
+    renderHelpPlayer();
+    if (playing()) play!.windowOpened("keys");
+    else {
+        pausedByHelp = running && !paused;
+        if (pausedByHelp) pauseResume();
+    }
     helpPanel.showModal();
     helpOpenBtn.setAttribute("aria-expanded", "true");
     fitHelpPad();
+}
+
+/** Playing together, the panel says which player this computer's keys and gamepads drive. */
+function renderHelpPlayer() {
+    const line = document.getElementById("help-netplay");
+    if (!line) return;
+    line.hidden = !playing();
+    line.textContent = playing() ? `Playing together — your keys and gamepads control player ${playRole === "host" ? 1 : 2}.` : "";
 }
 
 function closeHelp() {
@@ -3440,7 +3525,8 @@ function closeHelp() {
 
 helpPanel.addEventListener("close", () => {
     helpOpenBtn.setAttribute("aria-expanded", "false");
-    if (pausedByHelp && running && paused) pauseResume();
+    if (playing()) play!.windowClosed("keys");
+    else if (pausedByHelp && running && paused) pauseResume();
     pausedByHelp = false;
 });
 // H closes it as it opened it; Esc closes any modal dialog by itself.
@@ -3495,6 +3581,7 @@ function netplayCore(): WasmNes | WasmSnes | null {
  * arrived, and the two are starting, it is refused.
  */
 function mayLeaveGameForNetplay(): boolean {
+    if (refusedWhilePlaying()) return false;
     if (netplayCounting || joinStarting) return false;
     const view = netplaySession.view();
     if (view.role === "host" && view.sending) return netplaySession.cancelSending();
@@ -3554,11 +3641,16 @@ function showFirstFrame() {
  * Both browsers, together: the windows close, the joiner's own game closes and the host's is set
  * up (the host waits about as long), the host's moment shows dimmed under the count, then it runs.
  */
-async function startNetplayGame({ role, game }: NetplayStart) {
+async function startNetplayGame({ role, game, inputDelay }: NetplayStart) {
+    // Begun before anything else, so a packet from a game that starts sooner is not lost.
+    beginPlaying(role, inputDelay);
     // The game the window paused is replaced (joiner) or held for the count (host): closing must not resume it.
     pausedByNetplay = false;
     heldForSending = false;
     playTogether.close();
+    // The debugger belongs to one game; this one is shared.
+    if (nes?.is_debugger_open()) nes.debugger_continue();
+    hideDebuggerPanel();
     if (role === "join") {
         if (running) stop();
         romInput.value = "";
@@ -3575,13 +3667,14 @@ async function startNetplayGame({ role, game }: NetplayStart) {
         if (receivedGame !== game) {
             // Its bytes were let go of under it (null), unless another game was chosen meanwhile.
             if (running && (romBytes === null || romBytes === game.rom)) stop();
+            leavePlay();
             updateView();
             return;
         }
         updateView();
     }
     const core = netplayCore();
-    if (!core) return;
+    if (!core) return leavePlay();
     paused = true;
     netplayCounting = true;
     try {
@@ -3593,14 +3686,190 @@ async function startNetplayGame({ role, game }: NetplayStart) {
     updateEmulationButtons();
     cancelCountdown = runCountdown({
         screen: screenWrap,
-        player: role === "host" ? 1 : 2,
+        label: `You are player ${role === "host" ? 1 : 2}`,
         onDone: () => {
             cancelCountdown = null;
             netplayCounting = false;
-            if (running && paused) pauseResume();
-            else updateEmulationButtons();
+            // Both pads start released, whatever was held before the count.
+            releasePlayPorts();
+            play?.begin();
+            updateEmulationButtons();
         },
     });
+}
+
+const COUNT_WORDS: Record<CountLabel, string> = {
+    resume: "Resuming",
+    "reset-me": "You reset the game",
+    "reset-them": "The other player reset the game",
+};
+
+/** The shared game as the play controller drives it: both pads on ports 1 and 2, then one frame. */
+const playCore: PlayCore = {
+    runFrame: (pad1, pad2) => {
+        const core = netplayCore();
+        if (!core) return;
+        const buttons = emulator!.kind === "snes" ? 12 : 8;
+        for (let button = 0; button < buttons; button++) {
+            core.set_button(1, button, ((pad1 >> button) & 1) === 1);
+            core.set_button(2, button, ((pad2 >> button) & 1) === 1);
+        }
+        playFrame = core.render_frame_rgba();
+    },
+    reset: (soft) => netplayCore()?.reset(soft),
+};
+
+function releasePlayPorts() {
+    const core = netplayCore();
+    if (!core) return;
+    for (let button = 0; button < 12; button++) {
+        core.set_button(1, button, false);
+        core.set_button(2, button, false);
+    }
+}
+
+/** Playing together begins: the lockstep rules, the shared game's controller and its screens. */
+function beginPlaying(role: Role, inputDelay: number) {
+    leavePlay();
+    playRole = role;
+    endingHere = false;
+    play = createPlay({
+        player: role === "host" ? 1 : 2,
+        lockstep: new WasmLockstep(role === "host" ? 1 : 2, inputDelay),
+        link: { sendPacket: (bytes) => netplaySession.sendPacket(bytes), sendPlay: (message) => netplaySession.sendPlay(message) },
+        core: playCore,
+        count: (label, onDone) => {
+            netplayCounting = true;
+            updateEmulationButtons();
+            const cancel = runCountdown({
+                screen: screenWrap,
+                label: COUNT_WORDS[label],
+                onDone: () => {
+                    netplayCounting = false;
+                    onDone();
+                },
+            });
+            return () => {
+                cancel();
+                netplayCounting = false;
+            };
+        },
+    });
+    playScreen = createPlayScreen({
+        screen: screenWrap,
+        role,
+        onResume: () => (play?.view().phase === "ended" ? playAlone() : play?.resume()),
+        onEnd: endPlaying,
+        onBackToLibrary: backToLibraryAfterPlaying,
+    });
+    play.subscribe(playViewChanged);
+    updatePlayLocks();
+}
+
+/** The shared game runs only while it is played; paused, counting or ended, its loop rests. */
+function playViewChanged(view: PlayView) {
+    playScreen?.draw(view);
+    if (running) {
+        if (view.phase === "playing" && paused) {
+            paused = false;
+            resumeFrameLoop();
+        } else if (view.phase !== "playing" && view.phase !== "starting" && !paused) {
+            paused = true;
+            setStatus("Paused");
+        }
+    }
+    playTogether.refresh();
+    updatePlayLocks();
+    updateEmulationButtons();
+}
+
+/** Playing together is over for this page: its screens go and every control works again. */
+function leavePlay() {
+    if (!play) return;
+    playScreen?.remove();
+    playScreen = null;
+    play = null;
+    playRole = null;
+    playFrame = null;
+    releasePlayPorts();
+    updatePlayLocks();
+    updateSaveStateButtons();
+}
+
+/** The host's Resume once playing together has ended: the game carries on from that moment, alone. */
+function playAlone() {
+    leavePlay();
+    if (running && paused) pauseResume();
+    else updateEmulationButtons();
+}
+
+/** End playing together, asked and confirmed: both games stop, and the other side is told. */
+function endPlaying() {
+    endingHere = true;
+    // Ended before the window closes: closing it while still playing would resume both games.
+    netplaySession.end();
+    playTogether.close();
+    playTogether.markEnded();
+}
+
+/** The joiner's Back to library: the host's game goes, and the joiner's own settings come back. */
+function backToLibraryAfterPlaying() {
+    leavePlay();
+    endReceivedGame();
+}
+
+/** The controls playing together greys out in place, each saying why when hovered or reached by Tab. */
+const PLAY_LOCKED_BUTTONS = ["library-open", "stop", "debugger-open", "hh-eject"];
+const PLAY_LOCKED_GROUPS = ["snes-firmware-rows", "settings-debugger-button", "autorun-section"];
+
+function updatePlayLocks() {
+    const locked = playLocked();
+    for (const id of PLAY_LOCKED_BUTTONS) {
+        const button = document.getElementById(id);
+        if (button) lockForPlay(button, locked);
+    }
+    // The Settings choices that would change the game: their whole group greys, with the reason.
+    for (const id of PLAY_LOCKED_GROUPS) {
+        const group = document.getElementById(id)?.closest<HTMLElement>(".settings-group");
+        if (!group) continue;
+        group.toggleAttribute("data-play-locked", locked);
+        if (locked) group.dataset.tip = PLAY_LOCKED;
+        else delete group.dataset.tip;
+    }
+    updateSaveStateButtons();
+}
+
+function lockForPlay(button: HTMLElement, locked: boolean) {
+    const kept = button.dataset.playTip !== undefined;
+    if (locked && !kept) {
+        button.dataset.playTip = button.dataset.tip ?? "";
+        button.dataset.playKeys = button.dataset.keys ?? "";
+        button.setAttribute("aria-disabled", "true");
+        button.dataset.tip = PLAY_LOCKED;
+        delete button.dataset.keys;
+    } else if (!locked && kept) {
+        button.removeAttribute("aria-disabled");
+        if (button.dataset.playTip) button.dataset.tip = button.dataset.playTip;
+        else delete button.dataset.tip;
+        if (button.dataset.playKeys) button.dataset.keys = button.dataset.playKeys;
+        delete button.dataset.playTip;
+        delete button.dataset.playKeys;
+    }
+}
+
+// A greyed-out Settings choice takes no click, change or key while playing together.
+for (const type of ["click", "change", "keydown"] as const) {
+    document.getElementById("settings-panel")?.addEventListener(
+        type,
+        (event) => {
+            const target = event.target as HTMLElement | null;
+            if (!target?.closest("[data-play-locked]")) return;
+            if (type === "keydown" && !["Enter", " "].includes((event as KeyboardEvent).key)) return;
+            event.preventDefault();
+            event.stopPropagation();
+        },
+        true
+    );
 }
 
 /** The count stops when playing together ends under it; the host's own game stays, paused. */
@@ -3625,10 +3894,18 @@ function endReceivedGame() {
     updateView();
 }
 
+netplaySession.onPlay((data) => play?.hear(data));
 netplaySession.subscribe((view) => {
     if (view.phase !== "connected") {
         cancelNetplayCount();
-        endReceivedGame();
+        // Once both are playing, an end stops both games on their last picture; before then, the
+        // start is called off as it always was.
+        if (play && play.view().phase !== "starting") {
+            play.ended(endingHere ? "me" : view.leaving === "ended" ? "them" : "left");
+        } else {
+            leavePlay();
+            endReceivedGame();
+        }
     }
     // A send that ended without starting gives back the game it held, unless the window still pauses it.
     if (heldForSending && !view.sending && !playTogether.isOpen()) {
@@ -3649,11 +3926,17 @@ const playTogether = createPlayTogether({
     currentGame: () =>
         running && emulator && romMetadata ? { kind: emulator.kind, title: gameTitle(romMetadata.name, emulator.kind).title } : null,
     hostGame: netplayHostGame,
+    playing,
+    waiting: () => play?.view().waiting ?? false,
+    // Mid-game, Disconnect ends playing together for both, so it asks first.
+    onDisconnect: () => (playing() ? playScreen?.askToEnd() : netplaySession.disconnect()),
     onOpen: () => {
+        if (playing()) return play!.windowOpened("together");
         pausedByNetplay = running && !paused;
         if (pausedByNetplay) pauseResume();
     },
     onClose: () => {
+        if (playing()) return play!.windowClosed("together");
         // The host's game waits, paused, while it is on its way to the other player; reopening the
         // window meanwhile finds it paused already, so the hold carries over to this close.
         const view = netplaySession.view();
@@ -3693,15 +3976,20 @@ function keyBindingSink(active: ActiveEmulator): KeyBindingSink {
         case "nes": {
             const nesInst = active.inst;
             return {
-                pad: (port, button, pressed) => applyJoypadButtonIfAllowed(nesInst, port, button, pressed),
-                snesPad: (port, button, pressed) => nesInst.set_snes_button(port, button, pressed),
-                vsCoin: () => nesInst.insert_vs_coin(0),
+                pad: (port, button, pressed) => {
+                    if (!playPress(port, button, pressed)) applyJoypadButtonIfAllowed(nesInst, port, button, pressed);
+                },
+                snesPad: (port, button, pressed) => !playing() && nesInst.set_snes_button(port, button, pressed),
+                vsCoin: () => {
+                    if (!playing()) nesInst.insert_vs_coin(0);
+                },
             };
         }
         case "snes": {
             const snesInst = active.inst;
             return {
                 pad: (port, button, pressed) => {
+                    if (playPress(port, button, pressed)) return;
                     if (!shouldSuppressSnesJoypadInput(snesInst, port)) {
                         snesInst.set_button(port, button, pressed);
                     }
@@ -3782,6 +4070,8 @@ function releaseSuperScopeButtons() {
  * when no scope is plugged in.
  */
 function applySuperScopeKey(snesInst: WasmSnes, action: "turbo" | "pause", pressed: boolean, repeat: boolean): boolean {
+    // Playing together the scope's keys reach neither the scope nor a pad.
+    if (playing()) return superScopePort() !== null;
     const port = superScopePort();
     if (port === null) {
         return false;
@@ -3884,6 +4174,7 @@ const touchControlsContainer = document.getElementById("touch-controls");
 
 function handleTouchButton(button: number, pressed: boolean) {
     if (!emulator) return;
+    if (playPress(1, button, pressed)) return;
     if (nes) {
         applyJoypadButtonIfAllowed(nes, 1, button, pressed);
     } else if (emulator.kind === "snes") {
@@ -3900,6 +4191,8 @@ if (touchControlsContainer) {
 }
 
 function handleMouseMotion(event: MouseEvent) {
+    // Playing together, only pads are shared; a light gun, mouse or scope would move one game alone.
+    if (playing()) return;
     // SNES peripherals: handle mouse and superscope for the standalone SNES emulator.
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
@@ -4071,6 +4364,7 @@ function updateMouseCursorState() {
 }
 
 function handleMouseButton(event: MouseEvent, pressed: boolean) {
+    if (playing()) return;
     // SNES peripherals: handle mouse and superscope buttons.
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
@@ -4105,6 +4399,7 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
 
 window.addEventListener("mousemove", handleMouseMotion);
 canvas.addEventListener("mousedown", (event) => {
+    if (playing()) return;
     const scopePort = superScopePort();
     if (emulator?.kind === "snes" && scopePort !== null) {
         const rect = canvas.getBoundingClientRect();
@@ -4396,6 +4691,9 @@ async function toggleScreenFullscreen() {
 async function resetAction() {
     if (netplayCounting) return;
     if (!emulator) return;
+    if (playing()) return play!.reset(true);
+    // The joiner's game has stopped for good once playing together ends, as its greyed Reset says.
+    if (playEndedForJoiner()) return;
     cancelActiveRecording();
     if (emulator.kind === "gba") {
         await restartGbaSession("Soft reset");
@@ -4409,6 +4707,9 @@ async function resetAction() {
 async function hardResetAction() {
     if (netplayCounting) return;
     if (!emulator) return;
+    if (playing()) return play!.reset(false);
+    // The joiner's game has stopped for good once playing together ends, as its greyed Reset says.
+    if (playEndedForJoiner()) return;
     cancelActiveRecording();
     if (emulator.kind === "gba") {
         await restartGbaSession("Hard reset");
@@ -4473,6 +4774,7 @@ function cancelActiveRecording() {
 }
 
 async function saveStateAction() {
+    if (refusedWhilePlaying()) return;
     if (!saveStateController) return;
     const ok = await saveStateController.save();
     if (ok) {
@@ -4554,6 +4856,7 @@ loadStateBtn?.addEventListener("blur", () => {
 });
 
 async function loadStateAction() {
+    if (refusedWhilePlaying()) return;
     if (!saveStateController) return;
     const ok = await saveStateController.load();
     if (ok) {
@@ -4572,7 +4875,7 @@ function updateSaveStateButtons() {
     });
     // Unavailable for the running game, the buttons stay hoverable (aria-disabled) so their tip can
     // say why; a disabled button gets no pointer events. Their actions do nothing without a controller.
-    const note = running ? saveStateUnavailableReason : null;
+    const note = running ? (playLocked() ? PLAY_LOCKED : saveStateUnavailableReason) : null;
     const buttons = [
         [saveStateBtn, saveEnabled, "Save state", "F6"],
         [loadStateBtn, loadEnabled, "Load state", "F7"],
@@ -4724,7 +5027,7 @@ for (const [id, action] of [["hh-save", saveStateAction], ["hh-load", loadStateA
     button.addEventListener("click", () => {
         // Not offered for this console: the tap says why instead.
         if (button.getAttribute("aria-disabled") === "true") {
-            toastOverlay.show(saveStateUnavailableReason ?? "");
+            toastOverlay.show(playLocked() ? PLAY_LOCKED : (saveStateUnavailableReason ?? ""));
             return;
         }
         void action();
@@ -4881,6 +5184,7 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
     if (emulator.kind === "gba" && controller !== 1) return;
     const nesRuntime = nes;
     const applyButton = (button: number, pressed: boolean) => {
+        if (playPress(controller, button, pressed)) return;
         if (nesRuntime) {
             applyJoypadButtonIfAllowed(nesRuntime, controller, button, pressed);
         } else {
@@ -4894,6 +5198,13 @@ function applyGamepadState(state: GamepadButtonState, controller: number, lastSt
         fallbackNesButton?: number
     ) => {
         if (!changed) return;
+
+        // Playing together, a pad is a standard pad of the console being played.
+        if (playing()) {
+            if (emulator!.kind === "snes") playPress(controller, remapLegacySnesButtonId(snesButtonId), pressed);
+            else if (fallbackNesButton !== undefined) playPress(controller, fallbackNesButton, pressed);
+            return;
+        }
 
         if (nesRuntime?.set_snes_button(controller, snesButtonId, pressed)) {
             return;

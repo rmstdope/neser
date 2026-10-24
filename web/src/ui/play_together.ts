@@ -10,7 +10,9 @@ import type { NetplaySession, NetplayView, Role } from "../netplay/session";
  * the button into a status chip while connected. Closing the window keeps a connection; before
  * one, closing cancels the attempt. Once connected the host sends its game from here
  * (nr-ayk5.4, docs/ui/nr-ayk5.4-sending-the-game.html); closing the window while it is on its way
- * does not stop it, and the chip shows how far it is.
+ * does not stop it, and the chip shows how far it is. While the game is played together
+ * (nr-ayk5.5) the connected step offers only Disconnect, which the page asks about first, and the
+ * chip says "Waiting…" while the other player's game holds this one.
  */
 
 export type CurrentGame = { kind: ConsoleKind; title: string };
@@ -92,6 +94,9 @@ export function createPlayTogether({
     hostGame,
     onOpen,
     onClose,
+    playing = () => false,
+    waiting = () => false,
+    onDisconnect = () => session.disconnect(),
 }: {
     dialog: HTMLDialogElement;
     title: HTMLElement;
@@ -105,6 +110,12 @@ export function createPlayTogether({
     hostGame: () => { game: GamePackage; title: string } | null;
     onOpen: () => void;
     onClose: () => void;
+    /** Whether the game is being played together now. */
+    playing?: () => boolean;
+    /** Whether the other player's game is holding this one. */
+    waiting?: () => boolean;
+    /** Disconnect on the connected step. */
+    onDisconnect?: () => void;
 }) {
     let isOpen = false;
     /** Which screen is drawn; a change of it redraws the window, anything else updates it in place. */
@@ -113,6 +124,8 @@ export function createPlayTogether({
     /** The text last pasted, shown again while it is being connected or after it failed. */
     let lastPaste = "";
     const buttonLabel = openButton.textContent ?? "Play together";
+    /** This player ended playing together: the chip says Disconnected until it is pressed. */
+    let endedHere = false;
 
     function close() {
         if (!isOpen) return;
@@ -130,6 +143,10 @@ export function createPlayTogether({
     function open() {
         if (isOpen) return;
         isOpen = true;
+        if (endedHere) {
+            endedHere = false;
+            drawButton(session.view());
+        }
         screenKey = "";
         if (typeof dialog.showModal === "function") dialog.showModal();
         else dialog.setAttribute("open", "");
@@ -149,12 +166,16 @@ export function createPlayTogether({
                 el("span", "netplay-chip-long", direction === "send" ? "Sending · " : "Receiving · "),
                 `${percent(done, total)}%`
             );
+        } else if (view.phase === "connected" && waiting()) {
+            openButton.removeAttribute("data-icon");
+            openButton.dataset.tone = "wait";
+            openButton.replaceChildren(dot("wait"), "Waiting…");
         } else if (view.phase === "connected" && view.rtt !== null) {
             const tone = responseTimeRating(view.rtt).tone;
             openButton.removeAttribute("data-icon");
             openButton.dataset.tone = tone;
             openButton.replaceChildren(dot(tone), el("span", "netplay-chip-long", "Connected · "), `${view.rtt} ms`);
-        } else if (lost) {
+        } else if (lost || (endedHere && view.phase === "idle")) {
             openButton.removeAttribute("data-icon");
             openButton.dataset.tone = "err";
             openButton.replaceChildren(dot("err"), "Disconnected");
@@ -408,7 +429,13 @@ export function createPlayTogether({
     function drawReady(view: NetplayView): (v: NetplayView) => void {
         const notice = noticeAlert(view);
         if (notice) body.append(notice);
-        const disconnect = btn("Disconnect", () => session.disconnect());
+        const disconnect = btn("Disconnect", onDisconnect);
+        // Mid-game, there is nothing to start nor wait for.
+        if (playing()) {
+            body.append(actions(disconnect));
+            disconnect.focus();
+            return () => {};
+        }
         if (view.role === "join") {
             body.append(el("p", "netplay-muted", "⟳ Waiting for the host to start the game…"), actions(disconnect));
             disconnect.focus();
@@ -498,7 +525,18 @@ export function createPlayTogether({
     });
     drawButton(session.view());
 
-    return { open, close, isOpen: () => isOpen };
+    return {
+        open,
+        close,
+        isOpen: () => isOpen,
+        /** Draws the chip again, for a change the session does not know of (the game waiting). */
+        refresh: () => drawButton(session.view()),
+        /** This player ended playing together. */
+        markEnded: () => {
+            endedHere = true;
+            drawButton(session.view());
+        },
+    };
 }
 
 /**
