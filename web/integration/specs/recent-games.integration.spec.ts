@@ -37,11 +37,31 @@ test.describe("Continue playing", () => {
         await expect(page.locator("#recent")).toBeHidden();
     });
 
-    test("Given a game left by hiding the page, then its card still has a picture", async ({ page }) => {
+    // The page can be gone before the picture's database write commits, and Chromium then aborts
+    // the write (nr-39ib): a starved CI runner did it once. A second tab keeping the database busy
+    // holds the write back until after the reload, every time.
+    test("Given a game left by hiding the page while the database is busy, then its card still has a picture", async ({ page, context }) => {
         await openApp(page);
         await loadRomFromFileInput(page);
         await waitForRunningState(page);
         await expect(page.locator("#fps-counter")).toBeVisible();
+        const other = await context.newPage();
+        await other.goto("/roms/roms.json");
+        await other.evaluate(
+            () =>
+                new Promise<void>((resolve) => {
+                    const request = indexedDB.open("neser-recent");
+                    request.onsuccess = () => {
+                        const games = request.result.transaction("games", "readwrite").objectStore("games");
+                        const end = Date.now() + 1500;
+                        const keepBusy = () => {
+                            if (Date.now() < end) games.count().onsuccess = keepBusy;
+                        };
+                        keepBusy();
+                        resolve();
+                    };
+                })
+        );
         await page.evaluate(() => {
             Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
             document.dispatchEvent(new Event("visibilitychange"));

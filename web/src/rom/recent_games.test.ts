@@ -5,7 +5,17 @@ import "fake-indexeddb/auto";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createRecentGamesStore, playedWhen, RECENT_GAMES_LIMIT, renderRecentGames, type RecentGame } from "./recent_games";
+import {
+    applyPendingThumbnail,
+    createRecentGamesStore,
+    keepThumbnail,
+    PENDING_THUMBNAIL_KEY,
+    playedWhen,
+    RECENT_GAMES_LIMIT,
+    renderRecentGames,
+    type RecentGame,
+    type RecentGamesStore,
+} from "./recent_games";
 
 const game = (name: string, playedAt: number, extra: Partial<RecentGame & { bytes: Uint8Array }> = {}): RecentGame & { bytes: Uint8Array } => ({
     name,
@@ -97,6 +107,65 @@ describe("a database from before the bytes had their own store", () => {
         await store.remember(game("a.nes", 1));
         expect((await store.list()).map((g) => g.name)).toEqual(["a.nes"]);
         expect(await store.bytesOf("a.nes")).not.toBeNull();
+    });
+});
+
+describe("a picture taken as the page is left", () => {
+    const memoryStorage = () => {
+        const items = new Map<string, string>();
+        return {
+            getItem: (key: string) => items.get(key) ?? null,
+            setItem: (key: string, value: string) => void items.set(key, value),
+            removeItem: (key: string) => void items.delete(key),
+        };
+    };
+    // The page went away before the write committed: Chromium aborts it, so it never lands.
+    const abortedWrites = (store: RecentGamesStore): RecentGamesStore => ({ ...store, setThumbnail: () => new Promise<void>(() => {}) });
+
+    it("Given its database write was lost with the page, When the next page starts, Then the card has the picture", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1));
+        const storage = memoryStorage();
+
+        void keepThumbnail(abortedWrites(store), storage, "a.nes", "data:image/png;base64,AAA");
+        await applyPendingThumbnail(store, storage);
+
+        expect((await store.list())[0].thumbnail).toBe("data:image/png;base64,AAA");
+        expect(storage.getItem(PENDING_THUMBNAIL_KEY)).toBeNull();
+    });
+
+    it("Given its database write committed, Then nothing is left waiting for the next page", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1));
+        const storage = memoryStorage();
+
+        await keepThumbnail(store, storage, "a.nes", "data:image/png;base64,AAA");
+
+        expect((await store.list())[0].thumbnail).toBe("data:image/png;base64,AAA");
+        expect(storage.getItem(PENDING_THUMBNAIL_KEY)).toBeNull();
+    });
+
+    it("Given a later picture taken while the first was still being written, Then the later one is what waits", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1));
+        const storage = memoryStorage();
+
+        const first = keepThumbnail(store, storage, "a.nes", "data:image/png;base64,AAA");
+        void keepThumbnail(abortedWrites(store), storage, "a.nes", "data:image/png;base64,BBB");
+        await first;
+        await applyPendingThumbnail(store, storage);
+
+        expect((await store.list())[0].thumbnail).toBe("data:image/png;base64,BBB");
+    });
+
+    it("Given no storage the page may use, Then the picture is still written to the database", async () => {
+        const store = freshStore();
+        await store.remember(game("a.nes", 1));
+
+        await keepThumbnail(store, null, "a.nes", "data:image/png;base64,AAA");
+        await applyPendingThumbnail(store, null);
+
+        expect((await store.list())[0].thumbnail).toBe("data:image/png;base64,AAA");
     });
 });
 
