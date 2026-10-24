@@ -26,6 +26,12 @@ import { isTooSlow, median } from "./response_time";
  * together. Until `start` the joiner's own game is untouched. Nothing the other side sends
  * is trusted: a message that does not describe itself is ignored, and a transfer that does not
  * add up did not arrive.
+ *
+ * Playing together (nr-ayk5.5) rides the same link. `start` carries the input delay the host
+ * chose from the response time, so both play with the same one. The lockstep packets go as bytes
+ * led by transfer id 0, which no game transfer uses; `resume` and `reset` are the play messages,
+ * handed to `onPlay` as they are. `end` says the other player ended playing together, where `bye`
+ * says they left.
  */
 
 export type Role = "host" | "join";
@@ -47,7 +53,16 @@ export interface Sending {
 export interface NetplayStart {
     role: Role;
     game: GamePackage;
+    /** Frames between a press and the frame it is played on, the same on both sides. */
+    inputDelay: number;
 }
+
+/** What the two games say to each other while playing together, besides the lockstep packets. */
+export type PlayMessage = { t: "resume" } | { t: "reset"; soft: boolean; at: number };
+/** A lockstep packet (bytes) or a play message. */
+export type PlayData = Uint8Array | PlayMessage;
+/** How the other player went: they ended playing together, or left (closed the page, lost the link). */
+export type Leaving = "ended" | "left";
 
 export interface NetplayView {
     /** Who this browser is; null on the first screen, where the player chooses. */
@@ -68,6 +83,8 @@ export interface NetplayView {
     /** The game on its way, while it is. */
     sending: Sending | null;
     notice: SendingNotice | null;
+    /** How the other player went, once they have (failure "peer-left"). */
+    leaving: Leaving | null;
 }
 
 export interface NetplaySession {
@@ -89,6 +106,28 @@ export interface NetplaySession {
     startGame(game: GamePackage, title: string): void;
     /** Either side's Cancel while the game is on its way; the connection stays. Says whether it cancelled. */
     cancelSending(): boolean;
+    /** Ends playing together: the other side is told it was ended, not left. */
+    end(): void;
+    /** Sends a lockstep packet, or a play message, to the other side. */
+    sendPacket(bytes: Uint8Array): void;
+    sendPlay(message: PlayMessage): void;
+    /** Hears the other side's lockstep packets and play messages. */
+    onPlay(listener: (data: PlayData) => void): void;
+}
+
+/** The transfer id that leads a lockstep packet; game transfers count from 1. */
+const PLAY_PACKET_ID = 0;
+const FRAME_MS = 1000 / 60;
+const MIN_INPUT_DELAY = 2;
+const MAX_INPUT_DELAY = 6;
+
+/**
+ * The input delay for a response time: enough frames for a press to cross the link one way, plus
+ * one to spare, within two to six.
+ */
+export function inputDelayFor(rttMs: number): number {
+    const frames = Math.ceil(rttMs / 2 / FRAME_MS) + 1;
+    return Math.min(MAX_INPUT_DELAY, Math.max(MIN_INPUT_DELAY, frames));
 }
 
 /** How long the host waits, from Connect, for the connection and its check. */
@@ -113,12 +152,14 @@ type Message =
     | { t: "ready"; rtt: number }
     | { t: "refuse"; rtt: number }
     | { t: "bye" }
+    | { t: "end" }
     | { t: "game"; id: number; name: string; total: number; crc: number }
     | { t: "got"; id: number; bytes: number }
     | { t: "arrived"; id: number; ms: number }
     | { t: "broken"; id: number }
     | { t: "stop"; id: number }
-    | { t: "start"; id: number };
+    | { t: "start"; id: number; delay: number }
+    | PlayMessage;
 
 /** The host's side of a game on its way. */
 type Outgoing = {
@@ -147,9 +188,16 @@ const IDLE: NetplayView = {
     rtt: null,
     sending: null,
     notice: null,
+    leaving: null,
 };
 
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+/** Whether a message from the other side is a play message as this build sends them. */
+function isPlayMessage(message: { t: string } & Record<string, unknown>): message is PlayMessage {
+    if (message.t === "resume") return true;
+    return message.t === "reset" && typeof message.soft === "boolean" && isCount(message.at);
+}
 
 export function createNetplaySession({
     links,
@@ -187,6 +235,7 @@ export function createNetplaySession({
     let outgoing: Outgoing | null = null;
     let incoming: Incoming | null = null;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    let playListener: (data: PlayData) => void = () => {};
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const intervals = new Set<ReturnType<typeof setInterval>>();
 
@@ -262,9 +311,12 @@ export function createNetplaySession({
 
     function receiveBytes(link: PeerLink, data: Uint8Array) {
         const into = incoming;
-        if (!into || into.game || data.length < 4) return;
+        if (data.length < 4) return;
+        const id = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, true);
+        if (id === PLAY_PACKET_ID) return playListener(data.slice(4));
+        if (!into || into.game) return;
         // Chunks of an attempt already given up (cancelled, or replaced) are still on their way.
-        if (new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, true) !== into.id) return;
+        if (id !== into.id) return;
         const piece = data.subarray(4);
         if (into.received + piece.length > into.total) return refuseIncoming(link, into.id);
         into.buffer.set(piece, into.received);
@@ -302,10 +354,10 @@ export function createNetplaySession({
             if (incoming?.id !== id) return;
             if (message.t === "stop") transferEnded("host-stopped");
             else if (message.t === "broken") transferEnded("not-arrived");
-            else if (message.t === "start" && incoming.game) {
+            else if (message.t === "start" && incoming.game && isCount(message.delay) && message.delay >= 1) {
                 const game = incoming.game;
                 // Told before the send's view clears, so what it starts is in place when the window hears.
-                onStart({ role: "join", game });
+                onStart({ role: "join", game, inputDelay: Math.min(message.delay, MAX_INPUT_DELAY) });
                 transferEnded(null);
             }
             return;
@@ -326,7 +378,8 @@ export function createNetplaySession({
             }
             outgoing.started = true;
             clearTimeout(stallTimer);
-            send(link, { t: "start", id });
+            const inputDelay = inputDelayFor(outgoing.rtt);
+            send(link, { t: "start", id, delay: inputDelay });
             const setup = isCount(message.ms) ? Math.min(message.ms, MAX_SETUP_MS) : 0;
             const game = outgoing.game;
             const mine = attempt;
@@ -334,7 +387,7 @@ export function createNetplaySession({
             timers.add(
                 setTimeout(() => {
                     if (mine !== attempt || outgoing?.id !== id) return;
-                    onStart({ role: "host", game });
+                    onStart({ role: "host", game, inputDelay });
                     transferEnded(null);
                 }, Math.round(outgoing.rtt / 2) + setup)
             );
@@ -419,18 +472,22 @@ export function createNetplaySession({
                 unanswered.delete(message.id);
                 onSample(Math.round(now() - message.at));
             }
-            else if (message.t === "bye") peerLeft();
+            else if (message.t === "bye") peerLeft("left");
+            else if (message.t === "end") peerLeft("ended");
+            else if (message.t === "resume" || message.t === "reset") {
+                if (state.phase === "connected" && isPlayMessage(message)) playListener(message);
+            }
             else if (["game", "got", "arrived", "broken", "stop", "start"].includes(message.t)) {
                 if (state.phase === "connected") onTransfer(link, message);
             } else onMessage(message);
         });
         link.onClosed(() => {
-            if (mine === attempt) peerLeft();
+            if (mine === attempt) peerLeft("left");
         });
     }
 
-    function peerLeft() {
-        if (state.phase === "connected") fail("peer-left");
+    function peerLeft(leaving: Leaving) {
+        if (state.phase === "connected") fail("peer-left", { leaving });
         else if (state.phase === "connecting" || state.phase === "waiting") fail("unreachable");
     }
 
@@ -604,6 +661,24 @@ export function createNetplaySession({
             set({ sending: { direction: "send", name: title, done: 0, total: packed.length }, notice: null });
             watchStall(live, id);
             pump(live);
+        },
+        end: () => {
+            if (live) send(live, { t: "end" });
+            teardown();
+            set({ ...IDLE });
+        },
+        sendPacket: (bytes) => {
+            if (state.phase !== "connected" || !live) return;
+            const frame = new Uint8Array(4 + bytes.length);
+            new DataView(frame.buffer).setUint32(0, PLAY_PACKET_ID, true);
+            frame.set(bytes, 4);
+            live.send(frame);
+        },
+        sendPlay: (message) => {
+            if (state.phase === "connected" && live) send(live, message);
+        },
+        onPlay: (listener) => {
+            playListener = listener;
         },
         cancelSending: () => {
             const id = outgoing?.id ?? incoming?.id;

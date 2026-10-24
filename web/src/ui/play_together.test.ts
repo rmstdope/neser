@@ -18,6 +18,7 @@ const IDLE: NetplayView = {
     rtt: null,
     sending: null,
     notice: null,
+    leaving: null,
 };
 
 class FakeSession implements NetplaySession {
@@ -35,6 +36,10 @@ class FakeSession implements NetplaySession {
     link = vi.fn(() => null);
     startGame = vi.fn();
     cancelSending = vi.fn(() => true);
+    end = vi.fn(() => this.emit({ ...IDLE }));
+    sendPacket = vi.fn();
+    sendPlay = vi.fn();
+    onPlay = vi.fn();
     view = () => this.state;
     subscribe(listener: (view: NetplayView) => void) {
         this.listener = listener;

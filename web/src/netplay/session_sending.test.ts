@@ -2,7 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeCode } from "./code";
 import { MAX_PACKAGE_BYTES, type GamePackage } from "./game_package";
 import type { HostStart, JoinStart, PeerLink, PeerLinks } from "./peer_link";
-import { CHUNK_BYTES, createNetplaySession, STALL_MS, WINDOW_BYTES, type NetplaySession, type NetplayStart } from "./session";
+import {
+    CHUNK_BYTES,
+    createNetplaySession,
+    inputDelayFor,
+    STALL_MS,
+    WINDOW_BYTES,
+    type NetplaySession,
+    type NetplayStart,
+    type PlayData,
+} from "./session";
 
 // Sending the game (nr-ayk5.4): a real host session and a real joiner session, connected over an
 // in-memory pair of links with a fixed one-way delay.
@@ -395,5 +404,67 @@ describe("sending the game", () => {
         host.disconnect();
         host.startGame(game(100), TITLE);
         expect(host.view().sending).toBeNull();
+    });
+});
+
+// Playing together (nr-ayk5.5): the input delay both sides play with, the play channel over the
+// same link, and how it ends.
+describe("playing together", () => {
+    it("chooses the input delay from the response time, two to six frames", () => {
+        expect(inputDelayFor(0)).toBe(2);
+        expect(inputDelayFor(20)).toBe(2);
+        expect(inputDelayFor(50)).toBe(3);
+        expect(inputDelayFor(120)).toBe(5);
+        expect(inputDelayFor(1000)).toBe(6);
+    });
+
+    it("starts the joiner with the host's input delay", async () => {
+        host.startGame(game(10_000), TITLE);
+        await run(2000);
+        const delays = starts.map((s) => s.start.inputDelay);
+        expect(delays).toEqual([inputDelayFor(2 * ONE_WAY_MS), inputDelayFor(2 * ONE_WAY_MS)]);
+    });
+
+    it("carries play packets and play messages both ways, apart from the game", async () => {
+        const toHost: PlayData[] = [];
+        const toJoin: PlayData[] = [];
+        host.onPlay((data) => toHost.push(data));
+        join.onPlay((data) => toJoin.push(data));
+        host.startGame(game(200_000), TITLE);
+        await run(20);
+        host.sendPacket(new Uint8Array([1, 2, 3]));
+        join.sendPacket(new Uint8Array([4, 5]));
+        join.sendPlay({ t: "resume" });
+        host.sendPlay({ t: "reset", soft: true, at: 42 });
+        await run(2000);
+        expect(toHost).toEqual([new Uint8Array([4, 5]), { t: "resume" }]);
+        expect(toJoin).toEqual([new Uint8Array([1, 2, 3]), { t: "reset", soft: true, at: 42 }]);
+        expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
+    });
+
+    it("passes on no play message it does not know", async () => {
+        const toHost: PlayData[] = [];
+        host.onPlay((data) => toHost.push(data));
+        joinEnd.forge(JSON.stringify({ t: "reset", soft: "yes", at: 1 }));
+        joinEnd.forge(JSON.stringify({ t: "reset", soft: true, at: -1 }));
+        joinEnd.forge(JSON.stringify({ t: "rewind" }));
+        await run(100);
+        expect(toHost).toEqual([]);
+    });
+
+    it("tells the other side it was ended, and that it was left when a page closes", async () => {
+        host.end();
+        await run(100);
+        expect(host.view()).toMatchObject({ phase: "idle", leaving: null });
+        expect(join.view()).toMatchObject({ phase: "failed", failure: "peer-left", leaving: "ended" });
+        await connected();
+        join.disconnect();
+        await run(100);
+        expect(host.view()).toMatchObject({ phase: "failed", failure: "peer-left", leaving: "left" });
+        await connected();
+        // The connection is lost: the host's own end of it closes.
+        hostEnd.closedListener();
+        await run(100);
+        expect(host.view()).toMatchObject({ phase: "failed", failure: "peer-left", leaving: "left" });
     });
 });
