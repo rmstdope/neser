@@ -2276,3 +2276,25 @@ fn wasm_lockstep_refuses_what_it_cannot_play() {
     let mut side = WasmLockstep::new(1, 2).expect("player 1");
     assert!(!side.receive(&[9, 9, 9]), "not a packet");
 }
+
+#[wasm_bindgen_test]
+fn wasm_lockstep_reports_a_desync_and_clears_it_on_resync() {
+    let interval = WasmLockstep::hash_interval();
+    assert!(interval > 0, "the games are compared");
+    let mut host = WasmLockstep::new(1, 2).expect("player 1");
+    let mut joiner = WasmLockstep::new(2, 2).expect("player 2");
+    for frame in 0..=interval {
+        assert_eq!(host.advance(0)[0], frame);
+        assert_eq!(joiner.advance(0)[0], frame);
+        assert!(joiner.receive(&host.packet()));
+        assert!(host.receive(&joiner.packet()));
+    }
+    host.record_state_hash(interval, 0xAAAA);
+    joiner.record_state_hash(interval, 0xBBBB);
+    assert!(joiner.receive(&host.packet()));
+    assert!(host.receive(&joiner.packet()));
+    assert!(host.desynced() && joiner.desynced());
+    host.resynced();
+    joiner.resynced();
+    assert!(!host.desynced() && !joiner.desynced());
+}
