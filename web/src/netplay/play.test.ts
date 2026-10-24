@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFrameLimiter } from "../audio/frame_limiter";
 import { createPlay, type CountLabel, type LockstepRules, type Play, type PlayCore } from "./play";
-import type { PlayData, PlayMessage, ResyncState } from "./session";
+import type { PlayData, PlayMessage, ResyncState, SpeedMessage } from "./session";
 
 // Playing together (nr-ayk5.5): two play controllers, the host's and the joiner's, over an in-memory
 // link with a fixed one-way delay, each with a stand-in for the Rust lockstep that follows its
@@ -8,7 +9,10 @@ import type { PlayData, PlayMessage, ResyncState } from "./session";
 // released pads) and a stand-in core that records what it was asked to play.
 
 const ONE_WAY_MS = 10;
-const FRAME_MS = 1000 / 60;
+/** The link's one-way delay now: `ONE_WAY_MS` unless a test makes it a LAN's. */
+let oneWayMs = ONE_WAY_MS;
+const FULL_SPEED = 60;
+const FRAME_MS = 1000 / FULL_SPEED;
 const DELAY = 2;
 /** The games are compared after every tenth frame. */
 const HASH_EVERY = 10;
@@ -132,6 +136,8 @@ type Side = {
     /** Rewrites, or swallows (null), a resync state this side sends. */
     tamperState: (state: ResyncState) => ResyncState | null;
     gaveUp: number;
+    /** The page's frame limiter, at the speed both games play at, as `runSteady` drives it. */
+    limiter: ReturnType<typeof createFrameLimiter>;
 };
 
 let host: Side;
@@ -141,7 +147,7 @@ let join: Side;
 function deliverer(to: () => Side) {
     let lastAt = 0;
     return (data: PlayData) => {
-        const at = Math.max(performance.now() + ONE_WAY_MS, lastAt);
+        const at = Math.max(performance.now() + oneWayMs, lastAt);
         lastAt = at;
         setTimeout(() => {
             to().play.hear(data);
@@ -164,6 +170,7 @@ function side(player: 1 | 2, other: () => Side): Side {
         lastTick: 0,
         tamperState: (state) => state,
         gaveUp: 0,
+        limiter: createFrameLimiter(FULL_SPEED),
     };
     me.play = createPlay({
         player,
@@ -171,7 +178,7 @@ function side(player: 1 | 2, other: () => Side): Side {
         hashEvery: HASH_EVERY,
         link: {
             sendPacket: (bytes) => send(bytes.slice()),
-            sendPlay: (message: PlayMessage) => send(message),
+            sendPlay: (message: PlayMessage | SpeedMessage) => send(message),
             sendState: (at, bytes) => {
                 const out = me.tamperState({ t: "state", at, bytes: bytes.slice() });
                 if (out) send(out);
@@ -183,6 +190,7 @@ function side(player: 1 | 2, other: () => Side): Side {
             },
         },
         core,
+        fullSpeed: () => FULL_SPEED,
         count: (label, onDone) => {
             counts.push(label);
             const timer = setTimeout(onDone, 3000);
@@ -208,6 +216,7 @@ async function run(ms: number) {
 
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+    oneWayMs = ONE_WAY_MS;
     host = side(1, () => join);
     join = side(2, () => host);
     host.play.begin();
@@ -471,13 +480,14 @@ describe("falling behind", () => {
 function alone(player: 1 | 2) {
     const core = new Core();
     const counts: CountLabel[] = [];
-    const sent: PlayMessage[] = [];
+    const sent: (PlayMessage | SpeedMessage)[] = [];
     const play = createPlay({
         player,
         lockstep: new Rules(player, DELAY),
         hashEvery: HASH_EVERY,
         link: { sendPacket: () => {}, sendPlay: (message) => sent.push(message), sendState: () => {}, giveUp: () => {} },
         core,
+        fullSpeed: () => FULL_SPEED,
         count: (label, onDone) => {
             counts.push(label);
             const timer = setTimeout(onDone, 3000);
@@ -918,5 +928,199 @@ describe("resyncing", () => {
         expect(host.play.view()).toMatchObject({ phase: "ended", ended: "left" });
         expect(join.play.view()).toMatchObject({ phase: "ended", ended: "left" });
         expect(host.gaveUp + join.gaveUp).toBe(0);
+    });
+});
+
+/**
+ * Plays `ms` with each side's animation frames at its own steady, fractional interval, as two
+ * displays tick: `run` rounds every interval to the millisecond, which hides small differences.
+ * Returns, for each side from `watchFrom` ms on, the most frames it ran in one tick and the most
+ * ticks in a row it ran none.
+ */
+async function runSteady(ms: number, watchFrom = 0) {
+    const start = performance.now();
+    const end = start + ms;
+    const next = new Map<Side, number>([
+        [host, start],
+        [join, start],
+    ]);
+    const most = new Map<Side, { frames: number; held: number; heldNow: number }>([
+        [host, { frames: 0, held: 0, heldNow: 0 }],
+        [join, { frames: 0, held: 0, heldNow: 0 }],
+    ]);
+    while (performance.now() < end) {
+        await vi.advanceTimersByTimeAsync(1);
+        const t = performance.now();
+        for (const s of [host, join]) {
+            if (s.hidden || t < next.get(s)!) continue;
+            next.set(s, next.get(s)! + s.tickEvery);
+            // As the page does: every animation frame is seen, and a frame runs when the limiter,
+            // at the speed both games play at, lets it.
+            s.play.animationFrame(t);
+            s.limiter.setTargetFps(s.play.view().speed ?? FULL_SPEED);
+            if (!s.limiter.shouldRender(t)) continue;
+            const ran = s.play.tick();
+            if (t - start < watchFrom) continue;
+            const seen = most.get(s)!;
+            seen.frames = Math.max(seen.frames, ran);
+            seen.heldNow = ran === 0 ? seen.heldNow + 1 : 0;
+            seen.held = Math.max(seen.held, seen.heldNow);
+        }
+    }
+    return most;
+}
+
+describe("two computers at slightly different speeds (nr-ayk5.7)", () => {
+    // Lockstep evens them out a single frame at a time: the faster game shows one frame twice when
+    // it gets the input delay ahead, or the slower one runs two frames in one tick to catch up. On
+    // a 60 Hz display one frame is the least either can do, and too little to see or to empty the
+    // sound's lead, so nothing more is needed; this pins that it stays that small.
+    for (const [where, latency] of [
+        ["on one LAN", 1],
+        ["over a slower link", ONE_WAY_MS],
+    ] as const) {
+        it(`stay in step a frame at a time, with nothing shown, ${where}`, async () => {
+            oneWayMs = latency;
+            host.tickEvery = 1000 / 61;
+            join.tickEvery = 1000 / 60;
+            const shown: string[] = [];
+            for (const s of [host, join]) {
+                s.play.subscribe((view) => {
+                    if (view.waiting) shown.push("waiting");
+                    if (view.catchingUp) shown.push("catching up");
+                });
+            }
+            const most = await runSteady(30_000, 2000);
+            for (const s of [host, join]) {
+                expect(most.get(s)!.frames).toBeLessThanOrEqual(2);
+                expect(most.get(s)!.held).toBeLessThanOrEqual(1);
+            }
+            expect(shown).toEqual([]);
+            const both = Math.min(host.core.frames, join.core.frames);
+            expect(both).toBeGreaterThan(30 * 60 - 60);
+            expect(host.core.pads().slice(0, both)).toEqual(join.core.pads().slice(0, both));
+        });
+    }
+
+    it("leave two computers at the same speed alone", async () => {
+        oneWayMs = 1;
+        const most = await runSteady(10_000, 1000);
+        for (const s of [host, join]) {
+            expect(most.get(s)!.frames).toBe(1);
+            expect(most.get(s)!.held).toBe(0);
+            expect(Math.abs(s.core.frames - 600)).toBeLessThan(5);
+        }
+    });
+});
+
+describe("a computer that can't keep full speed (nr-ayk5.7)", () => {
+    /** The slow-speed notes a side's view asked for, in order. */
+    function notes(s: Side): string[] {
+        const seen: string[] = [];
+        let last: string | null = null;
+        s.play.subscribe((view) => {
+            if (view.slowNote !== last && view.slowNote !== null) seen.push(view.slowNote);
+            last = view.slowNote;
+        });
+        return seen;
+    }
+
+    it("slows both games to what it can keep, saying so once on each side, worded for it", async () => {
+        const hostNotes = notes(host);
+        const joinNotes = notes(join);
+        // The joiner's computer manages 40 frames a second.
+        join.tickEvery = 25;
+        await runSteady(2500);
+        expect(host.play.view()).toMatchObject({ speed: null, slowNote: null });
+        await runSteady(2000);
+        expect(join.play.view()).toMatchObject({ speed: 38, slowNote: "me" });
+        expect(host.play.view()).toMatchObject({ speed: 38, slowNote: "them" });
+        const [hostAt, joinAt] = [host.core.frames, join.core.frames];
+        await runSteady(4000);
+        expect(Math.abs(host.core.frames - hostAt - 4 * 38)).toBeLessThan(6);
+        expect(Math.abs(join.core.frames - joinAt - 4 * 38)).toBeLessThan(6);
+        expect(hostNotes).toEqual(["them"]);
+        expect(joinNotes).toEqual(["me"]);
+    });
+
+    it("runs both at full speed again once it can, showing nothing, and says nothing when slow again", async () => {
+        const hostNotes = notes(host);
+        const joinNotes = notes(join);
+        join.tickEvery = 25;
+        await runSteady(5000);
+        expect(host.play.view().speed).toBe(38);
+        join.tickEvery = FRAME_MS;
+        await runSteady(5000);
+        expect(join.play.view().speed).toBeNull();
+        expect(host.play.view().speed).toBeNull();
+        const [hostAt, joinAt] = [host.core.frames, join.core.frames];
+        await runSteady(2000);
+        expect(Math.abs(host.core.frames - hostAt - 120)).toBeLessThan(4);
+        expect(Math.abs(join.core.frames - joinAt - 120)).toBeLessThan(4);
+        join.tickEvery = 25;
+        await runSteady(5000);
+        expect(host.play.view().speed).toBe(38);
+        expect(hostNotes).toEqual(["them"]);
+        expect(joinNotes).toEqual(["me"]);
+    });
+
+    it("does not take the faster computer, held by the slower one, for slow", async () => {
+        join.tickEvery = 25;
+        await runSteady(8000);
+        expect(join.play.view().slowNote).toBe("me");
+        expect(host.play.view().slowNote).toBe("them");
+    });
+
+    it("does not take a paused game, or its count, for a slow one", async () => {
+        join.tickEvery = 25;
+        await runSteady(2500);
+        host.play.pause();
+        await runSteady(500);
+        expect(join.play.view().phase).toBe("paused");
+        host.play.resume();
+        await runSteady(3500);
+        join.tickEvery = FRAME_MS;
+        await runSteady(4000);
+        expect(join.play.view()).toMatchObject({ speed: null, slowNote: null });
+    });
+
+    it("can be said again the next time players play together", async () => {
+        join.tickEvery = 25;
+        await runSteady(5000);
+        expect(join.play.view().slowNote).toBe("me");
+        // A new play together: nothing of the last one is still on its way.
+        vi.clearAllTimers();
+        host = side(1, () => join);
+        join = side(2, () => host);
+        host.play.begin();
+        join.play.begin();
+        expect(join.play.view()).toMatchObject({ speed: null, slowNote: null });
+        join.tickEvery = 25;
+        await runSteady(5000);
+        expect(join.play.view().slowNote).toBe("me");
+    });
+});
+
+describe("the other side's speed (nr-ayk5.7 review)", () => {
+    it("takes no speed at or above full speed for a slower one", async () => {
+        const { play } = alone(1);
+        play.hear({ t: "speed", fps: 1000 });
+        expect(play.view()).toMatchObject({ speed: null, slowNote: null });
+        play.hear({ t: "speed", fps: FULL_SPEED });
+        expect(play.view()).toMatchObject({ speed: null, slowNote: null });
+        play.hear({ t: "speed", fps: 38 });
+        expect(play.view()).toMatchObject({ speed: 38, slowNote: "them" });
+    });
+
+    it("asks for the note only while playing, not while this game is stopped (review 2)", async () => {
+        await run(200);
+        host.play.pause();
+        await run(300);
+        expect(join.play.view().phase).toBe("paused");
+        join.play.hear({ t: "speed", fps: 38 });
+        expect(join.play.view()).toMatchObject({ speed: 38, slowNote: null });
+        join.play.resume();
+        await run(3500);
+        expect(join.play.view()).toMatchObject({ phase: "playing", speed: 38, slowNote: "them" });
     });
 });

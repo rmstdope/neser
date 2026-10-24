@@ -134,3 +134,27 @@ it("drainNesToasts is a no-op when nes is undefined", () => {
 
     expect(called).toBe(false);
 });
+
+it("shows a toast for the time it is given, and dismisses it at once when asked (nr-ayk5.7)", () => {
+    const container = createMockContainer();
+    const scheduled: { callback: () => void; delayMs: number }[] = [];
+    const overlay = createToastOverlay({
+        container,
+        createNode: (message: string) => ({ textContent: message }),
+        schedule: (callback: () => void, delayMs: number) => {
+            scheduled.push({ callback, delayMs });
+            return scheduled.length;
+        },
+        durationMs: 3000
+    } as any);
+
+    const dismiss = overlay.show("Both games run a little slower.", 5000);
+    expect(scheduled[0].delayMs).toBe(5000);
+    expect(container.children.length).toBe(1);
+    dismiss();
+    expect(container.children.length).toBe(0);
+    // Its own timer coming later, or a second dismiss, finds nothing to remove.
+    scheduled[0].callback();
+    dismiss();
+    expect(container.children.length).toBe(0);
+});

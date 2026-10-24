@@ -1,4 +1,5 @@
-import type { PlayData, PlayMessage, ResyncState } from "./session";
+import { createSpeedWatch } from "./speed";
+import type { PlayData, PlayMessage, ResyncState, SpeedMessage } from "./session";
 
 /**
  * Playing together (nr-ayk5.5, docs/ui/nr-ayk5.5-playing-together.html), without the page: one
@@ -25,6 +26,11 @@ import type { PlayData, PlayMessage, ResyncState } from "./session";
  * resync that fails, or is not over within `RESYNC_LIMIT_MS`, ends playing together on both sides.
  * Nothing pressed before the games stopped is lost: a press still waiting, or carried by the very
  * frame the resync was, is carried out after the count.
+ *
+ * Keeping full speed (nr-ayk5.7, docs/ui/nr-ayk5.7-smooth-play.html): each side watches whether
+ * its computer keeps the game at full speed (`speed.ts`) and tells the other what it can keep;
+ * both games then run at the slower of the two, and the first time that happens in a play
+ * together, each side's view asks for the note worded for it.
  */
 
 /** The lockstep rules as `WasmLockstep` offers them. */
@@ -57,7 +63,7 @@ export interface PlayCore {
 
 export interface PlayLink {
     sendPacket(bytes: Uint8Array): void;
-    sendPlay(message: PlayMessage): void;
+    sendPlay(message: PlayMessage | SpeedMessage): void;
     /** The host's state, for the frame `at`, for a resync. */
     sendState(at: number, bytes: Uint8Array): void;
     /** Ends playing together on both sides: the games could not be resynced. */
@@ -82,6 +88,13 @@ export interface PlayView {
     /** This game has been behind the other player's for half a second. */
     catchingUp: boolean;
     ended: EndedHow | null;
+    /** The frames a second both games run at while one computer can't keep full speed; null at full speed. */
+    speed: number | null;
+    /**
+     * Whose computer could not keep full speed the first time both games ran slower in this play
+     * together: the note to show, once. Set once, and never again.
+     */
+    slowNote: "me" | "them" | null;
 }
 
 export interface Play {
@@ -91,6 +104,8 @@ export interface Play {
     begin(): void;
     /** A local button: every keyboard, gamepad and touch control on this computer drives this player. */
     press(controller: number, button: number, pressed: boolean): void;
+    /** An animation frame began at `t` (ms), whether or not a frame runs in it: how fast this computer is. */
+    animationFrame(t: number): void;
     /** One animation frame: runs what frames it may and sends the other side a packet. Returns how many ran. */
     tick(): number;
     /** Pause while playing, resume while paused (the Pause button and Space). */
@@ -133,6 +148,7 @@ export function createPlay({
     link,
     core,
     count,
+    fullSpeed,
     now = () => performance.now(),
 }: {
     player: 1 | 2;
@@ -143,6 +159,8 @@ export function createPlay({
     core: PlayCore;
     /** Shows a 3-2-1 count with `label` above it, calling `onDone` once it is over; returns its cancel. */
     count: (label: CountLabel, onDone: () => void) => () => void;
+    /** The game's own frames a second, once it is known. */
+    fullSpeed: () => number;
     now?: () => number;
 }): Play {
     let state: PlayView = {
@@ -153,6 +171,8 @@ export function createPlay({
         waiting: false,
         catchingUp: false,
         ended: null,
+        speed: null,
+        slowNote: null,
     };
     const listeners: ((view: PlayView) => void)[] = [];
     /** Each local controller's buttons, by controller number. */
@@ -177,9 +197,19 @@ export function createPlay({
     let earlyState: ResyncState | null = null;
     let resyncTimer: ReturnType<typeof setTimeout> | undefined;
     const delay = lockstep.input_delay();
+    const speedWatch = createSpeedWatch(fullSpeed);
+    /** What this computer can keep, as last told to the other side, and what the other's can. */
+    let mySpeed: number | null = null;
+    let theirSpeed: number | null = null;
 
     function set(changes: Partial<PlayView>) {
         const next = { ...state, ...changes };
+        // The first slowdown's note is asked for only while playing, so it is never used up unseen.
+        if (next.phase === "playing" && next.slowNote === null && next.speed !== null) {
+            next.slowNote = mySpeed !== null ? "me" : "them";
+        }
+        // Stopped, the game's seconds say nothing about this computer's speed.
+        if (state.phase === "playing" && next.phase !== "playing") speedWatch.reset();
         const same = (Object.keys(next) as (keyof PlayView)[]).every((key) => next[key] === state[key]);
         state = next;
         if (!same) for (const listener of listeners) listener(state);
@@ -339,6 +369,23 @@ export function createPlay({
         return behindSince !== null && known > delay;
     }
 
+    /** Both games run at the slower of the two computers' speeds; `set` asks for the first slowdown's note. */
+    function updateSpeed() {
+        const speeds = [mySpeed, theirSpeed].filter((fps): fps is number => fps !== null);
+        const speed = speeds.length > 0 ? Math.min(...speeds) : null;
+        set({ speed });
+    }
+
+    function animationFrame(t: number) {
+        if (state.phase !== "playing") return;
+        speedWatch.animationFrame(t);
+        const wanted = speedWatch.wanted();
+        if (wanted === mySpeed) return;
+        mySpeed = wanted;
+        link.sendPlay({ t: "speed", fps: wanted });
+        updateSpeed();
+    }
+
     function tick(): number {
         if (state.phase !== "playing") return 0;
         let ran = 0;
@@ -360,6 +407,7 @@ export function createPlay({
         }
         link.sendPacket(lockstep.packet());
         if (state.phase !== "playing") return ran;
+        speedWatch.ran(ran);
         const t = now();
         heldSince = ran > 0 ? null : (heldSince ?? t);
         behindSince = wasBehind ? (behindSince ?? t) : null;
@@ -413,6 +461,7 @@ export function createPlay({
             const buttons = held.get(controller) ?? 0;
             held.set(controller, pressed ? buttons | (1 << button) : buttons & ~(1 << button));
         },
+        animationFrame,
         tick,
         pause: () => {
             if (state.phase === "paused") return resume();
@@ -451,6 +500,12 @@ export function createPlay({
         hear: (data) => {
             if (data instanceof Uint8Array) lockstep.receive(data);
             else if (data.t === "state") hearState(data);
+            else if (data.t === "speed") {
+                if (state.phase === "ended") return;
+                // A speed this game keeps anyway asks nothing of it.
+                theirSpeed = data.fps !== null && data.fps < fullSpeed() ? data.fps : null;
+                updateSpeed();
+            }
             else message(data);
         },
         ended,

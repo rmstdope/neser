@@ -76,8 +76,13 @@ export interface ResyncState {
     at: number;
     bytes: Uint8Array | null;
 }
-/** A lockstep packet (bytes), a play message, or the host's state for a resync. */
-export type PlayData = Uint8Array | PlayMessage | ResyncState;
+/**
+ * The frames a second this side's computer can keep up while playing together, or null at full
+ * speed (nr-ayk5.7): both games run at the slower of the two sides'. For no particular frame.
+ */
+export type SpeedMessage = { t: "speed"; fps: number | null };
+/** A lockstep packet (bytes), a play message, a speed message, or the host's state for a resync. */
+export type PlayData = Uint8Array | PlayMessage | SpeedMessage | ResyncState;
 /**
  * How playing together ended from the other side: they ended it, they left (closed the page, lost
  * the link), or the games could not be resynced.
@@ -130,7 +135,7 @@ export interface NetplaySession {
     end(): void;
     /** Sends a lockstep packet, or a play message, to the other side. */
     sendPacket(bytes: Uint8Array): void;
-    sendPlay(message: PlayMessage): void;
+    sendPlay(message: PlayMessage | SpeedMessage): void;
     /** Sends the host's save state for the frame `at`, for a resync. */
     sendState(at: number, bytes: Uint8Array): void;
     /** Ends playing together on both sides: the games could not be resynced. */
@@ -187,7 +192,8 @@ type Message =
     | { t: "start"; id: number; delay: number }
     | { t: "state"; at: number; total: number; crc: number }
     | { t: "unsynced" }
-    | PlayMessage;
+    | PlayMessage
+    | SpeedMessage;
 
 /** The host's side of a game on its way. */
 type Outgoing = {
@@ -221,8 +227,12 @@ const IDLE: NetplayView = {
 
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
 
-/** Whether a message from the other side is a play message as this build sends them. */
-function isPlayMessage(message: { t: string } & Record<string, unknown>): message is PlayMessage {
+/** A speed as this build sends it: whole frames a second, at least one. */
+const isRate = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 1;
+
+/** Whether a message from the other side is a play or speed message as this build sends them. */
+function isPlayMessage(message: { t: string } & Record<string, unknown>): message is PlayMessage | SpeedMessage {
+    if (message.t === "speed") return message.fps === null || isRate(message.fps);
     if (!isCount(message.at)) return false;
     if (message.t === "resume" || message.t === "resynced") return true;
     return message.t === "reset" && typeof message.soft === "boolean";
@@ -534,7 +544,7 @@ export function createNetplaySession({
             else if (message.t === "unsynced") peerLeft("unsynced");
             else if (message.t === "state") {
                 if (state.phase === "connected") stateAnnounced(message);
-            } else if (message.t === "resume" || message.t === "reset" || message.t === "resynced") {
+            } else if (["resume", "reset", "resynced", "speed"].includes(message.t)) {
                 if (state.phase === "connected" && isPlayMessage(message)) playListener(message);
             }
             else if (["game", "got", "arrived", "broken", "stop", "start"].includes(message.t)) {

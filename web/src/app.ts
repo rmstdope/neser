@@ -64,6 +64,7 @@ import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normaliz
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
+import { createAudioFade, fadeSecondsFor, type AudioFade } from "./audio/audio_fade";
 import { gameTitle } from "./ui/game_title";
 import { BROWSER_CANNOT_DRAW, errorPlace, libraryAlert, showLibraryAlert, unsupportedFileMessage } from "./ui/errors";
 import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
@@ -95,6 +96,7 @@ import { createNetplaySession, type NetplayStart, type Role } from "./netplay/se
 import { createPlay, type CountLabel, type EndedHow, type Play, type PlayCore, type PlayView } from "./netplay/play";
 import { createPlayScreen, type PlayScreen } from "./ui/play_screen";
 import { createPlayTogether } from "./ui/play_together";
+import { createSlowNote } from "./ui/slow_note";
 import { runCountdown } from "./ui/countdown";
 import { createCrosshair } from "./display/crosshair";
 import {
@@ -1717,6 +1719,9 @@ const AUDIO_MAX_ADJUST = AUDIO_PROFILE.maxAdjust; // +/- playback rate bound
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
 let masterGain: GainNode | null = null;
+/** Playing together, the sound fades out wherever it runs dry and back in after (nr-ayk5.7); otherwise always full. */
+let fadeGain: GainNode | null = null;
+let audioFade: AudioFade | null = null;
 let volumePercent = DEFAULT_VOLUME;
 function createEmptyGamepadState(): GamepadButtonState {
     return {
@@ -1972,6 +1977,9 @@ async function initAudioContext(): Promise<void> {
         masterGain = audioContext.createGain();
         masterGain.gain.value = volumeToGain(volumePercent);
         masterGain.connect(audioContext.destination);
+        fadeGain = audioContext.createGain();
+        fadeGain.connect(masterGain);
+        audioFade = createAudioFade(fadeGain.gain, fadeSecondsFor(AUDIO_TARGET_LATENCY));
         console.log(`Audio initialized: ${audioContext.sampleRate} Hz`);
     }
 }
@@ -2015,13 +2023,15 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
     // Create a buffer source and schedule it
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
-    source.connect(masterGain ?? audioContext.destination);
+    source.connect(fadeGain ?? masterGain ?? audioContext.destination);
 
     // Schedule playback at the next available time
     // Ensure smooth continuous playback by scheduling samples back-to-back
     const now = audioContext.currentTime;
     if (nextAudioTime < now) {
-        nextAudioTime = now;
+        // Playing together, sound that ran dry starts again with the lead it always has, so it
+        // stays as far behind the picture as ever and the chunks after it carry on without a dip.
+        nextAudioTime = play ? now + AUDIO_TARGET_LATENCY : now;
     }
     // Cap how far ahead of real-time we schedule audio to avoid unbounded latency
     const MAX_AUDIO_LOOKAHEAD = 0.5; // seconds
@@ -2029,15 +2039,19 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
         nextAudioTime = now + MAX_AUDIO_LOOKAHEAD;
     }
     const latencySeconds = Math.max(0, nextAudioTime - now);
-    const playbackRate = computePlaybackRate({
+    const corrected = computePlaybackRate({
         latencySeconds,
         targetLatencySeconds: AUDIO_TARGET_LATENCY,
         maxAdjust: AUDIO_MAX_ADJUST,
         gain: AUDIO_LATENCY_GAIN
     });
+    // Both games running slower together, the sound keeps its pitch: never slowed to fill the gaps.
+    const playbackRate = play?.view().speed != null ? Math.max(1, corrected) : corrected;
     source.playbackRate.value = playbackRate;
     source.start(nextAudioTime);
+    const start = nextAudioTime;
     nextAudioTime += buffer.duration / playbackRate;
+    if (play) audioFade?.chunk(now, start, nextAudioTime);
 }
 
 async function start(): Promise<boolean> {
@@ -3130,6 +3144,8 @@ function renderNtscPass(frame: Uint8Array) {
 function step(timestamp: number) {
     if (!running || paused) return;
     lastFrameTime = timestamp;
+    // Playing together, every animation frame tells how fast this computer is (nr-ayk5.7).
+    play?.animationFrame(timestamp);
     const { shouldStep, shouldRender } = planFrame({
         shouldRender: frameLimiter.shouldRender(timestamp)
     });
@@ -3774,6 +3790,7 @@ function beginPlaying(role: Role, inputDelay: number) {
             giveUp: () => netplaySession.endUnsynced(),
         },
         core: playCore,
+        fullSpeed: gameFrameRate,
         count: (label, onDone) => {
             netplayCounting = true;
             updateEmulationButtons();
@@ -3802,9 +3819,24 @@ function beginPlaying(role: Role, inputDelay: number) {
     updatePlayLocks();
 }
 
+/** The game's own frames a second; before a game is set up, a typical one. */
+function gameFrameRate(): number {
+    return emulator?.inst.frame_rate_hz() ?? 60;
+}
+
+/** The note that says why both games run slower, once each time players play together. */
+const slowNote = createSlowNote((message, ms) => toastOverlay.show(message, ms));
+
+/** Both games run at the speed the slower computer keeps; the first time, a note says why, once (nr-ayk5.7). */
+function showPlaySpeed(view: PlayView) {
+    frameLimiter.setTargetFps(view.speed ?? gameFrameRate());
+    slowNote.draw(view);
+}
+
 /** The shared game runs only while it is played; paused, counting or ended, its loop rests. */
 function playViewChanged(view: PlayView) {
     playScreen?.draw(view);
+    showPlaySpeed(view);
     if (running) {
         if (view.phase === "playing" && paused) {
             paused = false;
@@ -3828,6 +3860,10 @@ function leavePlay() {
     playRole = null;
     playFrame = null;
     releasePlayPorts();
+    // Playing alone, the sound is never faded, and the game runs at its own speed.
+    if (audioContext) audioFade?.reset(audioContext.currentTime);
+    slowNote.end();
+    if (emulator) frameLimiter.setTargetFps(gameFrameRate());
     updatePlayLocks();
     updateSaveStateButtons();
 }

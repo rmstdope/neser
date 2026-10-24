@@ -442,6 +442,32 @@ describe("playing together", () => {
         expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
     });
 
+    it("carries the speed each computer can keep both ways (nr-ayk5.7)", async () => {
+        const toHost: PlayData[] = [];
+        const toJoin: PlayData[] = [];
+        host.onPlay((data) => toHost.push(data));
+        join.onPlay((data) => toJoin.push(data));
+        host.startGame(game(10_000), TITLE);
+        await run(20);
+        join.sendPlay({ t: "speed", fps: 48 });
+        host.sendPlay({ t: "speed", fps: null });
+        await run(2000);
+        expect(toHost).toEqual([{ t: "speed", fps: 48 }]);
+        expect(toJoin).toEqual([{ t: "speed", fps: null }]);
+    });
+
+    it("passes on no speed it cannot use", async () => {
+        const toHost: PlayData[] = [];
+        host.onPlay((data) => toHost.push(data));
+        joinEnd.forge(JSON.stringify({ t: "speed", fps: 0 }));
+        joinEnd.forge(JSON.stringify({ t: "speed", fps: 0.001 }));
+        joinEnd.forge(JSON.stringify({ t: "speed", fps: 37.5 }));
+        joinEnd.forge(JSON.stringify({ t: "speed", fps: "48" }));
+        joinEnd.forge(JSON.stringify({ t: "speed" }));
+        await run(100);
+        expect(toHost).toEqual([]);
+    });
+
     it("passes on no play message it does not know", async () => {
         const toHost: PlayData[] = [];
         host.onPlay((data) => toHost.push(data));
