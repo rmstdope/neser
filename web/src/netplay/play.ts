@@ -127,6 +127,8 @@ export function createPlay({
     let command = 0;
     /** The window that paused the game, while it is open and the game is still paused by it. */
     let pausingWindow: PlayWindow | null = null;
+    /** A window closed after a frame carried its pause, before this game reached that frame. */
+    let closedBeforeItsPause: PlayWindow | null = null;
     let lastPauseFrame: number | null = null;
     let heldSince: number | null = null;
     let behindSince: number | null = null;
@@ -178,13 +180,11 @@ export function createPlay({
         lastPauseFrame = frame;
         heldSince = null;
         behindSince = null;
-        set({
-            phase: "paused",
-            pausedBy: pauser === mine ? "me" : "them",
-            pauseReason: PAUSES[commands[pauser]],
-            waiting: false,
-            catchingUp: false,
-        });
+        const reason = PAUSES[commands[pauser]];
+        set({ phase: "paused", pausedBy: pauser === mine ? "me" : "them", pauseReason: reason, waiting: false, catchingUp: false });
+        // Its window has closed already: closing it resumes both, as it would have once paused.
+        if (pauser === mine && closedBeforeItsPause === reason) resume();
+        closedBeforeItsPause = null;
     }
 
     /**
@@ -283,6 +283,8 @@ export function createPlay({
             if (state.phase === "paused") resume();
             // Closed before a frame carried its pause: the pause is not needed.
             else if (command === COMMANDS[window]) command = 0;
+            // A frame carries it already, so both games will pause there: then they resume.
+            else if (state.phase === "playing") closedBeforeItsPause = window;
         },
         receive: (bytes) => {
             lockstep.receive(bytes);

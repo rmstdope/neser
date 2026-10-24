@@ -258,6 +258,22 @@ describe("windows", () => {
         }
     });
 
+    it("resume both when closed after a frame carried the pause but before this game reached it", async () => {
+        await run(200);
+        const before = join.core.frames;
+        join.play.windowOpened("settings");
+        // The next frame to run carries the pause, for a frame the input delay later.
+        while (join.core.frames === before) await run(1);
+        expect(join.play.view().phase).toBe("playing");
+        join.play.windowClosed("settings");
+        await run(300);
+        expect(join.counts).toEqual(["resume"]);
+        expect(host.counts).toEqual(["resume"]);
+        await run(3500);
+        expect(host.play.view().phase).toBe("playing");
+        expect(join.play.view().phase).toBe("playing");
+    });
+
     it("do not resume a game that was paused before they opened", async () => {
         join.play.pause();
         await run(300);
