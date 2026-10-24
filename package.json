@@ -8,11 +8,12 @@
     },
     "scripts": {
         "build:wasm": "env -u RUSTUP_TOOLCHAIN cargo build --profile wasm-release --target wasm32-unknown-unknown --no-default-features --features wasm && \"$(sh scripts/find_wasm_bindgen.sh)\" target/wasm32-unknown-unknown/wasm-release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path && wasm-opt -O3 web/pkg/neser_bg.wasm -o web/pkg/neser_bg.wasm",
+        "build:wasm:dev": "env -u RUSTUP_TOOLCHAIN cargo build --profile wasm-dev --target wasm32-unknown-unknown --no-default-features --features wasm && \"$(sh scripts/find_wasm_bindgen.sh)\" target/wasm32-unknown-unknown/wasm-dev/neser.wasm --out-dir web/pkg --target web --omit-default-module-path",
         "build": "pnpm run build:wasm && vite build",
         "serve": "[ -d dist ] || { echo \"Error: dist/ not found. Run 'pnpm run build' first.\" >&2; exit 1; } && rm -f dist/roms && ln -s ../web/roms dist/roms && cd dist && exec python3 -m http.server \"${NESER_WEB_PORT:-8000}\"",
         "start": "pnpm run build && pnpm run serve",
         "typecheck": "tsc --noEmit -p tsconfig.json",
-        "dev": "vite",
+        "dev": "pnpm run build:wasm:dev && vite",
         "preview": "vite preview",
         "test": "vitest run",
         "test:watch": "vitest",

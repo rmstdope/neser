@@ -161,6 +161,14 @@ opt-level = 3
 lto = true
 codegen-units = 1
 
+# `pnpm run dev` rebuilds the wasm on every Rust save: still optimised, so the emulator runs at
+# speed, but without LTO and with incremental, parallel codegen so a rebuild takes seconds.
+[profile.wasm-dev]
+inherits = "release"
+lto = false
+codegen-units = 256
+incremental = true
+
 [profile.dev.package."*"]
 opt-level = 3
 incremental = false
