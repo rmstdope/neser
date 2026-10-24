@@ -57,6 +57,10 @@ const PACKAGE: GamePackage = { kind: "nes", name: "smb3.nes", rom: new Uint8Arra
 let onOpen: ReturnType<typeof vi.fn<() => void>>;
 let onClose: ReturnType<typeof vi.fn<() => void>>;
 let writeText: ReturnType<typeof vi.fn>;
+let playing: boolean;
+let waiting: boolean;
+let askedToEnd: ReturnType<typeof vi.fn<() => void>>;
+let window_: ReturnType<typeof createPlayTogether>;
 
 function q(selector: string) {
     return document.querySelector<HTMLElement>(selector);
@@ -94,7 +98,10 @@ beforeEach(() => {
     onClose = vi.fn();
     writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    createPlayTogether({
+    playing = false;
+    waiting = false;
+    askedToEnd = vi.fn();
+    window_ = createPlayTogether({
         dialog: q("#netplay-panel") as HTMLDialogElement,
         title: q("#netplay-title")!,
         body: body(),
@@ -106,6 +113,10 @@ beforeEach(() => {
         hostGame: () => (game ? { game: PACKAGE, title: game.title } : null),
         onOpen,
         onClose,
+        playing: () => playing,
+        waiting: () => waiting,
+        // As the page does: while playing, Disconnect asks first.
+        onDisconnect: () => (playing ? askedToEnd() : session.disconnect()),
     });
 });
 
@@ -615,5 +626,48 @@ describe("sending the game (nr-ayk5.4)", () => {
         open();
         body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
         expect(alerts()).toEqual([]);
+    });
+});
+
+describe("playing together (nr-ayk5.5)", () => {
+    function playingTogether(role: "host" | "join") {
+        playing = true;
+        session.emit({ role, step: 3, phase: "connected", rtt: 18 });
+    }
+
+    it.each(["host", "join"] as const)("offers the %s only Disconnect while the game is played, which asks first", (role) => {
+        playingTogether(role);
+        open();
+        expect(buttonNames()).toEqual(["Disconnect"]);
+        expect(text()).not.toContain("Waiting for the host to start the game");
+        expect(text()).not.toContain("When you're both ready");
+        expect(text()).toContain("Connected");
+        button("Disconnect")!.click();
+        expect(askedToEnd).toHaveBeenCalledOnce();
+        expect(session.disconnect).not.toHaveBeenCalled();
+    });
+
+    it("shows Waiting… on an amber chip while the other player's game holds this one", () => {
+        playingTogether("host");
+        waiting = true;
+        window_.refresh();
+        expect(chip().textContent).toBe("Waiting…");
+        expect(chip().dataset.tone).toBe("wait");
+        waiting = false;
+        window_.refresh();
+        expect(chip().textContent).toBe("Connected · 18 ms");
+    });
+
+    it("shows Disconnected to the player who ended it too, until pressed, and then the first choice", () => {
+        playingTogether("join");
+        session.emit({ ...IDLE });
+        window_.markEnded();
+        expect(chip().textContent).toBe("Disconnected");
+        expect(chip().dataset.tone).toBe("err");
+        open();
+        expect(title()).toBe("Play together");
+        expect(text()).toContain("Join a game");
+        q("#netplay-close")!.click();
+        expect(chip().textContent).toBe("Play together");
     });
 });
