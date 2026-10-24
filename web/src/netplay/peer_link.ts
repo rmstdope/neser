@@ -97,8 +97,13 @@ function opened(pc: RTCPeerConnection, channel: Promise<RTCDataChannel>): Promis
 async function startHost(): Promise<HostStart> {
     const pc = new RTCPeerConnection({ iceServers: [] });
     const channel = pc.createDataChannel("neser");
-    await pc.setLocalDescription();
-    await gathered(pc);
+    try {
+        await pc.setLocalDescription();
+        await gathered(pc);
+    } catch (error) {
+        pc.close();
+        throw error;
+    }
     return {
         sdp: pc.localDescription!.sdp,
         accept: async (replySdp) => {
@@ -117,9 +122,15 @@ async function startJoin(hostSdp: string): Promise<JoinStart> {
     const link = opened(pc, channel);
     // A joiner may wait long for the host; a failure before then is reported through `link`.
     link.catch(() => {});
-    await pc.setRemoteDescription({ type: "offer", sdp: hostSdp });
-    await pc.setLocalDescription();
-    await gathered(pc);
+    try {
+        await pc.setRemoteDescription({ type: "offer", sdp: hostSdp });
+        await pc.setLocalDescription();
+        await gathered(pc);
+    } catch (error) {
+        // A code whose connection details the browser refuses: nothing will use this connection.
+        pc.close();
+        throw error;
+    }
     return { sdp: pc.localDescription!.sdp, link, cancel: () => pc.close() };
 }
 

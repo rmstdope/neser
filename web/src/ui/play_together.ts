@@ -234,8 +234,14 @@ export function createPlayTogether({
     function drawHost(view: NetplayView) {
         if (view.step === 1) {
             const code = codeBox(view);
-            const next = btn("Next", () => session.next(), true);
             body.append(steps("host", 1), el("p", "", "Send this code to the other player — by chat, email, anything."), code.box);
+            if (view.phase === "failed") {
+                // The browser could not make a connection to offer at all.
+                body.append(failureAlert(view), actions(btn("Close", close), btn("Start again", () => session.startAgain(), true)));
+                body.querySelector<HTMLButtonElement>(".netplay-actions button")?.focus();
+                return;
+            }
+            const next = btn("Next", () => session.next(), true);
             body.append(actions(btn("Cancel", close), code.copy, next));
             update = (v) => {
                 code.fill(v);

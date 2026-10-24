@@ -444,3 +444,13 @@ describe("copying without the clipboard API", () => {
         expect(buttonNames()).toContain("✓ Copied");
     });
 });
+
+describe("a host whose connection cannot start", () => {
+    it("says it could not reach the other player, offering to start again", () => {
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
+        session.emit({ ownCode: null, phase: "failed", failure: "unreachable" });
+        expect(text()).toContain("Couldn't reach the other player.");
+        expect(buttonNames()).toEqual(["Close", "Start again"]);
+    });
+});
