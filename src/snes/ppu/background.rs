@@ -191,6 +191,13 @@ impl Ppu {
     /// The display line layer `bg`'s tile column for native pixel `x` was fetched for:
     /// `screen_y`, the line being drawn, unless forced blank stopped this line's fetch of
     /// that column, which then still holds the line of its last fetch (nr-g1d).
+    ///
+    /// Only the line and the vertical scroll are frozen with a stale column. Everything
+    /// else Mesen2's stale `_layerData` would also hold is still read when drawing, and
+    /// is deliberately not modelled: the mosaic counter, the interlace field (modes 5/6),
+    /// the offset-per-tile lookup (modes 2/4/6), the VRAM contents and BGnHOFS. Before any
+    /// fetch the record is line 0, so a display first enabled mid-line at power-on draws
+    /// line 0's tile where Mesen2's zeroed `_layerData` would be transparent.
     fn fetched_bg_line(&self, bg: usize, x: u16, screen_y: u16) -> u16 {
         let fetch = self.fetched_bg_column(bg, x);
         if fetch.line == self.position.scanline {
@@ -3449,7 +3456,7 @@ mod tests {
     /// NESER has **no BG tile pre-fetch stage** for VRAM or BGnHOFS: `bg_pixel` indexes
     /// `self.vram` at the dot being rendered, so a VRAM write landing mid-scanline is
     /// visible to every dot after it on that same line. (BGnVOFS alone is sampled per
-    /// fetched tile column, `Ppu::bg_vofs_fetched`, nr-kis.) Mesen2 instead pre-fetches tilemap and CHR into
+    /// fetched tile column, `Ppu::bg_fetched`, nr-kis.) Mesen2 instead pre-fetches tilemap and CHR into
     /// `_layerData` in chunks bounded by H=263 (`SnesPpu::FetchTileData`), and skips
     /// fetching altogether while forced blank is set -- so there, the same write reaches
     /// a tile only if it precedes that tile's fetch. (NESER models the forced-blank skip
@@ -3622,8 +3629,10 @@ mod tests {
     fn a_vofs_write_during_forced_blank_does_not_reach_the_stale_columns() {
         let mut ppu = Ppu::new();
         setup_white_row0_then_forced_blank(&mut ppu);
-        tick_to_dot(&mut ppu, 5, 100);
-        // VOFS = 8: line 1 would fetch map row 1 (transparent) with it, line 9 map row 2.
+        // Dot 10 is before the fetch slots of columns 5-7 (BG1 reads column k at 8k+3), so
+        // the write would reach them if forced blank did not stop it.
+        tick_to_dot(&mut ppu, 5, 10);
+        // VOFS = 8: every line from 1 on fetches a transparent map row with it.
         ppu.write_register(0x210E, 0x08);
         ppu.write_register(0x210E, 0x00);
         tick_to_dot(&mut ppu, 9, 62);

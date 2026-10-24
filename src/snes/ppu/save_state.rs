@@ -79,7 +79,7 @@ impl Ppu {
             bg_char_base,
             bg_hofs,
             bg_vofs,
-            bg_fetched: _,               // derived: rebuilt from bg_vofs on restore
+            bg_fetched: _, // rebuilt from bg_vofs on restore; see the field doc
             bg_fetched_at_line_start: _, // derived: rebuilt from bg_vofs on restore
             bg_old,
             bg_old_hofs,

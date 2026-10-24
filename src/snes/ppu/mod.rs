@@ -432,7 +432,11 @@ pub struct Ppu {
     /// column's vertical position from here, so a mid-line VOFS write reaches only the
     /// columns fetched after it ([`Ppu::write_bg_vofs`]), and a column whose fetch slot
     /// passed during forced blank keeps an older line's tile ([`Ppu::start_bg_fetch_line`]).
-    /// Rebuilt from `bg_vofs` on restore, so not part of save states.
+    /// Not part of save states: restore rebuilds it from `bg_vofs` as if every column had
+    /// just been fetched. A record left stale by forced blank is therefore lost across a
+    /// save and load, and a display enabled mid-line on the next visible line shows that
+    /// line's tiles instead of the stale ones. That divergence (a few pixels on one line)
+    /// is accepted rather than adding a save-state version for it (nr-g1d).
     bg_fetched: [[BgColumnFetch; BG_FETCH_COLUMNS]; 4],
     /// `bg_fetched` as it stood when the current line began, which forced blank set
     /// mid-line restores to the columns it stops from being fetched.
