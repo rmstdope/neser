@@ -31,9 +31,16 @@ pnpm start
 # Or serve an existing build only
 pnpm run serve
 
-# Vite's development server (needs web/pkg from `pnpm run build:wasm`)
+# Develop with hot reload at http://localhost:8000 (or NESER_WEB_PORT)
 pnpm run dev
 ```
+
+`pnpm run dev` builds the wasm with the fast-rebuilding `wasm-dev` Cargo profile (no LTO, no
+`wasm-opt`; still optimised), then starts Vite's development server. Edits to TS and CSS under
+`web/` reach the open page through Vite's hot reload. Saving a Rust input (`src/`, `Cargo.toml`,
+`Cargo.lock`, `build.rs`) rebuilds the wasm into `web/pkg/` and reloads the page on its own once the
+build has finished; a failed build leaves the page running the last good wasm, with cargo's error
+in the terminal. The `wasm-watch` plugin that does this lives in `web/src/dev/wasm_watch.ts`.
 
 ## Testing
 ```bash
@@ -58,11 +65,11 @@ installed with `pnpm exec playwright install --only-shell chromium`, which a pre
 already run.
 
 ## GBA performance benchmark
-Build the WASM package, copy a local GBA ROM into `web/roms/`, start the dev
-server, then open the benchmark page:
+Copy a local GBA ROM into `web/roms/`, start the dev server (it builds the wasm), then open the
+benchmark page. The dev server's wasm skips LTO and `wasm-opt`, so for figures comparable with the
+shipped build use `pnpm start` and the same URL instead:
 
 ```bash
-pnpm run build:wasm
 cp roms/games/metroid-zero-mission.gba web/roms/
 pnpm run dev
 # open http://localhost:8000/gba-bench.html?rom=metroid-zero-mission.gba

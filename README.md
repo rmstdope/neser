@@ -189,6 +189,9 @@ pnpm start      # pnpm run build, then pnpm run serve
 `pnpm run build` compiles the wasm and bundles the app into `dist/`; `pnpm run serve` serves
 `dist/` at <http://localhost:8000> (or on the port in `NESER_WEB_PORT`).
 
+While developing, run `pnpm run dev` instead: edits to the web code under `web/` show up in the
+open page at once, and saving Rust code rebuilds the wasm and reloads the page on its own.
+
 ## Configuration
 
 NESER can be configured with config files and command-line arguments.
