@@ -183,7 +183,11 @@ so both computers must be on the same network (or VPN). The two must run the sam
 a connection slower than 120 ms round trip is refused. Once connected the host presses **Start game**:
 the game (with any SNES firmware it needs) and the host's current moment are sent to the other
 player, who needs no copy of the game and does not keep it, and both start from that moment after a
-3-2-1 count. Each pad driving both games is still to come.
+3-2-1 count. Then they play one game together: the host is player 1 and the other player is
+player 2, each with their usual keys or gamepad. Pause and Reset act on both games, and Settings,
+Keys and controls and the Play together window pause both while open; Save, Load, Eject, Library
+and the debugger are greyed out meanwhile. If one game falls behind (a hidden tab), the other waits
+for it. Either player can end playing together; the host can then keep playing alone.
 
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 
