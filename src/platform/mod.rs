@@ -13,6 +13,7 @@ pub mod headless_capture;
 pub mod image_cache;
 pub mod key_bindings;
 pub mod metadata;
+pub mod netplay;
 pub mod png_utils;
 pub mod ram_init;
 pub mod rom_extensions;
