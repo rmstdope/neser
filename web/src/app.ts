@@ -89,7 +89,7 @@ import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { THIS_BUILD } from "./netplay/build_id";
 import { webRtcLinks } from "./netplay/peer_link";
-import type { GamePackage } from "./netplay/game_package";
+import { NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
 import { createNetplaySession, type NetplayStart } from "./netplay/session";
 import { createPlayTogether } from "./ui/play_together";
 import { runCountdown } from "./ui/countdown";
@@ -3469,23 +3469,30 @@ const netplaySession = createNetplaySession({
     links: webRtcLinks,
     build: THIS_BUILD,
     checkGame: checkReceivedGame,
-    onStart: (start) => void startNetplayGame(start),
+    prepareGame: prepareReceivedGame,
+    confirmStart: (game) => running && emulator?.kind === game.kind && romBytes === game.rom,
+    onStart: startNetplayGame,
 });
 let pausedByNetplay = false;
 /** The host's game was paused when Start game was pressed, and stays so while it is on its way. */
 let heldForSending = false;
+/** The received game has begun its count; until then a send that ends takes it away again. */
+let receivedStarted = false;
+let cancelCountdown: (() => void) | null = null;
+
+/** The running game, if it is one a network game can be played on. */
+function netplayCore(): WasmNes | WasmSnes | null {
+    if (!running || !emulator) return null;
+    return emulator.kind === "nes" || emulator.kind === "snes" ? emulator.inst : null;
+}
 
 /** What Start game sends: the running NES or SNES game, its firmware, and this moment of it. */
 function netplayHostGame(): { game: GamePackage; title: string } | null {
-    if (!emulator || !romBytes || !romMetadata || (emulator.kind !== "nes" && emulator.kind !== "snes")) return null;
-    const game: GamePackage = {
-        kind: emulator.kind,
-        name: romMetadata.name,
-        rom: romBytes,
-        firmware: currentFirmware,
-        state: emulator.inst.save_state_bytes(),
-    };
-    return { game, title: gameTitle(romMetadata.name, emulator.kind).title };
+    const core = netplayCore();
+    const kind = NETPLAY_KINDS.find((k) => k === emulator?.kind);
+    if (!core || !kind || !romBytes || !romMetadata) return null;
+    const game: GamePackage = { kind, name: romMetadata.name, rom: romBytes, firmware: currentFirmware, state: core.save_state_bytes() };
+    return { game, title: gameTitle(romMetadata.name, kind).title };
 }
 
 /**
@@ -3526,25 +3533,36 @@ function showFirstFrame() {
     getPlaybackAudioSamples(emulator!.kind, emulator!.inst);
 }
 
-/** Both browsers: the windows close, the host's moment shows dimmed under the count, then the game runs. */
-async function startNetplayGame({ role, game }: NetplayStart) {
-    // The game the window paused is replaced (joiner) or held for the count (host): closing must not resume it.
+/**
+ * The joiner, once the host has confirmed: its own game closes and the received one is set up,
+ * paused, before the two begin to count, so the count does not wait on loading it.
+ */
+async function prepareReceivedGame(game: GamePackage): Promise<boolean> {
+    // The game the window paused is replaced: closing the window must not resume anything.
+    pausedByNetplay = false;
+    receivedStarted = false;
+    if (running) stop();
+    romInput.value = "";
+    romFromFile = false;
+    leaveLibraryForNewGame();
+    await applyRomBytes(game.rom, game.name, game);
+    await start();
+    if (!running || receivedGame !== game) return false;
+    paused = true;
+    updateEmulationButtons();
+    return true;
+}
+
+/** Both browsers, together: the windows close, the host's moment shows dimmed under the count, then the game runs. */
+function startNetplayGame({ role, game }: NetplayStart) {
+    // The host's game is held for the count: closing the window must not resume it.
     pausedByNetplay = false;
     heldForSending = false;
+    if (role === "join") receivedStarted = true;
     playTogether.close();
-    if (role === "join") {
-        if (running) stop();
-        romInput.value = "";
-        romFromFile = false;
-        leaveLibraryForNewGame();
-        await applyRomBytes(game.rom, game.name, game);
-        await start();
-        if (!running || receivedGame !== game) return;
-        updateView();
-    }
-    // Only a NES or SNES game is ever sent or received.
-    if (!running || (emulator?.kind !== "nes" && emulator?.kind !== "snes")) return;
-    const core = emulator.inst;
+    updateView();
+    const core = netplayCore();
+    if (!core) return;
     paused = true;
     netplayCounting = true;
     try {
@@ -3554,10 +3572,11 @@ async function startNetplayGame({ role, game }: NetplayStart) {
         console.error("Could not start from the host's moment", error);
     }
     updateEmulationButtons();
-    runCountdown({
+    cancelCountdown = runCountdown({
         screen: screenWrap,
         player: role === "host" ? 1 : 2,
         onDone: () => {
+            cancelCountdown = null;
             netplayCounting = false;
             if (running && paused) pauseResume();
             else updateEmulationButtons();
@@ -3568,6 +3587,10 @@ async function startNetplayGame({ role, game }: NetplayStart) {
 /** Playing together ended: a game received from the host goes with it. */
 function endReceivedGame() {
     if (!receivedGame) return;
+    cancelCountdown?.();
+    cancelCountdown = null;
+    netplayCounting = false;
+    receivedStarted = false;
     if (running) stop();
     receivedGame = null;
     romBytes = null;
@@ -3579,7 +3602,8 @@ function endReceivedGame() {
 }
 
 netplaySession.subscribe((view) => {
-    if (view.phase !== "connected") endReceivedGame();
+    // A game set up for a start that then failed goes too: it never began.
+    if (view.phase !== "connected" || (!view.sending && !receivedStarted)) endReceivedGame();
     // A send that ended without starting gives back the game it held, unless the window still pauses it.
     if (heldForSending && !view.sending && !playTogether.isOpen()) {
         heldForSending = false;
@@ -3595,7 +3619,9 @@ const playTogether = createPlayTogether({
     openButton: document.getElementById("netplay-open") as HTMLButtonElement,
     session: netplaySession,
     build: THIS_BUILD,
-    currentGame: () => (emulator && romMetadata ? { kind: emulator.kind, title: gameTitle(romMetadata.name, emulator.kind).title } : null),
+    // A stopped game is not one to play together, nor one that joining would close.
+    currentGame: () =>
+        running && emulator && romMetadata ? { kind: emulator.kind, title: gameTitle(romMetadata.name, emulator.kind).title } : null,
     hostGame: netplayHostGame,
     onOpen: () => {
         pausedByNetplay = running && !paused;

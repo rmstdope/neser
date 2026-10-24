@@ -45,3 +45,15 @@ describe("the count before playing together", () => {
         expect(overlay()!.getAttribute("role")).toBe("status");
     });
 });
+
+describe("a count that is called off", () => {
+    it("goes at once, without letting the game run", () => {
+        const onDone = vi.fn();
+        const cancel = runCountdown({ screen, player: 2, onDone });
+        vi.advanceTimersByTime(1500);
+        cancel();
+        expect(overlay()).toBeNull();
+        vi.advanceTimersByTime(5000);
+        expect(onDone).not.toHaveBeenCalled();
+    });
+});

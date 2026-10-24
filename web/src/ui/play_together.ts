@@ -1,7 +1,7 @@
 import type { ConsoleKind } from "../console/consoles";
 import { buildLabel, type BuildId } from "../netplay/build_id";
 import { responseTimeRating } from "../netplay/response_time";
-import type { GamePackage } from "../netplay/game_package";
+import { NETPLAY_KINDS, type GamePackage } from "../netplay/game_package";
 import type { NetplaySession, NetplayView, Role } from "../netplay/session";
 
 /**
@@ -15,7 +15,7 @@ import type { NetplaySession, NetplayView, Role } from "../netplay/session";
 
 export type CurrentGame = { kind: ConsoleKind; title: string };
 
-const HOSTABLE: readonly ConsoleKind[] = ["nes", "snes"];
+const HOSTABLE: readonly ConsoleKind[] = NETPLAY_KINDS;
 const COPIED_FOR_MS = 1500;
 
 const STEPS: Record<Role, readonly string[]> = {

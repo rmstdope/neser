@@ -21,6 +21,8 @@ class End implements PeerLink {
     /** Rewrites, or swallows (null), what this end sends. */
     tamper: (data: Data) => Data | null = (data) => data;
     held = false;
+    delay = ONE_WAY_MS;
+    lastAt = 0;
     sentBytes = 0;
     sent: Data[] = [];
 
@@ -29,7 +31,10 @@ class End implements PeerLink {
         if (typeof data !== "string") this.sentBytes += data.length - 4;
         const out = this.tamper(typeof data === "string" ? data : data.slice());
         if (out === null || this.held) return;
-        setTimeout(() => this.other.listener(out), ONE_WAY_MS);
+        // An ordered channel: a message never overtakes one sent before it.
+        const at = Math.max(performance.now() + this.delay, this.lastAt);
+        this.lastAt = at;
+        setTimeout(() => this.other.listener(out), at - performance.now());
     }
     onMessage(listener: (data: Data) => void) {
         this.listener = listener;
@@ -70,6 +75,8 @@ let hostEnd: End;
 let joinEnd: End;
 let starts: { side: "host" | "join"; at: number; start: NetplayStart }[];
 let checkGame: (game: GamePackage) => Promise<boolean>;
+let prepareGame: (game: GamePackage) => Promise<boolean>;
+let confirmStart: (game: GamePackage) => boolean;
 
 async function connected() {
     hostEnd = new End();
@@ -78,15 +85,19 @@ async function connected() {
     joinEnd.other = hostEnd;
     starts = [];
     checkGame = async () => true;
+    prepareGame = async () => true;
+    confirmStart = () => true;
     host = createNetplaySession({
         links: linksTo(hostEnd),
         build: BUILD,
+        confirmStart: (g) => confirmStart(g),
         onStart: (start) => starts.push({ side: "host", at: performance.now(), start }),
     });
     join = createNetplaySession({
         links: linksTo(joinEnd),
         build: BUILD,
         checkGame: (g) => checkGame(g),
+        prepareGame: (g) => prepareGame(g),
         onStart: (start) => starts.push({ side: "join", at: performance.now(), start }),
     });
     join.join();
@@ -301,6 +312,59 @@ describe("sending the game", () => {
         expect(starts).toEqual([]);
         expect(host.view()).toMatchObject({ sending: null, notice: null });
         expect(join.view()).toMatchObject({ sending: null, notice: "host-stopped" });
+    });
+
+    it("starts both together however long the joiner takes to set the game up", async () => {
+        prepareGame = () => new Promise((resolve) => setTimeout(() => resolve(true), 700));
+        host.startGame(game(50_000), TITLE);
+        await run(3000);
+        expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
+        const [a, b] = starts;
+        expect(Math.abs(a.at - b.at)).toBeLessThanOrEqual(ONE_WAY_MS);
+    });
+
+    it("times the host's start from the response time before sending, not one slowed by the game queued on the link", async () => {
+        await run(1000);
+        expect(host.view().rtt).toBe(2 * ONE_WAY_MS);
+        // The game queued on the link makes every round trip during the send long; once it has
+        // all arrived the link is quick again.
+        hostEnd.delay = joinEnd.delay = 150;
+        joinEnd.tamper = (data) => {
+            if (typeof data === "string" && JSON.parse(data).t === "arrived") hostEnd.delay = joinEnd.delay = ONE_WAY_MS;
+            return data;
+        };
+        host.startGame(game(2_000_000), TITLE);
+        await run(12_000);
+        expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
+        const [a, b] = starts;
+        expect(Math.abs(a.at - b.at)).toBeLessThanOrEqual(ONE_WAY_MS);
+    });
+
+    it("starts neither side when the host no longer runs the game it sent", async () => {
+        confirmStart = () => false;
+        host.startGame(game(50_000), TITLE);
+        await run(2000);
+        expect(starts).toEqual([]);
+        expect(host.view()).toMatchObject({ sending: null, notice: "not-arrived" });
+        expect(join.view()).toMatchObject({ sending: null, notice: "not-arrived" });
+    });
+
+    it("asks the joiner to set the game up only once the host has confirmed it", async () => {
+        const prepared = vi.fn(async () => true);
+        prepareGame = prepared;
+        confirmStart = () => false;
+        host.startGame(game(50_000), TITLE);
+        await run(2000);
+        expect(prepared).not.toHaveBeenCalled();
+    });
+
+    it("starts neither side when the joiner cannot set the game up", async () => {
+        prepareGame = async () => false;
+        host.startGame(game(50_000), TITLE);
+        await run(2000);
+        expect(starts).toEqual([]);
+        expect(host.view().notice).toBe("not-arrived");
+        expect(join.view().notice).toBe("not-arrived");
     });
 
     it("keeps measuring the response time while sending", async () => {
