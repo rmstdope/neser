@@ -180,8 +180,10 @@ asks for each chip's file once. See [README-SNES.md](README-SNES.md).
 **Play together** (top bar) connects two browsers for a NES or Super Nintendo network game:
 the host copies a code to the other player, who pastes it and sends one back. There is no server,
 so both computers must be on the same network (or VPN). The two must run the same NESER build, and
-a connection slower than 120 ms round trip is refused. Sending the game and playing it together
-are still to come.
+a connection slower than 120 ms round trip is refused. Once connected the host presses **Start game**:
+the game (with any SNES firmware it needs) and the host's current moment are sent to the other
+player, who needs no copy of the game and does not keep it, and both start from that moment after a
+3-2-1 count. Each pad driving both games is still to come.
 
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 

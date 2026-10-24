@@ -1,5 +1,6 @@
 import { THIS_BUILD, type BuildId } from "./build_id";
 import { encodeCode, readCode, type CodeKind } from "./code";
+import { crc32, MAX_PACKAGE_BYTES, packGame, unpackGame, type GamePackage } from "./game_package";
 import type { HostStart, JoinStart, PeerLink, PeerLinks } from "./peer_link";
 import { isTooSlow, median } from "./response_time";
 
@@ -13,11 +14,40 @@ import { isTooSlow, median } from "./response_time";
  * measures `CHECK_SAMPLES` round trips on connecting and sends `ready` or `refuse` with their
  * median, so both sides agree; once connected each side measures once a second; `bye` says the
  * other player has left.
+ *
+ * Once connected the host can send its game (nr-ayk5.4): `game` announces it (its title, size and
+ * CRC), the bytes follow as binary chunks each led by the transfer's id (u32, little-endian), and
+ * the joiner acknowledges every chunk with `got`, which both moves the host's progress and keeps
+ * at most `WINDOW_BYTES` in flight. The joiner checks what came and answers `arrived` or `broken`;
+ * `stop` is either side's Cancel. `arrived` carries how long loading the game took the joiner. The
+ * host confirms it still runs the game it sent and says `start`: the joiner then closes its own
+ * game and sets the received one up, which takes about that long, and the host waits half the
+ * round trip it measured before the game filled the link plus that time, so both counts begin
+ * together. Until `start` the joiner's own game is untouched. Nothing the other side sends
+ * is trusted: a message that does not describe itself is ignored, and a transfer that does not
+ * add up did not arrive.
  */
 
 export type Role = "host" | "join";
 export type PasteProblem = "not-neser" | "wrong-kind";
 export type Failure = "other-build" | "unreachable" | "too-slow" | "peer-left";
+/** The line on the connected step about the last attempt to send the game. */
+export type SendingNotice = "host-stopped" | "joiner-stopped" | "not-arrived";
+
+export interface Sending {
+    direction: "send" | "receive";
+    /** The game's title, as the window names it. */
+    name: string;
+    /** Bytes the joiner has received; the host's count follows the joiner's acknowledgements. */
+    done: number;
+    total: number;
+}
+
+/** The game has arrived and been checked: both sides begin from it. */
+export interface NetplayStart {
+    role: Role;
+    game: GamePackage;
+}
 
 export interface NetplayView {
     /** Who this browser is; null on the first screen, where the player chooses. */
@@ -35,6 +65,9 @@ export interface NetplayView {
     theirs: BuildId | null;
     /** The response time shown, in whole milliseconds. */
     rtt: number | null;
+    /** The game on its way, while it is. */
+    sending: Sending | null;
+    notice: SendingNotice | null;
 }
 
 export interface NetplaySession {
@@ -52,6 +85,10 @@ export interface NetplaySession {
     startAgain(): void;
     /** The open link to the other browser, once connected. */
     link(): PeerLink | null;
+    /** The host sends `game`, titled `title`, and both start once it has arrived. */
+    startGame(game: GamePackage, title: string): void;
+    /** Either side's Cancel while the game is on its way; the connection stays. Says whether it cancelled. */
+    cancelSending(): boolean;
 }
 
 /** How long the host waits, from Connect, for the connection and its check. */
@@ -60,13 +97,43 @@ const CHECK_SAMPLES = 5;
 const CHECK_INTERVAL_MS = 200;
 const LIVE_INTERVAL_MS = 1000;
 const LIVE_SAMPLES = 5;
+/** The largest piece of the game sent at once, well under what any browser's data channel takes. */
+export const CHUNK_BYTES = 16 * 1024;
+/** How much of the game may be on its way, unacknowledged, at once. */
+export const WINDOW_BYTES = 256 * 1024;
+/** A send in which nothing moves for this long has broken off. */
+export const STALL_MS = 10_000;
+const MAX_TITLE_LENGTH = 255;
+/** The longest the host waits for the joiner to set the game up, whatever the joiner says. */
+export const MAX_SETUP_MS = 2000;
 
 type Message =
     | { t: "ping"; id: number; at: number }
     | { t: "pong"; id: number; at: number }
     | { t: "ready"; rtt: number }
     | { t: "refuse"; rtt: number }
-    | { t: "bye" };
+    | { t: "bye" }
+    | { t: "game"; id: number; name: string; total: number; crc: number }
+    | { t: "got"; id: number; bytes: number }
+    | { t: "arrived"; id: number; ms: number }
+    | { t: "broken"; id: number }
+    | { t: "stop"; id: number }
+    | { t: "start"; id: number };
+
+/** The host's side of a game on its way. */
+type Outgoing = {
+    id: number;
+    game: GamePackage;
+    packed: Uint8Array;
+    sent: number;
+    acked: number;
+    /** Whether `start` has been sent. */
+    started: boolean;
+    /** The response time before sending: the game queued on the link slows every round trip during it. */
+    rtt: number;
+};
+/** The joiner's side; `game` is set once it has arrived and passed its check. */
+type Incoming = { id: number; total: number; crc: number; buffer: Uint8Array; received: number; game: GamePackage | null };
 
 const IDLE: NetplayView = {
     role: null,
@@ -78,11 +145,33 @@ const IDLE: NetplayView = {
     failure: null,
     theirs: null,
     rtt: null,
+    sending: null,
+    notice: null,
 };
 
-export function createNetplaySession({ links, build = THIS_BUILD }: { links: PeerLinks; build?: BuildId }): NetplaySession {
+const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+export function createNetplaySession({
+    links,
+    build = THIS_BUILD,
+    checkGame = async () => 0,
+    confirmStart = () => true,
+    onStart = () => {},
+}: {
+    links: PeerLinks;
+    build?: BuildId;
+    /**
+     * The joiner's test that what arrived is a game this browser can run, without disturbing its
+     * own: how long loading it took, in ms, or null when it cannot run it.
+     */
+    checkGame?: (game: GamePackage) => Promise<number | null>;
+    /** Whether the host still runs the game it sent, asked before telling the joiner to start. */
+    confirmStart?: (game: GamePackage) => boolean;
+    /** Both sides, together: the joiner sets the game up and both count down. */
+    onStart?: (start: NetplayStart) => void;
+}): NetplaySession {
     let state: NetplayView = { ...IDLE };
-    let listener: (view: NetplayView) => void = () => {};
+    const listeners: ((view: NetplayView) => void)[] = [];
     /** Bumped whenever an attempt ends, so the late results of an abandoned one are dropped. */
     let attempt = 0;
     let pastedSdp: string | null = null;
@@ -94,6 +183,10 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     /** When each ping still waiting for its pong was sent, by id: a silent link shows as slow. */
     let unanswered = new Map<number, number>();
     let pingId = 0;
+    let transferId = 0;
+    let outgoing: Outgoing | null = null;
+    let incoming: Incoming | null = null;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const intervals = new Set<ReturnType<typeof setInterval>>();
 
@@ -101,7 +194,7 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
 
     function set(changes: Partial<NetplayView>) {
         state = { ...state, ...changes };
-        listener(state);
+        for (const listener of listeners) listener(state);
     }
 
     function stopClocks() {
@@ -115,6 +208,7 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     function teardown() {
         attempt++;
         stopClocks();
+        endTransfer();
         // An open link closes its own connection once its last message is out; cancelling the
         // connection under it would drop that message (a refusal, a goodbye).
         if (live) live.close();
@@ -130,6 +224,135 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
         unanswered = new Map();
     }
 
+    function endTransfer() {
+        clearTimeout(stallTimer);
+        outgoing = null;
+        incoming = null;
+    }
+
+    /** The current attempt at sending ends, saying `notice` (or nothing) on the connected step. */
+    function transferEnded(notice: SendingNotice | null) {
+        endTransfer();
+        set({ sending: null, notice });
+    }
+
+    /** Restarts the clock after which a send in which nothing moves has broken off. */
+    function watchStall(link: PeerLink, id: number) {
+        clearTimeout(stallTimer);
+        stallTimer = setTimeout(() => {
+            if (outgoing?.id !== id && incoming?.id !== id) return;
+            send(link, { t: "broken", id });
+            transferEnded("not-arrived");
+        }, STALL_MS);
+    }
+
+    /** Sends as much of the game as the window allows. */
+    function pump(link: PeerLink) {
+        const out = outgoing;
+        if (!out) return;
+        while (out.sent < out.packed.length && out.sent - out.acked < WINDOW_BYTES) {
+            const piece = out.packed.subarray(out.sent, out.sent + CHUNK_BYTES);
+            const frame = new Uint8Array(4 + piece.length);
+            new DataView(frame.buffer).setUint32(0, out.id, true);
+            frame.set(piece, 4);
+            link.send(frame);
+            out.sent += piece.length;
+        }
+    }
+
+    function receiveBytes(link: PeerLink, data: Uint8Array) {
+        const into = incoming;
+        if (!into || into.game || data.length < 4) return;
+        // Chunks of an attempt already given up (cancelled, or replaced) are still on their way.
+        if (new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, true) !== into.id) return;
+        const piece = data.subarray(4);
+        if (into.received + piece.length > into.total) return refuseIncoming(link, into.id);
+        into.buffer.set(piece, into.received);
+        into.received += piece.length;
+        send(link, { t: "got", id: into.id, bytes: into.received });
+        set({ sending: { ...state.sending!, done: into.received } });
+        if (into.received < into.total) return watchStall(link, into.id);
+        clearTimeout(stallTimer);
+        const game = crc32(into.buffer) === into.crc ? unpackGame(into.buffer) : null;
+        if (!game) return refuseIncoming(link, into.id);
+        const mine = attempt;
+        checkGame(game).then(
+            (ms) => arrivedChecked(link, into, mine, ms === null ? null : game, ms ?? 0),
+            () => arrivedChecked(link, into, mine, null, 0)
+        );
+    }
+
+    function arrivedChecked(link: PeerLink, into: Incoming, mine: number, game: GamePackage | null, ms: number) {
+        if (mine !== attempt || incoming !== into) return;
+        if (!game) return refuseIncoming(link, into.id);
+        into.game = game;
+        send(link, { t: "arrived", id: into.id, ms: Math.max(0, Math.round(ms)) });
+    }
+
+    function refuseIncoming(link: PeerLink, id: number) {
+        send(link, { t: "broken", id });
+        transferEnded("not-arrived");
+    }
+
+    function onTransfer(link: PeerLink, message: Message) {
+        if (!("id" in message) || !isCount(message.id)) return;
+        const id = message.id;
+        if (state.role === "join") {
+            if (message.t === "game") return announced(link, message);
+            if (incoming?.id !== id) return;
+            if (message.t === "stop") transferEnded("host-stopped");
+            else if (message.t === "broken") transferEnded("not-arrived");
+            else if (message.t === "start" && incoming.game) {
+                const game = incoming.game;
+                // Told before the send's view clears, so what it starts is in place when the window hears.
+                onStart({ role: "join", game });
+                transferEnded(null);
+            }
+            return;
+        }
+        if (outgoing?.id !== id) return;
+        if (message.t === "got" && isCount(message.bytes)) {
+            outgoing.acked = Math.min(Math.max(outgoing.acked, message.bytes), outgoing.sent);
+            set({ sending: { ...state.sending!, done: outgoing.acked } });
+            watchStall(link, id);
+            pump(link);
+        } else if (message.t === "stop") transferEnded("joiner-stopped");
+        else if (message.t === "broken") transferEnded("not-arrived");
+        else if (message.t === "arrived" && !outgoing.started && outgoing.acked === outgoing.packed.length) {
+            // A host that stopped its game, or loaded another, has nothing to start from.
+            if (!confirmStart(outgoing.game)) {
+                send(link, { t: "broken", id });
+                return transferEnded("not-arrived");
+            }
+            outgoing.started = true;
+            clearTimeout(stallTimer);
+            send(link, { t: "start", id });
+            const setup = isCount(message.ms) ? Math.min(message.ms, MAX_SETUP_MS) : 0;
+            const game = outgoing.game;
+            const mine = attempt;
+            // The joiner hears `start` about half a round trip from now and then sets the game up.
+            timers.add(
+                setTimeout(() => {
+                    if (mine !== attempt || outgoing?.id !== id) return;
+                    onStart({ role: "host", game });
+                    transferEnded(null);
+                }, Math.round(outgoing.rtt / 2) + setup)
+            );
+        }
+    }
+
+    function announced(link: PeerLink, message: Extract<Message, { t: "game" }>) {
+        const { id, total, crc, name } = message;
+        const fits = isCount(total) && total > 0 && total <= MAX_PACKAGE_BYTES;
+        if (!fits || !isCount(crc) || typeof name !== "string" || name.length > MAX_TITLE_LENGTH) {
+            return refuseIncoming(link, id);
+        }
+        endTransfer();
+        incoming = { id, total, crc, buffer: new Uint8Array(total), received: 0, game: null };
+        set({ sending: { direction: "receive", name, done: 0, total }, notice: null });
+        watchStall(link, id);
+    }
+
     function send(link: PeerLink, message: Message) {
         link.send(JSON.stringify(message));
     }
@@ -142,7 +365,7 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
 
     function fail(failure: Failure, extra: Partial<NetplayView> = {}) {
         teardown();
-        set({ phase: "failed", failure, pasteReady: false, ...extra });
+        set({ phase: "failed", failure, pasteReady: false, sending: null, notice: null, ...extra });
     }
 
     function measureLive(link: PeerLink) {
@@ -178,21 +401,28 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     /** Listens on a fresh link: pongs feed `onSample`, and the other player's leaving ends it. */
     function adopt(link: PeerLink, mine: number, onSample: (rtt: number) => void, onMessage: (m: Message) => void) {
         live = link;
-        link.onMessage((text) => {
+        link.onMessage((data) => {
             if (mine !== attempt) return;
+            if (typeof data !== "string") {
+                if (state.phase === "connected") receiveBytes(link, data);
+                return;
+            }
             let message: Message;
             try {
-                message = JSON.parse(text) as Message;
+                message = JSON.parse(data) as Message;
             } catch {
                 return;
             }
+            if (typeof message !== "object" || message === null) return;
             if (message.t === "ping") send(link, { t: "pong", id: message.id, at: message.at });
             else if (message.t === "pong") {
                 unanswered.delete(message.id);
                 onSample(Math.round(now() - message.at));
             }
             else if (message.t === "bye") peerLeft();
-            else onMessage(message);
+            else if (["game", "got", "arrived", "broken", "stop", "start"].includes(message.t)) {
+                if (state.phase === "connected") onTransfer(link, message);
+            } else onMessage(message);
         });
         link.onClosed(() => {
             if (mine === attempt) peerLeft();
@@ -286,7 +516,7 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     return {
         view: () => state,
         subscribe: (next) => {
-            listener = next;
+            listeners.push(next);
         },
         host: () => {
             teardown();
@@ -364,5 +594,27 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
             else beginJoin();
         },
         link: () => (state.phase === "connected" ? live : null),
+        startGame: (game, title) => {
+            if (state.role !== "host" || state.phase !== "connected" || state.sending || !live) return;
+            const packed = packGame(game);
+            const id = ++transferId;
+            endTransfer();
+            outgoing = { id, game, packed, sent: 0, acked: 0, started: false, rtt: state.rtt ?? 0 };
+            send(live, { t: "game", id, name: title, total: packed.length, crc: crc32(packed) });
+            set({ sending: { direction: "send", name: title, done: 0, total: packed.length }, notice: null });
+            watchStall(live, id);
+            pump(live);
+        },
+        cancelSending: () => {
+            const id = outgoing?.id ?? incoming?.id;
+            if (id === undefined || !live) return false;
+            // Once all of it has arrived the start is under way on both sides; a stop then would
+            // race it and could leave one side starting alone.
+            if (outgoing && outgoing.acked === outgoing.packed.length) return false;
+            if (incoming && incoming.received === incoming.total) return false;
+            send(live, { t: "stop", id });
+            transferEnded(null);
+            return true;
+        },
     };
 }

@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GamePackage } from "../netplay/game_package";
 import type { NetplaySession, NetplayView } from "../netplay/session";
 import { createPlayTogether, type CurrentGame } from "./play_together";
 
@@ -15,6 +16,8 @@ const IDLE: NetplayView = {
     failure: null,
     theirs: null,
     rtt: null,
+    sending: null,
+    notice: null,
 };
 
 class FakeSession implements NetplaySession {
@@ -30,6 +33,8 @@ class FakeSession implements NetplaySession {
     cancel = vi.fn(() => this.emit({ ...IDLE }));
     startAgain = vi.fn();
     link = vi.fn(() => null);
+    startGame = vi.fn();
+    cancelSending = vi.fn(() => true);
     view = () => this.state;
     subscribe(listener: (view: NetplayView) => void) {
         this.listener = listener;
@@ -43,6 +48,7 @@ class FakeSession implements NetplaySession {
 const BUILD = { version: "1.3.0", commit: "4f2a9c1" };
 let session: FakeSession;
 let game: CurrentGame | null;
+const PACKAGE: GamePackage = { kind: "nes", name: "smb3.nes", rom: new Uint8Array([1]), firmware: null, state: new Uint8Array([2]) };
 let onOpen: ReturnType<typeof vi.fn<() => void>>;
 let onClose: ReturnType<typeof vi.fn<() => void>>;
 let writeText: ReturnType<typeof vi.fn>;
@@ -92,6 +98,7 @@ beforeEach(() => {
         session,
         build: BUILD,
         currentGame: () => game,
+        hostGame: () => (game ? { game: PACKAGE, title: game.title } : null),
         onOpen,
         onClose,
     });
@@ -242,8 +249,8 @@ describe("hosting", () => {
         expect(text()).toContain("Connected to the other player.");
         expect(body().querySelector(".netplay-pill")!.textContent).toBe("Response time 18 ms · Great");
         expect(body().querySelector(".netplay-pill")!.getAttribute("data-tone")).toBe("ok");
-        expect(buttonNames()).toEqual(["Disconnect"]);
-        expect(text()).not.toContain("The host will send the game next.");
+        expect(buttonNames()).toEqual(["Disconnect", "Start game"]);
+        expect(text()).not.toContain("Waiting for the host");
     });
 
     it("warns when the response time is only Playable", () => {
@@ -261,7 +268,7 @@ describe("hosting", () => {
         expect(text()).toContain(
             "The connection has become too slow to play. It may recover by itself — if not, try both being on the same network, or closer to the router."
         );
-        expect(buttonNames()).toEqual(["Disconnect"]);
+        expect(buttonNames()).toEqual(["Disconnect", "Start game"]);
         session.emit({ rtt: 20 });
         expect(text()).not.toContain("too slow to play");
     });
@@ -341,11 +348,13 @@ describe("joining", () => {
         expect(buttonNames()).toEqual(["Cancel", "Copy code"]);
     });
 
-    it("is connected to the host, who will send the game next", () => {
+    it("is connected to the host, waiting for the host to start the game", () => {
         joinStep1();
         session.emit({ step: 3, phase: "connected", rtt: 18 });
         expect(text()).toContain("Connected to the host.");
-        expect(text()).toContain("The host will send the game next.");
+        expect(text()).toContain("⟳ Waiting for the host to start the game…");
+        expect(text()).not.toContain("The host will send the game next.");
+        expect(buttonNames()).toEqual(["Disconnect"]);
     });
 });
 
@@ -452,5 +461,154 @@ describe("a host whose connection cannot start", () => {
         session.emit({ ownCode: null, phase: "failed", failure: "unreachable" });
         expect(text()).toContain("Couldn't reach the other player.");
         expect(buttonNames()).toEqual(["Close", "Start again"]);
+    });
+});
+
+describe("sending the game (nr-ayk5.4)", () => {
+    function hostConnected() {
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
+        session.emit({ step: 3, phase: "connected", rtt: 18 });
+    }
+    function joinConnected() {
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
+        session.emit({ step: 3, phase: "connected", rtt: 18 });
+    }
+    const sending = (direction: "send" | "receive", done: number, total: number) =>
+        session.emit({ sending: { direction, name: "Super Mario Bros. 3", done, total } });
+    const alerts = () => [...body().querySelectorAll<HTMLElement>(".netplay-alert")].map((a) => [a.dataset.tone, a.textContent]);
+
+    it("offers the host Start game, with focus, under the hint", () => {
+        hostConnected();
+        expect(text()).toContain("When you're both ready, send Super Mario Bros. 3 and start.");
+        expect(buttonNames()).toEqual(["Disconnect", "Start game"]);
+        expect(button("Start game")!.disabled).toBe(false);
+        expect(button("Start game")!.className).toContain("btn-primary");
+        expect(document.activeElement).toBe(button("Start game"));
+        button("Start game")!.click();
+        expect(session.startGame).toHaveBeenCalledWith(PACKAGE, "Super Mario Bros. 3");
+    });
+
+    it("greys Start game out, with the reason, when the host has no game", () => {
+        hostConnected();
+        game = null;
+        q("#netplay-close")!.click();
+        open();
+        expect(button("Start game")!.disabled).toBe(true);
+        expect(text()).toContain("Load a NES or Super Nintendo game first, then come back here.");
+        expect(text()).not.toContain("When you're both ready");
+    });
+
+    it("greys Start game out for a game that cannot be played together", () => {
+        hostConnected();
+        game = { kind: "gb", title: "Tetris" };
+        q("#netplay-close")!.click();
+        open();
+        expect(button("Start game")!.disabled).toBe(true);
+        expect(text()).toContain("Network play works with NES and Super Nintendo games.");
+    });
+
+    it("shows the host's progress, in KB, with Cancel", () => {
+        hostConnected();
+        sending("send", 240 * 1024 + 500, 384 * 1024);
+        expect(text()).toContain("Sending Super Mario Bros. 3…");
+        expect(text()).toContain("240 KB of 384 KB");
+        expect(body().querySelector<HTMLElement>(".netplay-progress i")!.style.width).toBe("62%");
+        expect(buttonNames()).toEqual(["Cancel"]);
+        expect(text()).not.toContain("You'll play with the host's game settings.");
+        expect(document.activeElement).toBe(button("Cancel"));
+        sending("send", 300 * 1024, 384 * 1024);
+        expect(text()).toContain("300 KB of 384 KB");
+        button("Cancel")!.click();
+        expect(session.cancelSending).toHaveBeenCalled();
+        sending("send", 384 * 1024, 384 * 1024);
+        expect(button("Cancel")!.disabled).toBe(true);
+    });
+
+    it("shows the joiner's progress, and that the host's settings are used", () => {
+        joinConnected();
+        sending("receive", 0, 384 * 1024);
+        expect(text()).toContain("Receiving Super Mario Bros. 3…");
+        expect(text()).toContain("0 KB of 384 KB");
+        expect(text()).toContain("You'll play with the host's game settings. Your own settings come back when you stop playing together.");
+        expect(text()).not.toContain("Waiting for the host");
+        expect(buttonNames()).toEqual(["Cancel"]);
+        button("Cancel")!.click();
+        expect(session.cancelSending).toHaveBeenCalled();
+    });
+
+    it("keeps sending when the window is closed, and the chip shows how far it is", () => {
+        hostConnected();
+        sending("send", 62 * 1024, 100 * 1024);
+        q("#netplay-close")!.click();
+        expect(session.cancel).not.toHaveBeenCalled();
+        expect(session.cancelSending).not.toHaveBeenCalled();
+        expect(chip().textContent).toBe("Sending · 62%");
+        expect(chip().querySelector(".netplay-chip-long")!.textContent).toBe("Sending · ");
+        sending("send", 99 * 1024 + 1000, 100 * 1024);
+        expect(chip().textContent).toBe("Sending · 99%");
+        open();
+        expect(text()).toContain("Sending Super Mario Bros. 3…");
+    });
+
+    it("shows Receiving on the joiner's chip", () => {
+        joinConnected();
+        sending("receive", 31, 50);
+        q("#netplay-close")!.click();
+        expect(chip().textContent).toBe("Receiving · 62%");
+    });
+
+    it("goes back to the connected chip once the game is under way", () => {
+        hostConnected();
+        sending("send", 10, 50);
+        session.emit({ sending: null });
+        expect(chip().textContent).toBe("Connected · 18 ms");
+    });
+
+    it("tells the joiner the host stopped, above the waiting line", () => {
+        joinConnected();
+        sending("receive", 10, 50);
+        session.emit({ sending: null, notice: "host-stopped" });
+        expect(alerts()).toEqual([["warn", "The host stopped sending the game."]]);
+        expect(text()).toContain("⟳ Waiting for the host to start the game…");
+    });
+
+    it("tells the host the other player stopped it, with Start game again", () => {
+        hostConnected();
+        sending("send", 10, 50);
+        session.emit({ sending: null, notice: "joiner-stopped" });
+        expect(alerts()).toEqual([["warn", "The other player stopped the game from being sent."]]);
+        expect(buttonNames()).toEqual(["Disconnect", "Start game"]);
+        expect(text()).not.toContain("When you're both ready");
+    });
+
+    it("says the game didn't arrive, to each side in its words", () => {
+        hostConnected();
+        session.emit({ notice: "not-arrived" });
+        expect(alerts()).toEqual([
+            ["err", "The game didn't arrive. Something went wrong while sending it. You're still connected — try again."],
+        ]);
+        expect(body().querySelector(".netplay-alert b")!.textContent).toBe("The game didn't arrive.");
+        expect(buttonNames()).toEqual(["Disconnect", "Start game"]);
+        session.emit({ role: "join" });
+        expect(alerts()).toEqual([
+            ["err", "The game didn't arrive. Something went wrong while sending it. You're still connected — the host can try again."],
+        ]);
+        expect(text()).toContain("⟳ Waiting for the host to start the game…");
+    });
+
+    it("warns a joiner with a game of their own that it will be closed", () => {
+        game = { kind: "gb", title: "The Legend of Zelda" };
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
+        expect(alerts()).toEqual([["warn", "The Legend of Zelda will be closed when the host's game arrives. Your saves are kept."]]);
+    });
+
+    it("does not warn a joiner with no game loaded", () => {
+        game = null;
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
+        expect(alerts()).toEqual([]);
     });
 });
