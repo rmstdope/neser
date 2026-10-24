@@ -5,10 +5,13 @@
  * is the only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
  */
 
-/** An open channel to the other browser. `onClosed` is told once, however the channel ends. */
+/**
+ * An open channel to the other browser, carrying text (the session's messages) and bytes (a game
+ * being sent, nr-ayk5.4). `onClosed` is told once, however the channel ends.
+ */
 export interface PeerLink {
-    send(text: string): void;
-    onMessage(listener: (text: string) => void): void;
+    send(data: string | Uint8Array): void;
+    onMessage(listener: (data: string | Uint8Array) => void): void;
     onClosed(listener: () => void): void;
     close(): void;
 }
@@ -49,7 +52,8 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
     });
 }
 
-function wrap(pc: RTCPeerConnection, channel: RTCDataChannel): PeerLink {
+export function wrapChannel(pc: RTCPeerConnection, channel: RTCDataChannel): PeerLink {
+    channel.binaryType = "arraybuffer";
     let closedListener: () => void = () => {};
     let ended = false;
     const end = () => {
@@ -62,10 +66,15 @@ function wrap(pc: RTCPeerConnection, channel: RTCDataChannel): PeerLink {
         if (pc.connectionState === "failed" || pc.connectionState === "closed") end();
     });
     return {
-        send: (text) => {
-            if (channel.readyState === "open") channel.send(text);
+        send: (data) => {
+            if (channel.readyState !== "open") return;
+            if (typeof data === "string") channel.send(data);
+            else channel.send(data as Uint8Array<ArrayBuffer>);
         },
-        onMessage: (listener) => channel.addEventListener("message", (event) => listener(String(event.data))),
+        onMessage: (listener) =>
+            channel.addEventListener("message", (event) =>
+                listener(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : String(event.data))
+            ),
         onClosed: (listener) => {
             closedListener = listener;
         },
@@ -88,8 +97,8 @@ function opened(pc: RTCPeerConnection, channel: Promise<RTCDataChannel>): Promis
             if (pc.connectionState === "failed" || pc.connectionState === "closed") reject(new Error("unreachable"));
         });
         channel.then((ch) => {
-            if (ch.readyState === "open") resolve(wrap(pc, ch));
-            else ch.addEventListener("open", () => resolve(wrap(pc, ch)), { once: true });
+            if (ch.readyState === "open") resolve(wrapChannel(pc, ch));
+            else ch.addEventListener("open", () => resolve(wrapChannel(pc, ch)), { once: true });
         });
     });
 }
