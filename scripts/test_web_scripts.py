@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 import time
+import tomllib
 import unittest
 import urllib.request
 from pathlib import Path
@@ -224,6 +225,31 @@ class BuildScriptsTest(unittest.TestCase):
 
     def test_typecheck_checks_web_against_tsconfig(self) -> None:
         self.assertEqual("tsc --noEmit -p tsconfig.json", _package_script("typecheck"))
+
+    def test_build_wasm_dev_builds_the_dev_profile_without_wasm_opt(self) -> None:
+        """A Rust save during `dev` rebuilds in seconds: no LTO profile and no wasm-opt (nr-fli1.2)."""
+        commands = self._run("build:wasm:dev")
+        self.assertTrue(commands[0].startswith("cargo build --profile wasm-dev"), commands)
+        self.assertIn("--target wasm32-unknown-unknown --no-default-features --features wasm", commands[0])
+        self.assertEqual("RUSTUP_TOOLCHAIN=unset", commands[1])
+        self.assertTrue(commands[2].startswith("wasm-bindgen "), commands)
+        self.assertIn("target/wasm32-unknown-unknown/wasm-dev/neser.wasm", commands[2])
+        self.assertIn("--out-dir web/pkg", commands[2])
+        self.assertEqual(3, len(commands), commands)
+
+    def test_dev_builds_the_dev_wasm_then_starts_vite(self) -> None:
+        self.assertEqual(["pnpm run build:wasm:dev", "vite"], [c.rstrip() for c in self._run("dev")])
+
+
+class WasmDevProfileTest(unittest.TestCase):
+    """The profile `build:wasm:dev` compiles is fast to rebuild and still optimised (nr-fli1.2)."""
+
+    def test_wasm_dev_profile_is_incremental_release_without_lto(self) -> None:
+        profile = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8"))["profile"]["wasm-dev"]
+        self.assertEqual("release", profile["inherits"])
+        self.assertIs(False, profile["lto"])
+        self.assertIs(True, profile["incremental"])
+        self.assertGreater(profile["codegen-units"], 1)
 
 
 class PnpmOnlyTest(unittest.TestCase):
