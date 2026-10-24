@@ -54,18 +54,26 @@ class WebIntegrationShardsTest(unittest.TestCase):
         shards = [int(entry) for entry in matrix.group(1).split(",")]
         self.assertEqual(shards, list(range(1, int(total.group(1)) + 1)))
 
-    def test_shards_are_weighted_toward_the_heavy_tail(self) -> None:
-        """Playwright splits by test count in file order, and the slow specs sort last.
+    def test_shards_are_weighted_at_the_measured_midpoint(self) -> None:
+        """Playwright splits by test count in file order, so the weights place the cut.
 
-        An even split left shard 2 with 281 worker-seconds against shard 1's 169 on run
-        36317969389, so shard 1 takes twice the tests. One weight per matrix entry.
+        2:1 (nr-ks6) suited a suite whose slow specs sorted last; by nr-y7yu the slow specs sorted
+        early and shard 1's test step took about 470 s to shard 2's 220 s. The list reporter's
+        passing durations on run 40028363298 put the midpoint after test 58 of 118 (735 against 740
+        worker-seconds), which 29:30 gives (58 and 60). One weight per matrix entry; Playwright
+        parses them as integers.
         """
 
         weights = re.search(r'PWTEST_SHARD_WEIGHTS: "([0-9:]+)"', self.job)
         matrix = re.search(r"shard: \[([^\]]*)\]", self.job)
         assert weights is not None and matrix is not None
-        self.assertEqual(weights.group(1), "2:1")
+        self.assertEqual(weights.group(1), "29:30")
         self.assertEqual(len(weights.group(1).split(":")), len(matrix.group(1).split(",")))
+
+    def test_test_step_reports_each_test_duration(self) -> None:
+        """The list reporter logs every test's duration, the data the next rebalance needs."""
+
+        self.assertIn("--shard=${{ matrix.shard }}/2 --reporter=list\n", self.job)
 
     def test_each_shard_uploads_its_own_failure_artifact(self) -> None:
         upload = re.search(r"- name: Upload Playwright test results\n((?: {8}.*\n)+)", self.job)
