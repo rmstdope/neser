@@ -79,6 +79,15 @@ async function waitForPlaying(page: Page) {
     await expect(page.locator("#pause")).toBeEnabled();
 }
 
+/** Both games show their count at the same time, saying what each is told, and then both play on. */
+async function bothCount(host: Page, joiner: Page, hostWords: string, joinerWords: string) {
+    await Promise.all([
+        expect(host.locator(".netplay-countdown")).toContainText(hostWords, { timeout: CONNECT_TIMEOUT_MS }),
+        expect(joiner.locator(".netplay-countdown")).toContainText(joinerWords, { timeout: CONNECT_TIMEOUT_MS }),
+    ]);
+    for (const page of [host, joiner]) await waitForPlaying(page);
+}
+
 function endedScreen(page: Page) {
     return page.locator(".netplay-screen", { hasText: "Playing together has ended" });
 }
@@ -226,10 +235,7 @@ test.describe("Play together", () => {
         await expect(joiner.locator("#help-netplay")).toHaveText("Playing together — your keys and gamepads control player 2.");
         await expect(host.locator(".netplay-screen")).toContainText("The other player is in Keys and controls.", { timeout: CONNECT_TIMEOUT_MS });
         await joiner.keyboard.press("Escape");
-        for (const page of [host, joiner]) {
-            await expect(page.locator(".netplay-countdown")).toContainText("Resuming", { timeout: CONNECT_TIMEOUT_MS });
-            await waitForPlaying(page);
-        }
+        await bothCount(host, joiner, "Resuming", "Resuming");
     });
 
     test("Given two players playing together, when either pauses, resets, opens Settings or ends it, then both games do so and each is told who did", async ({
@@ -249,23 +255,15 @@ test.describe("Play together", () => {
             await expect(page.locator("#pause")).toHaveText("Resume");
         }
         await host.locator(".netplay-screen").getByRole("button", { name: "Resume" }).click();
-        for (const page of [host, joiner]) {
-            await expect(page.locator(".netplay-countdown")).toContainText("Resuming", { timeout: CONNECT_TIMEOUT_MS });
-            await waitForPlaying(page);
-        }
+        await bothCount(host, joiner, "Resuming", "Resuming");
 
         await host.locator("#settings-open").click();
         await expect(joiner.locator(".netplay-screen")).toContainText("The other player is in Settings.", { timeout: CONNECT_TIMEOUT_MS });
         await host.keyboard.press("Escape");
-        for (const page of [host, joiner]) {
-            await expect(page.locator(".netplay-countdown")).toContainText("Resuming", { timeout: CONNECT_TIMEOUT_MS });
-            await waitForPlaying(page);
-        }
+        await bothCount(host, joiner, "Resuming", "Resuming");
 
         await host.locator("#reset").click();
-        await expect(host.locator(".netplay-countdown")).toContainText("You reset the game", { timeout: CONNECT_TIMEOUT_MS });
-        await expect(joiner.locator(".netplay-countdown")).toContainText("The other player reset the game", { timeout: CONNECT_TIMEOUT_MS });
-        for (const page of [host, joiner]) await waitForPlaying(page);
+        await bothCount(host, joiner, "You reset the game", "The other player reset the game");
 
         await host.locator("#pause").click();
         await expect(joiner.locator(".netplay-screen")).toContainText("The other player paused the game.", { timeout: CONNECT_TIMEOUT_MS });
@@ -278,8 +276,8 @@ test.describe("Play together", () => {
         await expect(joiner.locator(".netplay-screen")).toContainText("The other player paused the game.");
         await joiner.locator(".netplay-screen").getByRole("button", { name: "End playing together" }).click();
         await confirmEnd(joiner);
-        await expect(endedScreen(joiner)).toContainText("You ended it. The host's game isn't kept on this computer.");
-        await expect(endedScreen(host)).toContainText("The other player ended it. You can keep playing on your own from here.", {
+        await expect(endedScreen(joiner).locator("p")).toHaveText(["You ended it.", "The host's game isn't kept on this computer."]);
+        await expect(endedScreen(host).locator("p")).toHaveText(["The other player ended it.", "You can keep playing on your own from here."], {
             timeout: CONNECT_TIMEOUT_MS
         });
         await expect(host.locator("#save-state")).not.toHaveAttribute("aria-disabled", "true");
