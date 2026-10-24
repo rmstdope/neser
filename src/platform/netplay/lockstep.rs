@@ -18,8 +18,9 @@ use std::collections::VecDeque;
 
 use super::wire::{MAX_INPUTS_PER_PACKET, Packet, WireError};
 
-/// How many of each side's state hashes are kept for comparison.
-const HASH_HISTORY: usize = 16;
+/// How many frames back each side's state hashes are kept for comparison: 10 seconds, far
+/// longer than any link lockstep can play over, whatever the hash interval.
+const HASH_SPAN_FRAMES: u32 = 600;
 
 /// Which pad a side plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +102,7 @@ pub struct Lockstep {
     remote_inputs: VecDeque<Option<u16>>,
     /// The first local frame the peer still needs.
     remote_ack: u32,
-    /// The newest `(frame, hash)` pairs of each side, oldest first.
+    /// Each side's `(frame, hash)` pairs of the last [`HASH_SPAN_FRAMES`], oldest first.
     local_hashes: VecDeque<(u32, u32)>,
     remote_hashes: VecDeque<(u32, u32)>,
     desync: Option<Desync>,
@@ -262,15 +263,21 @@ impl Lockstep {
     }
 }
 
-/// Keep `entry` among the newest [`HASH_HISTORY`] hashes, once per frame.
+/// Keep `entry`, once per frame, and forget hashes more than [`HASH_SPAN_FRAMES`] older
+/// than the newest kept.
 fn remember(hashes: &mut VecDeque<(u32, u32)>, entry: (u32, u32)) {
     if hashes.iter().any(|&(frame, _)| frame == entry.0) {
         return;
     }
-    if hashes.len() == HASH_HISTORY {
+    let at = hashes.partition_point(|&(frame, _)| frame < entry.0);
+    hashes.insert(at, entry);
+    let newest = hashes.back().map_or(0, |&(frame, _)| frame);
+    while hashes
+        .front()
+        .is_some_and(|&(frame, _)| frame.saturating_add(HASH_SPAN_FRAMES) < newest)
+    {
         hashes.pop_front();
     }
-    hashes.push_back(entry);
 }
 
 #[cfg(test)]
@@ -613,6 +620,40 @@ mod tests {
             state_hash: Some((30 + 1, 2)),
         };
         a.receive(&off_interval.encode()).unwrap();
+        assert_eq!(a.desync(), None);
+    }
+
+    #[test]
+    fn a_remote_hash_arriving_long_after_ours_is_still_compared() {
+        // Hashing every frame over a slow link: the peer's hash for frame 0 arrives after
+        // this side has hashed 100 more frames, and must still meet ours.
+        let config = LockstepConfig {
+            input_delay: 2,
+            hash_interval: 1,
+        };
+        let mut a = Lockstep::new(Player::One, config);
+        let mut b = Lockstep::new(Player::Two, config);
+        b.record_state_hash(0, 0xBBBB);
+        let late = b.packet().encode();
+        for frame in 0..=100 {
+            a.record_state_hash(frame, 0xAAAA);
+        }
+        a.receive(&late).unwrap();
+        assert_eq!(a.desync().map(|d| d.frame), Some(0));
+    }
+
+    #[test]
+    fn a_hash_for_the_last_frame_there_is_does_not_panic() {
+        let mut a = session(Player::One, 2);
+        a.record_state_hash(0, 1);
+        let hostile = Packet {
+            ack: 0,
+            first_frame: 0,
+            inputs: vec![],
+            state_hash: Some((u32::MAX / 30 * 30, 2)),
+        };
+        a.receive(&hostile.encode()).unwrap();
+        a.record_state_hash(30, 1);
         assert_eq!(a.desync(), None);
     }
 }
