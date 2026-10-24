@@ -1,3 +1,6 @@
+/** The smallest windowed picture height, the NES's own 240 lines, in CSS pixels. */
+export const MIN_WINDOWED_HEIGHT = 240;
+
 /** The preferred windowed picture height before any zoom, in CSS pixels. */
 export const PREFERRED_WINDOWED_HEIGHT = 720;
 
@@ -12,7 +15,7 @@ export const WINDOWED_CHROME_HEIGHT = 260;
  * short to show it with the control bar beneath, but never below the NES's 240 lines.
  */
 export function initialWindowedHeight(viewportHeight: number): number {
-    return Math.max(240, Math.min(PREFERRED_WINDOWED_HEIGHT, Math.floor(viewportHeight - WINDOWED_CHROME_HEIGHT)));
+    return Math.max(MIN_WINDOWED_HEIGHT, Math.min(PREFERRED_WINDOWED_HEIGHT, Math.floor(viewportHeight - WINDOWED_CHROME_HEIGHT)));
 }
 
 /**
@@ -26,7 +29,7 @@ export function initialWindowedHeight(viewportHeight: number): number {
  * @returns {{ cssWidth: string, cssHeight: string, pixelWidth: number, pixelHeight: number }}
  */
 export function computeWindowedCanvasSize(preferredHeight: number, nesAspectRatio: number, dpr: number) {
-    const h = Math.max(240, Math.min(preferredHeight, 1440));
+    const h = Math.max(MIN_WINDOWED_HEIGHT, Math.min(preferredHeight, 1440));
     const w = Math.round(h * nesAspectRatio);
     return {
         cssWidth: `${w}px`,
