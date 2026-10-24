@@ -927,6 +927,12 @@ body.handheld .app-topbar {
     width: 100%;
     height: min(760px, 80dvh);
   }
+
+  /* The picture keeps about the size it had beside the debugger, short enough that the debugger's
+     top stays in the window; app.ts measures the cap (nr-i5pl). */
+  .game-view:has(#debugger-panel:not(.hidden)) .screen-wrap:not(:fullscreen) canvas {
+    max-width: min(100%, var(--docked-picture-max-width, 100%));
+  }
 }
 
 .firmware-row {

@@ -99,10 +99,12 @@ import {
     computeFullscreenCanvasSize,
     computeWindowedCanvasSize,
     computeHandheldCanvasSize,
+    dockedPictureMaxWidth,
     initialWindowedHeight,
+    scrollToShowDockedDebugger,
 } from "./display/canvas_size";
 import {
-    zoomLevelLabel, probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
+    zoomLevelLabel, probeNextZoomHeight, probeZoomAvailability, MIN_CANVAS_HEIGHT } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
 import {
     browserStorage,
@@ -2586,9 +2588,12 @@ function showDebuggerPanel() {
     if (!debuggerPanel) return;
     const opening = debuggerPanel.classList.contains("hidden");
     debuggerPanel.classList.remove("hidden");
-    // Docked under the picture on a narrow window, it can open below the fold: bring it into view.
-    if (opening) debuggerPanel.scrollIntoView({ block: "nearest" });
     updateDebuggerPanel();
+    // Fits the picture to the docked debugger, and lets + and - say what that leaves room for.
+    updateZoomButtonState();
+    // Docked under a picture already at 1x on a short window, it can open below the fold: scroll just
+    // far enough for its top to show, so F5 visibly does something.
+    if (opening) window.scrollBy(0, scrollToShowDockedDebugger(debuggerPanel.getBoundingClientRect().top, window.innerHeight));
     updateDebuggerButton();
     setStatus("Debugger paused");
 }
@@ -2597,6 +2602,7 @@ function hideDebuggerPanel() {
     if (debuggerPanel) {
         debuggerPanel.classList.add("hidden");
     }
+    updateZoomButtonState();
     updateDebuggerButton();
 }
 
@@ -3989,9 +3995,38 @@ function updateCanvasSize(newHeight: number) {
     const size = computeWindowedCanvasSize(newHeight, NES_ASPECT_RATIO, dpr);
     currentHeight = size.pixelHeight / dpr; // track the clamped height
     applyCanvasSize(size);
+    fitDockedPicture();
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
+}
+
+/** At 900px or narrower the debugger docks under the picture; main.css switches at the same width. */
+const debuggerDocksUnder = window.matchMedia("(max-width: 900px)");
+
+/**
+ * Caps the picture while the debugger is docked under it, so the debugger's top stays in the window
+ * and the picture keeps about the size it had beside it (nr-i5pl). The cap is the custom property
+ * main.css reads; it is measured again from the page on every resize, zoom and opening or closing.
+ */
+function fitDockedPicture() {
+    const view = document.getElementById("game-view");
+    if (!view || !debuggerPanel) return;
+    const docked = debuggerDocksUnder.matches && !debuggerPanel.classList.contains("hidden") && debuggerPanel.getClientRects().length > 0;
+    if (!docked) {
+        view.style.removeProperty("--docked-picture-max-width");
+        return;
+    }
+    // 1x is the console's own lines, and never under the smallest picture a window shows.
+    const oneTimesHeight = Math.max(MIN_CANVAS_HEIGHT, height);
+    // A second pass: at its new width the control bar under the picture may wrap, moving the debugger.
+    for (let pass = 0; pass < 2; pass++) {
+        const picture = canvas.getBoundingClientRect();
+        const gap = debuggerPanel.getBoundingClientRect().top - picture.bottom;
+        const cap = dockedPictureMaxWidth(window.innerHeight, picture.top + window.scrollY, gap, oneTimesHeight, NES_ASPECT_RATIO);
+        view.style.setProperty("--docked-picture-max-width", `${cap}px`);
+    }
+    updateZoomLevel();
 }
 
 function updateCanvasSizeForFullscreenViewport() {

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
     closeSettings,
     loadRomFromFileInput,
@@ -180,8 +180,83 @@ test.describe("Settings panel, firmware and debugger", () => {
         const dock = (await panel.boundingBox())!;
         expect(dock.y).toBeGreaterThanOrEqual(picture.y + picture.height);
         expect(dock.width).toBeGreaterThan(600);
-        // Opening it brings it into view, rather than below the fold where F5 would seem to do nothing.
-        await expect(panel).toBeInViewport({ ratio: 0.5 });
+        // Its title, registers and current instruction are in the window, without scrolling to them.
+        expect(dock.y + 200).toBeLessThanOrEqual(900);
+        expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    });
+
+    /** Starts the NES game in a window of the given size and opens the debugger with F5. */
+    async function openDebuggerIn(page: Page, width: number, height: number) {
+        await page.setViewportSize({ width, height });
+        await openApp(page);
+        await loadRomFromFileInput(page);
+        await waitForRunningState(page);
+        await page.locator("#screen").focus();
+        await page.keyboard.press("F5");
+        await expect(page.locator("#debugger-panel #dbg-continue")).toBeVisible();
+    }
+
+    test("Given the debugger open in a 720px-tall window, when the window crosses 900px wide, then the picture keeps about its size and the debugger's top stays in view", async ({ page }) => {
+        await openDebuggerIn(page, 901, 720);
+        const panel = page.locator("#debugger-panel");
+        const beside = (await page.locator("#screen").boundingBox())!;
+        expect((await panel.boundingBox())!.x).toBeGreaterThanOrEqual(beside.x + beside.width);
+
+        await page.setViewportSize({ width: 900, height: 720 });
+        // The window's resize event, which caps the picture, runs before the next paint, not at once.
+        await expect.poll(async () => Math.abs((await page.locator("#screen").boundingBox())!.width - beside.width) / beside.width).toBeLessThan(0.15);
+        const under = (await page.locator("#screen").boundingBox())!;
+        const dock = (await panel.boundingBox())!;
+        expect(dock.y).toBeGreaterThanOrEqual(under.y + under.height);
+        expect(dock.y + 200).toBeLessThanOrEqual(720);
+        expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+        // And back: only the debugger changes place.
+        await page.setViewportSize({ width: 901, height: 720 });
+        await expect.poll(async () => Math.abs((await page.locator("#screen").boundingBox())!.width - beside.width)).toBeLessThan(2);
+    });
+
+    test("Given a narrow window, when the debugger is closed, then the picture takes its full size again", async ({ page }) => {
+        await page.setViewportSize({ width: 850, height: 720 });
+        await openApp(page);
+        await loadRomFromFileInput(page);
+        await waitForRunningState(page);
+        const full = (await page.locator("#screen").boundingBox())!.width;
+        await page.locator("#screen").focus();
+        await page.keyboard.press("F5");
+        await expect(page.locator("#debugger-panel")).toBeVisible();
+        expect((await page.locator("#screen").boundingBox())!.width).toBeLessThan(full * 0.7);
+
+        await page.locator("#screen").focus();
+        await page.keyboard.press("F5");
+        await expect(page.locator("#debugger-panel")).toBeHidden();
+        expect((await page.locator("#screen").boundingBox())!.width).toBe(full);
+    });
+
+    test("Given a short narrow window, when the debugger opens, then the picture stays at the NES's own 256x240", async ({ page }) => {
+        await openDebuggerIn(page, 850, 400);
+        const picture = (await page.locator("#screen").boundingBox())!;
+        expect(picture.height).toBeGreaterThanOrEqual(240 - 1);
+        expect(picture.height).toBeLessThan(260);
+        // The debugger starts below the bottom edge, so opening scrolls just enough to show its top.
+        expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+        expect((await page.locator("#debugger-panel").boundingBox())!.y + 200).toBeLessThanOrEqual(400 + 1);
+    });
+
+    test("Given a narrow 720px-tall window, when the debugger opens, then its top is in view without scrolling", async ({ page }) => {
+        await openDebuggerIn(page, 900, 720);
+        expect(await page.evaluate(() => window.scrollY)).toBe(0);
+        expect((await page.locator("#debugger-panel").boundingBox())!.y + 200).toBeLessThanOrEqual(720);
+    });
+
+    test("Given the debugger docked under a capped picture, when it closes, then zooming in is offered again", async ({ page }) => {
+        await openDebuggerIn(page, 850, 720);
+        const plus = page.locator("#screen-plus");
+        await expect(plus).toBeDisabled();
+        await page.locator("#screen").focus();
+        await page.keyboard.press("F5");
+        await expect(page.locator("#debugger-panel")).toBeHidden();
+        await expect(plus).toBeEnabled();
     });
 
     test("Given the open panel over a running game, when the backdrop is clicked, then it closes and the game carries on", async ({ page }) => {

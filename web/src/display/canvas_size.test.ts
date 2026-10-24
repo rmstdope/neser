@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { assignBackingStoreSize, computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize, initialWindowedHeight, WINDOWED_CHROME_HEIGHT } from "./canvas_size";
+import { assignBackingStoreSize, computeFullscreenCanvasSize, computeWindowedCanvasSize, computeHandheldCanvasSize, dockedPictureMaxWidth, DOCKED_DEBUGGER_VISIBLE_TOP, initialWindowedHeight, scrollToShowDockedDebugger, WINDOWED_CHROME_HEIGHT } from "./canvas_size";
 
 // NES native resolution (256x240) aspect ratio
 const NES_AR = 256 / 240;
@@ -177,4 +177,24 @@ it("initialWindowedHeight - a shorter window starts the picture smaller so the c
 
 it("initialWindowedHeight - never starts below the NES's own 240 lines", () => {
     expect(initialWindowedHeight(300)).toBe(240);
+});
+
+it("dockedPictureMaxWidth - leaves the debugger's top 200px inside the window under the picture", () => {
+    // 720 tall window, picture starting 90px down, 70px of frame and control bar before the debugger.
+    const height = 720 - 90 - 70 - DOCKED_DEBUGGER_VISIBLE_TOP;
+    expect(DOCKED_DEBUGGER_VISIBLE_TOP).toBe(200);
+    expect(dockedPictureMaxWidth(720, 90, 70, 240, NES_AR)).toBe(Math.floor(height * NES_AR));
+});
+
+it("dockedPictureMaxWidth - a short window keeps the picture at the console's own 1x", () => {
+    expect(dockedPictureMaxWidth(400, 90, 70, 240, NES_AR)).toBe(256);
+});
+
+it("scrollToShowDockedDebugger - no scroll when the debugger's top 200px are already in the window", () => {
+    expect(scrollToShowDockedDebugger(520, 720)).toBe(0);
+    expect(scrollToShowDockedDebugger(100, 720)).toBe(0);
+});
+
+it("scrollToShowDockedDebugger - scrolls just far enough to bring the top 200px into the window", () => {
+    expect(scrollToShowDockedDebugger(500, 600)).toBe(100);
 });

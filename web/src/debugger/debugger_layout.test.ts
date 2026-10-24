@@ -27,3 +27,10 @@ it("debugger right panel (.debugger-regs) uses flex: 65 for 65% proportional wid
     // Should not have a fixed width that overrides the proportional split
     expect(rule!.includes("width: 300px")).toBe(false);
 });
+
+it("docked under the picture on a narrow window, the picture is capped by the width app.ts measures (nr-i5pl)", () => {
+    const mainCss = readFileSync(join(__dirname, "..", "..", "main.css"), "utf8");
+    const narrow = mainCss.slice(mainCss.indexOf("@media (max-width: 900px)"));
+    const rule = extractRule(narrow, ".game-view:has(#debugger-panel:not(.hidden)) .screen-wrap:not(:fullscreen) canvas");
+    expect(rule).toContain("max-width: min(100%, var(--docked-picture-max-width, 100%))");
+});
