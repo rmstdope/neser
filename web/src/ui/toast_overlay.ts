@@ -39,12 +39,18 @@ export function createToastOverlay({
     schedule?: (callback: () => void, delayMs: number) => number | ReturnType<typeof setTimeout>;
     durationMs?: number;
 }) {
-    function show(message: string) {
+    /** Shows `message` for `forMs` (the overlay's own duration by default); returns what takes it away at once. */
+    function show(message: string, forMs = durationMs) {
         const node = createNode(String(message));
         container.appendChild(node);
-        schedule(() => {
+        let shown = true;
+        const dismiss = () => {
+            if (!shown) return;
+            shown = false;
             removeNodeIfPresent(container, node);
-        }, durationMs);
+        };
+        schedule(dismiss, forMs);
+        return dismiss;
     }
 
     function showMany(messages: string[]) {
