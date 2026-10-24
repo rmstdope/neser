@@ -2098,15 +2098,31 @@ async function start(): Promise<boolean> {
     updateEmulationButtons();
     updateSaveStateButtons();
     rememberRecentGame();
-    requestAnimationFrame(step);
+    scheduleFrameLoop();
     return true;
+}
+
+let frameLoopScheduled = false;
+/**
+ * Asks for the next frame unless the loop already has one coming. A pause and a resume inside one
+ * frame (Settings, Help, the pause button) found the loop's request still pending; asking again
+ * started a second loop, and each extra one emulated and drew a whole frame more per frame
+ * (nr-oi18).
+ */
+function scheduleFrameLoop() {
+    if (frameLoopScheduled) return;
+    frameLoopScheduled = true;
+    requestAnimationFrame((timestamp) => {
+        frameLoopScheduled = false;
+        step(timestamp);
+    });
 }
 
 function resumeFrameLoop() {
     lastFrameTime = 0;
     frameLimiter.reset();
     setStatus("Running...");
-    requestAnimationFrame(step);
+    scheduleFrameLoop();
 }
 
 function pauseResume() {
@@ -3022,7 +3038,7 @@ function step(timestamp: number) {
         }
 
         if (!shouldStep) {
-            requestAnimationFrame(step);
+            scheduleFrameLoop();
             return;
         }
 
@@ -3100,7 +3116,7 @@ function step(timestamp: number) {
         }
     }
     if (running) {
-        requestAnimationFrame(step);
+        scheduleFrameLoop();
     }
 }
 
@@ -4160,7 +4176,7 @@ async function restartGbaSession(status: string) {
         updateEmulationButtons();
         updateSaveStateButtons();
         if (shouldScheduleFrameLoop) {
-            requestAnimationFrame(step);
+            scheduleFrameLoop();
         }
     } catch (err) {
         drainNesToasts(emulator?.inst ?? null, toastOverlay);
