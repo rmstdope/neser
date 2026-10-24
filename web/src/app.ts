@@ -89,8 +89,10 @@ import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { THIS_BUILD } from "./netplay/build_id";
 import { webRtcLinks } from "./netplay/peer_link";
-import { createNetplaySession } from "./netplay/session";
+import type { GamePackage } from "./netplay/game_package";
+import { createNetplaySession, type NetplayStart } from "./netplay/session";
 import { createPlayTogether } from "./ui/play_together";
+import { runCountdown } from "./ui/countdown";
 import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
@@ -920,6 +922,15 @@ let saveSlot: SaveSlotState = "empty";
 let running = false;
 let paused = false;
 let romFromFile = false; // true only when ROM was loaded from the file input
+/** The firmware the running SNES game was given, which the host sends along with it (nr-ayk5.4). */
+let currentFirmware: { chip: string; image: Uint8Array } | null = null;
+/**
+ * The running game came from the host of a network game (nr-ayk5.4): it is not kept, so it gets no
+ * library entry, no picture and no save state, and it goes when playing together ends.
+ */
+let receivedGame: GamePackage | null = null;
+/** The 3-2-1 count before playing together is on; nothing may skip or interrupt it. */
+let netplayCounting = false;
 /** Game Boy Color LCD colour correction; lives for the page, not across reloads (like Filter). */
 const cgbColor = createCgbColorControl({
     refreshButton: () => updateCgbColorButton(),
@@ -1246,7 +1257,7 @@ async function refreshRecentGames() {
 
 /** Remembers the game that just started, as played now. */
 function rememberRecentGame() {
-    if (!romMetadata || !romBytes || !emulator) return;
+    if (!romMetadata || !romBytes || !emulator || receivedGame) return;
     const isColor = emulator.kind === "gb" && emulator.inst.is_color();
     const game: RecentGame & { bytes: Uint8Array } = {
         name: romMetadata.name,
@@ -1261,7 +1272,7 @@ function rememberRecentGame() {
 
 /** Keeps a picture of the running game's last frame for its card, before it stops or is left. */
 function captureRecentThumbnail() {
-    if (!running || !lastFrame || !romMetadata) return;
+    if (!running || !lastFrame || !romMetadata || receivedGame) return;
     const channels = lastFrame.format === gl.RGB ? 3 : 4;
     const picture = frameThumbnail(lastFrame.frame, channels, width, height);
     if (!picture) return;
@@ -1351,6 +1362,12 @@ function updateEmulationButtons() {
     }
     if (resetBtn) {
         resetBtn.disabled = !states.resetEnabled;
+    }
+    // The count before playing together cannot be skipped or interrupted.
+    if (netplayCounting) {
+        for (const button of [pauseBtn, stopBtn, resetBtn, document.getElementById("hh-pause")]) {
+            if (button) (button as HTMLButtonElement).disabled = true;
+        }
     }
     // Load autorun button: available when a ROM is loaded from file and emulation is stopped
     if (autorunLoadBtn) {
@@ -1729,7 +1746,9 @@ function hideLibraryError() {
     if (libraryError) libraryError.hidden = true;
 }
 
-async function applyRomBytes(bytes: Uint8Array, name: string) {
+/** Takes `bytes` as the game to start; `received` is the network game's package when it came from the host. */
+async function applyRomBytes(bytes: Uint8Array, name: string, received: GamePackage | null = null) {
+    receivedGame = received;
     romBytes = bytes;
     savePreviewKey = null;
     romMetadata = {
@@ -1747,7 +1766,7 @@ async function refreshSaveStateController() {
     if (emulator && emulator.kind !== "gba" && supportsWebSaveState(emulator.kind)) {
         saveStateRuntime = emulator.inst;
     }
-    if (!saveStateRuntime || !romMetadata) {
+    if (!saveStateRuntime || !romMetadata || receivedGame) {
         saveStateController = null;
         saveSlot = "empty";
         updateSaveStateButtons();
@@ -2019,8 +2038,10 @@ async function start(): Promise<boolean> {
 
         // A DSP game needs the player's firmware for its chip before it can load.
         const firmwareChip = consoleKind === "snes" ? chipByKey(snes_rom_dsp_chip(romBytes) ?? "") : undefined;
+        currentFirmware = null;
         if (firmwareChip) {
-            const firmware = await obtainFirmwareForChip(firmwareChip);
+            // A game from the host of a network game brings its firmware; it is not stored here.
+            const firmware = receivedGame ? (receivedGame.firmware?.image ?? null) : await obtainFirmwareForChip(firmwareChip);
             if (!firmware) {
                 const game = romDisplayName(romName);
                 // As drawn: a brief note, and the game goes back to the library.
@@ -2030,6 +2051,7 @@ async function start(): Promise<boolean> {
                 return false;
             }
             (emulator!.inst as WasmSnes).set_dsp_firmware(firmwareChip.key, firmware);
+            currentFirmware = { chip: firmwareChip.key, image: firmware };
         }
 
         const wasCaptured = superScopeSession.captured() || snesMouseSession.captured();
@@ -2132,7 +2154,7 @@ function resumeFrameLoop() {
 }
 
 function pauseResume() {
-    if (!emulator || !running) return;
+    if (!emulator || !running || netplayCounting) return;
     paused = !paused;
     if (!paused) {
         resumeFrameLoop();
@@ -3262,7 +3284,9 @@ if (!pauseBtn || !stopBtn || !resetBtn) {
     throw new Error("Pause/Stop/Reset buttons not found in DOM");
 }
 pauseBtn.addEventListener("click", pauseResume);
-stopBtn.addEventListener("click", stop);
+stopBtn.addEventListener("click", () => {
+    if (!netplayCounting) stop();
+});
 resetBtn.addEventListener("click", () => {
     void resetAction();
 });
@@ -3440,9 +3464,130 @@ function toggleShortcutHelp() {
 }
 
 // ── Play together: two browsers connect for a network game (nr-ayk5.3); the game pauses while it is open ──
-const netplaySession = createNetplaySession({ links: webRtcLinks, build: THIS_BUILD });
+// The host's game is sent to the joiner and both start together (nr-ayk5.4).
+const netplaySession = createNetplaySession({
+    links: webRtcLinks,
+    build: THIS_BUILD,
+    checkGame: checkReceivedGame,
+    onStart: (start) => void startNetplayGame(start),
+});
 let pausedByNetplay = false;
-createPlayTogether({
+/** The host's game was paused when Start game was pressed, and stays so while it is on its way. */
+let heldForSending = false;
+
+/** What Start game sends: the running NES or SNES game, its firmware, and this moment of it. */
+function netplayHostGame(): { game: GamePackage; title: string } | null {
+    if (!emulator || !romBytes || !romMetadata || (emulator.kind !== "nes" && emulator.kind !== "snes")) return null;
+    const game: GamePackage = {
+        kind: emulator.kind,
+        name: romMetadata.name,
+        rom: romBytes,
+        firmware: currentFirmware,
+        state: emulator.inst.save_state_bytes(),
+    };
+    return { game, title: gameTitle(romMetadata.name, emulator.kind).title };
+}
+
+/**
+ * Whether this browser can run what the host sent, tried on a core of its own so the joiner's own
+ * game is untouched by anything that fails, a core that panics included.
+ */
+async function checkReceivedGame(game: GamePackage): Promise<boolean> {
+    try {
+        await ensureWasmInitialized();
+        await ensureRomExtensionTable();
+        if (webRomConsoleKindForName(game.name) !== game.kind) return false;
+        const chip = game.kind === "snes" ? chipByKey(snes_rom_dsp_chip(game.rom) ?? "") : undefined;
+        if (chip && game.firmware?.chip !== chip.key) return false;
+        const scratch = game.kind === "snes" ? new WasmSnes() : new WasmNes();
+        try {
+            if (chip && scratch instanceof WasmSnes) scratch.set_dsp_firmware(chip.key, game.firmware!.image);
+            scratch.load_rom(game.rom, game.name);
+            scratch.load_state_bytes(game.state);
+            return true;
+        } finally {
+            try {
+                scratch.free();
+            } catch {
+                // A core that panicked cannot be freed; it is simply dropped.
+            }
+        }
+    } catch (error) {
+        console.error("The game from the host cannot run here", error);
+        return false;
+    }
+}
+
+/** Runs one frame from the loaded moment and draws it, so the count shows the picture both start from. */
+function showFirstFrame() {
+    const frame = emulator!.inst.render_frame_rgba();
+    renderFrameWithCurrentPipeline(frame, frameTextureFormat());
+    // That frame's sound would play as a blip under the count.
+    getPlaybackAudioSamples(emulator!.kind, emulator!.inst);
+}
+
+/** Both browsers: the windows close, the host's moment shows dimmed under the count, then the game runs. */
+async function startNetplayGame({ role, game }: NetplayStart) {
+    // The game the window paused is replaced (joiner) or held for the count (host): closing must not resume it.
+    pausedByNetplay = false;
+    heldForSending = false;
+    playTogether.close();
+    if (role === "join") {
+        if (running) stop();
+        romInput.value = "";
+        romFromFile = false;
+        leaveLibraryForNewGame();
+        await applyRomBytes(game.rom, game.name, game);
+        await start();
+        if (!running || receivedGame !== game) return;
+        updateView();
+    }
+    // Only a NES or SNES game is ever sent or received.
+    if (!running || (emulator?.kind !== "nes" && emulator?.kind !== "snes")) return;
+    const core = emulator.inst;
+    paused = true;
+    netplayCounting = true;
+    try {
+        core.load_state_bytes(game.state);
+        showFirstFrame();
+    } catch (error) {
+        console.error("Could not start from the host's moment", error);
+    }
+    updateEmulationButtons();
+    runCountdown({
+        screen: screenWrap,
+        player: role === "host" ? 1 : 2,
+        onDone: () => {
+            netplayCounting = false;
+            if (running && paused) pauseResume();
+            else updateEmulationButtons();
+        },
+    });
+}
+
+/** Playing together ended: a game received from the host goes with it. */
+function endReceivedGame() {
+    if (!receivedGame) return;
+    if (running) stop();
+    receivedGame = null;
+    romBytes = null;
+    romMetadata = null;
+    currentFirmware = null;
+    void refreshSaveStateController();
+    updateEmulationButtons();
+    updateView();
+}
+
+netplaySession.subscribe((view) => {
+    if (view.phase !== "connected") endReceivedGame();
+    // A send that ended without starting gives back the game it held, unless the window still pauses it.
+    if (heldForSending && !view.sending && !playTogether.isOpen()) {
+        heldForSending = false;
+        if (running && paused) pauseResume();
+    }
+});
+
+const playTogether = createPlayTogether({
     dialog: document.getElementById("netplay-panel") as HTMLDialogElement,
     title: document.getElementById("netplay-title") as HTMLElement,
     body: document.getElementById("netplay-body") as HTMLElement,
@@ -3451,12 +3596,16 @@ createPlayTogether({
     session: netplaySession,
     build: THIS_BUILD,
     currentGame: () => (emulator && romMetadata ? { kind: emulator.kind, title: gameTitle(romMetadata.name, emulator.kind).title } : null),
+    hostGame: netplayHostGame,
     onOpen: () => {
         pausedByNetplay = running && !paused;
         if (pausedByNetplay) pauseResume();
     },
     onClose: () => {
-        if (pausedByNetplay && running && paused) pauseResume();
+        // The host's game waits, paused, while it is on its way to the other player.
+        const view = netplaySession.view();
+        if (pausedByNetplay && view.role === "host" && view.sending) heldForSending = true;
+        else if (pausedByNetplay && running && paused) pauseResume();
         pausedByNetplay = false;
     },
 });
@@ -3596,6 +3745,11 @@ function applySuperScopeKey(snesInst: WasmSnes, action: "turbo" | "pause", press
 
 async function handleKeyDown(event: KeyboardEvent) {
     if (isEditableKeyboardTarget(event.target) || belongsToOpenDialog(event.target)) {
+        return;
+    }
+    // The count before playing together cannot be skipped or interrupted, and adds no shortcut.
+    if (netplayCounting) {
+        event.preventDefault();
         return;
     }
 
@@ -4186,6 +4340,7 @@ async function toggleScreenFullscreen() {
 }
 
 async function resetAction() {
+    if (netplayCounting) return;
     if (!emulator) return;
     cancelActiveRecording();
     if (emulator.kind === "gba") {
@@ -4198,6 +4353,7 @@ async function resetAction() {
 }
 
 async function hardResetAction() {
+    if (netplayCounting) return;
     if (!emulator) return;
     cancelActiveRecording();
     if (emulator.kind === "gba") {

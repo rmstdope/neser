@@ -404,3 +404,17 @@ describe("a link that goes silent", () => {
         expect(session.view().rtt).toBeGreaterThan(120);
     });
 });
+
+describe("subscribers", () => {
+    it("tells every subscriber of each change", async () => {
+        const fake = fakeLinks();
+        session = createNetplaySession({ links: fake.links, build: OURS });
+        const first: string[] = [];
+        const second: string[] = [];
+        session.subscribe((v) => first.push(v.phase));
+        session.subscribe((v) => second.push(v.phase));
+        session.join();
+        expect(first.length).toBeGreaterThan(0);
+        expect(second).toEqual(first);
+    });
+});

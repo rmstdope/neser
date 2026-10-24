@@ -211,7 +211,7 @@ describe("sending the game", () => {
             hostEnd.forge(JSON.stringify({ t: "game", id: 99, name: TITLE, total, crc: 0 }));
             await run(30);
             expect(join.view()).toMatchObject({ sending: null, notice: "not-arrived" });
-            expect(joinEnd.messages("broken").at(-1)).toEqual({ t: "broken", id: 99 });
+            expect(joinEnd.messages("broken").slice(-1)[0]).toEqual({ t: "broken", id: 99 });
         }
     });
 

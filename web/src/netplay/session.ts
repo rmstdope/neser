@@ -148,7 +148,7 @@ export function createNetplaySession({
     onStart?: (start: NetplayStart) => void;
 }): NetplaySession {
     let state: NetplayView = { ...IDLE };
-    let listener: (view: NetplayView) => void = () => {};
+    const listeners: ((view: NetplayView) => void)[] = [];
     /** Bumped whenever an attempt ends, so the late results of an abandoned one are dropped. */
     let attempt = 0;
     let pastedSdp: string | null = null;
@@ -171,7 +171,7 @@ export function createNetplaySession({
 
     function set(changes: Partial<NetplayView>) {
         state = { ...state, ...changes };
-        listener(state);
+        for (const listener of listeners) listener(state);
     }
 
     function stopClocks() {
@@ -281,8 +281,9 @@ export function createNetplaySession({
             else if (message.t === "broken") transferEnded("not-arrived");
             else if (message.t === "start" && incoming.game) {
                 const game = incoming.game;
-                transferEnded(null);
+                // Told before the send's view clears, so what it starts is in place when the window hears.
                 onStart({ role: "join", game });
+                transferEnded(null);
             }
             return;
         }
@@ -304,8 +305,8 @@ export function createNetplaySession({
             timers.add(
                 setTimeout(() => {
                     if (mine !== attempt || outgoing?.id !== id) return;
-                    transferEnded(null);
                     onStart({ role: "host", game });
+                    transferEnded(null);
                 }, Math.round((state.rtt ?? 0) / 2))
             );
         }
@@ -486,7 +487,7 @@ export function createNetplaySession({
     return {
         view: () => state,
         subscribe: (next) => {
-            listener = next;
+            listeners.push(next);
         },
         host: () => {
             teardown();
