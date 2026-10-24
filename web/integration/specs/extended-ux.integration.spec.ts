@@ -180,6 +180,7 @@ test.describe("Phase 3 extended UX", () => {
         { width: 780, gamepad: false },
         { width: 1280, gamepad: true },
         { width: 390, gamepad: true },
+        { width: 320, gamepad: true },
     ]) {
         test(`Given a ${width}px window${gamepad ? " and a gamepad" : ""}, when the keys and controls panel shows each pad, then no two buttons overlap and the pad fits the panel`, async ({ page }) => {
             if (gamepad) {
@@ -206,6 +207,10 @@ test.describe("Phase 3 extended UX", () => {
                     boxes.slice(i + 1).filter((b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b).map((b) => `${a.name}×${b.name}`)
                 );
                 expect(overlaps, system).toEqual([]);
+                // A keyboard player's keys move to the list whenever the pad is shrunk, at any width (a
+                // 780px window's two-column panel shrinks it too); a gamepad player never has one.
+                const shrunk = await panel.locator("#help-pad").evaluate((el) => Number((el as HTMLElement).style.zoom) < 1);
+                await expect(panel.locator("#help-pad-keys"), system).toBeVisible({ visible: shrunk && !gamepad });
                 // Nothing in the panel runs past it, so it never scrolls sideways.
                 const fits = await panel.evaluate((el) => el.scrollWidth <= el.clientWidth);
                 expect(fits, system).toBe(true);

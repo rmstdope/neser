@@ -1663,7 +1663,6 @@ body.handheld .app-topbar {
   background:
     linear-gradient(#2a3c56, #2a3c56) center / 7px 20px no-repeat,
     linear-gradient(#2a3c56, #2a3c56) center / 20px 7px no-repeat;
-  box-shadow: none;
 }
 
 .pad-key-symbol[data-button="Select"],
