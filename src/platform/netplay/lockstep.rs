@@ -201,14 +201,20 @@ impl Lockstep {
             self.remote_inputs[index].get_or_insert(pad);
         }
         self.drop_unneeded_local_inputs();
+        if let Some((frame, hash)) = packet.state_hash.filter(|&(f, _)| self.is_hash_frame(f)) {
+            remember(&mut self.remote_hashes, (frame, hash));
+            self.compare_hashes();
+        }
         Ok(())
     }
 
     /// Record the hash of the game state after `frame` ran. Only frames divisible by
     /// `hash_interval` are kept and compared.
     pub fn record_state_hash(&mut self, frame: u32, hash: u32) {
-        let _ = (frame, hash, HASH_HISTORY);
-        todo!()
+        if self.is_hash_frame(frame) {
+            remember(&mut self.local_hashes, (frame, hash));
+            self.compare_hashes();
+        }
     }
 
     /// The first state mismatch found, kept for the rest of the session.
@@ -226,6 +232,27 @@ impl Lockstep {
         self.next_frame + known as u32
     }
 
+    fn is_hash_frame(&self, frame: u32) -> bool {
+        self.config.hash_interval != 0 && frame % self.config.hash_interval == 0
+    }
+
+    /// Record the first frame both sides hashed differently, if there is one yet.
+    fn compare_hashes(&mut self) {
+        if self.desync.is_some() {
+            return;
+        }
+        self.desync = self.local_hashes.iter().find_map(|&(frame, local_hash)| {
+            self.remote_hashes
+                .iter()
+                .find(|&&(f, h)| f == frame && h != local_hash)
+                .map(|&(_, remote_hash)| Desync {
+                    frame,
+                    local_hash,
+                    remote_hash,
+                })
+        });
+    }
+
     /// Forget local pads both the peer (acknowledged) and this side (already run) are done with.
     fn drop_unneeded_local_inputs(&mut self) {
         while self.local_base < self.remote_ack.min(self.next_frame) {
@@ -233,6 +260,17 @@ impl Lockstep {
             self.local_base += 1;
         }
     }
+}
+
+/// Keep `entry` among the newest [`HASH_HISTORY`] hashes, once per frame.
+fn remember(hashes: &mut VecDeque<(u32, u32)>, entry: (u32, u32)) {
+    if hashes.iter().any(|&(frame, _)| frame == entry.0) {
+        return;
+    }
+    if hashes.len() == HASH_HISTORY {
+        hashes.pop_front();
+    }
+    hashes.push_back(entry);
 }
 
 #[cfg(test)]
@@ -480,5 +518,101 @@ mod tests {
             Err(LockstepError::Wire(WireError::Truncated))
         );
         assert_eq!(b.packet(), before);
+    }
+
+    #[test]
+    fn matching_hashes_report_no_desync() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        for frame in [0, 30, 60] {
+            a.record_state_hash(frame, frame * 7);
+            b.record_state_hash(frame, frame * 7);
+            exchange(&mut a, &mut b);
+        }
+        assert_eq!(a.desync(), None);
+        assert_eq!(b.desync(), None);
+    }
+
+    #[test]
+    fn a_differing_hash_is_reported_with_its_frame() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        a.record_state_hash(0, 5);
+        b.record_state_hash(0, 5);
+        exchange(&mut a, &mut b);
+        a.record_state_hash(30, 0xAAAA);
+        b.record_state_hash(30, 0xBBBB);
+        exchange(&mut a, &mut b);
+        assert_eq!(
+            a.desync(),
+            Some(Desync {
+                frame: 30,
+                local_hash: 0xAAAA,
+                remote_hash: 0xBBBB
+            })
+        );
+        assert_eq!(
+            b.desync(),
+            Some(Desync {
+                frame: 30,
+                local_hash: 0xBBBB,
+                remote_hash: 0xAAAA
+            })
+        );
+    }
+
+    #[test]
+    fn a_remote_hash_arriving_first_is_compared_once_ours_exists() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        b.record_state_hash(30, 0xBBBB);
+        exchange(&mut a, &mut b);
+        assert_eq!(a.desync(), None);
+        a.record_state_hash(30, 0xAAAA);
+        assert_eq!(a.desync().map(|d| d.frame), Some(30));
+    }
+
+    #[test]
+    fn the_first_desync_is_kept() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        for frame in [30, 60] {
+            a.record_state_hash(frame, 1);
+            b.record_state_hash(frame, 2);
+            exchange(&mut a, &mut b);
+        }
+        assert_eq!(a.desync().map(|d| d.frame), Some(30));
+    }
+
+    #[test]
+    fn only_hash_interval_frames_are_kept() {
+        let mut a = session(Player::One, 2);
+        a.record_state_hash(31, 9);
+        assert_eq!(a.packet().state_hash, None);
+        a.record_state_hash(60, 9);
+        assert_eq!(a.packet().state_hash, Some((60, 9)));
+        let mut never = Lockstep::new(
+            Player::One,
+            LockstepConfig {
+                input_delay: 2,
+                hash_interval: 0,
+            },
+        );
+        never.record_state_hash(0, 9);
+        assert_eq!(never.packet().state_hash, None);
+    }
+
+    #[test]
+    fn a_remote_hash_off_the_interval_is_ignored() {
+        let mut a = session(Player::One, 2);
+        a.record_state_hash(30, 1);
+        let off_interval = Packet {
+            ack: 0,
+            first_frame: 0,
+            inputs: vec![],
+            state_hash: Some((30 + 1, 2)),
+        };
+        a.receive(&off_interval.encode()).unwrap();
+        assert_eq!(a.desync(), None);
     }
 }
