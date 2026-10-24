@@ -2509,10 +2509,10 @@ mod tests {
         }
     }
 
-    /// Render one frame from the pre-render line with `control` and fine Y scroll `fine_y`,
-    /// background on, and stop at dot 5 of the post-render line 240. Returns the addresses
-    /// the PPU put on its bus, and v.
-    fn bus_addresses_at_vblank_start(control: u8, fine_y: u8) -> (Vec<u16>, u16) {
+    /// Render from the pre-render line with `control` and fine Y scroll `fine_y`, background
+    /// on, until the PPU first puts v on its bus at or after line 240. Returns the scanline
+    /// and dot that tick brought the PPU to, and v.
+    fn dot_where_v_returns_to_the_bus(control: u8, fine_y: u8) -> ((u16, u16), u16) {
         let calls = Rc::new(RefCell::new(Vec::new()));
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             A12PrimingSpyMapper {
@@ -2530,12 +2530,18 @@ mod tests {
         while ppu.scanline() != 261 {
             ppu.run_ppu_cycles(1);
         }
-        while !(ppu.scanline() == 240 && ppu.pixel() == 5) {
+        while ppu.scanline() != 240 {
             ppu.run_ppu_cycles(1);
         }
         let v = ppu.registers.v() & 0x3FFF;
-        let calls = calls.borrow().clone();
-        (calls, v)
+        for _ in 0..341 {
+            let before = calls.borrow().len();
+            ppu.run_ppu_cycles(1);
+            if calls.borrow()[before..].contains(&v) {
+                return ((ppu.scanline(), ppu.pixel()), v);
+            }
+        }
+        panic!("v ${v:04X} never reached the bus on line 240");
     }
 
     // nr-5ex: at the start of vblank the PPU puts v back on its address bus (Mesen2 NesPpu.cpp,
@@ -2546,25 +2552,94 @@ mod tests {
     // and the MMC3 IRQ under the status box came a scanline late (frame 546).
     #[test]
     fn test_vblank_start_puts_v_with_a12_low_on_the_bus_after_background_at_1000() {
-        let (calls, v) = bus_addresses_at_vblank_start(0x10, 0);
+        let (at, v) = dot_where_v_returns_to_the_bus(0x10, 0);
         assert_eq!(v & 0x1000, 0, "fine Y 0 at line 240 leaves A12 of v low");
-        assert_eq!(
-            calls.last().copied(),
-            Some(v),
-            "line 240 dot 1 puts v ${v:04X} on the bus"
-        );
+        assert_eq!(at, (240, 1), "v ${v:04X} goes on the bus at line 240 dot 1");
     }
 
     // The same with A12 of v high and the last fetch from $0xxx: the bus goes high, so a
     // vblank write that sets A12 is no rising edge (The Last Ninja, frame 1742).
     #[test]
     fn test_vblank_start_puts_v_with_a12_high_on_the_bus_after_background_at_0000() {
-        let (calls, v) = bus_addresses_at_vblank_start(0x00, 1);
+        let (at, v) = dot_where_v_returns_to_the_bus(0x00, 1);
         assert_ne!(v & 0x1000, 0, "fine Y 1 at line 240 sets A12 of v");
+        assert_eq!(at, (240, 1), "v ${v:04X} goes on the bus at line 240 dot 1");
+    }
+
+    /// Counts the A12 rises an MMC3-style debounce (3 CPU cycles low) accepts.
+    struct A12EdgeCountingMapper {
+        base: crate::nes::cartridge::BaseMapper,
+        detector: Rc<RefCell<crate::nes::cartridge::A12RisingEdgeDetector>>,
+        edges: Rc<RefCell<u32>>,
+    }
+
+    impl crate::nes::cartridge::Mapper for A12EdgeCountingMapper {
+        fn base(&self) -> &crate::nes::cartridge::BaseMapper {
+            &self.base
+        }
+
+        fn base_mut(&mut self) -> &mut crate::nes::cartridge::BaseMapper {
+            &mut self.base
+        }
+
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, addr: u16) {
+            if self.detector.borrow_mut().update(addr) {
+                *self.edges.borrow_mut() += 1;
+            }
+        }
+
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
+        }
+    }
+
+    // nr-5ex, the symptom: with the background at $1000, a vblank $2006 write of $3F10 is a
+    // rising A12 edge the MMC3 debounce accepts, because A12 has been low (v on the bus)
+    // since line 240. Before the fix A12 stayed high from the last pattern fetch, the
+    // debounce never counted a low cycle, and the edge was dropped.
+    #[test]
+    fn test_vblank_ppuaddr_write_to_3f10_is_an_accepted_a12_edge_after_background_at_1000() {
+        let detector = Rc::new(RefCell::new(
+            crate::nes::cartridge::A12RisingEdgeDetector::new(3),
+        ));
+        let edges = Rc::new(RefCell::new(0));
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12EdgeCountingMapper {
+                base: create_test_base_mapper(),
+                detector: detector.clone(),
+                edges: edges.clone(),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        ppu.write_control(0x10); // background at $1000
+        ppu.write_mask(0x08);
+        // One CPU cycle per three PPU cycles, as the console clocks the debounce.
+        let run = |ppu: &mut Ppu| {
+            ppu.run_ppu_cycles(3);
+            detector.borrow_mut().cpu_tick();
+        };
+        while ppu.scanline() != 261 {
+            run(&mut ppu);
+        }
+        while ppu.scanline() != 241 {
+            run(&mut ppu);
+        }
+        *edges.borrow_mut() = 0;
+        ppu.write_mask(0x00); // the game turns rendering off for its vblank palette write
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x10, false);
+        ppu.flush_pending_vram_addr();
         assert_eq!(
-            calls.last().copied(),
-            Some(v),
-            "line 240 dot 1 puts v ${v:04X} on the bus"
+            *edges.borrow(),
+            1,
+            "the $3F10 write clocks the MMC3 counter once"
         );
     }
 
