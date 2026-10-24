@@ -71,9 +71,20 @@ function fakeLinks() {
     return { links, accepted, joined, hostCancel, joinCancel };
 }
 
-/** Lets promises, compression streams and zero-delay work finish without moving the clock. */
+/**
+ * Lets promises, compression streams and zero-delay work finish without moving the clock. A code
+ * on its way (a step that shows one, not yet failed) is waited for, however many turns the
+ * compression stream takes on a slow machine: a fixed count of turns was enough here and not on CI.
+ */
 async function settle() {
-    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    const turn = () => new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 20; i++) await turn();
+    const codeDue = () => {
+        const view = session?.view();
+        if (!view || view.phase === "failed" || view.ownCode !== null) return false;
+        return (view.role === "host" && view.step === 1) || (view.role === "join" && view.step === 2);
+    };
+    for (let i = 0; i < 10_000 && codeDue(); i++) await turn();
 }
 
 let session: NetplaySession;
