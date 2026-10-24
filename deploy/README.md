@@ -3,14 +3,14 @@
 Build the normal production bundle, then package it:
 
 ```sh
-npm ci
-bash scripts/build_web.sh
+pnpm install --frozen-lockfile
+pnpm run build
 docker build --build-arg REVISION="$(git rev-parse HEAD)" -t neser-web .
 docker run --rm -p 127.0.0.1:18081:8080 neser-web
 REVISION="$(git rev-parse HEAD)" node deploy/smoke.mjs
 ```
 
-The smoke check requires Playwright Chromium (`npx playwright install chromium`)
+The smoke check requires Playwright Chromium (`pnpm exec playwright install chromium`)
 and reads a repository test ROM only to upload through the browser's local
 file picker. It does not copy that ROM into the image.
 

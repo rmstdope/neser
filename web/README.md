@@ -3,65 +3,68 @@
 ## Prerequisites
 - Rust toolchain with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
 - `wasm-bindgen-cli` (or `wasm-pack`) installed, or use `cargo install wasm-bindgen-cli`
-- Node.js 20+ with npm
+- Node.js 22.13+ with pnpm (`corepack enable` gives you the version `package.json` pins)
+
+Install the JavaScript dependencies once, and again whenever `package.json` changes:
+```bash
+pnpm install
+```
 
 ## Build
 ```bash
-# 1. Build WASM
-cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
-wasm-bindgen target/wasm32-unknown-unknown/release/neser.wasm --out-dir web/pkg --target web --omit-default-module-path
+# The wasm and the bundle: web/pkg, then dist/
+pnpm run build
 
-# 2. Bundle with Vite (outputs to dist/)
-npx vite build
-
-# Or use the convenience script which does both:
-bash scripts/build_web.sh
-# or only step 1 (web/pkg, its TypeScript types included), without bundling:
-bash scripts/build_web.sh --no-bundle
+# Only the wasm (web/pkg, its TypeScript types included), without bundling
+pnpm run build:wasm
 ```
 
+`build:wasm` compiles the `wasm-release` profile, runs `wasm-bindgen` and then `wasm-opt -O3`.
 wasm-bindgen writes the bindings' TypeScript declarations to `web/pkg/neser.d.ts`, and `app.ts`'s
 `../pkg/neser` import is typed from that file; nothing under `web/types/` restates them.
 
 ## Run locally
 ```bash
-# Development server with hot reload
-npm run dev
+# Build, then serve dist/ at http://localhost:8000
+pnpm start
 
-# Or production preview (after build)
-bash scripts/run_web.sh
-# then open http://localhost:8000 in your browser
+# Or serve an existing build only
+pnpm run serve
+
+# Vite's development server (needs web/pkg from `pnpm run build:wasm`)
+pnpm run dev
 ```
 
 ## Testing
 ```bash
 # Unit tests (Vitest)
-npm test
+pnpm test
 
 # Type-check (needs web/pkg, so build it first; Vite and Vitest do not check types)
-bash scripts/build_web.sh --no-bundle && npx tsc --noEmit -p tsconfig.json
+pnpm run build:wasm && pnpm run typecheck
 
 # Integration tests (Playwright)
-npm run test:integration:web
+pnpm run test:integration:web
 ```
 
-The integration suite builds the app with `scripts/build_web.sh` and serves it with
-`scripts/run_web.sh` on port 8000, or on `NESER_WEB_PORT` when that is set. A fleet session runs it
-as `.cerebro/cerebro/scripts/smoke-port -- npm run test:integration:web`, which gives each session
+The integration suite builds the app with `pnpm run build` and serves it with `pnpm run serve` on
+port 8000, or on `NESER_WEB_PORT` when that is set; with `NESER_WEB_PREBUILT=1` it serves the
+`dist/` already there without building. A fleet session runs it
+as `.cerebro/cerebro/scripts/smoke-port -- pnpm run test:integration:web`, which gives each session
 its own port (`port_base`/`port_env` in `.cerebro/project.conf`) so it never tests another
-session's server. `build_web.sh` runs `wasm-bindgen` from `PATH`, or else wasm-pack's cached copy
+session's server. `build:wasm` runs `wasm-bindgen` from `PATH`, or else wasm-pack's cached copy
 of the version `Cargo.lock` pins (`scripts/find_wasm_bindgen.sh`). The browser the suite needs is
-installed with `npx playwright install --only-shell chromium`, which a prepared worktree has already
-run.
+installed with `pnpm exec playwright install --only-shell chromium`, which a prepared worktree has
+already run.
 
 ## GBA performance benchmark
 Build the WASM package, copy a local GBA ROM into `web/roms/`, start the dev
 server, then open the benchmark page:
 
 ```bash
-bash scripts/build_web.sh
+pnpm run build:wasm
 cp roms/games/metroid-zero-mission.gba web/roms/
-npm run dev
+pnpm run dev
 # open http://localhost:8000/gba-bench.html?rom=metroid-zero-mission.gba
 ```
 

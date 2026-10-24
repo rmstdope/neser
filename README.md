@@ -63,7 +63,8 @@ Prerequisites:
 - Rust via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml`
   and rustup installs it, with clippy, rustfmt and the wasm target, on the first `cargo` run
 - Platform build tools needed by Rust native dependencies
-- Node.js 20+ and npm for the web frontend
+- Node.js 22.13+ and [pnpm](https://pnpm.io) for the web frontend (`corepack enable` installs the
+  pnpm version `package.json` pins); run `pnpm install` once
 
 Native desktop build:
 
@@ -178,14 +179,15 @@ asks for each chip's file once. See [README-SNES.md](README-SNES.md).
 
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 
-Convenience commands:
+Build and serve it:
 
 ```bash
-bash scripts/build_web.sh
-bash scripts/run_web.sh
+pnpm install    # once, and after package.json changes
+pnpm start      # pnpm run build, then pnpm run serve
 ```
 
-`scripts/run_web.sh` serves the built `dist/` directory at <http://localhost:8000> (or on the port in `NESER_WEB_PORT`).
+`pnpm run build` compiles the wasm and bundles the app into `dist/`; `pnpm run serve` serves
+`dist/` at <http://localhost:8000> (or on the port in `NESER_WEB_PORT`).
 
 ## Configuration
 
@@ -279,8 +281,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --target wasm32-unknown-unknown --no-default-features --features wasm --all-targets -- -D warnings
 cargo clippy --no-default-features --features frontend --all-targets -- -D warnings
 cargo test --all-features --lib
-npm test
-sh scripts/build_web.sh --no-bundle && npx tsc --noEmit -p tsconfig.json
+pnpm test
+pnpm run build:wasm && pnpm run typecheck
 ruff check scripts
 ruff format --check scripts
 mypy --config-file scripts/pyproject.toml scripts
@@ -310,7 +312,7 @@ release cannot turn CI red on unchanged code. Moving to a newer Rust is a delibe
 
 `RUSTUP_TOOLCHAIN` in the environment beats the file. rustup's `cargo` sets it for every process
 it starts, so a shell opened from a program launched with `cargo run` inherits `stable`.
-`scripts/gate-full.sh`, `scripts/test-dir.sh`, `scripts/build_web.sh` and the pre-commit hook
+`scripts/gate-full.sh`, `scripts/test-dir.sh`, `pnpm run build:wasm` and the pre-commit hook
 unset it. For any other command, run `unset RUSTUP_TOOLCHAIN` first, and check with `rustup show active-toolchain`.
 
 The pin uses rustup's minimal profile, so CI downloads no more than it needs. rust-analyzer needs
