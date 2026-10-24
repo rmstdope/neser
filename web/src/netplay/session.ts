@@ -579,6 +579,10 @@ export function createNetplaySession({
         cancelSending: () => {
             const id = outgoing?.id ?? incoming?.id;
             if (id === undefined || !live) return;
+            // Once all of it has arrived the start is under way on both sides; a stop then would
+            // race it and could leave one side starting alone.
+            if (outgoing && outgoing.acked === outgoing.packed.length) return;
+            if (incoming && incoming.received === incoming.total) return;
             send(live, { t: "stop", id });
             transferEnded(null);
         },

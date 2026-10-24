@@ -467,6 +467,8 @@ export function createPlayTogether({
             bar.style.width = `${share}%`;
             progress.setAttribute("aria-valuenow", String(share));
             count.textContent = `${kb(v.sending.done)} KB of ${kb(v.sending.total)} KB`;
+            // Everything has arrived and both are about to start; there is nothing left to cancel.
+            cancel.disabled = v.sending.done >= v.sending.total;
         };
     }
 

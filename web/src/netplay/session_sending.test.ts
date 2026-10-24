@@ -271,6 +271,38 @@ describe("sending the game", () => {
         expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
     });
 
+    it("cannot be cancelled by the joiner once the whole game has arrived, so the host does not start alone", async () => {
+        joinEnd.tamper = (data) => {
+            if (typeof data === "string" && JSON.parse(data).t === "arrived") join.cancelSending();
+            return data;
+        };
+        host.startGame(game(50_000), TITLE);
+        await run(2000);
+        expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
+    });
+
+    it("cannot be cancelled by the host once it has told the joiner to start", async () => {
+        hostEnd.tamper = (data) => {
+            if (typeof data === "string" && JSON.parse(data).t === "start") host.cancelSending();
+            return data;
+        };
+        host.startGame(game(50_000), TITLE);
+        await run(2000);
+        expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
+    });
+
+    it("starts neither side when the host cancels just as the last of it arrives", async () => {
+        joinEnd.tamper = (data) => {
+            if (typeof data === "string" && JSON.parse(data).t === "arrived") host.cancelSending();
+            return data;
+        };
+        host.startGame(game(50_000), TITLE);
+        await run(2000);
+        expect(starts).toEqual([]);
+        expect(host.view()).toMatchObject({ sending: null, notice: null });
+        expect(join.view()).toMatchObject({ sending: null, notice: "host-stopped" });
+    });
+
     it("keeps measuring the response time while sending", async () => {
         const pongsBefore = hostEnd.messages("ping").length;
         host.startGame(game(2_000_000), TITLE);

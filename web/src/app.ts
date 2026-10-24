@@ -3602,11 +3602,13 @@ const playTogether = createPlayTogether({
         if (pausedByNetplay) pauseResume();
     },
     onClose: () => {
-        // The host's game waits, paused, while it is on its way to the other player.
+        // The host's game waits, paused, while it is on its way to the other player; reopening the
+        // window meanwhile finds it paused already, so the hold carries over to this close.
         const view = netplaySession.view();
-        if (pausedByNetplay && view.role === "host" && view.sending) heldForSending = true;
-        else if (pausedByNetplay && running && paused) pauseResume();
+        const held = pausedByNetplay || heldForSending;
         pausedByNetplay = false;
+        heldForSending = held && view.role === "host" && view.sending !== null;
+        if (held && !heldForSending && running && paused) pauseResume();
     },
 });
 // Leaving the page tells the other browser at once, rather than leaving it to notice the silence.

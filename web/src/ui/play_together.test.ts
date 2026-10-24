@@ -522,6 +522,8 @@ describe("sending the game (nr-ayk5.4)", () => {
         expect(text()).toContain("300 KB of 384 KB");
         button("Cancel")!.click();
         expect(session.cancelSending).toHaveBeenCalled();
+        sending("send", 384 * 1024, 384 * 1024);
+        expect(button("Cancel")!.disabled).toBe(true);
     });
 
     it("shows the joiner's progress, and that the host's settings are used", () => {
