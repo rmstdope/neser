@@ -162,7 +162,10 @@ lto = true
 codegen-units = 1
 
 # `pnpm run dev` rebuilds the wasm on every Rust save: still optimised, so the emulator runs at
-# speed, but without LTO and with incremental, parallel codegen so a rebuild takes seconds.
+# speed, but without LTO and with incremental, parallel codegen so a rebuild takes seconds
+# (about 4 s against about 2 min). Incremental is on here although [profile.dev] turns it off for
+# its disk use: Cargo keeps one session per crate, and this cache measured a steady ~490 MB over
+# repeated save-and-rebuild cycles (nr-fli1.2), where target/debug/incremental grew to gigabytes.
 [profile.wasm-dev]
 inherits = "release"
 lto = false

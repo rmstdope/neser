@@ -27,6 +27,12 @@ describe("isRustInput", () => {
         "node_modules/vite/index.js",
         "package.json",
         "../other/src/lib.rs",
+        "src/nes/.cpu.rs.swp",
+        "src/nes/cpu.rs.swp",
+        "src/nes/cpu.rs~",
+        "src/nes/4913",
+        "src/.DS_Store",
+        "src/nes/cpu.rs.tmp",
     ])("leaves %s to Vite", (rel) => {
         expect(isRustInput(join(repo, rel), repo)).toBe(false);
     });
@@ -88,6 +94,45 @@ describe("createRebuildScheduler", () => {
         await vi.advanceTimersByTimeAsync(500);
         expect(run).toHaveBeenCalledTimes(2);
         expect(onSuccess).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps serving when a rebuild throws", async () => {
+        const run = vi
+            .fn<() => Promise<boolean>>()
+            .mockRejectedValueOnce(new Error("spawn exploded"))
+            .mockResolvedValueOnce(true);
+        const onSuccess = vi.fn();
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        const scheduler = createRebuildScheduler(run, onSuccess, 100);
+
+        scheduler.schedule();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(error).toHaveBeenCalledWith(expect.stringContaining("spawn exploded"));
+        expect(onSuccess).not.toHaveBeenCalled();
+
+        scheduler.schedule();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(run).toHaveBeenCalledTimes(2);
+        expect(onSuccess).toHaveBeenCalledTimes(1);
+        error.mockRestore();
+    });
+
+    it("keeps serving when the reload throws", async () => {
+        const run = vi.fn(async () => true);
+        const onSuccess = vi.fn(() => {
+            throw new Error("hot channel closed");
+        });
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        const scheduler = createRebuildScheduler(run, onSuccess, 100);
+
+        scheduler.schedule();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(error).toHaveBeenCalledWith(expect.stringContaining("hot channel closed"));
+
+        scheduler.schedule();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(run).toHaveBeenCalledTimes(2);
+        error.mockRestore();
     });
 
     it("does not reload after a failed rebuild", async () => {

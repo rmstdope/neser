@@ -10,7 +10,8 @@ import { wasmWatchPlugin } from "./web/src/dev/wasm_watch";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** The dev and preview servers' port: `NESER_WEB_PORT`, as `pnpm run serve` reads it, or 8000. */
-const port = Number(process.env.NESER_WEB_PORT ?? 8000);
+// `||`, not `??`: an empty variable means 8000, as `${NESER_WEB_PORT:-8000}` does in `serve`.
+const port = Number(process.env.NESER_WEB_PORT || 8000);
 
 /** Vite plugin that generates web/roms/roms.json so the ROM picker works. */
 function romManifestPlugin(): Plugin {

@@ -3,17 +3,32 @@
  * Vite's own HMR keeps handling TS and CSS under web/.
  */
 import { spawn } from "child_process";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
 import type { Plugin } from "vite";
 
 /** Files at the repository root whose change means the wasm must be rebuilt. */
 const ROOT_INPUTS = new Set(["Cargo.toml", "Cargo.lock", "build.rs"]);
 
+/**
+ * Editor and OS scratch files: dotfiles (`.DS_Store`, `.x.swp`), swap and temp files, backups,
+ * and vim's all-digit write probe (`4913`). A save must not rebuild and reload for these.
+ */
+function isScratchFile(file: string): boolean {
+    const name = basename(file);
+    return (
+        name.startsWith(".") ||
+        name.endsWith("~") ||
+        /\.(swp|swx|swo|tmp)$/.test(name) ||
+        /^\d+$/.test(name)
+    );
+}
+
 /** True when `file` is a Rust build input of the crate rooted at `repoRoot`. */
 export function isRustInput(file: string, repoRoot: string): boolean {
     const rel = relative(repoRoot, file);
     if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
+    if (isScratchFile(rel)) return false;
     const parts = rel.split(sep);
     if (parts.length === 1) return ROOT_INPUTS.has(rel);
     return parts[0] === "src";
@@ -42,6 +57,10 @@ export function createRebuildScheduler(
         running = true;
         try {
             if (await run()) onSuccess();
+        } catch (error) {
+            // A dev server that dies on one bad rebuild loses the open page; log and keep serving.
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`[wasm-watch] rebuild or reload failed: ${message}`);
         } finally {
             running = false;
             if (pending) {
