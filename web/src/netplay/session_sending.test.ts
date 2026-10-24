@@ -357,6 +357,23 @@ describe("sending the game", () => {
         expect(join.view()).toMatchObject({ sending: null, notice: "not-arrived" });
     });
 
+    it("refuses a cancel on either side once the whole game has arrived", async () => {
+        let hostTried: boolean | null = null;
+        let joinTried: boolean | null = null;
+        joinEnd.tamper = (data) => {
+            if (typeof data === "string" && JSON.parse(data).t === "arrived") joinTried = join.cancelSending();
+            return data;
+        };
+        hostEnd.tamper = (data) => {
+            if (typeof data === "string" && JSON.parse(data).t === "start") hostTried = host.cancelSending();
+            return data;
+        };
+        host.startGame(game(50_000), TITLE);
+        await run(2000);
+        expect(joinTried).toBe(false);
+        expect(hostTried).toBe(false);
+    });
+
     it("tells the host whether a cancel happened", async () => {
         host.startGame(game(2_000_000), TITLE);
         await run(100);

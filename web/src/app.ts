@@ -3479,6 +3479,8 @@ let pausedByNetplay = false;
 /** The host's game was paused when Start game was pressed, and stays so while it is on its way. */
 let heldForSending = false;
 let cancelCountdown: (() => void) | null = null;
+/** The joiner is setting the received game up, between the host's `start` and the count. */
+let joinStarting = false;
 
 /** The running game, if it is one a network game can be played on. */
 function netplayCore(): WasmNes | WasmSnes | null {
@@ -3487,12 +3489,13 @@ function netplayCore(): WasmNes | WasmSnes | null {
 }
 
 /**
- * Whether the running game may be stopped or replaced now. Never during the count. While the host
+ * Whether the running game may be stopped or replaced now: never during the count, nor while the
+ * joiner sets the received game up for it. While the host
  * is sending, leaving its game is its Cancel (the other player is told), and once the whole game has
  * arrived, and the two are starting, it is refused.
  */
 function mayLeaveGameForNetplay(): boolean {
-    if (netplayCounting) return false;
+    if (netplayCounting || joinStarting) return false;
     const view = netplaySession.view();
     if (view.role === "host" && view.sending) return netplaySession.cancelSending();
     return true;
@@ -3561,8 +3564,13 @@ async function startNetplayGame({ role, game }: NetplayStart) {
         romInput.value = "";
         romFromFile = false;
         leaveLibraryForNewGame();
-        await applyRomBytes(game.rom, game.name, game);
-        await start();
+        joinStarting = true;
+        try {
+            await applyRomBytes(game.rom, game.name, game);
+            await start();
+        } finally {
+            joinStarting = false;
+        }
         // Playing together may have ended while the game was being set up: then it goes again.
         if (receivedGame !== game) {
             // Its bytes were let go of under it (null), unless another game was chosen meanwhile.
@@ -3595,7 +3603,6 @@ async function startNetplayGame({ role, game }: NetplayStart) {
     });
 }
 
-/** Playing together ended: a game received from the host goes with it. */
 /** The count stops when playing together ends under it; the host's own game stays, paused. */
 function cancelNetplayCount() {
     cancelCountdown?.();
@@ -3605,6 +3612,7 @@ function cancelNetplayCount() {
     updateEmulationButtons();
 }
 
+/** Playing together ended: a game received from the host goes with it. */
 function endReceivedGame() {
     if (!receivedGame) return;
     if (running) stop();
@@ -4736,6 +4744,7 @@ document.getElementById("hh-fullscreen")!.addEventListener("click", () => {
     void toggleScreenFullscreen();
 });
 document.getElementById("hh-eject")!.addEventListener("click", () => {
+    if (!mayLeaveGameForNetplay()) return;
     pausedBySheet = false;
     closeHandheldSheet();
     stop();
