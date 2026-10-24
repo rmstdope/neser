@@ -957,6 +957,11 @@ function playLocked(): boolean {
     return play !== null && (play.view().phase !== "ended" || playRole === "join");
 }
 
+/** Playing together has ended and this is the joiner: only Back to library is left. */
+function playEndedForJoiner(): boolean {
+    return play?.view().phase === "ended" && playRole === "join";
+}
+
 /** A greyed-out control was used: it says why, briefly, over the game. */
 function refusedWhilePlaying(): boolean {
     if (!playLocked()) return false;
@@ -1404,7 +1409,7 @@ function updateEmulationButtons() {
         resetBtn.disabled = !states.resetEnabled;
     }
     // The joiner's game has stopped for good once playing together ends: only Back to library is left.
-    if (play?.view().phase === "ended" && playRole === "join") {
+    if (playEndedForJoiner()) {
         for (const button of [pauseBtn, resetBtn, document.getElementById("hh-pause")]) {
             if (button) (button as HTMLButtonElement).disabled = true;
         }
@@ -4065,6 +4070,8 @@ function releaseSuperScopeButtons() {
  * when no scope is plugged in.
  */
 function applySuperScopeKey(snesInst: WasmSnes, action: "turbo" | "pause", pressed: boolean, repeat: boolean): boolean {
+    // Playing together the scope's keys reach neither the scope nor a pad.
+    if (playing()) return superScopePort() !== null;
     const port = superScopePort();
     if (port === null) {
         return false;
@@ -4184,6 +4191,8 @@ if (touchControlsContainer) {
 }
 
 function handleMouseMotion(event: MouseEvent) {
+    // Playing together, only pads are shared; a light gun, mouse or scope would move one game alone.
+    if (playing()) return;
     // SNES peripherals: handle mouse and superscope for the standalone SNES emulator.
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
@@ -4355,6 +4364,7 @@ function updateMouseCursorState() {
 }
 
 function handleMouseButton(event: MouseEvent, pressed: boolean) {
+    if (playing()) return;
     // SNES peripherals: handle mouse and superscope buttons.
     if (emulator?.kind === "snes") {
         const snesInst = emulator.inst;
@@ -4389,6 +4399,7 @@ function handleMouseButton(event: MouseEvent, pressed: boolean) {
 
 window.addEventListener("mousemove", handleMouseMotion);
 canvas.addEventListener("mousedown", (event) => {
+    if (playing()) return;
     const scopePort = superScopePort();
     if (emulator?.kind === "snes" && scopePort !== null) {
         const rect = canvas.getBoundingClientRect();
@@ -4681,6 +4692,8 @@ async function resetAction() {
     if (netplayCounting) return;
     if (!emulator) return;
     if (playing()) return play!.reset(true);
+    // The joiner's game has stopped for good once playing together ends, as its greyed Reset says.
+    if (playEndedForJoiner()) return;
     cancelActiveRecording();
     if (emulator.kind === "gba") {
         await restartGbaSession("Soft reset");
@@ -4695,6 +4708,8 @@ async function hardResetAction() {
     if (netplayCounting) return;
     if (!emulator) return;
     if (playing()) return play!.reset(false);
+    // The joiner's game has stopped for good once playing together ends, as its greyed Reset says.
+    if (playEndedForJoiner()) return;
     cancelActiveRecording();
     if (emulator.kind === "gba") {
         await restartGbaSession("Hard reset");
