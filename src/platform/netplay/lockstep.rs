@@ -176,6 +176,17 @@ impl Lockstep {
     /// Take in bytes the peer sent. A refused packet changes nothing.
     pub fn receive(&mut self, bytes: &[u8]) -> Result<(), LockstepError> {
         let packet = Packet::decode(bytes).map_err(LockstepError::Wire)?;
+        let sent_end = self.local_base + self.local_inputs.len() as u32;
+        if packet.ack > sent_end {
+            return Err(LockstepError::AckAhead { ack: packet.ack });
+        }
+        let window_end = u64::from(self.next_frame) + 2 * u64::from(self.config.input_delay);
+        if u64::from(packet.first_frame) + packet.inputs.len() as u64 > window_end {
+            return Err(LockstepError::OutOfWindow {
+                first_frame: packet.first_frame,
+                count: packet.inputs.len(),
+            });
+        }
         self.remote_ack = self.remote_ack.max(packet.ack);
         for (frame, pad) in (u64::from(packet.first_frame)..).zip(packet.inputs) {
             let Some(index) = frame
@@ -323,5 +334,151 @@ mod tests {
     #[should_panic(expected = "input_delay")]
     fn an_input_delay_of_zero_is_refused() {
         session(Player::One, 0);
+    }
+
+    #[test]
+    fn packet_repeats_inputs_until_acknowledged() {
+        let mut a = session(Player::One, 2);
+        a.advance(0x11);
+        let lost = a.packet();
+        a.advance(0x12);
+        let next = a.packet();
+        assert_eq!(lost.inputs, [0, 0, 0x11]);
+        assert_eq!(next.first_frame, 0);
+        assert_eq!(
+            next.inputs,
+            [0, 0, 0x11, 0x12],
+            "the lost inputs ride again"
+        );
+        let mut b = session(Player::Two, 2);
+        b.receive(&next.encode()).unwrap();
+        assert_eq!(b.packet().ack, 4, "b now needs a's frame 4");
+    }
+
+    #[test]
+    fn acknowledged_inputs_are_not_resent() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        for pad in [0x11, 0x12] {
+            a.advance(pad);
+            b.advance(pad << 4);
+        }
+        exchange(&mut a, &mut b);
+        exchange(&mut a, &mut b);
+        let packet = a.packet();
+        assert_eq!(packet.first_frame, 4);
+        assert!(packet.inputs.is_empty());
+        a.advance(0x13);
+        exchange(&mut a, &mut b);
+        assert!(a.advance(0x14).is_some());
+        assert_eq!(a.packet().first_frame, 4);
+        assert_eq!(a.packet().inputs, [0x13, 0x14]);
+    }
+
+    #[test]
+    fn duplicate_reordered_and_stale_packets_are_harmless() {
+        let mut a = session(Player::One, 2);
+        a.advance(0x11);
+        let first = a.packet().encode();
+        a.advance(0x12);
+        let second = a.packet().encode();
+        let mut in_order = session(Player::Two, 2);
+        in_order.receive(&second).unwrap();
+        let mut shuffled = session(Player::Two, 2);
+        for bytes in [&second, &first, &second, &first] {
+            shuffled.receive(bytes).unwrap();
+        }
+        assert_eq!(shuffled.packet(), in_order.packet());
+        for _ in 0..4 {
+            assert_eq!(shuffled.advance(0), in_order.advance(0));
+        }
+        // Long after those frames ran, the old packet still changes nothing.
+        let before = shuffled.packet();
+        shuffled.receive(&first).unwrap();
+        assert_eq!(shuffled.packet(), before);
+    }
+
+    #[test]
+    fn a_later_packet_never_overwrites_a_known_input() {
+        let mut b = session(Player::Two, 2);
+        let packet = |pad| {
+            Packet {
+                ack: 0,
+                first_frame: 2,
+                inputs: vec![pad],
+                state_hash: None,
+            }
+            .encode()
+        };
+        b.receive(&packet(0x11)).unwrap();
+        b.receive(&packet(0x77)).unwrap();
+        b.advance(0);
+        b.advance(0);
+        assert_eq!(b.advance(0).unwrap().pads[0], 0x11);
+    }
+
+    #[test]
+    fn inputs_beyond_the_window_are_rejected() {
+        let packet = |first_frame, count| {
+            Packet {
+                ack: 0,
+                first_frame,
+                inputs: vec![1; count],
+                state_hash: None,
+            }
+            .encode()
+        };
+        let mut b = session(Player::Two, 2);
+        // A peer in lockstep is at most input_delay frames ahead, so its pads reach at
+        // most frame next_frame + 2 * input_delay - 1.
+        assert_eq!(b.receive(&packet(0, 4)), Ok(()));
+        let before = b.packet();
+        assert_eq!(
+            b.receive(&packet(0, 5)),
+            Err(LockstepError::OutOfWindow {
+                first_frame: 0,
+                count: 5
+            })
+        );
+        assert_eq!(
+            b.receive(&packet(u32::MAX, 1)),
+            Err(LockstepError::OutOfWindow {
+                first_frame: u32::MAX,
+                count: 1
+            })
+        );
+        assert_eq!(b.packet(), before);
+    }
+
+    #[test]
+    fn an_ack_for_inputs_never_sent_is_rejected() {
+        let mut a = session(Player::One, 2);
+        let ack = |ack| {
+            Packet {
+                ack,
+                first_frame: 0,
+                inputs: vec![],
+                state_hash: None,
+            }
+            .encode()
+        };
+        assert_eq!(a.receive(&ack(2)), Ok(()), "frames 0 and 1 were sent");
+        assert_eq!(a.receive(&ack(3)), Err(LockstepError::AckAhead { ack: 3 }));
+        assert_eq!(a.packet().first_frame, 2);
+    }
+
+    #[test]
+    fn a_malformed_packet_is_an_error_and_changes_nothing() {
+        let mut b = session(Player::Two, 2);
+        let before = b.packet();
+        assert_eq!(
+            b.receive(&[0xFF, 1, 2]),
+            Err(LockstepError::Wire(WireError::UnknownVersion(0xFF)))
+        );
+        assert_eq!(
+            b.receive(&[]),
+            Err(LockstepError::Wire(WireError::Truncated))
+        );
+        assert_eq!(b.packet(), before);
     }
 }
