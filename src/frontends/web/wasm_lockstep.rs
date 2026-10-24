@@ -2,11 +2,16 @@
 //! behind `wasm_bindgen`, so the browser runs a frame only once both players' pads for it are
 //! known. The page owns the clock and the link; this owns no more than the rules do.
 //!
-//! State hashes are not compared here (`hash_interval` 0): noticing a drifted game is nr-ayk5.6.
+//! The page hashes its game's state every [`HASH_INTERVAL_FRAMES`] frames and hands the hash in
+//! (nr-ayk5.6); the two sides' hashes ride the packets, and `desynced` says when they differ.
 
 use wasm_bindgen::prelude::*;
 
 use crate::platform::netplay::lockstep::{Lockstep, LockstepConfig, Player};
+
+/// How often the two games are compared: once a second. Both sides run the same build, so the
+/// same interval.
+pub const HASH_INTERVAL_FRAMES: u32 = 60;
 
 #[wasm_bindgen]
 pub struct WasmLockstep {
@@ -29,7 +34,7 @@ impl WasmLockstep {
         }
         let config = LockstepConfig {
             input_delay,
-            hash_interval: 0,
+            hash_interval: HASH_INTERVAL_FRAMES,
         };
         Ok(WasmLockstep {
             inner: Lockstep::new(local, config),
@@ -73,5 +78,25 @@ impl WasmLockstep {
 
     pub fn input_delay(&self) -> u32 {
         self.inner.input_delay()
+    }
+
+    /// Frames between two comparisons: the page hashes its state after each frame divisible by it.
+    pub fn hash_interval() -> u32 {
+        HASH_INTERVAL_FRAMES
+    }
+
+    /// The hash of the game's state after `frame` ran; frames off the interval are ignored.
+    pub fn record_state_hash(&mut self, frame: u32, hash: u32) {
+        self.inner.record_state_hash(frame, hash);
+    }
+
+    /// Whether the two games' hashes for some frame differ.
+    pub fn desynced(&self) -> bool {
+        self.inner.desync().is_some()
+    }
+
+    /// The games were made the same before the next frame: compare afresh from there.
+    pub fn resynced(&mut self) {
+        self.inner.resynced();
     }
 }

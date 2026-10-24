@@ -469,3 +469,70 @@ describe("playing together", () => {
         expect(host.view()).toMatchObject({ phase: "failed", failure: "peer-left", leaving: "left" });
     });
 });
+
+// Resyncing (nr-ayk5.6): the host's save state crosses the same link in pieces, the joiner says
+// it has loaded it, and a resync that does not work ends playing together on both sides.
+describe("resyncing", () => {
+    function state(size: number): Uint8Array {
+        const bytes = new Uint8Array(size);
+        for (let i = 0; i < size; i++) bytes[i] = (i * 7 + 3) & 0xff;
+        return bytes;
+    }
+
+    it("carries the host's state to the other side whole, in pieces no bigger than the game's", async () => {
+        const toJoin: PlayData[] = [];
+        join.onPlay((data) => toJoin.push(data));
+        const sent = state(3 * CHUNK_BYTES + 5);
+        host.sendState(120, sent);
+        await run(200);
+        expect(toJoin).toEqual([{ t: "state", at: 120, bytes: sent }]);
+        const pieces = hostEnd.sent.filter((d): d is Uint8Array => typeof d !== "string");
+        expect(pieces.length).toBe(4);
+        expect(Math.max(...pieces.map((p) => p.length - 4))).toBe(CHUNK_BYTES);
+    });
+
+    it("gives the newest state when a second starts before the first has arrived", async () => {
+        const toJoin: PlayData[] = [];
+        join.onPlay((data) => toJoin.push(data));
+        let pieces = 0;
+        hostEnd.tamper = (data) => (typeof data !== "string" && ++pieces === 2 ? null : data);
+        host.sendState(60, state(2 * CHUNK_BYTES));
+        const second = state(100);
+        host.sendState(180, second);
+        await run(200);
+        expect(toJoin).toEqual([{ t: "state", at: 180, bytes: second }]);
+    });
+
+    it("says a state that does not add up did not arrive", async () => {
+        const toJoin: PlayData[] = [];
+        join.onPlay((data) => toJoin.push(data));
+        hostEnd.tamper = (data) => {
+            if (typeof data === "string") return data;
+            const bad = data.slice();
+            bad[bad.length - 1] ^= 0xff;
+            return bad;
+        };
+        host.sendState(60, state(1000));
+        await run(200);
+        expect(toJoin).toEqual([{ t: "state", at: 60, bytes: null }]);
+        toJoin.length = 0;
+        hostEnd.forge(JSON.stringify({ t: "state", at: 61, total: MAX_PACKAGE_BYTES + 1, crc: 0 }));
+        await run(200);
+        expect(toJoin).toEqual([{ t: "state", at: 61, bytes: null }]);
+    });
+
+    it("carries the joiner's word that it has loaded the state", async () => {
+        const toHost: PlayData[] = [];
+        host.onPlay((data) => toHost.push(data));
+        join.sendPlay({ t: "resynced", at: 61 });
+        await run(100);
+        expect(toHost).toEqual([{ t: "resynced", at: 61 }]);
+    });
+
+    it("ends playing together on both sides when the games could not be resynced", async () => {
+        join.endUnsynced();
+        await run(100);
+        expect(join.view()).toMatchObject({ phase: "failed", failure: "peer-left", leaving: "unsynced" });
+        expect(host.view()).toMatchObject({ phase: "failed", failure: "peer-left", leaving: "unsynced" });
+    });
+});

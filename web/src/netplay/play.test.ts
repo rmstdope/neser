@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlay, type CountLabel, type LockstepRules, type Play, type PlayCore } from "./play";
-import type { PlayData, PlayMessage } from "./session";
+import type { PlayData, PlayMessage, ResyncState } from "./session";
 
 // Playing together (nr-ayk5.5): two play controllers, the host's and the joiner's, over an in-memory
 // link with a fixed one-way delay, each with a stand-in for the Rust lockstep that follows its
@@ -10,12 +10,20 @@ import type { PlayData, PlayMessage } from "./session";
 const ONE_WAY_MS = 10;
 const FRAME_MS = 1000 / 60;
 const DELAY = 2;
+/** The games are compared after every tenth frame. */
+const HASH_EVERY = 10;
 
 /** The lockstep rules, as `platform::netplay::lockstep` has them, without the wire format. */
 class Rules implements LockstepRules {
     private local: number[];
     private remote: (number | undefined)[];
     private next = 0;
+    private localHashes = new Map<number, number>();
+    private remoteHashes = new Map<number, number>();
+    private newestHash: [number, number] | null = null;
+    private hashFloor = 0;
+    /** Says the games differ, whatever the hashes: a test's way to make a mismatch at a moment of its choosing. */
+    forceDesync = false;
     constructor(
         private player: 1 | 2,
         private delay: number
@@ -32,14 +40,36 @@ class Rules implements LockstepRules {
         return [this.next++, ...pads];
     }
     packet(): Uint8Array {
-        return new TextEncoder().encode(JSON.stringify(this.local));
+        return new TextEncoder().encode(JSON.stringify({ pads: this.local, hash: this.newestHash }));
     }
     receive(bytes: Uint8Array): boolean {
-        const pads = JSON.parse(new TextDecoder().decode(bytes)) as number[];
+        const got = JSON.parse(new TextDecoder().decode(bytes)) as number[] | { pads: number[]; hash: [number, number] | null };
+        const pads = Array.isArray(got) ? got : got.pads;
         pads.forEach((pad, frame) => {
             this.remote[frame] ??= pad;
         });
+        if (!Array.isArray(got) && got.hash && got.hash[0] >= this.hashFloor) this.remoteHashes.set(got.hash[0], got.hash[1]);
         return true;
+    }
+    record_state_hash(frame: number, hash: number) {
+        if (frame % HASH_EVERY !== 0 || frame < this.hashFloor) return;
+        this.localHashes.set(frame, hash);
+        this.newestHash = [frame, hash];
+    }
+    desynced(): boolean {
+        if (this.forceDesync) return true;
+        for (const [frame, hash] of this.localHashes) {
+            const theirs = this.remoteHashes.get(frame);
+            if (theirs !== undefined && theirs !== hash) return true;
+        }
+        return false;
+    }
+    resynced() {
+        this.forceDesync = false;
+        this.localHashes.clear();
+        this.remoteHashes.clear();
+        this.newestHash = null;
+        this.hashFloor = this.next;
     }
     next_frame() {
         return this.next;
@@ -59,8 +89,25 @@ type Played = { frame: number; pads: [number, number] } | { reset: boolean; afte
 class Core implements PlayCore {
     played: Played[] = [];
     frames = 0;
+    /** The game's whole state: it follows every frame's pads, so two games fed the same pads agree. */
+    state = 1;
+    loads: number[] = [];
+    loadFails = false;
     runFrame(pad1: number, pad2: number) {
         this.played.push({ frame: this.frames++, pads: [pad1, pad2] });
+        this.state = (Math.imul(this.state, 31) + pad1 * 7 + pad2 * 13 + 1) >>> 0;
+    }
+    stateHash() {
+        return this.state;
+    }
+    saveState() {
+        return new TextEncoder().encode(String(this.state));
+    }
+    loadState(bytes: Uint8Array) {
+        if (this.loadFails) return false;
+        this.state = Number(new TextDecoder().decode(bytes));
+        this.loads.push(this.state);
+        return true;
     }
     reset(soft: boolean) {
         this.played.push({ reset: soft, afterFrames: this.frames });
@@ -74,7 +121,18 @@ class Core implements PlayCore {
 }
 
 /** One side: its controller, its core, the counts it showed, and whether its page is hidden. */
-type Side = { play: Play; core: Core; counts: CountLabel[]; hidden: boolean; tickEvery: number; lastTick: number };
+type Side = {
+    play: Play;
+    core: Core;
+    rules: Rules;
+    counts: CountLabel[];
+    hidden: boolean;
+    tickEvery: number;
+    lastTick: number;
+    /** Rewrites, or swallows (null), a resync state this side sends. */
+    tamperState: (state: ResyncState) => ResyncState | null;
+    gaveUp: number;
+};
 
 let host: Side;
 let join: Side;
@@ -86,21 +144,44 @@ function deliverer(to: () => Side) {
         const at = Math.max(performance.now() + ONE_WAY_MS, lastAt);
         lastAt = at;
         setTimeout(() => {
-            const side = to();
-            if (data instanceof Uint8Array) side.play.receive(data);
-            else side.play.message(data);
+            to().play.hear(data);
         }, at - performance.now());
     };
 }
 
 function side(player: 1 | 2, other: () => Side): Side {
     const core = new Core();
+    const rules = new Rules(player, DELAY);
     const counts: CountLabel[] = [];
     const send = deliverer(other);
-    const play = createPlay({
+    const me: Side = {
+        play: undefined as unknown as Play,
+        core,
+        rules,
+        counts,
+        hidden: false,
+        tickEvery: FRAME_MS,
+        lastTick: 0,
+        tamperState: (state) => state,
+        gaveUp: 0,
+    };
+    me.play = createPlay({
         player,
-        lockstep: new Rules(player, DELAY),
-        link: { sendPacket: (bytes) => send(bytes.slice()), sendPlay: (message: PlayMessage) => send(message) },
+        lockstep: rules,
+        hashEvery: HASH_EVERY,
+        link: {
+            sendPacket: (bytes) => send(bytes.slice()),
+            sendPlay: (message: PlayMessage) => send(message),
+            sendState: (at, bytes) => {
+                const out = me.tamperState({ t: "state", at, bytes: bytes.slice() });
+                if (out) send(out);
+            },
+            // The session ends it on this side and tells the other, which ends it there.
+            giveUp: () => {
+                me.gaveUp++;
+                setTimeout(() => other().play.ended("unsynced"), ONE_WAY_MS);
+            },
+        },
         core,
         count: (label, onDone) => {
             counts.push(label);
@@ -108,7 +189,7 @@ function side(player: 1 | 2, other: () => Side): Side {
             return () => clearTimeout(timer);
         },
     });
-    return { play, core, counts, hidden: false, tickEvery: FRAME_MS, lastTick: 0 };
+    return me;
 }
 
 /** Plays `ms` of wall time: each visible page ticks at its own rate, as its animation frames come. */
@@ -394,7 +475,8 @@ function alone(player: 1 | 2) {
     const play = createPlay({
         player,
         lockstep: new Rules(player, DELAY),
-        link: { sendPacket: () => {}, sendPlay: (message) => sent.push(message) },
+        hashEvery: HASH_EVERY,
+        link: { sendPacket: () => {}, sendPlay: (message) => sent.push(message), sendState: () => {}, giveUp: () => {} },
         core,
         count: (label, onDone) => {
             counts.push(label);
@@ -583,5 +665,258 @@ describe("a window, a count and a reset together", () => {
         await run(3500);
         expect(host.play.view().phase).toBe("playing");
         expect(join.play.view().phase).toBe("playing");
+    });
+});
+
+// Resyncing (nr-ayk5.6): the games are compared as they run; when they differ both stop after the
+// same frame, the joiner's game is set to the host's, and both count "Resynced" and play on.
+describe("resyncing", () => {
+    /** Each side's frame count whenever its phase turns to `phase`. */
+    function phaseFrames(s: Side, phase: string): number[] {
+        const frames: number[] = [];
+        s.play.subscribe((view) => {
+            if (view.phase === phase && frames.length === resyncs(s)) frames.push(s.core.frames);
+        });
+        return frames;
+    }
+    const resyncs = (s: Side) => s.counts.filter((c) => c === "resync").length;
+    const dropStates = () => {
+        host.tamperState = () => null;
+    };
+
+    it("plays on unseen while the two games match", async () => {
+        await run(2000);
+        expect(host.play.view().phase).toBe("playing");
+        expect(join.play.view().phase).toBe("playing");
+        expect(host.core.loads).toEqual([]);
+    });
+
+    it("stops both games after the same frame, sets the joiner's to the host's, and both count Resynced then play on", async () => {
+        const hostStopped = phaseFrames(host, "resyncing");
+        const joinStopped = phaseFrames(join, "resyncing");
+        await run(300);
+        join.core.state ^= 0x55;
+        await run(1000);
+        expect(hostStopped).toHaveLength(1);
+        expect(hostStopped).toEqual(joinStopped);
+        expect(host.counts).toEqual(["resync"]);
+        expect(join.counts).toEqual(["resync"]);
+        expect(join.core.loads).toHaveLength(1);
+        expect(host.core.loads).toEqual([]);
+        await run(3500);
+        expect(host.play.view().phase).toBe("playing");
+        expect(join.play.view().phase).toBe("playing");
+        await run(1000);
+        // Both have run the same frames since: the same pads on the same state.
+        const both = Math.min(host.core.frames, join.core.frames);
+        expect(host.core.pads().slice(0, both)).toEqual(join.core.pads().slice(0, both));
+        expect(host.core.frames - join.core.frames).toBeLessThanOrEqual(DELAY + 1);
+        expect(host.rules.desynced() || join.rules.desynced()).toBe(false);
+    });
+
+    it("is one resync when both games notice the same difference", async () => {
+        await run(300);
+        join.core.state ^= 0x55;
+        await run(6000);
+        expect(resyncs(host)).toBe(1);
+        expect(resyncs(join)).toBe(1);
+        expect(join.core.loads).toHaveLength(1);
+    });
+
+    it("looks and works the same every time, however often it happens", async () => {
+        for (let round = 1; round <= 3; round++) {
+            join.core.state ^= round;
+            await run(5000);
+            expect(resyncs(host)).toBe(round);
+            expect(resyncs(join)).toBe(round);
+            expect(host.play.view().phase).toBe("playing");
+        }
+        expect(join.core.loads).toHaveLength(3);
+    });
+
+    it("starts no resync while the game is paused, only once it runs again", async () => {
+        await run(200);
+        host.play.pause();
+        await run(300);
+        host.rules.forceDesync = true;
+        await run(2000);
+        expect(host.play.view().phase).toBe("paused");
+        expect(resyncs(host)).toBe(0);
+        host.play.resume();
+        await run(3000);
+        expect(host.counts).toEqual(["resume"]);
+        await run(1000);
+        expect(resyncs(host)).toBe(1);
+        expect(resyncs(join)).toBe(1);
+    });
+
+    it("ignores Pause, Reset and Resume while resyncing and while counting", async () => {
+        await run(200);
+        dropStates();
+        join.core.state ^= 0x55;
+        await run(1000);
+        expect(host.play.view().phase).toBe("resyncing");
+        expect(join.play.view().phase).toBe("resyncing");
+        for (const s of [host, join]) {
+            s.play.pause();
+            s.play.resume();
+            s.play.reset(true);
+            s.play.reset(false);
+        }
+        await run(500);
+        expect(host.play.view().phase).toBe("resyncing");
+        expect(join.play.view().phase).toBe("resyncing");
+        host.tamperState = (state) => state;
+        join.core.state ^= 0x55;
+        await run(100);
+        expect(host.core.resets()).toEqual([]);
+    });
+
+    it("ignores Pause and Reset during the Resynced count", async () => {
+        await run(200);
+        join.core.state ^= 0x55;
+        await run(1000);
+        expect(host.play.view()).toMatchObject({ phase: "counting", count: "resync" });
+        host.play.pause();
+        host.play.reset(true);
+        join.play.pause();
+        join.play.reset(false);
+        await run(3500);
+        expect(host.play.view().phase).toBe("playing");
+        expect(join.play.view().phase).toBe("playing");
+        expect(host.core.resets()).toEqual([]);
+        expect(join.core.resets()).toEqual([]);
+    });
+
+    it("carries out a Pause pressed before the resync stopped the games, once the count is over", async () => {
+        await run(200);
+        host.rules.forceDesync = true;
+        host.play.pause();
+        await run(5000);
+        expect(resyncs(host)).toBe(1);
+        expect(host.play.view()).toMatchObject({ phase: "paused", pausedBy: "me", pauseReason: "pause" });
+        expect(join.play.view()).toMatchObject({ phase: "paused", pausedBy: "them", pauseReason: "pause" });
+    });
+
+    it("keeps a Pause carried by the very frame the other player's resync stopped both games on", async () => {
+        await run(200);
+        host.rules.forceDesync = true;
+        // The host's next frame records the resync; the joiner's records its pause for the same frame.
+        join.play.pause();
+        await run(5000);
+        expect(resyncs(join)).toBe(1);
+        expect(join.play.view()).toMatchObject({ phase: "paused", pausedBy: "me", pauseReason: "pause" });
+    });
+
+    // The other player's pads: a resync carried by frame 4, nothing after. Fed all at once, this
+    // game is behind and runs two frames a tick.
+    const RESYNC_AT_4 = [0, 0, 0, 0, 7 << 12, ...Array(30).fill(0)];
+
+    it("does not pause after the count for a window closed before the frame that carried its pause and the resync", async () => {
+        const host = alone(1);
+        host.play.receive(pads(RESYNC_AT_4));
+        host.play.tick();
+        expect(host.core.frames).toBe(2);
+        // Its pause is recorded for frame 4, the frame that carries the other player's resync.
+        host.play.windowOpened("settings");
+        host.play.tick();
+        host.play.windowClosed("settings");
+        host.play.tick();
+        expect(host.play.view().phase).toBe("resyncing");
+        host.play.message({ t: "resynced", at: 5 });
+        await vi.advanceTimersByTimeAsync(3000);
+        for (let i = 0; i < 10; i++) host.play.tick();
+        expect(host.play.view().phase).toBe("playing");
+        expect(host.counts).toEqual(["resync"]);
+    });
+
+    it("resumes after the count for a window closed during the resync whose pause a later frame carries", async () => {
+        const host = alone(1);
+        host.play.receive(pads(RESYNC_AT_4));
+        host.play.tick();
+        host.play.tick();
+        // Recorded for frame 6, after the resync at frame 4, which this tick reaches.
+        host.play.windowOpened("settings");
+        host.play.tick();
+        expect(host.play.view().phase).toBe("resyncing");
+        host.play.windowClosed("settings");
+        host.play.message({ t: "resynced", at: 5 });
+        await vi.advanceTimersByTimeAsync(3000);
+        for (let i = 0; i < 10; i++) host.play.tick();
+        // Both games pause at frame 6 as they must, and closing the window has already resumed them.
+        expect(host.play.view()).toMatchObject({ phase: "counting", count: "resume" });
+    });
+
+    it("resumes after the count for a window closed during the Resynced count whose pause a later frame carries", async () => {
+        const host = alone(1);
+        host.play.receive(pads(RESYNC_AT_4));
+        host.play.tick();
+        host.play.tick();
+        host.play.windowOpened("settings");
+        host.play.tick();
+        host.play.message({ t: "resynced", at: 5 });
+        expect(host.play.view().phase).toBe("counting");
+        host.play.windowClosed("settings");
+        await vi.advanceTimersByTimeAsync(3000);
+        for (let i = 0; i < 10; i++) host.play.tick();
+        expect(host.play.view()).toMatchObject({ phase: "counting", count: "resume" });
+    });
+
+    it("pauses for a window opened during a resync, once the count is over", async () => {
+        await run(200);
+        join.core.state ^= 0x55;
+        await run(500);
+        expect(join.play.view().phase).not.toBe("playing");
+        join.play.windowOpened("settings");
+        await run(4000);
+        expect(host.play.view()).toMatchObject({ phase: "paused", pausedBy: "them", pauseReason: "settings" });
+        expect(join.play.view()).toMatchObject({ phase: "paused", pausedBy: "me", pauseReason: "settings" });
+    });
+
+    it("ends playing together on both when the games are not back in step 15 seconds after it began", async () => {
+        await run(200);
+        dropStates();
+        join.core.state ^= 0x55;
+        await run(1000);
+        expect(host.play.view().phase).toBe("resyncing");
+        await run(13_000);
+        expect(host.play.view().phase).toBe("resyncing");
+        expect(join.play.view().phase).toBe("resyncing");
+        await run(2000);
+        expect(host.play.view()).toMatchObject({ phase: "ended", ended: "unsynced" });
+        expect(join.play.view()).toMatchObject({ phase: "ended", ended: "unsynced" });
+        expect(host.gaveUp + join.gaveUp).toBeGreaterThanOrEqual(1);
+    });
+
+    it("ends playing together on both when the joiner cannot load the host's game", async () => {
+        await run(200);
+        join.core.loadFails = true;
+        join.core.state ^= 0x55;
+        await run(1000);
+        expect(join.play.view()).toMatchObject({ phase: "ended", ended: "unsynced" });
+        expect(host.play.view()).toMatchObject({ phase: "ended", ended: "unsynced" });
+        expect(join.gaveUp).toBe(1);
+    });
+
+    it("ends playing together on both when the host's game did not arrive whole", async () => {
+        await run(200);
+        host.tamperState = (state) => ({ ...state, bytes: null });
+        join.core.state ^= 0x55;
+        await run(1000);
+        expect(join.play.view()).toMatchObject({ phase: "ended", ended: "unsynced" });
+        expect(host.play.view()).toMatchObject({ phase: "ended", ended: "unsynced" });
+    });
+
+    it("says the other player left when the link is lost during a resync, and gives up nothing later", async () => {
+        await run(200);
+        dropStates();
+        join.core.state ^= 0x55;
+        await run(1000);
+        host.play.ended("left");
+        join.play.ended("left");
+        await run(20_000);
+        expect(host.play.view()).toMatchObject({ phase: "ended", ended: "left" });
+        expect(join.play.view()).toMatchObject({ phase: "ended", ended: "left" });
+        expect(host.gaveUp + join.gaveUp).toBe(0);
     });
 });

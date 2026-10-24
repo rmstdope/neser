@@ -1289,6 +1289,15 @@ impl Emulator for Nes {
         self.get_screen_buffer().crc32()
     }
 
+    fn netplay_state_hash(&self) -> Result<u32, String> {
+        let mut state = self.save_state();
+        state.apu.pending_samples.clear();
+        let bytes = state
+            .to_bytes()
+            .map_err(|e| format!("save state serialization failed: {e}"))?;
+        Ok(crate::platform::crc32::crc32(&[&bytes]))
+    }
+
     fn sample_ready(&self) -> bool {
         Nes::sample_ready(self)
     }

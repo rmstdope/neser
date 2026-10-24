@@ -73,6 +73,13 @@ pub trait Emulator {
     fn get_joypad_button_states(&self, port: u8) -> u8;
     fn save_state_bytes(&self) -> Result<Vec<u8>, String>;
     fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String>;
+    /// A hash of the whole game state for network play to compare (nr-ayk5.6): two consoles
+    /// that ran the same frames hash the same. Cores whose save state carries audio the
+    /// frontend has not taken out yet leave that queue out, since how much of it a page has
+    /// played says nothing about the game.
+    fn netplay_state_hash(&self) -> Result<u32, String> {
+        Ok(crate::platform::crc32::crc32(&[&self.save_state_bytes()?]))
+    }
     fn reset(&mut self, soft_reset: bool);
     fn save_ram(&self) -> Result<(), String>;
     fn app_context(&self) -> &SharedAppContext;
@@ -553,6 +560,11 @@ impl Console {
     /// Restore emulator state from previously serialized bytes.
     pub fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
         self.as_core_mut().load_state_bytes(data)
+    }
+
+    /// See [`Emulator::netplay_state_hash`].
+    pub fn netplay_state_hash(&self) -> Result<u32, String> {
+        self.as_core().netplay_state_hash()
     }
 
     /// Returns the file path where save-state data should be stored, or `None`

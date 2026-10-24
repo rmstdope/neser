@@ -32,6 +32,13 @@ import { isTooSlow, median } from "./response_time";
  * led by transfer id 0, which no game transfer uses; `resume` and `reset` are the play messages,
  * handed to `onPlay` as they are. `end` says the other player ended playing together, where `bye`
  * says they left.
+ *
+ * Resyncing (nr-ayk5.6) rides it too. `state` announces the host's save state (the frame it is for,
+ * its size and CRC) and its bytes follow in pieces led by transfer id `STATE_ID`, unacknowledged:
+ * a save state is far smaller than what a channel queues, and the channel is ordered and reliable.
+ * The joiner hands it to `onPlay` whole, or as `bytes: null` when it does not add up; `resynced` is
+ * the joiner's word that it has loaded it, a play message like the others; and `unsynced` ends
+ * playing together on both sides because the games could not be made the same again.
  */
 
 export type Role = "host" | "join";
@@ -59,11 +66,23 @@ export interface NetplayStart {
 
 /** What the two games say to each other while playing together, besides the lockstep packets. */
 /** Each names the frame it is for: the one both games stopped before. */
-export type PlayMessage = { t: "resume"; at: number } | { t: "reset"; soft: boolean; at: number };
-/** A lockstep packet (bytes) or a play message. */
-export type PlayData = Uint8Array | PlayMessage;
-/** How the other player went: they ended playing together, or left (closed the page, lost the link). */
-export type Leaving = "ended" | "left";
+export type PlayMessage =
+    | { t: "resume"; at: number }
+    | { t: "reset"; soft: boolean; at: number }
+    | { t: "resynced"; at: number };
+/** The host's save state for the frame `at`, or null when what came did not add up. */
+export interface ResyncState {
+    t: "state";
+    at: number;
+    bytes: Uint8Array | null;
+}
+/** A lockstep packet (bytes), a play message, or the host's state for a resync. */
+export type PlayData = Uint8Array | PlayMessage | ResyncState;
+/**
+ * How playing together ended from the other side: they ended it, they left (closed the page, lost
+ * the link), or the games could not be resynced.
+ */
+export type Leaving = "ended" | "left" | "unsynced";
 
 export interface NetplayView {
     /** Who this browser is; null on the first screen, where the player chooses. */
@@ -112,12 +131,18 @@ export interface NetplaySession {
     /** Sends a lockstep packet, or a play message, to the other side. */
     sendPacket(bytes: Uint8Array): void;
     sendPlay(message: PlayMessage): void;
-    /** Hears the other side's lockstep packets and play messages. */
+    /** Sends the host's save state for the frame `at`, for a resync. */
+    sendState(at: number, bytes: Uint8Array): void;
+    /** Ends playing together on both sides: the games could not be resynced. */
+    endUnsynced(): void;
+    /** Hears the other side's lockstep packets, play messages and resync states. */
     onPlay(listener: (data: PlayData) => void): void;
 }
 
 /** The transfer id that leads a lockstep packet; game transfers count from 1. */
 const PLAY_PACKET_ID = 0;
+/** The transfer id that leads a piece of a resync state: one no game transfer reaches. */
+const STATE_ID = 0xffff_ffff;
 const FRAME_MS = 1000 / 60;
 const MIN_INPUT_DELAY = 2;
 const MAX_INPUT_DELAY = 6;
@@ -160,6 +185,8 @@ type Message =
     | { t: "broken"; id: number }
     | { t: "stop"; id: number }
     | { t: "start"; id: number; delay: number }
+    | { t: "state"; at: number; total: number; crc: number }
+    | { t: "unsynced" }
     | PlayMessage;
 
 /** The host's side of a game on its way. */
@@ -197,7 +224,8 @@ const isCount = (value: unknown): value is number => typeof value === "number" &
 /** Whether a message from the other side is a play message as this build sends them. */
 function isPlayMessage(message: { t: string } & Record<string, unknown>): message is PlayMessage {
     if (!isCount(message.at)) return false;
-    return message.t === "resume" || (message.t === "reset" && typeof message.soft === "boolean");
+    if (message.t === "resume" || message.t === "resynced") return true;
+    return message.t === "reset" && typeof message.soft === "boolean";
 }
 
 export function createNetplaySession({
@@ -237,6 +265,8 @@ export function createNetplaySession({
     let incoming: Incoming | null = null;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     let playListener: (data: PlayData) => void = () => {};
+    /** A resync state on its way in. */
+    let incomingState: { at: number; total: number; crc: number; buffer: Uint8Array; received: number } | null = null;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const intervals = new Set<ReturnType<typeof setInterval>>();
 
@@ -259,6 +289,7 @@ export function createNetplaySession({
         attempt++;
         stopClocks();
         endTransfer();
+        incomingState = null;
         // An open link closes its own connection once its last message is out; cancelling the
         // connection under it would drop that message (a refusal, a goodbye).
         if (live) live.close();
@@ -315,6 +346,7 @@ export function createNetplaySession({
         if (data.length < 4) return;
         const id = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, true);
         if (id === PLAY_PACKET_ID) return playListener(data.slice(4));
+        if (id === STATE_ID) return receiveStatePiece(data.subarray(4));
         if (!into || into.game) return;
         // Chunks of an attempt already given up (cancelled, or replaced) are still on their way.
         if (id !== into.id) return;
@@ -333,6 +365,30 @@ export function createNetplaySession({
             (ms) => arrivedChecked(link, into, mine, ms === null ? null : game, ms ?? 0),
             () => arrivedChecked(link, into, mine, null, 0)
         );
+    }
+
+    function stateAnnounced(message: Extract<Message, { t: "state" }>) {
+        const { at, total, crc } = message;
+        if (!isCount(at)) return;
+        incomingState = null;
+        if (!isCount(total) || total === 0 || total > MAX_PACKAGE_BYTES || !isCount(crc)) {
+            return playListener({ t: "state", at, bytes: null });
+        }
+        incomingState = { at, total, crc, buffer: new Uint8Array(total), received: 0 };
+    }
+
+    function receiveStatePiece(piece: Uint8Array) {
+        const into = incomingState;
+        if (!into) return;
+        if (into.received + piece.length > into.total) {
+            incomingState = null;
+            return playListener({ t: "state", at: into.at, bytes: null });
+        }
+        into.buffer.set(piece, into.received);
+        into.received += piece.length;
+        if (into.received < into.total) return;
+        incomingState = null;
+        playListener({ t: "state", at: into.at, bytes: crc32(into.buffer) === into.crc ? into.buffer : null });
     }
 
     function arrivedChecked(link: PeerLink, into: Incoming, mine: number, game: GamePackage | null, ms: number) {
@@ -475,7 +531,10 @@ export function createNetplaySession({
             }
             else if (message.t === "bye") peerLeft("left");
             else if (message.t === "end") peerLeft("ended");
-            else if (message.t === "resume" || message.t === "reset") {
+            else if (message.t === "unsynced") peerLeft("unsynced");
+            else if (message.t === "state") {
+                if (state.phase === "connected") stateAnnounced(message);
+            } else if (message.t === "resume" || message.t === "reset" || message.t === "resynced") {
                 if (state.phase === "connected" && isPlayMessage(message)) playListener(message);
             }
             else if (["game", "got", "arrived", "broken", "stop", "start"].includes(message.t)) {
@@ -677,6 +736,22 @@ export function createNetplaySession({
         },
         sendPlay: (message) => {
             if (state.phase === "connected" && live) send(live, message);
+        },
+        sendState: (at, bytes) => {
+            if (state.phase !== "connected" || !live) return;
+            send(live, { t: "state", at, total: bytes.length, crc: crc32(bytes) });
+            for (let sent = 0; sent < bytes.length; sent += CHUNK_BYTES) {
+                const piece = bytes.subarray(sent, sent + CHUNK_BYTES);
+                const frame = new Uint8Array(4 + piece.length);
+                new DataView(frame.buffer).setUint32(0, STATE_ID, true);
+                frame.set(piece, 4);
+                live.send(frame);
+            }
+        },
+        endUnsynced: () => {
+            if (state.phase !== "connected") return;
+            if (live) send(live, { t: "unsynced" });
+            fail("peer-left", { leaving: "unsynced" });
         },
         onPlay: (listener) => {
             playListener = listener;

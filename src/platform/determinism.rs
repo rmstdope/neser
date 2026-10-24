@@ -86,6 +86,111 @@ pub(crate) fn assert_save_mid_run_continues_identically(
     }
 }
 
+/// The hash network play compares (nr-ayk5.6) is the same on two consoles that ran the same
+/// frames, however much of their audio each page has taken out yet: a page that ran two frames
+/// in one tick, or a joiner whose loop rests through a count, holds more samples than the other.
+/// A console that has run other frames hashes differently.
+pub(crate) fn assert_netplay_hash_ignores_undrained_audio(system: SystemType, rom_path: &str) {
+    const FRAMES: u32 = 120;
+    let rom = read_rom(rom_path);
+    let mut drained = page_console(system, &rom, rom_path);
+    let mut undrained = page_console(system, &rom, rom_path);
+    let mut other = page_console(system, &rom, rom_path);
+    let mut queues_differed = false;
+    let mut other_differed = false;
+    for frame in 0..FRAMES {
+        let label = format!("{rom_path}, frame {frame}");
+        play_frame_with_pads(&mut drained, system, pads_for_frame(frame), &label);
+        run_frame_keeping_audio(&mut undrained, system, pads_for_frame(frame), &label);
+        play_frame_with_pads(
+            &mut other,
+            system,
+            pads_for_frame(frame + DRIFTED_PAD_OFFSET),
+            &label,
+        );
+        if frame % 3 == 2 {
+            while undrained.get_stereo_sample().is_some() {}
+        }
+        queues_differed |= drained.save_state_bytes().ok() != undrained.save_state_bytes().ok();
+        assert_eq!(
+            drained.netplay_state_hash(),
+            undrained.netplay_state_hash(),
+            "{label}: the same game hashes differently for audio not yet played"
+        );
+        other_differed |= other.netplay_state_hash() != drained.netplay_state_hash();
+    }
+    assert!(
+        queues_differed,
+        "{rom_path}: the run never left samples in one console's queue"
+    );
+    assert!(
+        other_differed,
+        "{rom_path}: a console fed other presses never hashed differently"
+    );
+}
+
+/// A resync (nr-ayk5.6): a console that has drifted (other presses, its audio taken out at
+/// other times) loads the other's save state, and from then on the two hash the same every
+/// frame. Audio output is on, as on the page: a state load that leaves the output resampler
+/// apart from the saved console's must not show in the hash.
+pub(crate) fn assert_netplay_hash_matches_after_a_resync(system: SystemType, rom_path: &str) {
+    let rom = read_rom(rom_path);
+    for load_at in [30, 61, 97] {
+        let mut host = page_console(system, &rom, rom_path);
+        let mut joiner = page_console(system, &rom, rom_path);
+        for frame in 0..load_at {
+            let label = format!("{rom_path}, frame {frame}");
+            play_frame_with_pads(&mut host, system, pads_for_frame(frame), &label);
+            run_frame_keeping_audio(
+                &mut joiner,
+                system,
+                pads_for_frame(frame + DRIFTED_PAD_OFFSET),
+                &label,
+            );
+        }
+        joiner
+            .load_state_bytes(&host.save_state_bytes().expect("save state"))
+            .unwrap_or_else(|e| panic!("{rom_path}: load state: {e}"));
+        for frame in load_at..load_at + 120 {
+            let label = format!("{rom_path}, loaded after {load_at}, frame {frame}");
+            play_frame_with_pads(&mut host, system, pads_for_frame(frame), &label);
+            play_frame_with_pads(&mut joiner, system, pads_for_frame(frame), &label);
+            assert_eq!(
+                host.netplay_state_hash(),
+                joiner.netplay_state_hash(),
+                "{label}: the resynced games hash differently"
+            );
+        }
+    }
+}
+
+/// The audio output rate a page asks its console for.
+const PAGE_AUDIO_SAMPLE_RATE: f32 = 44_100.0;
+
+/// A console as [`loaded_console`] builds it, with audio output on as the page has it.
+fn page_console(system: SystemType, rom: &[u8], name: &str) -> Console {
+    let mut console = loaded_console(system, rom, name);
+    console.set_audio_sample_rate(PAGE_AUDIO_SAMPLE_RATE);
+    console
+}
+
+/// [`play_frame_with_pads`], leaving the frame's audio in the console.
+fn run_frame_keeping_audio(console: &mut Console, system: SystemType, pads: [u16; 2], name: &str) {
+    let (ports, buttons) = pad_layout(system);
+    for (port, pad) in ports.into_iter().zip(pads) {
+        for button in 0..buttons {
+            console.set_button(port, button, pad & (1 << button) != 0);
+        }
+    }
+    let mut ticks = 0;
+    while !console.is_ready_to_render() {
+        assert_ne!(console.run_tick(), 0, "{name}: no progress in a frame");
+        ticks += 1;
+        assert!(ticks < MAX_TICKS_PER_FRAME, "{name}: a frame never ended");
+    }
+    console.clear_ready_to_render();
+}
+
 pub(crate) fn read_rom(path: &str) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }

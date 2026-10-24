@@ -39,6 +39,8 @@ class FakeSession implements NetplaySession {
     end = vi.fn(() => this.emit({ ...IDLE }));
     sendPacket = vi.fn();
     sendPlay = vi.fn();
+    sendState = vi.fn();
+    endUnsynced = vi.fn();
     onPlay = vi.fn();
     view = () => this.state;
     subscribe(listener: (view: NetplayView) => void) {
@@ -59,6 +61,7 @@ let onClose: ReturnType<typeof vi.fn<() => void>>;
 let writeText: ReturnType<typeof vi.fn>;
 let playing: boolean;
 let waiting: boolean;
+let resyncing: boolean;
 let askedToEnd: ReturnType<typeof vi.fn<() => void>>;
 let window_: ReturnType<typeof createPlayTogether>;
 
@@ -100,6 +103,7 @@ beforeEach(() => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     playing = false;
     waiting = false;
+    resyncing = false;
     askedToEnd = vi.fn();
     window_ = createPlayTogether({
         dialog: q("#netplay-panel") as HTMLDialogElement,
@@ -115,6 +119,7 @@ beforeEach(() => {
         onClose,
         playing: () => playing,
         waiting: () => waiting,
+        resyncing: () => resyncing,
         // As the page does: while playing, Disconnect asks first.
         onDisconnect: () => (playing ? askedToEnd() : session.disconnect()),
     });
@@ -653,6 +658,20 @@ describe("playing together (nr-ayk5.5)", () => {
         window_.refresh();
         expect(chip().textContent).toBe("Waiting…");
         expect(chip().dataset.tone).toBe("wait");
+        waiting = false;
+        window_.refresh();
+        expect(chip().textContent).toBe("Connected · 18 ms");
+    });
+
+    it("shows Resyncing… on an amber chip while the games are resynced, and the response time alone when narrow", () => {
+        playingTogether("join");
+        resyncing = true;
+        waiting = true;
+        window_.refresh();
+        expect(chip().dataset.tone).toBe("wait");
+        expect(chip().querySelector(".netplay-chip-long")!.textContent).toBe("Resyncing…");
+        expect(chip().querySelector(".netplay-chip-short")!.textContent).toBe("18 ms");
+        resyncing = false;
         waiting = false;
         window_.refresh();
         expect(chip().textContent).toBe("Connected · 18 ms");

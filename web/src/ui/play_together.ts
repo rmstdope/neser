@@ -96,6 +96,7 @@ export function createPlayTogether({
     onClose,
     playing = () => false,
     waiting = () => false,
+    resyncing = () => false,
     onDisconnect = () => session.disconnect(),
 }: {
     dialog: HTMLDialogElement;
@@ -114,6 +115,8 @@ export function createPlayTogether({
     playing?: () => boolean;
     /** Whether the other player's game is holding this one. */
     waiting?: () => boolean;
+    /** Whether the two games are being resynced. */
+    resyncing?: () => boolean;
     /** Disconnect on the connected step. */
     onDisconnect?: () => void;
 }) {
@@ -165,6 +168,15 @@ export function createPlayTogether({
                 dot("busy"),
                 el("span", "netplay-chip-long", direction === "send" ? "Sending · " : "Receiving · "),
                 `${percent(done, total)}%`
+            );
+        } else if (view.phase === "connected" && resyncing()) {
+            // A narrow window keeps the dot and the response time only, as everywhere.
+            openButton.removeAttribute("data-icon");
+            openButton.dataset.tone = "wait";
+            openButton.replaceChildren(
+                dot("wait"),
+                el("span", "netplay-chip-long", "Resyncing…"),
+                el("span", "netplay-chip-short", `${view.rtt ?? 0} ms`)
             );
         } else if (view.phase === "connected" && waiting()) {
             openButton.removeAttribute("data-icon");

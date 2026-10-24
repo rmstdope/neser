@@ -106,6 +106,8 @@ pub struct Lockstep {
     local_hashes: VecDeque<(u32, u32)>,
     remote_hashes: VecDeque<(u32, u32)>,
     desync: Option<Desync>,
+    /// Hashes of frames before this one are from before the last resync, and are ignored.
+    hash_floor: u32,
 }
 
 impl Lockstep {
@@ -129,6 +131,7 @@ impl Lockstep {
             local_hashes: VecDeque::new(),
             remote_hashes: VecDeque::new(),
             desync: None,
+            hash_floor: 0,
         }
     }
 
@@ -218,7 +221,17 @@ impl Lockstep {
         }
     }
 
-    /// The first state mismatch found, kept for the rest of the session.
+    /// The two games were made the same again before frame `next_frame`: the desync and every
+    /// hash so far are forgotten, and hashes of frames already run, still on their way from the
+    /// peer, are ignored. Pads and the frame count are untouched.
+    pub fn resynced(&mut self) {
+        self.local_hashes.clear();
+        self.remote_hashes.clear();
+        self.desync = None;
+        self.hash_floor = self.next_frame;
+    }
+
+    /// The first state mismatch found, kept until [`Lockstep::resynced`].
     pub fn desync(&self) -> Option<Desync> {
         self.desync
     }
@@ -243,7 +256,9 @@ impl Lockstep {
     }
 
     fn is_hash_frame(&self, frame: u32) -> bool {
-        self.config.hash_interval != 0 && frame.is_multiple_of(self.config.hash_interval)
+        self.config.hash_interval != 0
+            && frame >= self.hash_floor
+            && frame.is_multiple_of(self.config.hash_interval)
     }
 
     /// Record the first frame both sides hashed differently, if there is one yet.
@@ -678,5 +693,66 @@ mod tests {
         a.receive(&hostile.encode()).unwrap();
         a.record_state_hash(30, 1);
         assert_eq!(a.desync(), None);
+    }
+
+    /// Both sides run `frames` frames, swapping packets after each.
+    fn run_both(a: &mut Lockstep, b: &mut Lockstep, frames: u32) {
+        for _ in 0..frames {
+            a.advance(0).expect("a runs");
+            b.advance(0).expect("b runs");
+            exchange(a, b);
+        }
+    }
+
+    #[test]
+    fn resynced_forgets_the_desync_and_compares_again_from_the_next_frame() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        run_both(&mut a, &mut b, 31);
+        a.record_state_hash(30, 0xAAAA);
+        b.record_state_hash(30, 0xBBBB);
+        exchange(&mut a, &mut b);
+        assert!(a.desync().is_some() && b.desync().is_some());
+        a.resynced();
+        b.resynced();
+        assert_eq!(a.desync(), None);
+        assert_eq!(
+            a.packet().state_hash,
+            None,
+            "no hash from before the resync is sent"
+        );
+        run_both(&mut a, &mut b, 30);
+        a.record_state_hash(60, 0x6060);
+        b.record_state_hash(60, 0x6060);
+        exchange(&mut a, &mut b);
+        assert_eq!(a.desync(), None, "the games match again");
+        run_both(&mut a, &mut b, 30);
+        a.record_state_hash(90, 1);
+        b.record_state_hash(90, 2);
+        exchange(&mut a, &mut b);
+        assert_eq!(
+            a.desync().map(|d| d.frame),
+            Some(90),
+            "a later drift is noticed again"
+        );
+    }
+
+    #[test]
+    fn a_frame_run_before_the_resync_is_never_compared_again() {
+        let mut a = session(Player::One, 2);
+        let mut b = session(Player::Two, 2);
+        run_both(&mut a, &mut b, 31);
+        b.record_state_hash(30, 0xBBBB);
+        let in_flight = b.packet().encode();
+        a.record_state_hash(30, 0xAAAA);
+        a.resynced();
+        a.receive(&in_flight).unwrap();
+        assert_eq!(a.desync(), None);
+        a.record_state_hash(30, 0xAAAA);
+        assert_eq!(
+            a.packet().state_hash,
+            None,
+            "a frame run before the resync is not hashed again"
+        );
     }
 }

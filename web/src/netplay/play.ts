@@ -1,4 +1,4 @@
-import type { PlayData, PlayMessage } from "./session";
+import type { PlayData, PlayMessage, ResyncState } from "./session";
 
 /**
  * Playing together (nr-ayk5.5, docs/ui/nr-ayk5.5-playing-together.html), without the page: one
@@ -15,6 +15,16 @@ import type { PlayData, PlayMessage } from "./session";
  * that land within the input delay of each other were made before either side saw the first, so
  * they are one press. Nothing here touches the page: the core, the link, the count
  * and the clock are handed in, and `view()` is what the screens draw.
+ *
+ * Resyncing (nr-ayk5.6, docs/ui/nr-ayk5.6-resync.html): after every `hashEvery`th frame each game
+ * hands the lockstep rules a hash of its state, and the rules compare the two sides'. A side that
+ * finds them different puts a resync command in its next pad, so both games stop after the same
+ * frame, as for a pause; a frame runs only while playing, so a resync never starts while paused,
+ * behind a window or during a count. The host then sends its state for the next frame; the joiner
+ * loads it and says `resynced`, and both count "Resynced" and play on from the same moment. A
+ * resync that fails, or is not over within `RESYNC_LIMIT_MS`, ends playing together on both sides.
+ * Nothing pressed before the games stopped is lost: a press still waiting, or carried by the very
+ * frame the resync was, is carried out after the count.
  */
 
 /** The lockstep rules as `WasmLockstep` offers them. */
@@ -26,29 +36,44 @@ export interface LockstepRules {
     next_frame(): number;
     remote_frames_known(): number;
     input_delay(): number;
+    /** The hash of this game's state after `frame` ran. */
+    record_state_hash(frame: number, hash: number): void;
+    /** Whether the two games' hashes for some frame differ. */
+    desynced(): boolean;
+    /** The games were made the same before the next frame: compare afresh from there. */
+    resynced(): void;
 }
 
 /** The running game: plays one frame with both pads, or resets. */
 export interface PlayCore {
     runFrame(pad1: number, pad2: number): void;
     reset(soft: boolean): void;
+    /** A hash of the whole game state, the same on two games that are the same. */
+    stateHash(): number;
+    saveState(): Uint8Array;
+    /** Sets the game to a saved state; false when it could not. */
+    loadState(bytes: Uint8Array): boolean;
 }
 
 export interface PlayLink {
     sendPacket(bytes: Uint8Array): void;
     sendPlay(message: PlayMessage): void;
+    /** The host's state, for the frame `at`, for a resync. */
+    sendState(at: number, bytes: Uint8Array): void;
+    /** Ends playing together on both sides: the games could not be resynced. */
+    giveUp(): void;
 }
 
 /** A window that pauses both games while it is open. */
 export type PlayWindow = "settings" | "keys" | "together";
 export type PauseReason = "pause" | PlayWindow;
 /** What the count says above its numbers. */
-export type CountLabel = "resume" | "reset-me" | "reset-them";
-/** How playing together ended: this player ended it, the other did, or the other left. */
-export type EndedHow = "me" | "them" | "left";
+export type CountLabel = "resume" | "reset-me" | "reset-them" | "resync";
+/** How playing together ended: this player ended it, the other did, the other left, or a resync failed. */
+export type EndedHow = "me" | "them" | "left" | "unsynced";
 
 export interface PlayView {
-    phase: "starting" | "playing" | "paused" | "counting" | "ended";
+    phase: "starting" | "playing" | "paused" | "resyncing" | "counting" | "ended";
     pausedBy: "me" | "them" | null;
     pauseReason: PauseReason | null;
     count: CountLabel | null;
@@ -83,6 +108,8 @@ export interface Play {
 
 /** How long a held or lagging game goes before the player is told. */
 export const NOTICE_AFTER_MS = 500;
+/** How long a resync may take, from the moment both games stopped, before playing together ends. */
+export const RESYNC_LIMIT_MS = 15_000;
 /** The most frames a game that is behind runs in one tick, to catch up. */
 const CATCH_UP_FRAMES = 2;
 
@@ -95,12 +122,14 @@ const COMMANDS = {
     together: 4,
     reset: 5,
     hardReset: 6,
+    resync: 7,
 } as const;
 const PAUSES: Record<number, PauseReason> = { 1: "pause", 2: "settings", 3: "keys", 4: "together" };
 
 export function createPlay({
     player,
     lockstep,
+    hashEvery,
     link,
     core,
     count,
@@ -108,6 +137,8 @@ export function createPlay({
 }: {
     player: 1 | 2;
     lockstep: LockstepRules;
+    /** The game's state is hashed after every frame divisible by this, as the rules compare them. */
+    hashEvery: number;
     link: PlayLink;
     core: PlayCore;
     /** Shows a 3-2-1 count with `label` above it, calling `onDone` once it is over; returns its cancel. */
@@ -139,6 +170,12 @@ export function createPlay({
     let heldSince: number | null = null;
     let behindSince: number | null = null;
     let cancelCount: (() => void) | null = null;
+    /** The two games differ: the next frame carries a resync, ahead of any waiting command. */
+    let resyncWanted = false;
+    let lastResyncFrame: number | null = null;
+    /** The host's state for the frame this game is still on its way to (joiner). */
+    let earlyState: ResyncState | null = null;
+    let resyncTimer: ReturnType<typeof setTimeout> | undefined;
     const delay = lockstep.input_delay();
 
     function set(changes: Partial<PlayView>) {
@@ -185,6 +222,11 @@ export function createPlay({
     function act(frame: number, pad1: number, pad2: number) {
         const commands = [pad1 >> COMMAND_SHIFT, pad2 >> COMMAND_SHIFT];
         const mine = player - 1;
+        // A resync wins over anything else the same frame carries, on both sides alike; the other
+        // player's resync sent before this one reached them is the same resync.
+        if (commands.includes(COMMANDS.resync) && (lastResyncFrame === null || frame - lastResyncFrame > delay)) {
+            return startResync(frame, commands[mine]);
+        }
         // A reset wins over a pause carried by the same frame, on both sides alike.
         const resetter = commands.findIndex(isReset);
         // A press made before the last reset reached that player lands within the delay: the same reset.
@@ -214,6 +256,78 @@ export function createPlay({
         closedBeforeItsPause = null;
     }
 
+    /** Both games stopped after `frame` because they differ; `carried` is what this side's pad had in it. */
+    function startResync(frame: number, carried: number) {
+        lockstep.resynced();
+        resyncWanted = false;
+        lastResyncFrame = frame;
+        // What this player pressed for that frame is kept for after the count, not lost under the
+        // resync; but a window closed since then needs no pause any more.
+        const closedWindow = isPause(carried) && PAUSES[carried] === closedBeforeItsPause;
+        if (closedWindow) closedBeforeItsPause = null;
+        else if (carried !== COMMANDS.resync && carried !== 0 && command === 0) command = carried;
+        heldSince = null;
+        behindSince = null;
+        set({ phase: "resyncing", pausedBy: null, pauseReason: null, waiting: false, catchingUp: false });
+        clearTimeout(resyncTimer);
+        resyncTimer = setTimeout(giveUp, RESYNC_LIMIT_MS);
+        const at = lockstep.next_frame();
+        if (player === 1) {
+            let bytes: Uint8Array;
+            try {
+                bytes = core.saveState();
+            } catch {
+                return giveUp();
+            }
+            return link.sendState(at, bytes);
+        }
+        const held = earlyState;
+        earlyState = null;
+        if (held && held.at === at) applyState(held);
+    }
+
+    /** The joiner sets its game to the host's moment, and says so. */
+    function applyState(received: ResyncState) {
+        let loaded = false;
+        try {
+            loaded = received.bytes !== null && core.loadState(received.bytes);
+        } catch {
+            loaded = false;
+        }
+        if (!loaded) return giveUp();
+        link.sendPlay({ t: "resynced", at: received.at });
+        resynced();
+    }
+
+    function resynced() {
+        clearTimeout(resyncTimer);
+        startCount("resync");
+    }
+
+    function giveUp() {
+        if (state.phase === "ended") return;
+        ended("unsynced");
+        link.giveUp();
+    }
+
+    function hearState(received: ResyncState) {
+        if (player !== 2 || state.phase === "ended") return;
+        const at = lockstep.next_frame();
+        if (received.at > at) earlyState = received;
+        else if (received.at === at && state.phase === "resyncing") applyState(received);
+    }
+
+    function ended(how: EndedHow) {
+        if (state.phase === "ended") return;
+        cancelCount?.();
+        cancelCount = null;
+        clearTimeout(resyncTimer);
+        command = 0;
+        resyncWanted = false;
+        earlyState = null;
+        set({ phase: "ended", ended: how, count: null, waiting: false, catchingUp: false, pausedBy: null, pauseReason: null });
+    }
+
     /**
      * Whether this game is behind the other's, judged before this tick catches up. Behind is more
      * than a frame past the input delay (two games ticking together are never that far apart), and
@@ -231,13 +345,17 @@ export function createPlay({
         const wasBehind = judgeBehind();
         const most = wasBehind ? CATCH_UP_FRAMES : 1;
         while (ran < most && state.phase === "playing") {
-            const inputs = lockstep.advance(localPad() | (command << COMMAND_SHIFT));
+            if (lockstep.desynced()) resyncWanted = true;
+            const carried = resyncWanted ? COMMANDS.resync : command;
+            const inputs = lockstep.advance(localPad() | (carried << COMMAND_SHIFT));
             if (inputs.length < 3) break;
             // The frame recorded it: it now travels to the other side with this pad.
-            command = 0;
+            if (resyncWanted) resyncWanted = false;
+            else command = 0;
             ran++;
             const [frame, pad1, pad2] = [inputs[0], inputs[1], inputs[2]];
             core.runFrame(pad1 & BUTTONS, pad2 & BUTTONS);
+            if (frame % hashEvery === 0) lockstep.record_state_hash(frame, core.stateHash());
             act(frame, pad1, pad2);
         }
         link.sendPacket(lockstep.packet());
@@ -267,6 +385,10 @@ export function createPlay({
         }
         // For a frame this game has passed: it cannot be played where it was meant.
         if (message.at < at) return;
+        if (message.t === "resynced") {
+            if (player === 1 && state.phase === "resyncing") resynced();
+            return;
+        }
         if (message.t === "resume") {
             if (state.phase === "paused") {
                 pausingWindow = null;
@@ -307,8 +429,8 @@ export function createPlay({
         },
         windowOpened: (window) => {
             closedBeforeItsPause = null;
-            // Opened during a count, its pause waits for the count to end and the first frame after.
-            if (state.phase !== "playing" && state.phase !== "counting" && state.phase !== "starting") return;
+            // Opened during a count or a resync, its pause waits for the count to end and the first frame after.
+            if (!["playing", "counting", "starting", "resyncing"].includes(state.phase)) return;
             if (command === 0) command = COMMANDS[window];
             pausingWindow = window;
         },
@@ -318,8 +440,9 @@ export function createPlay({
             if (state.phase === "paused") resume();
             // Closed before a frame carried its pause: the pause is not needed.
             else if (command === COMMANDS[window]) command = 0;
-            // A frame carries it already, so both games will pause there: then they resume.
-            else if (state.phase === "playing") closedBeforeItsPause = window;
+            // A frame carries it already, so both games will pause there: then they resume. Frames
+            // carried before a resync stopped both still run once it and its count are over.
+            else if (["playing", "resyncing", "counting"].includes(state.phase)) closedBeforeItsPause = window;
         },
         receive: (bytes) => {
             lockstep.receive(bytes);
@@ -327,14 +450,9 @@ export function createPlay({
         message,
         hear: (data) => {
             if (data instanceof Uint8Array) lockstep.receive(data);
+            else if (data.t === "state") hearState(data);
             else message(data);
         },
-        ended: (how) => {
-            if (state.phase === "ended") return;
-            cancelCount?.();
-            cancelCount = null;
-            command = 0;
-            set({ phase: "ended", ended: how, count: null, waiting: false, catchingUp: false, pausedBy: null, pauseReason: null });
-        },
+        ended,
     };
 }

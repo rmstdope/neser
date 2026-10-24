@@ -89,6 +89,7 @@ describe("the screens over the game while playing together", () => {
         ["me", "You ended it."],
         ["them", "The other player ended it."],
         ["left", "The other player left."],
+        ["unsynced", "The games couldn't be resynced."],
     ] as const)("tells the host it has ended (%s) and offers to play on alone", (ended, first) => {
         make("host").draw({ ...PLAYING, phase: "ended", ended });
         expect(heading()).toBe("Playing together has ended");
@@ -106,6 +107,39 @@ describe("the screens over the game while playing together", () => {
         expect(document.activeElement).toBe(button("Back to library"));
         button("Back to library").click();
         expect(onBackToLibrary).toHaveBeenCalledOnce();
+    });
+
+    it("tells the joiner when the games could not be resynced", () => {
+        make("join").draw({ ...PLAYING, phase: "ended", ended: "unsynced" });
+        expect(heading()).toBe("Playing together has ended");
+        expect(lines()).toEqual(["The games couldn't be resynced.", "The host's game isn't kept on this computer."]);
+        expect(buttons()).toEqual(["Back to library"]);
+    });
+
+    it.each(["host", "join"] as const)("says the games are being resynced, the same for the %s, with focus left where it was", (role) => {
+        const before = document.createElement("button");
+        document.body.append(before);
+        before.focus();
+        const s = make(role);
+        s.draw({ ...PLAYING, phase: "resyncing" });
+        expect(heading()).toBe("⟳ Resyncing the games…");
+        expect(lines()).toEqual(["Your two games stopped matching, so the other player's game is being set to the host's."]);
+        expect(buttons()).toEqual(["End playing together"]);
+        expect(document.activeElement).toBe(before);
+        expect(overlay()!.querySelector("button")!.tabIndex).toBe(0);
+        s.draw({ ...PLAYING, phase: "counting", count: "resync" });
+        expect(overlay()).toBeNull();
+    });
+
+    it("asks before ending from the resync screen, and Keep playing leaves the resync screen up", () => {
+        const s = make("host");
+        s.draw({ ...PLAYING, phase: "resyncing" });
+        overlay()!.querySelector("button")!.click();
+        expect(confirm().open).toBe(true);
+        button("Keep playing").click();
+        expect(confirm().open).toBe(false);
+        expect(heading()).toBe("⟳ Resyncing the games…");
+        expect(onEnd).not.toHaveBeenCalled();
     });
 
     it("goes when it is removed", () => {

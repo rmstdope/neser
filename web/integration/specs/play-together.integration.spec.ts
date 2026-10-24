@@ -117,6 +117,60 @@ async function startPlaying(host: Page, browser: Browser): Promise<Page> {
     return joiner;
 }
 
+/**
+ * Resyncing (nr-ayk5.6): two games in lockstep never drift on their own, so the host's page has
+ * what it sends tampered with before it leaves. `window.__tamper.corruptHash` changes the state
+ * hash in the next lockstep packet that carries a new one (bytes led by transfer id 0: version, ack,
+ * first frame, count, count pads, hash flag, frame, hash), so the joiner finds the games differ
+ * and the real resync follows. The pieces of the host's state (transfer id 0xFFFFFFFF) can be
+ * held back a while, so the resync screen stays long enough to be looked at, or dropped.
+ */
+async function tamperWithHostLink(host: Page) {
+    await host.addInitScript(() => {
+        const tamper = { corruptHash: false, stateDelayMs: 0, dropState: false };
+        (window as unknown as { __tamper: typeof tamper }).__tamper = tamper;
+        const send = RTCDataChannel.prototype.send;
+        let lastHashFrame = -1;
+        RTCDataChannel.prototype.send = function (this: RTCDataChannel, data: string | ArrayBufferView<ArrayBuffer> | ArrayBuffer | Blob) {
+            if (ArrayBuffer.isView(data)) {
+                const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+                const id = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
+                const flagAt = 4 + 10 + 2 * bytes[4 + 9];
+                if (id === 0 && bytes[flagAt] === 1) {
+                    // Every packet repeats the newest hash and the joiner keeps the first it hears,
+                    // so only the first packet with a new one is changed.
+                    const frame = new DataView(bytes.buffer, bytes.byteOffset + flagAt + 1, 4).getUint32(0, true);
+                    const fresh = frame !== lastHashFrame;
+                    lastHashFrame = frame;
+                    if (tamper.corruptHash && fresh) {
+                        tamper.corruptHash = false;
+                        const changed = bytes.slice();
+                        changed[flagAt + 5] ^= 0xff;
+                        return send.call(this, changed);
+                    }
+                }
+                if (id === 0xffffffff) {
+                    if (tamper.dropState) return;
+                    if (tamper.stateDelayMs > 0) {
+                        const later = bytes.slice();
+                        setTimeout(() => send.call(this, later), tamper.stateDelayMs);
+                        return;
+                    }
+                }
+            }
+            return (send as (this: RTCDataChannel, d: unknown) => void).call(this, data);
+        };
+    });
+}
+
+async function tamper(host: Page, change: { corruptHash?: boolean; stateDelayMs?: number; dropState?: boolean }) {
+    await host.evaluate((c) => Object.assign((window as unknown as { __tamper: object }).__tamper, c), change);
+}
+
+function resyncScreen(page: Page) {
+    return page.locator(".netplay-screen", { hasText: "⟳ Resyncing the games…" });
+}
+
 test.describe("Play together", () => {
     test("Given a host running a NES game and a joiner in the library, when they swap codes, then both are connected with a Great response time, and the host's chip shows when the joiner leaves", async ({
         page: host,
@@ -296,6 +350,65 @@ test.describe("Play together", () => {
         await joiner.close();
         await expect(endedScreen(host)).toContainText("The other player left.", { timeout: CONNECT_TIMEOUT_MS });
         await expect(host.locator("#netplay-open")).toHaveText("Disconnected");
+    });
+
+    test("Given two players playing together, when their games stop matching, then both stop under the resync screen, count Resynced and play on", async ({
+        page: host,
+        browser
+    }) => {
+        // Two browsers connect, count down and play through several shared steps.
+        test.slow();
+        await tamperWithHostLink(host);
+        const joiner = await startPlaying(host, browser);
+        // Two real games, compared once a second, play on unseen while they match.
+        await host.waitForTimeout(4000);
+        for (const page of [host, joiner]) await expect(resyncScreen(page)).toHaveCount(0);
+        // The joiner's window is phone-narrow: its chip keeps the dot and the response time.
+        await joiner.setViewportSize({ width: 700, height: 800 });
+        await tamper(host, { stateDelayMs: 3000, corruptHash: true });
+        for (const page of [host, joiner]) {
+            await expect(resyncScreen(page)).toContainText("Your two games stopped matching, so the other player's game is being set to the host's.", {
+                timeout: CONNECT_TIMEOUT_MS
+            });
+            await expect(resyncScreen(page).getByRole("button", { name: "End playing together" })).toBeVisible();
+            await expect(page.locator("#netplay-open")).toHaveAttribute("data-tone", "wait");
+        }
+        await expect(host.locator("#netplay-open .netplay-chip-long")).toHaveText("Resyncing…");
+        await expect(host.locator("#netplay-open .netplay-chip-long")).toBeVisible();
+        await expect(host.locator("#netplay-open .netplay-chip-short")).toBeHidden();
+        await expect(joiner.locator("#netplay-open .netplay-chip-long")).toBeHidden();
+        await expect(joiner.locator("#netplay-open .netplay-chip-short")).toBeVisible();
+        await expect(joiner.locator("#netplay-open .netplay-chip-short")).toHaveText(/^\d+ ms$/);
+        // Pause does nothing while it is resyncing.
+        await joiner.keyboard.press("Space");
+        await expect(resyncScreen(joiner)).toBeVisible();
+        await bothCount(host, joiner, "Resynced", "Resynced");
+        for (const page of [host, joiner]) {
+            await expect(page.locator(".netplay-screen")).toHaveCount(0);
+            await expect(page.locator("#netplay-open")).toHaveText(/^Connected · \d+ ms$/);
+        }
+    });
+
+    test("Given two players playing together, when the host's game never reaches the joiner during a resync, then after 15 seconds playing together ends on both because the games couldn't be resynced", async ({
+        page: host,
+        browser
+    }) => {
+        // Two browsers connect, play, and wait out the resync's 15 seconds.
+        test.slow();
+        await tamperWithHostLink(host);
+        const joiner = await startPlaying(host, browser);
+        await tamper(host, { dropState: true, corruptHash: true });
+        await expect(resyncScreen(joiner)).toBeVisible({ timeout: CONNECT_TIMEOUT_MS });
+        await expect(endedScreen(host).locator("p")).toHaveText(["The games couldn't be resynced.", "You can keep playing on your own from here."], {
+            timeout: 25_000
+        });
+        await expect(endedScreen(joiner).locator("p")).toHaveText(["The games couldn't be resynced.", "The host's game isn't kept on this computer."], {
+            timeout: CONNECT_TIMEOUT_MS
+        });
+        for (const page of [host, joiner]) await expect(page.locator("#netplay-open")).toHaveText("Disconnected");
+        await expect(endedScreen(joiner).getByRole("button", { name: "Back to library" })).toBeFocused();
+        await endedScreen(host).getByRole("button", { name: "Resume" }).click();
+        await waitForRunningState(host);
     });
 
     test("Given a Game Boy Advance game, when Play together opens, then hosting is greyed out with its reason", async ({ page }) => {

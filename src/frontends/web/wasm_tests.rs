@@ -2276,3 +2276,52 @@ fn wasm_lockstep_refuses_what_it_cannot_play() {
     let mut side = WasmLockstep::new(1, 2).expect("player 1");
     assert!(!side.receive(&[9, 9, 9]), "not a packet");
 }
+
+#[wasm_bindgen_test]
+fn wasm_lockstep_reports_a_desync_and_clears_it_on_resync() {
+    let interval = WasmLockstep::hash_interval();
+    assert!(interval > 0, "the games are compared");
+    let mut host = WasmLockstep::new(1, 2).expect("player 1");
+    let mut joiner = WasmLockstep::new(2, 2).expect("player 2");
+    for frame in 0..=interval {
+        assert_eq!(host.advance(0)[0], frame);
+        assert_eq!(joiner.advance(0)[0], frame);
+        assert!(joiner.receive(&host.packet()));
+        assert!(host.receive(&joiner.packet()));
+    }
+    host.record_state_hash(interval, 0xAAAA);
+    joiner.record_state_hash(interval, 0xBBBB);
+    assert!(joiner.receive(&host.packet()));
+    assert!(host.receive(&joiner.packet()));
+    assert!(host.desynced() && joiner.desynced());
+    host.resynced();
+    joiner.resynced();
+    assert!(!host.desynced() && !joiner.desynced());
+}
+
+#[wasm_bindgen_test]
+fn wasm_state_hash_is_the_same_whatever_audio_the_page_has_taken_out() {
+    let mut drained = WasmNes::new();
+    let mut undrained = WasmNes::new();
+    for nes in [&mut drained, &mut undrained] {
+        nes.load_rom(&minimal_nrom(), "test.nes")
+            .expect("valid rom should load");
+    }
+    for _ in 0..3 {
+        drained.render_frame_rgba();
+        drained.get_audio_samples();
+        undrained.render_frame_rgba();
+    }
+    assert_ne!(
+        drained.save_state_bytes(),
+        undrained.save_state_bytes(),
+        "the samples left in one core are in its save state"
+    );
+    assert_eq!(drained.state_hash(), undrained.state_hash());
+    undrained.render_frame_rgba();
+    assert_ne!(
+        drained.state_hash(),
+        undrained.state_hash(),
+        "a frame more is another game"
+    );
+}

@@ -168,6 +168,13 @@ macro_rules! web_console_bindings {
                 self.web.f8_action()
             }
 
+            /// The hash network play compares (nr-ayk5.6): the same on two games that are the
+            /// same, whatever audio the page has taken out yet; 0 when there is no game.
+            pub fn state_hash(&self) -> u32 {
+                crate::platform::emulator::Emulator::netplay_state_hash(self.web.core())
+                    .unwrap_or(0)
+            }
+
             /// Collect all pending mono audio samples; empty while muted. Call after each frame.
             pub fn get_audio_samples(&mut self) -> Vec<f32> {
                 self.web.audio_samples()

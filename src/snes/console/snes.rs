@@ -561,6 +561,25 @@ impl Emulator for Snes {
             .map_err(|e| format!("save state serialization failed: {e}"))
     }
 
+    fn netplay_state_hash(&self) -> Result<u32, String> {
+        let Some(cpu) = self.cpu.as_ref() else {
+            return Err("No ROM loaded".to_string());
+        };
+        let mut state = cpu.capture_save_state();
+        // The output side of the audio (the resampler to the page's rate and its queue) says
+        // nothing about the game, and a state load restarts the resampler without its input
+        // queue (`native_samples` is transient), so a resynced console's would never match.
+        let apu = &mut state.bus.apu;
+        apu.pending_samples.clear();
+        apu.resample_phase = 0.0;
+        apu.sample_acc = 0.0;
+        apu.cycles_per_sample = 0.0;
+        let bytes = state
+            .to_bytes()
+            .map_err(|e| format!("save state serialization failed: {e}"))?;
+        Ok(crate::platform::crc32::crc32(&[&bytes]))
+    }
+
     fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
         let Some(cpu) = self.cpu.as_mut() else {
             return Err("No ROM loaded".to_string());
