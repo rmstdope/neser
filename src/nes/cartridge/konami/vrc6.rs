@@ -641,11 +641,11 @@ impl Mapper for VRC6Mapper {
         // [18]: mirroring
         // [19]: audio.global_halt
         // [20]: audio.global_shift
-        // [21-27]: pulse1 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
-        // [28-34]: pulse2 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
-        // [35-46]: saw (enabled, rate, then period LE, divider LE, accumulator, step at 41-46)
+        // [21-29]: pulse1 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
+        // [30-38]: pulse2 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
+        // [39-46]: saw (enabled, rate, period LE, divider LE, accumulator, step)
         // [47-2094]: nametable RAM (CIRAM), which VRC6 owns
-        let mut snapshot = Vec::with_capacity(41);
+        let mut snapshot = Vec::with_capacity(CIRAM_SNAPSHOT_OFFSET + 2048);
         snapshot.push(self.prg_bank_16k);
         snapshot.push(self.prg_bank_8k);
         snapshot.extend_from_slice(&self.chr_banks_1k);
@@ -807,6 +807,35 @@ mod tests {
 
         assert_eq!(restored.read_nametable(0x2000), Some(0xAA));
         assert_eq!(restored.read_nametable(0x27FF), Some(0xBB));
+    }
+
+    /// A snapshot from before nr-ayk5.1 ends at the register bytes: it still restores them,
+    /// and the nametable RAM is left as it was.
+    #[test]
+    fn registers_snapshot_without_ciram_restores_registers_and_keeps_nametables() {
+        let new_mapper = || {
+            create_vrc6_mapper(
+                24,
+                banked_data(8 * 1024, 8),
+                banked_data(1024, 8),
+                NametableLayout::Vertical,
+            )
+            .expect("VRC6 (mapper 24) should be implemented")
+        };
+        let mut mapper = new_mapper();
+        mapper.write_prg(0x8000, 0x03); // 16K PRG bank
+        mapper.write_prg(0xD000, 0x05); // CHR bank 0
+        let old_snapshot = mapper.registers_snapshot()[..super::CIRAM_SNAPSHOT_OFFSET].to_vec();
+
+        let mut restored = new_mapper();
+        restored.write_nametable(0x2000, 0xCC);
+        restored.restore_registers(&old_snapshot);
+
+        assert_eq!(
+            restored.registers_snapshot()[..super::CIRAM_SNAPSHOT_OFFSET],
+            old_snapshot[..]
+        );
+        assert_eq!(restored.read_nametable(0x2000), Some(0xCC));
     }
 
     #[test]

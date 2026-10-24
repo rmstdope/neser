@@ -28,6 +28,10 @@ pub(crate) struct DeterminismRun {
 
 /// The power-on RAM seed both consoles share.
 const RAM_SEED: u64 = 0x5EED_1234;
+/// The power-on RAM seed of the drifted console a save/load run loads into.
+const DRIFTED_RAM_SEED: u64 = 0xD81F_7ED0;
+/// How far the drifted console's pad script is shifted from the run's.
+const DRIFTED_PAD_OFFSET: u32 = 1_000;
 /// Ticks one frame may take before the run is declared hung.
 const MAX_TICKS_PER_FRAME: u32 = 10_000_000;
 /// Frames each scripted pad pattern is held, so games see presses long enough to act on.
@@ -49,8 +53,8 @@ pub(crate) fn assert_two_instances_agree(system: SystemType, rom_path: &str, run
     }
 }
 
-/// A state saved after `run.save_at` frames and loaded into a freshly powered-on console
-/// continues, frame by frame, exactly as the console it was saved from.
+/// A state saved after `run.save_at` frames and loaded into a console that has drifted
+/// (another power-on RAM seed, other presses, fewer frames) continues, frame by frame, exactly as the console it was saved from.
 pub(crate) fn assert_save_mid_run_continues_identically(
     system: SystemType,
     rom_path: &str,
@@ -62,7 +66,16 @@ pub(crate) fn assert_save_mid_run_continues_identically(
         play_frame(&mut uninterrupted, system, frame, rom_path);
     }
     let saved = uninterrupted.save_state_bytes().expect("save state");
-    let mut resumed = loaded_console(system, &rom, rom_path);
+    // The console a resync loads into has drifted: its own power-on RAM, other presses,
+    // another frame count. Anything the save leaves out then shows up as a difference.
+    let mut resumed = loaded_console_with_seed(system, &rom, rom_path, DRIFTED_RAM_SEED);
+    for frame in 0..run.save_at / 2 {
+        play_frame(&mut resumed, system, frame + DRIFTED_PAD_OFFSET, rom_path);
+    }
+    assert!(
+        resumed.save_state_bytes().expect("save state") != saved,
+        "{rom_path}: the console loaded into has not drifted from the one saved"
+    );
     resumed
         .load_state_bytes(&saved)
         .unwrap_or_else(|e| panic!("{rom_path}: load state: {e}"));
@@ -78,8 +91,12 @@ fn read_rom(path: &str) -> Vec<u8> {
 }
 
 fn loaded_console(system: SystemType, rom: &[u8], name: &str) -> Console {
+    loaded_console_with_seed(system, rom, name, RAM_SEED)
+}
+
+fn loaded_console_with_seed(system: SystemType, rom: &[u8], name: &str, seed: u64) -> Console {
     let mut config = Config::default();
-    config.frontend.ram_init_mode = RamInitMode::SeededRandom(RAM_SEED);
+    config.frontend.ram_init_mode = RamInitMode::SeededRandom(seed);
     let context = AppContext::new_with_config(config);
     let mut console = match system {
         SystemType::Nes => Console::new_nes(context),

@@ -727,6 +727,36 @@ mod tests {
         assert_eq!(restored.read_nametable(0x27FF), Some(0xBB));
     }
 
+    /// A snapshot from before nr-ayk5.1 ends at the register bytes: it still restores them,
+    /// and the nametable RAM is left as it was.
+    #[test]
+    fn registers_snapshot_without_ciram_restores_registers_and_keeps_nametables() {
+        let new_mapper = || {
+            let mut mapper = create_namco163_mapper(
+                banked_data(8 * 1024, 8),
+                banked_data(1024, 16),
+                NametableLayout::Vertical,
+            )
+            .expect("Namco 163 (mapper 19) should be implemented");
+            mapper.write_prg(0xC000, 0xE0); // $2000 -> CIRAM page 0
+            mapper
+        };
+        let mut mapper = new_mapper();
+        mapper.write_prg(0xE000, 0x05); // PRG bank at $8000
+        mapper.write_prg(0x8000, 0x07); // CHR bank 0
+        let old_snapshot = mapper.registers_snapshot()[..super::CIRAM_SNAPSHOT_OFFSET].to_vec();
+
+        let mut restored = new_mapper();
+        restored.write_nametable(0x2000, 0xCC);
+        restored.restore_registers(&old_snapshot);
+
+        assert_eq!(
+            restored.registers_snapshot()[..super::CIRAM_SNAPSHOT_OFFSET],
+            old_snapshot[..]
+        );
+        assert_eq!(restored.read_nametable(0x2000), Some(0xCC));
+    }
+
     #[test]
     fn namco163_prg_chr_banking_and_mirroring() {
         let prg_rom = banked_data(8 * 1024, 8);

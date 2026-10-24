@@ -420,7 +420,8 @@ pub struct Spc700State {
     pub halted: bool,
     /// The instruction a save state was taken in the middle of. The APU steps the core one
     /// bus cycle at a time, so this is set on almost every save; states from before
-    /// nr-ayk5.1 lack it and resume at the next instruction boundary.
+    /// nr-ayk5.1 lack it and resume decoding at the saved PC, which may be inside an
+    /// instruction (at its operand bytes), as every load did before.
     #[serde(default)]
     pub(crate) in_progress: Option<InProgressOp>,
 }
@@ -512,7 +513,8 @@ impl Spc700 {
         self.psw = psw;
         self.halted = halted;
         // A saved instruction that no cycle script could have produced (a damaged file)
-        // would panic the stepper; resume at the next instruction boundary instead.
+        // would panic the stepper; drop it and resume decoding at the saved PC, as a state
+        // without one does.
         self.in_progress = in_progress.clone().filter(|op| {
             Self::cycle_script(op.opcode)
                 .is_some_and(|(script, _)| (1..=script.len()).contains(&usize::from(op.cycle)))
@@ -7241,13 +7243,18 @@ mod tests {
         let mut restored = Spc700::new();
         restored.restore_state(&cpu.capture_state());
         let mut restored_bus = program_bus();
-        while {
-            restored.step_one_cycle(&mut restored_bus);
-            restored.has_in_progress_op()
-        } {}
+        bus.ops.clear();
+        for (core, bus) in [(&mut cpu, &mut bus), (&mut restored, &mut restored_bus)] {
+            while {
+                core.step_one_cycle(bus);
+                core.has_in_progress_op()
+            } {}
+        }
 
         assert_eq!(restored.a(), 0x5A);
         assert_eq!(restored.pc(), 0x0203);
+        assert_eq!(restored.capture_state(), cpu.capture_state());
+        assert_eq!(restored_bus.ops, bus.ops);
     }
 
     #[test]
