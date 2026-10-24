@@ -2312,6 +2312,11 @@ fn wasm_state_hash_is_the_same_whatever_audio_the_page_has_taken_out() {
         drained.get_audio_samples();
         undrained.render_frame_rgba();
     }
+    assert_ne!(
+        drained.save_state_bytes(),
+        undrained.save_state_bytes(),
+        "the samples left in one core are in its save state"
+    );
     assert_eq!(drained.state_hash(), undrained.state_hash());
     undrained.render_frame_rgba();
     assert_ne!(
