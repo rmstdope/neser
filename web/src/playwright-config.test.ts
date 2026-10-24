@@ -44,4 +44,24 @@ describe("playwright.config", () => {
 
         expect(config.fullyParallel).toBe(true);
     });
+
+    it("runs one worker on CI, where two browsers starve the four-core runner", async () => {
+        // Each browser's SwiftShader GPU process burns about 1.6 cores. With Playwright's default of
+        // two workers on CI's four vCPUs, Chrome's own process fell ~40 s behind: new contexts hung
+        // ("Failed to find browser context") and clicks timed out (nr-oi18). One worker ran the
+        // shard in half the time with nothing flaky.
+        vi.stubEnv("CI", "true");
+
+        const config = await loadConfig();
+
+        expect(config.workers).toBe(1);
+    });
+
+    it("leaves the worker count to Playwright off CI", async () => {
+        vi.stubEnv("CI", "");
+
+        const config = await loadConfig();
+
+        expect(config.workers).toBeUndefined();
+    });
 });

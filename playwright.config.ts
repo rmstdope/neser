@@ -15,6 +15,11 @@ export default defineConfig({
     // Every test opens its own page, so tests can run in any order on any worker; this is what
     // lets the CI job's --shard=1/2 and --shard=2/2 split the suite by test rather than by file.
     fullyParallel: true,
+    // One browser at a time on CI. Each browser's SwiftShader GPU process burns about 1.6 cores, so
+    // Playwright's default of two workers on the four-vCPU runner starved Chrome's own process:
+    // new contexts hung for ~40 s ("Failed to find browser context") and clicks timed out
+    // (nr-oi18). One worker finished the larger shard in half the time, with nothing flaky.
+    workers: process.env.CI ? 1 : undefined,
     timeout: 45_000,
     retries: 1,
     use: {
