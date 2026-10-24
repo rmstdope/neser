@@ -738,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_hash_from_before_the_resync_is_ignored() {
+    fn a_frame_run_before_the_resync_is_never_compared_again() {
         let mut a = session(Player::One, 2);
         let mut b = session(Player::Two, 2);
         run_both(&mut a, &mut b, 31);

@@ -561,6 +561,18 @@ impl Emulator for Snes {
             .map_err(|e| format!("save state serialization failed: {e}"))
     }
 
+    fn netplay_state_hash(&self) -> Result<u32, String> {
+        let Some(cpu) = self.cpu.as_ref() else {
+            return Err("No ROM loaded".to_string());
+        };
+        let mut state = cpu.capture_save_state();
+        state.bus.apu.pending_samples.clear();
+        let bytes = state
+            .to_bytes()
+            .map_err(|e| format!("save state serialization failed: {e}"))?;
+        Ok(crate::platform::crc32::crc32(&[&bytes]))
+    }
+
     fn load_state_bytes(&mut self, data: &[u8]) -> Result<(), String> {
         let Some(cpu) = self.cpu.as_mut() else {
             return Err("No ROM loaded".to_string());

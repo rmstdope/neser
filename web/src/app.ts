@@ -90,7 +90,7 @@ import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { THIS_BUILD } from "./netplay/build_id";
 import { webRtcLinks } from "./netplay/peer_link";
-import { crc32, NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
+import { NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
 import { createNetplaySession, type NetplayStart, type Role } from "./netplay/session";
 import { createPlay, type CountLabel, type EndedHow, type Play, type PlayCore, type PlayView } from "./netplay/play";
 import { createPlayScreen, type PlayScreen } from "./ui/play_screen";
@@ -3718,11 +3718,8 @@ const playCore: PlayCore = {
         playFrame = core.render_frame_rgba();
     },
     reset: (soft) => netplayCore()?.reset(soft),
-    // The whole save state, so anything that makes the two games differ shows in the hash.
-    stateHash: () => {
-        const core = netplayCore();
-        return core ? crc32(core.save_state_bytes()) : 0;
-    },
+    // The whole game state, less the audio this page has not played yet (nr-ayk5.6 review).
+    stateHash: () => netplayCore()?.state_hash() ?? 0,
     saveState: () => {
         const core = netplayCore();
         if (!core) throw new Error("no game to resync from");

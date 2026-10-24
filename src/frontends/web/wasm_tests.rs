@@ -2298,3 +2298,25 @@ fn wasm_lockstep_reports_a_desync_and_clears_it_on_resync() {
     joiner.resynced();
     assert!(!host.desynced() && !joiner.desynced());
 }
+
+#[wasm_bindgen_test]
+fn wasm_state_hash_is_the_same_whatever_audio_the_page_has_taken_out() {
+    let mut drained = WasmNes::new();
+    let mut undrained = WasmNes::new();
+    for nes in [&mut drained, &mut undrained] {
+        nes.load_rom(&minimal_nrom(), "test.nes")
+            .expect("valid rom should load");
+    }
+    for _ in 0..3 {
+        drained.render_frame_rgba();
+        drained.get_audio_samples();
+        undrained.render_frame_rgba();
+    }
+    assert_eq!(drained.state_hash(), undrained.state_hash());
+    undrained.render_frame_rgba();
+    assert_ne!(
+        drained.state_hash(),
+        undrained.state_hash(),
+        "a frame more is another game"
+    );
+}

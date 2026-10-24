@@ -808,6 +808,60 @@ describe("resyncing", () => {
         expect(join.play.view()).toMatchObject({ phase: "paused", pausedBy: "me", pauseReason: "pause" });
     });
 
+    // The other player's pads: a resync carried by frame 4, nothing after. Fed all at once, this
+    // game is behind and runs two frames a tick.
+    const RESYNC_AT_4 = [0, 0, 0, 0, 7 << 12, ...Array(30).fill(0)];
+
+    it("does not pause after the count for a window closed before the frame that carried its pause and the resync", async () => {
+        const host = alone(1);
+        host.play.receive(pads(RESYNC_AT_4));
+        host.play.tick();
+        expect(host.core.frames).toBe(2);
+        // Its pause is recorded for frame 4, the frame that carries the other player's resync.
+        host.play.windowOpened("settings");
+        host.play.tick();
+        host.play.windowClosed("settings");
+        host.play.tick();
+        expect(host.play.view().phase).toBe("resyncing");
+        host.play.message({ t: "resynced", at: 5 });
+        await vi.advanceTimersByTimeAsync(3000);
+        for (let i = 0; i < 10; i++) host.play.tick();
+        expect(host.play.view().phase).toBe("playing");
+        expect(host.counts).toEqual(["resync"]);
+    });
+
+    it("resumes after the count for a window closed during the resync whose pause a later frame carries", async () => {
+        const host = alone(1);
+        host.play.receive(pads(RESYNC_AT_4));
+        host.play.tick();
+        host.play.tick();
+        // Recorded for frame 6, after the resync at frame 4, which this tick reaches.
+        host.play.windowOpened("settings");
+        host.play.tick();
+        expect(host.play.view().phase).toBe("resyncing");
+        host.play.windowClosed("settings");
+        host.play.message({ t: "resynced", at: 5 });
+        await vi.advanceTimersByTimeAsync(3000);
+        for (let i = 0; i < 10; i++) host.play.tick();
+        // Both games pause at frame 6 as they must, and closing the window has already resumed them.
+        expect(host.play.view()).toMatchObject({ phase: "counting", count: "resume" });
+    });
+
+    it("resumes after the count for a window closed during the Resynced count whose pause a later frame carries", async () => {
+        const host = alone(1);
+        host.play.receive(pads(RESYNC_AT_4));
+        host.play.tick();
+        host.play.tick();
+        host.play.windowOpened("settings");
+        host.play.tick();
+        host.play.message({ t: "resynced", at: 5 });
+        expect(host.play.view().phase).toBe("counting");
+        host.play.windowClosed("settings");
+        await vi.advanceTimersByTimeAsync(3000);
+        for (let i = 0; i < 10; i++) host.play.tick();
+        expect(host.play.view()).toMatchObject({ phase: "counting", count: "resume" });
+    });
+
     it("pauses for a window opened during a resync, once the count is over", async () => {
         await run(200);
         join.core.state ^= 0x55;

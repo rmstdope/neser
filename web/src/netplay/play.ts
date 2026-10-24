@@ -261,8 +261,11 @@ export function createPlay({
         lockstep.resynced();
         resyncWanted = false;
         lastResyncFrame = frame;
-        // What this player pressed for that frame is kept for after the count, not lost under the resync.
-        if (carried !== COMMANDS.resync && carried !== 0 && command === 0) command = carried;
+        // What this player pressed for that frame is kept for after the count, not lost under the
+        // resync; but a window closed since then needs no pause any more.
+        const closedWindow = isPause(carried) && PAUSES[carried] === closedBeforeItsPause;
+        if (closedWindow) closedBeforeItsPause = null;
+        else if (carried !== COMMANDS.resync && carried !== 0 && command === 0) command = carried;
         heldSince = null;
         behindSince = null;
         set({ phase: "resyncing", pausedBy: null, pauseReason: null, waiting: false, catchingUp: false });
@@ -437,8 +440,9 @@ export function createPlay({
             if (state.phase === "paused") resume();
             // Closed before a frame carried its pause: the pause is not needed.
             else if (command === COMMANDS[window]) command = 0;
-            // A frame carries it already, so both games will pause there: then they resume.
-            else if (state.phase === "playing") closedBeforeItsPause = window;
+            // A frame carries it already, so both games will pause there: then they resume. Frames
+            // carried before a resync stopped both still run once it and its count are over.
+            else if (["playing", "resyncing", "counting"].includes(state.phase)) closedBeforeItsPause = window;
         },
         receive: (bytes) => {
             lockstep.receive(bytes);

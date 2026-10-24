@@ -360,15 +360,25 @@ test.describe("Play together", () => {
         test.slow();
         await tamperWithHostLink(host);
         const joiner = await startPlaying(host, browser);
+        // Two real games, compared once a second, play on unseen while they match.
+        await host.waitForTimeout(4000);
+        for (const page of [host, joiner]) await expect(resyncScreen(page)).toHaveCount(0);
+        // The joiner's window is phone-narrow: its chip keeps the dot and the response time.
+        await joiner.setViewportSize({ width: 700, height: 800 });
         await tamper(host, { stateDelayMs: 3000, corruptHash: true });
         for (const page of [host, joiner]) {
             await expect(resyncScreen(page)).toContainText("Your two games stopped matching, so the other player's game is being set to the host's.", {
                 timeout: CONNECT_TIMEOUT_MS
             });
             await expect(resyncScreen(page).getByRole("button", { name: "End playing together" })).toBeVisible();
-            await expect(page.locator("#netplay-open")).toContainText("Resyncing…");
             await expect(page.locator("#netplay-open")).toHaveAttribute("data-tone", "wait");
         }
+        await expect(host.locator("#netplay-open .netplay-chip-long")).toHaveText("Resyncing…");
+        await expect(host.locator("#netplay-open .netplay-chip-long")).toBeVisible();
+        await expect(host.locator("#netplay-open .netplay-chip-short")).toBeHidden();
+        await expect(joiner.locator("#netplay-open .netplay-chip-long")).toBeHidden();
+        await expect(joiner.locator("#netplay-open .netplay-chip-short")).toBeVisible();
+        await expect(joiner.locator("#netplay-open .netplay-chip-short")).toHaveText(/^\d+ ms$/);
         // Pause does nothing while it is resyncing.
         await joiner.keyboard.press("Space");
         await expect(resyncScreen(joiner)).toBeVisible();

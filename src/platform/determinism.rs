@@ -86,6 +86,70 @@ pub(crate) fn assert_save_mid_run_continues_identically(
     }
 }
 
+/// The hash network play compares (nr-ayk5.6) is the same on two consoles that ran the same
+/// frames, however much of their audio each page has taken out yet: a page that ran two frames
+/// in one tick, or a joiner whose loop rests through a count, holds more samples than the other.
+/// A console that has run other frames hashes differently.
+pub(crate) fn assert_netplay_hash_ignores_undrained_audio(system: SystemType, rom_path: &str) {
+    const FRAMES: u32 = 120;
+    let rom = read_rom(rom_path);
+    let mut drained = loaded_console(system, &rom, rom_path);
+    let mut undrained = loaded_console(system, &rom, rom_path);
+    let mut other = loaded_console(system, &rom, rom_path);
+    let mut queues_differed = false;
+    let mut other_differed = false;
+    for frame in 0..FRAMES {
+        let label = format!("{rom_path}, frame {frame}");
+        play_frame_with_pads(&mut drained, system, pads_for_frame(frame), &label);
+        run_frame_keeping_audio(&mut undrained, system, pads_for_frame(frame), &label);
+        play_frame_with_pads(
+            &mut other,
+            system,
+            pads_for_frame(frame + DRIFTED_PAD_OFFSET),
+            &label,
+        );
+        if frame % 3 == 2 {
+            while undrained.get_stereo_sample().is_some() {}
+        }
+        queues_differed |= drained.save_state_bytes().ok() != undrained.save_state_bytes().ok();
+        assert_eq!(
+            drained.netplay_state_hash(),
+            undrained.netplay_state_hash(),
+            "{label}: the same game hashes differently for audio not yet played"
+        );
+        other_differed |= other.netplay_state_hash() != drained.netplay_state_hash();
+    }
+    // The NES save state carries the queue, so its states must have differed for the test to
+    // mean anything; the SNES console hands its samples on before they reach a save state.
+    if system == SystemType::Nes {
+        assert!(
+            queues_differed,
+            "{rom_path}: the run never left samples in one console's queue"
+        );
+    }
+    assert!(
+        other_differed,
+        "{rom_path}: a console fed other presses never hashed differently"
+    );
+}
+
+/// [`play_frame_with_pads`], leaving the frame's audio in the console.
+fn run_frame_keeping_audio(console: &mut Console, system: SystemType, pads: [u16; 2], name: &str) {
+    let (ports, buttons) = pad_layout(system);
+    for (port, pad) in ports.into_iter().zip(pads) {
+        for button in 0..buttons {
+            console.set_button(port, button, pad & (1 << button) != 0);
+        }
+    }
+    let mut ticks = 0;
+    while !console.is_ready_to_render() {
+        assert_ne!(console.run_tick(), 0, "{name}: no progress in a frame");
+        ticks += 1;
+        assert!(ticks < MAX_TICKS_PER_FRAME, "{name}: a frame never ended");
+    }
+    console.clear_ready_to_render();
+}
+
 pub(crate) fn read_rom(path: &str) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
