@@ -1,7 +1,6 @@
 //! Automates all 29 vendored undisbeliever/snes-test-roms hardware ROMs
 //! (`roms/snes/automated_tests/snes_test_roms/undisbeliever-inidisp/`), each
-//! a 0-pixel match against a Mesen2 capture of the same frame except
-//! `inidisp_enable_display_mid_frame`, whose comment names its residual.
+//! a 0-pixel match against a Mesen2 capture of the same frame.
 //!
 //! Unlike blargg/gilyon ROMs, these do not print a PASS/FAIL text screen.
 //! Fourteen of the 29 automated here demonstrate a real, documented
@@ -235,19 +234,16 @@ mod tests {
     );
 
     // The top of the frame is force-blanked (black), then the display is enabled
-    // mid-line on row 88. Record-current, NOT a 0-pixel match: since nr-2wn applied
-    // INIDISP per pixel, row 88 shows from the write on, as in Mesen2, and the frame
-    // differs from a fresh Mesen2 capture (stable across runs) in 45 px (it was 238 px
-    // with the per-scanline latch, whose CRC this test carried under a "matches Mesen2"
-    // comment that no longer held). The Mesen2 stale-latch OBJ model now removes the 23-pixel
-    // row-89 difference. What is left is the 22-pixel BG fetch-stage difference:
-    // row 88 x=41-62 is Mesen2's BG fetch-ahead, skipped during forced blank, showing
-    // stale tile data (see the fetch-stage characterisation in `ppu/background.rs`),
-    // while row 89 x=73-95 follows Mesen2's stale-latch OBJ-evaluation drop. Tracked in nr-1xa.
+    // mid-line on row 88. A 0-pixel match against a fresh Mesen2 capture (nr-g1d). Three
+    // fixes got it there: INIDISP applies per pixel (nr-2wn), so row 88 shows from the
+    // write on; the Mesen2 stale-latch OBJ model removed the row-89 difference (nr-1xa);
+    // and forced blank stops the BG fetch, so row 88 x=41-63, whose tile columns were
+    // due before the write, shows the tiles last fetched on the previous frame's final
+    // line, as Mesen2's fetch-ahead does (`Ppu::start_bg_fetch_line`, nr-g1d).
     undisbeliever_rom_test!(
         inidisp_enable_display_mid_frame_matches_mesen2,
         "inidisp_enable_display_mid_frame.sfc",
-        0x518D_C63E
+        0xC6BF_FA44
     );
 
     // Fixed by mid-scanline HDMA activation (#2943): ROMs write to HDMAEN mid-scanline
