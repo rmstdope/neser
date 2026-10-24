@@ -1609,6 +1609,70 @@ body.handheld .app-topbar {
   transform: translateX(-50%);
 }
 
+/* A pad too narrow for its full size carries no caps; the list beneath it names each button with
+   its keys at full size instead. */
+.help-pad[data-keys-listed] .pad-keys {
+  display: none;
+}
+
+.help-pad-keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.help-pad-keys[hidden] {
+  display: none;
+}
+
+.pad-key-row {
+  display: contents;
+}
+
+.pad-key-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.pad-key-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* The button's symbol, as the pad draws it: a lettered disc, the D-pad's cross, a Select/Start bar. */
+.pad-key-symbol {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font: 700 11px/1 system-ui, sans-serif;
+  color: #04111f;
+  background: linear-gradient(180deg, #a8d2fb, #5b8fc7);
+}
+
+.pad-key-symbol[data-button="D-Pad"] {
+  border-radius: 2px;
+  background:
+    linear-gradient(#2a3c56, #2a3c56) center / 7px 20px no-repeat,
+    linear-gradient(#2a3c56, #2a3c56) center / 20px 7px no-repeat;
+}
+
+.pad-key-symbol[data-button="Select"],
+.pad-key-symbol[data-button="Start"] {
+  height: 7px;
+  border-radius: 4px;
+  background: #2a3c56;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
 @media (max-width: 760px) {
   .help-body {
     grid-template-columns: 1fr;

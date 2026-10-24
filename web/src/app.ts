@@ -87,7 +87,7 @@ import {
 import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
-import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
+import { applyHelpPadFit, helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad, renderPadKeyList } from "./ui/help_panel";
 import { THIS_BUILD } from "./netplay/build_id";
 import { webRtcLinks } from "./netplay/peer_link";
 import { NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
@@ -3449,6 +3449,7 @@ const webShortcutActions = {
 // ── Keys and controls (H): the shortcuts, and a controller for the chosen system and player ──
 const helpPanel = document.getElementById("help-panel") as HTMLDialogElement;
 const helpPadEl = document.getElementById("help-pad") as HTMLElement;
+const helpPadKeysEl = document.getElementById("help-pad-keys") as HTMLElement;
 const helpChipsEl = document.getElementById("help-chips") as HTMLElement;
 const helpGamepadNote = document.getElementById("help-gamepad-note") as HTMLElement;
 const helpOpenBtn = document.getElementById("help-open") as HTMLButtonElement;
@@ -3480,18 +3481,23 @@ function renderHelpController() {
     );
     // The first connected gamepad is player 1's, the second player 2's, as in play.
     const usesGamepad = selectGamepads([...(navigator.getGamepads?.() ?? [])]).length > helpPlayer;
-    renderPad(helpPadEl, helpPadKeys(helpConsole, helpPlayer), usesGamepad);
+    const keys = helpPadKeys(helpConsole, helpPlayer);
+    renderPad(helpPadEl, keys, usesGamepad);
+    renderPadKeyList(helpPadKeysEl, keys);
     helpGamepadNote.hidden = usesGamepad;
     fitHelpPad();
 }
 
-/** Scales the pad's drawing to its column, so its buttons keep their places at any width. */
+/**
+ * Scales the pad's drawing to its column, so its buttons keep their places at any width; a pad
+ * that has to shrink lists its keys beneath it instead of carrying them.
+ */
 function fitHelpPad() {
     if (!helpPanel.open) return;
     const column = helpPadEl.parentElement!;
     const style = getComputedStyle(column);
     const available = column.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    helpPadEl.style.zoom = String(helpPadZoom(available));
+    applyHelpPadFit(helpPadEl, helpPadKeysEl, helpPadZoom(available));
 }
 window.addEventListener("resize", fitHelpPad);
 
