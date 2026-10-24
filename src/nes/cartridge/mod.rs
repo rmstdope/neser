@@ -50,6 +50,8 @@ pub(crate) use taito::taito_tc0190;
 pub use base_mapper::BaseMapper;
 pub use cartridge::Cartridge;
 #[cfg(test)]
+pub(crate) use common::A12RisingEdgeDetector;
+#[cfg(test)]
 #[allow(unused_imports)]
 pub use common::{BankSwitch, BankedRom};
 #[allow(unused_imports)]

@@ -653,9 +653,13 @@ pub trait Mapper {
         self.base_mut().write_chr(addr, value);
     }
 
-    /// Notify mapper of PPU address bus changes for CHR ($0000-$1FFF) fetches only.
-    /// Used for detecting A12 rising edges (for MMC3 IRQ). Nametable fetches arrive through
-    /// `ppu_nametable_address`; a mapper counting every A12 edge needs both.
+    /// Notify mapper of PPU address bus changes: every CHR ($0000-$1FFF) rendering fetch,
+    /// and v ($0000-$3FFF, usually $2xxx or $3Fxx) whenever the PPU parks its bus there: a
+    /// CPU $2006/$2007 access, rendering turned off on a rendering line, and the start of
+    /// vblank (line 240 dot 1). Used for detecting A12 rising edges (for MMC3 IRQ); a mapper
+    /// that latches on CHR addresses must ignore addresses at $2000 and above. Rendering
+    /// nametable fetches arrive through `ppu_nametable_address`; a mapper counting every A12
+    /// edge needs both.
     /// Default delegates to MMC3 when available, otherwise is a no-op.
     fn ppu_address_changed(&mut self, addr: u16) {
         if let Some(mmc3) = self.mmc3_delegate_mut() {
