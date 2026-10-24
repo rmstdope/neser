@@ -434,10 +434,10 @@ describe("playing together", () => {
         await run(20);
         host.sendPacket(new Uint8Array([1, 2, 3]));
         join.sendPacket(new Uint8Array([4, 5]));
-        join.sendPlay({ t: "resume" });
+        join.sendPlay({ t: "resume", at: 7 });
         host.sendPlay({ t: "reset", soft: true, at: 42 });
         await run(2000);
-        expect(toHost).toEqual([new Uint8Array([4, 5]), { t: "resume" }]);
+        expect(toHost).toEqual([new Uint8Array([4, 5]), { t: "resume", at: 7 }]);
         expect(toJoin).toEqual([new Uint8Array([1, 2, 3]), { t: "reset", soft: true, at: 42 }]);
         expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
     });
@@ -448,6 +448,7 @@ describe("playing together", () => {
         joinEnd.forge(JSON.stringify({ t: "reset", soft: "yes", at: 1 }));
         joinEnd.forge(JSON.stringify({ t: "reset", soft: true, at: -1 }));
         joinEnd.forge(JSON.stringify({ t: "rewind" }));
+        joinEnd.forge(JSON.stringify({ t: "resume" }));
         await run(100);
         expect(toHost).toEqual([]);
     });

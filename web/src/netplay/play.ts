@@ -10,7 +10,10 @@ import type { PlayData, PlayMessage } from "./session";
  * games act on them after the same frame: a pause stops both after frame F, a reset resets both
  * after it. A command waits in the pad until a frame carries it, and the frame runs with those
  * bits masked off. Once both are stopped at the same frame, resuming, and resetting while paused,
- * are plain messages over the link. Nothing here touches the page: the core, the link, the count
+ * are plain messages over the link, each naming the frame it is for: the other game may still be
+ * a few frames from it, and then holds the message until it gets there. Presses of the same kind
+ * that land within the input delay of each other were made before either side saw the first, so
+ * they are one press. Nothing here touches the page: the core, the link, the count
  * and the clock are handed in, and `view()` is what the screens draw.
  */
 
@@ -130,6 +133,9 @@ export function createPlay({
     /** A window closed after a frame carried its pause, before this game reached that frame. */
     let closedBeforeItsPause: PlayWindow | null = null;
     let lastPauseFrame: number | null = null;
+    let lastResetFrame: number | null = null;
+    /** A message for the frame this game is still on its way to, held until it gets there. */
+    let early: PlayMessage | null = null;
     let heldSince: number | null = null;
     let behindSince: number | null = null;
     let cancelCount: (() => void) | null = null;
@@ -160,9 +166,17 @@ export function createPlay({
         });
     }
 
-    function resetNow(soft: boolean, by: "me" | "them") {
+    const isPause = (c: number) => PAUSES[c] !== undefined;
+    const isReset = (c: number) => c === COMMANDS.reset || c === COMMANDS.hardReset;
+
+    /** `frame` is the last frame run before the reset. */
+    function resetNow(soft: boolean, by: "me" | "them", frame: number) {
         core.reset(soft);
+        lastResetFrame = frame;
         pausingWindow = null;
+        closedBeforeItsPause = null;
+        // A reset press of this player's not yet carried by a frame is answered by this one.
+        if (isReset(command)) command = 0;
         startCount(by === "me" ? "reset-me" : "reset-them");
     }
 
@@ -171,17 +185,28 @@ export function createPlay({
         const commands = [pad1 >> COMMAND_SHIFT, pad2 >> COMMAND_SHIFT];
         const mine = player - 1;
         // A reset wins over a pause carried by the same frame, on both sides alike.
-        const resetter = commands.findIndex((c) => c === COMMANDS.reset || c === COMMANDS.hardReset);
-        if (resetter >= 0) return resetNow(commands[resetter] === COMMANDS.reset, resetter === mine ? "me" : "them");
-        const pauser = commands.findIndex((c) => PAUSES[c] !== undefined);
+        const resetter = commands.findIndex(isReset);
+        // A press made before the last reset reached that player lands within the delay: the same reset.
+        if (resetter >= 0 && (lastResetFrame === null || frame - lastResetFrame > delay)) {
+            return resetNow(commands[resetter] === COMMANDS.reset, resetter === mine ? "me" : "them", frame);
+        }
+        const pauser = commands.findIndex(isPause);
         if (pauser < 0) return;
         // The other player's press made before this pause reached them is the same pause.
-        if (lastPauseFrame !== null && frame - lastPauseFrame <= 2 * delay) return;
+        if (lastPauseFrame !== null && frame - lastPauseFrame <= delay) {
+            closedBeforeItsPause = null;
+            return;
+        }
         lastPauseFrame = frame;
         heldSince = null;
         behindSince = null;
+        // A pause press of this player's not yet carried by a frame is answered by this one.
+        if (isPause(command)) command = 0;
         const reason = PAUSES[commands[pauser]];
         set({ phase: "paused", pausedBy: pauser === mine ? "me" : "them", pauseReason: reason, waiting: false, catchingUp: false });
+        const held = early;
+        early = null;
+        if (held && held.at === lockstep.next_frame()) message(held);
         // Its window has closed already: closing it resumes both, as it would have once paused.
         if (pauser === mine && closedBeforeItsPause === reason) resume();
         closedBeforeItsPause = null;
@@ -226,12 +251,20 @@ export function createPlay({
 
     function resume() {
         if (state.phase !== "paused") return;
-        link.sendPlay({ t: "resume" });
+        link.sendPlay({ t: "resume", at: lockstep.next_frame() });
         pausingWindow = null;
         startCount("resume");
     }
 
     function message(message: PlayMessage) {
+        const at = lockstep.next_frame();
+        // Sent once the other game stopped there; this one is still on its way.
+        if (message.at > at) {
+            if (state.phase === "playing") early = message;
+            return;
+        }
+        // For a frame this game has passed: it cannot be played where it was meant.
+        if (message.at < at) return;
         if (message.t === "resume") {
             if (state.phase === "paused") {
                 pausingWindow = null;
@@ -239,9 +272,7 @@ export function createPlay({
             }
             return;
         }
-        // Both games stopped after the same frame; one at another frame cannot take it.
-        if (message.at !== lockstep.next_frame()) return;
-        if (state.phase === "paused" || state.phase === "counting") resetNow(message.soft, "them");
+        if (state.phase === "paused" || state.phase === "counting") resetNow(message.soft, "them", at - 1);
     }
 
     return {
@@ -269,11 +300,13 @@ export function createPlay({
                 command = soft ? COMMANDS.reset : COMMANDS.hardReset;
             } else if (state.phase === "paused") {
                 link.sendPlay({ t: "reset", soft, at: lockstep.next_frame() });
-                resetNow(soft, "me");
+                resetNow(soft, "me", lockstep.next_frame() - 1);
             }
         },
         windowOpened: (window) => {
-            if (state.phase !== "playing") return;
+            closedBeforeItsPause = null;
+            // Opened during a count, its pause waits for the count to end and the first frame after.
+            if (state.phase !== "playing" && state.phase !== "counting" && state.phase !== "starting") return;
             if (command === 0) command = COMMANDS[window];
             pausingWindow = window;
         },

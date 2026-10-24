@@ -58,7 +58,8 @@ export interface NetplayStart {
 }
 
 /** What the two games say to each other while playing together, besides the lockstep packets. */
-export type PlayMessage = { t: "resume" } | { t: "reset"; soft: boolean; at: number };
+/** Each names the frame it is for: the one both games stopped before. */
+export type PlayMessage = { t: "resume"; at: number } | { t: "reset"; soft: boolean; at: number };
 /** A lockstep packet (bytes) or a play message. */
 export type PlayData = Uint8Array | PlayMessage;
 /** How the other player went: they ended playing together, or left (closed the page, lost the link). */
@@ -195,8 +196,8 @@ const isCount = (value: unknown): value is number => typeof value === "number" &
 
 /** Whether a message from the other side is a play message as this build sends them. */
 function isPlayMessage(message: { t: string } & Record<string, unknown>): message is PlayMessage {
-    if (message.t === "resume") return true;
-    return message.t === "reset" && typeof message.soft === "boolean" && isCount(message.at);
+    if (!isCount(message.at)) return false;
+    return message.t === "resume" || (message.t === "reset" && typeof message.soft === "boolean");
 }
 
 export function createNetplaySession({
