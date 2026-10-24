@@ -4,6 +4,8 @@ pub mod catalog;
 pub mod config;
 pub mod crc32;
 pub mod debugging;
+#[cfg(test)]
+pub(crate) mod determinism;
 pub mod emulator;
 pub mod frame_benchmark;
 pub mod frontend_toasts;

@@ -7,6 +7,7 @@ mod byuu_test_oam_tests;
 mod cartridge_fixtures;
 mod cx4_tests;
 mod ddribin_hdrv_tests;
+mod determinism_tests;
 mod dsp_audio_golden_tests;
 mod dsp_tests;
 mod fixture_rom;
