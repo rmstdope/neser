@@ -187,7 +187,10 @@ player, who needs no copy of the game and does not keep it, and both start from 
 player 2, each with their usual keys or gamepad. Pause and Reset act on both games, and Settings,
 Keys and controls and the Play together window pause both while open; Save, Load, Eject, Library
 and the debugger are greyed out meanwhile. If one game falls behind (a hidden tab), the other waits
-for it. Either player can end playing together; the host can then keep playing alone.
+for it. The two games check once a second that they still match; if they ever drift apart, both
+stop, the other player's game is set to the host's moment, and both carry on after a 3-2-1 count
+(if that takes more than 15 seconds, playing together ends). Either player can end playing
+together; the host can then keep playing alone.
 
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 
