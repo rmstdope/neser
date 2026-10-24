@@ -121,3 +121,35 @@ export function assignBackingStoreSize(canvas: { width: number; height: number }
     }
     return assigned;
 }
+
+/**
+ * How much of the debugger stays inside the window when it docks under the picture on a narrow
+ * window: its title, the registers and the current instruction, in CSS pixels.
+ */
+export const DOCKED_DEBUGGER_VISIBLE_TOP = 200;
+
+/**
+ * The widest the picture may be shown with the debugger docked under it: short enough that the
+ * debugger's top 200px stay in the window, but never below the console's own 1x (nr-i5pl).
+ *
+ * @param viewportHeight - The window's height in CSS pixels
+ * @param pictureTop     - The picture's top in document coordinates, so scrolling never moves the cap
+ * @param gapToDebugger  - From the picture's bottom to the debugger's top: frame and control bar
+ * @param nativeHeight   - The running console's own lines
+ * @param aspectRatio    - The picture's width / height
+ * @returns the CSS width cap in pixels
+ */
+export function dockedPictureMaxWidth(viewportHeight: number, pictureTop: number, gapToDebugger: number, nativeHeight: number, aspectRatio: number): number {
+    const height = Math.max(nativeHeight, viewportHeight - pictureTop - gapToDebugger - DOCKED_DEBUGGER_VISIBLE_TOP);
+    return Math.floor(height * aspectRatio);
+}
+
+/**
+ * The scroll down that brings a docked debugger's top 200px into the window; 0 when they are in it.
+ *
+ * @param debuggerTop    - The debugger's top relative to the window, in CSS pixels
+ * @param viewportHeight - The window's height in CSS pixels
+ */
+export function scrollToShowDockedDebugger(debuggerTop: number, viewportHeight: number): number {
+    return Math.max(0, debuggerTop + DOCKED_DEBUGGER_VISIBLE_TOP - viewportHeight);
+}
