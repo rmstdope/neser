@@ -80,6 +80,7 @@ fn tick_timing(ppu: &mut Ppu) {
 
     // Advance timing
     let skipped = ppu.timing.tick(is_rendering_enabled);
+    ppu.skipped_last_prerender_dot = skipped;
 
     // New frame begins when the pre-render scanline wraps back to scanline 0.
     // This also includes the NTSC odd-frame skip path.
@@ -492,7 +493,8 @@ fn tick_sprites(ppu: &mut Ppu) {
 /// pattern fetches of each background tile at dots 8n+1, +3, +5 and +7; per sprite slot the
 /// garbage nametable and attribute fetches at 257+8k and 259+8k and both pattern planes at
 /// 261+8k; the dummy nametable fetches at 337 and 339; and at dot 0 of a visible line, the
-/// pattern address of the tile the dot-339 fetch named, or v at dot 0 of the pre-render
+/// pattern address of the tile the dot-339 fetch named (except at line 0 after an odd
+/// frame skipped the pre-render line's last dot), or v at dot 0 of the pre-render
 /// line, since the bus has carried v through vblank. A $2001 write that turns rendering
 /// on or off puts v there (`Ppu::write_mask`).
 fn tick_rendering_bus_address(ppu: &mut Ppu) {
@@ -507,7 +509,10 @@ fn tick_rendering_bus_address(ppu: &mut Ppu) {
     let nametable = 0x2000 | (v & 0x0FFF);
     let attribute = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
     let address = match pixel {
-        0 if is_visible_scanline => Some(ppu.background.tile_addr()),
+        0 if is_visible_scanline && !ppu.skipped_last_prerender_dot => {
+            Some(ppu.background.tile_addr())
+        }
+        0 if is_visible_scanline => None,
         0 => Some(v & 0x3FFF),
         1..=256 | 321..=336 => match (pixel - 1) % 8 {
             0 => Some(nametable),

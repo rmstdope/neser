@@ -161,9 +161,12 @@ pub struct Ppu {
     /// The address of the latest rendering fetch, which is what the PPU address bus carries
     /// while it renders. A $2007 read during rendering refills its buffer from here, not
     /// from v (nr-6wgi; Mesen2 NesPpu.cpp `_ppuBusAddress`). Read only while
-    /// `is_actively_rendering`, so it is not saved in save states: the next fetch, at most
-    /// two dots later, sets it again.
+    /// `is_actively_rendering`, so it is not saved in save states: a restore puts v there,
+    /// and the next fetch, at most four dots later, sets it again.
     rendering_bus_address: u16,
+    /// The latest PPU tick skipped the pre-render line's last dot (NTSC odd frame), so dot 0
+    /// of line 0 leaves the bus alone (Mesen2 NesPpu.cpp ProcessScanlineFirstCycle).
+    skipped_last_prerender_dot: bool,
     /// PPU dots left in which a $2007 read is ignored, counting down from 6 after each read
     /// that was not (nr-6wgi; Mesen2 NesPpu.cpp `_ignoreVramRead`). Not saved in save
     /// states, like `vram_increment_pending`.
@@ -328,6 +331,7 @@ impl Ppu {
             system_palette: NesPalette::default(),
             update_vram_addr_delay: 0,
             rendering_bus_address: 0,
+            skipped_last_prerender_dot: false,
             ignore_vram_read: 0,
             pending_vram_addr: 0,
             vram_increment_pending: false,
@@ -385,6 +389,7 @@ impl Ppu {
         self.vram_increment_pending = false;
         self.update_vram_addr_delay = 0;
         self.rendering_bus_address = 0;
+        self.skipped_last_prerender_dot = false;
         self.ignore_vram_read = 0;
     }
 
@@ -724,10 +729,23 @@ impl Ppu {
     }
 
     /// A $2007 read while the PPU renders: the bus carries the latest rendering fetch, so the
-    /// buffer refills from that address, which never reaches palette RAM, and the mapper sees
-    /// no new address (nr-6gs, nr-6wgi; Mesen2 NesPpu.cpp ReadRam reads `_ppuBusAddress`).
+    /// buffer refills from that address, and the mapper sees no new address (nr-6gs,
+    /// nr-6wgi; Mesen2 NesPpu.cpp ReadRam reads `_ppuBusAddress`). The fetches never put a
+    /// palette address there, but v can still be on the bus right after rendering is turned
+    /// on, and then the read reaches palette RAM as it does outside rendering.
     fn read_data_during_rendering(&mut self) -> u8 {
         let addr = self.rendering_bus_address & 0x3FFF;
+        if addr >= 0x3F00 {
+            let palette_data = self.memory.read_palette(addr);
+            let below = self
+                .memory
+                .read_nametable_mapped(addr & 0x2FFF, &self.cartridge);
+            self.registers.set_data_buffer(below);
+            self.vram_increment_pending = true;
+            let result = (self.registers.io_bus() & 0xC0) | (palette_data & 0x3F);
+            self.registers.set_io_bus_with_mask(result, 0x3F);
+            return result;
+        }
         let value = if addr < 0x2000 {
             Self::notify_chr_fetch_is_ppudata(&self.cartridge);
             self.memory
@@ -965,10 +983,10 @@ impl Ppu {
     /// Check if PPU is actively rendering (rendering enabled + on rendering scanline).
     ///
     /// While it is, the PPU address bus carries the rendering fetches, so PPUADDR and
-    /// PPUDATA accesses do not tell the mapper about `v` (nr-6gs). A CHR or nametable access
-    /// itself still uses `v`, an approximation (Mesen2 uses the current fetch address); a
-    /// PPUDATA write aimed at palette RAM is dropped, since the fetches never put `$3Fxx` on
-    /// the bus (nr-sjt).
+    /// PPUDATA accesses do not tell the mapper about `v` (nr-6gs). A PPUDATA read refills its
+    /// buffer from the latest fetch address (nr-6wgi). A PPUDATA write still goes to `v`, an
+    /// approximation (Mesen2 writes to the current fetch address), except that one aimed at
+    /// palette RAM is dropped, since the fetches never put `$3Fxx` on the bus (nr-sjt).
     pub(crate) fn is_actively_rendering(&self) -> bool {
         self.registers.is_rendering_enabled() && self.is_on_rendering_scanline()
     }
@@ -1177,6 +1195,11 @@ impl Ppu {
         // A restored v replaces whatever a pending $2007 increment or $2006 copy was meant for.
         self.vram_increment_pending = false;
         self.update_vram_addr_delay = 0;
+        // Neither is in the save state: the bus carries v until the next rendering fetch, and
+        // no $2007 read of the replaced session can make the next one ignored (nr-6wgi).
+        self.rendering_bus_address = state.registers.v & 0x3FFF;
+        self.skipped_last_prerender_dot = false;
+        self.ignore_vram_read = 0;
         // Restore timing
         self.timing.restore_state(
             state.timing.scanline,
@@ -2544,11 +2567,85 @@ mod tests {
     fn test_ppudata_read_right_after_rendering_turns_on_refills_from_v() {
         // Until the first fetch, the bus still carries v (Mesen2 keeps v on the bus while
         // rendering is off).
+        // v moves while rendering is off, a few dots pass, then rendering comes back on and
+        // $2007 is read before the next fetch.
         let mut ppu = ppu_reading_ppudata_at_dot(0x10, 10 * 341 + 40);
         ppu.write_mask(0x00);
+        ppu.run_ppu_cycles(3);
+        ppu.write_address(0x13, false);
+        ppu.write_address(0x40, false);
+        ppu.run_ppu_cycles(6);
         ppu.write_mask(0x18);
         ppu.read_data();
-        assert_eq!(ppu.registers.data_buffer(), 0x30);
+        assert_eq!(ppu.registers.data_buffer(), 0x40);
+    }
+
+    // nr-6wgi review: a bus address that still carries a palette address when rendering
+    // turns back on reads palette RAM, as Mesen2 NesPpu.cpp ReadRam does for any bus
+    // address at $3F00 or above.
+    #[test]
+    fn test_ppudata_read_with_a_palette_address_on_the_bus_reads_palette_ram() {
+        let mut ppu = ppu_reading_ppudata_at_dot(0x10, 10 * 341 + 40);
+        ppu.memory.write_palette(0x3F00, 0x2A);
+        ppu.write_mask(0x00);
+        ppu.run_ppu_cycles(3);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x10, false);
+        ppu.run_ppu_cycles(6);
+        ppu.write_mask(0x18);
+        assert_eq!(ppu.read_data() & 0x3F, 0x2A);
+    }
+
+    // nr-6wgi review: on an odd NTSC frame the pre-render line's last dot is skipped, and
+    // then dot 0 of line 0 does not put the next tile's pattern address on the bus (Mesen2
+    // NesPpu.cpp ProcessScanlineFirstCycle): the bus still carries the dot-339 nametable
+    // fetch.
+    #[test]
+    fn test_ppudata_read_at_dot_0_after_the_odd_frame_skip_refills_from_the_nametable_fetch() {
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                base: create_test_base_mapper(),
+                calls: Rc::new(RefCell::new(Vec::new())),
+                chr_writes: Rc::new(RefCell::new(Vec::new())),
+            },
+        ))));
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+        ppu.set_cartridge(cart);
+        for addr in 0x2000..0x23C0 {
+            ppu.memory.write_nametable(addr, 0xAB);
+        }
+        ppu.write_control(0x10);
+        ppu.write_mask(0x18);
+        // Run until line 0 dot 0 is reached straight from pre-render dot 339.
+        let prerender = ppu.timing.region().prerender_scanline;
+        loop {
+            let before = (ppu.timing.scanline(), ppu.timing.pixel());
+            ppu.run_ppu_cycles(1);
+            if before == (prerender, 339) && ppu.timing.scanline() == 0 {
+                break;
+            }
+            assert!(ppu.timing.frame_count() < 4, "no odd-frame skip seen");
+        }
+        assert_eq!(ppu.timing.pixel(), 0);
+        ppu.read_data();
+        // Tile $AB's pattern at $1AB0 would give $B0; the nametable fetch gives $AB.
+        assert_eq!(ppu.registers.data_buffer(), 0xAB);
+    }
+
+    // nr-6wgi review: the rendering bus address and the $2007 ignore window are not part of
+    // a save state, so a restore must not carry them over from the session it replaced.
+    #[test]
+    fn test_ppudata_read_right_after_a_state_restore_is_honoured_and_reads_from_v() {
+        let mut ppu = ppu_reading_ppudata_at_dot(0x10, 10 * 341 + 40);
+        // Two dots on, the bus carries the nametable fetch of dot 41, and v has moved one
+        // tile to $1331, where the spy CHR answers $31.
+        ppu.run_ppu_cycles(2);
+        let state = ppu.capture_state();
+        assert_eq!(state.registers.v, 0x1331);
+        ppu.read_data(); // opens the ignore window
+        ppu.restore_state(&state);
+        ppu.read_data();
+        assert_eq!(ppu.registers.data_buffer(), 0x31, "honoured, and from v");
     }
 
     #[test]

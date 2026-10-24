@@ -591,7 +591,10 @@ impl Sprites {
     /// The address on the PPU bus once sprite slot `sprite_index` has fetched its pattern:
     /// its high plane. A slot without a sprite fetches tile $FF, row 0 (Mesen2 NesPpu.cpp
     /// LoadSprite, `fetchLastSprite`), which is what a $2007 read during rendering refills
-    /// its buffer from (nr-6wgi).
+    /// its buffer from (nr-6wgi). The fetch itself (`fetch_sprite_pattern`) reads the row the
+    /// slot's $FF Y gives, `(scanline + 1) & 7`, as the console does; the two differ only in
+    /// the row bits of tile $FF, which no mapper latch keys on, and the bus follows Mesen2
+    /// because Super Spy Hunter's random numbers are measured against it.
     pub fn pattern_bus_address(
         &self,
         sprite_index: usize,
