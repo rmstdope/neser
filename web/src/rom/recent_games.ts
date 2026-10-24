@@ -138,7 +138,8 @@ export function createRecentGamesStore(name = "neser-recent"): RecentGamesStore 
  * Where a picture waits, in `localStorage`, until its database write has committed. A picture
  * is taken as the page is hidden or left, and Chromium aborts every database write the page has
  * not finished when it goes, so on a slow machine the picture would be lost with the page
- * (nr-39ib). `localStorage` is written at once, and the next page finishes the write.
+ * (nr-39ib). `localStorage` is written at once, and the next page finishes the write. One note
+ * at a time: two tabs losing their writes together keep only the picture noted last.
  */
 export const PENDING_THUMBNAIL_KEY = "neser.recentPendingThumbnail";
 
@@ -152,12 +153,17 @@ export async function keepThumbnail(store: RecentGamesStore, storage: PendingSto
     } catch {
         // Too full or not allowed: the database write is then the only copy.
     }
-    await store.setThumbnail(name, thumbnail);
+    // A write the store refuses while the page lives would fail again on every load, so its note
+    // goes too; only a write the page's going cut off leaves its note behind.
     try {
-        // A later picture's note stays until its own write commits.
-        if (storage?.getItem(PENDING_THUMBNAIL_KEY) === note) storage.removeItem(PENDING_THUMBNAIL_KEY);
-    } catch {
-        // Nothing to tidy where storage cannot be read.
+        await store.setThumbnail(name, thumbnail);
+    } finally {
+        try {
+            // A later picture's note stays until its own write commits.
+            if (storage?.getItem(PENDING_THUMBNAIL_KEY) === note) storage.removeItem(PENDING_THUMBNAIL_KEY);
+        } catch {
+            // Nothing to tidy where storage cannot be read.
+        }
     }
 }
 

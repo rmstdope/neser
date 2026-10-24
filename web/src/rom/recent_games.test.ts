@@ -158,6 +158,15 @@ describe("a picture taken as the page is left", () => {
         expect((await store.list())[0].thumbnail).toBe("data:image/png;base64,BBB");
     });
 
+    it("Given a database that refuses the write while the page lives, Then no note is left to fail again on every load", async () => {
+        const store: RecentGamesStore = { ...freshStore(), setThumbnail: () => Promise.reject(new Error("IndexedDB not available")) };
+        const storage = memoryStorage();
+
+        await expect(keepThumbnail(store, storage, "a.nes", "data:image/png;base64,AAA")).rejects.toThrow("IndexedDB not available");
+
+        expect(storage.getItem(PENDING_THUMBNAIL_KEY)).toBeNull();
+    });
+
     it("Given no storage the page may use, Then the picture is still written to the database", async () => {
         const store = freshStore();
         await store.remember(game("a.nes", 1));

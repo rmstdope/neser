@@ -39,7 +39,7 @@ test.describe("Continue playing", () => {
 
     // The page can be gone before the picture's database write commits, and Chromium then aborts
     // the write (nr-39ib): a starved CI runner did it once. A second tab keeping the database busy
-    // holds the write back until after the reload, every time.
+    // holds the write back until the reload is done, every time.
     test("Given a game left by hiding the page while the database is busy, then its card still has a picture", async ({ page, context }) => {
         await openApp(page);
         await loadRomFromFileInput(page);
@@ -49,16 +49,22 @@ test.describe("Continue playing", () => {
         await other.goto("/roms/roms.json");
         await other.evaluate(
             () =>
-                new Promise<void>((resolve) => {
+                new Promise<void>((resolve, reject) => {
                     const request = indexedDB.open("neser-recent");
+                    request.onerror = () => reject(request.error);
+                    request.onblocked = () => reject(new Error("neser-recent is blocked"));
                     request.onsuccess = () => {
-                        const games = request.result.transaction("games", "readwrite").objectStore("games");
-                        const end = Date.now() + 1500;
-                        const keepBusy = () => {
-                            if (Date.now() < end) games.count().onsuccess = keepBusy;
-                        };
-                        keepBusy();
-                        resolve();
+                        try {
+                            const games = request.result.transaction("games", "readwrite").objectStore("games");
+                            const w = window as Window & { releaseDatabase?: boolean };
+                            const keepBusy = () => {
+                                if (!w.releaseDatabase) games.count().onsuccess = keepBusy;
+                            };
+                            keepBusy();
+                            resolve();
+                        } catch (err) {
+                            reject(err);
+                        }
                     };
                 })
         );
@@ -67,6 +73,9 @@ test.describe("Continue playing", () => {
             document.dispatchEvent(new Event("visibilitychange"));
         });
         await page.reload();
+        await other.evaluate(() => {
+            (window as Window & { releaseDatabase?: boolean }).releaseDatabase = true;
+        });
         await expect(page.getByRole("button", { name: "Play cpu again" }).locator("img")).toHaveAttribute("src", /^data:image\/png;base64,/);
     });
 });
