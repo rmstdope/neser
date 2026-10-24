@@ -1811,6 +1811,7 @@ async function refreshSaveStateController() {
 
 /** Loads a game file the player chose or dropped, and starts it. */
 async function loadRomFile(file: File) {
+    if (!mayLeaveGameForNetplay()) return;
     lastPickedName = file.name;
     requestPointerLockFromUserGesture();
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -1840,6 +1841,7 @@ function warnIfAutorunExpectsAnother(name: string) {
 
 /** Plays a game from the library's "Continue playing" row again, from the bytes kept for it. */
 async function loadRecentGame(game: RecentGame) {
+    if (!mayLeaveGameForNetplay()) return;
     lastPickedName = game.name;
     requestPointerLockFromUserGesture();
     const bytes = await recentGames.bytesOf(game.name).catch(() => null);
@@ -1865,6 +1867,7 @@ async function loadRecentGame(game: RecentGame) {
 
 /** Loads one of the bundled test ROMs, by its URL and its path (which names it), and starts it. */
 async function loadBundledRom(url: string, name: string) {
+    if (!mayLeaveGameForNetplay()) return;
     lastPickedName = name;
     requestPointerLockFromUserGesture();
     try {
@@ -3285,7 +3288,7 @@ if (!pauseBtn || !stopBtn || !resetBtn) {
 }
 pauseBtn.addEventListener("click", pauseResume);
 stopBtn.addEventListener("click", () => {
-    if (!netplayCounting) stop();
+    if (mayLeaveGameForNetplay()) stop();
 });
 resetBtn.addEventListener("click", () => {
     void resetAction();
@@ -3469,21 +3472,30 @@ const netplaySession = createNetplaySession({
     links: webRtcLinks,
     build: THIS_BUILD,
     checkGame: checkReceivedGame,
-    prepareGame: prepareReceivedGame,
     confirmStart: (game) => running && emulator?.kind === game.kind && romBytes === game.rom,
-    onStart: startNetplayGame,
+    onStart: (start) => void startNetplayGame(start),
 });
 let pausedByNetplay = false;
 /** The host's game was paused when Start game was pressed, and stays so while it is on its way. */
 let heldForSending = false;
-/** The received game has begun its count; until then a send that ends takes it away again. */
-let receivedStarted = false;
 let cancelCountdown: (() => void) | null = null;
 
 /** The running game, if it is one a network game can be played on. */
 function netplayCore(): WasmNes | WasmSnes | null {
     if (!running || !emulator) return null;
     return emulator.kind === "nes" || emulator.kind === "snes" ? emulator.inst : null;
+}
+
+/**
+ * Whether the running game may be stopped or replaced now. Never during the count. While the host
+ * is sending, leaving its game is its Cancel (the other player is told), and once the whole game has
+ * arrived, and the two are starting, it is refused.
+ */
+function mayLeaveGameForNetplay(): boolean {
+    if (netplayCounting) return false;
+    const view = netplaySession.view();
+    if (view.role === "host" && view.sending) return netplaySession.cancelSending();
+    return true;
 }
 
 /** What Start game sends: the running NES or SNES game, its firmware, and this moment of it. */
@@ -3499,19 +3511,21 @@ function netplayHostGame(): { game: GamePackage; title: string } | null {
  * Whether this browser can run what the host sent, tried on a core of its own so the joiner's own
  * game is untouched by anything that fails, a core that panics included.
  */
-async function checkReceivedGame(game: GamePackage): Promise<boolean> {
+async function checkReceivedGame(game: GamePackage): Promise<number | null> {
     try {
         await ensureWasmInitialized();
         await ensureRomExtensionTable();
-        if (webRomConsoleKindForName(game.name) !== game.kind) return false;
+        if (webRomConsoleKindForName(game.name) !== game.kind) return null;
         const chip = game.kind === "snes" ? chipByKey(snes_rom_dsp_chip(game.rom) ?? "") : undefined;
-        if (chip && game.firmware?.chip !== chip.key) return false;
+        if (chip && game.firmware?.chip !== chip.key) return null;
+        // Starting it for real later takes about as long; the host waits that much for the joiner.
+        const began = performance.now();
         const scratch = game.kind === "snes" ? new WasmSnes() : new WasmNes();
         try {
             if (chip && scratch instanceof WasmSnes) scratch.set_dsp_firmware(chip.key, game.firmware!.image);
             scratch.load_rom(game.rom, game.name);
             scratch.load_state_bytes(game.state);
-            return true;
+            return performance.now() - began;
         } finally {
             try {
                 scratch.free();
@@ -3521,7 +3535,7 @@ async function checkReceivedGame(game: GamePackage): Promise<boolean> {
         }
     } catch (error) {
         console.error("The game from the host cannot run here", error);
-        return false;
+        return null;
     }
 }
 
@@ -3534,33 +3548,30 @@ function showFirstFrame() {
 }
 
 /**
- * The joiner, once the host has confirmed: its own game closes and the received one is set up,
- * paused, before the two begin to count, so the count does not wait on loading it.
+ * Both browsers, together: the windows close, the joiner's own game closes and the host's is set
+ * up (the host waits about as long), the host's moment shows dimmed under the count, then it runs.
  */
-async function prepareReceivedGame(game: GamePackage): Promise<boolean> {
-    // The game the window paused is replaced: closing the window must not resume anything.
-    pausedByNetplay = false;
-    receivedStarted = false;
-    if (running) stop();
-    romInput.value = "";
-    romFromFile = false;
-    leaveLibraryForNewGame();
-    await applyRomBytes(game.rom, game.name, game);
-    await start();
-    if (!running || receivedGame !== game) return false;
-    paused = true;
-    updateEmulationButtons();
-    return true;
-}
-
-/** Both browsers, together: the windows close, the host's moment shows dimmed under the count, then the game runs. */
-function startNetplayGame({ role, game }: NetplayStart) {
-    // The host's game is held for the count: closing the window must not resume it.
+async function startNetplayGame({ role, game }: NetplayStart) {
+    // The game the window paused is replaced (joiner) or held for the count (host): closing must not resume it.
     pausedByNetplay = false;
     heldForSending = false;
-    if (role === "join") receivedStarted = true;
     playTogether.close();
-    updateView();
+    if (role === "join") {
+        if (running) stop();
+        romInput.value = "";
+        romFromFile = false;
+        leaveLibraryForNewGame();
+        await applyRomBytes(game.rom, game.name, game);
+        await start();
+        // Playing together may have ended while the game was being set up: then it goes again.
+        if (receivedGame !== game) {
+            // Its bytes were let go of under it (null), unless another game was chosen meanwhile.
+            if (running && (romBytes === null || romBytes === game.rom)) stop();
+            updateView();
+            return;
+        }
+        updateView();
+    }
     const core = netplayCore();
     if (!core) return;
     paused = true;
@@ -3585,12 +3596,17 @@ function startNetplayGame({ role, game }: NetplayStart) {
 }
 
 /** Playing together ended: a game received from the host goes with it. */
-function endReceivedGame() {
-    if (!receivedGame) return;
+/** The count stops when playing together ends under it; the host's own game stays, paused. */
+function cancelNetplayCount() {
     cancelCountdown?.();
     cancelCountdown = null;
+    if (!netplayCounting) return;
     netplayCounting = false;
-    receivedStarted = false;
+    updateEmulationButtons();
+}
+
+function endReceivedGame() {
+    if (!receivedGame) return;
     if (running) stop();
     receivedGame = null;
     romBytes = null;
@@ -3602,8 +3618,10 @@ function endReceivedGame() {
 }
 
 netplaySession.subscribe((view) => {
-    // A game set up for a start that then failed goes too: it never began.
-    if (view.phase !== "connected" || (!view.sending && !receivedStarted)) endReceivedGame();
+    if (view.phase !== "connected") {
+        cancelNetplayCount();
+        endReceivedGame();
+    }
     // A send that ended without starting gives back the game it held, unless the window still pauses it.
     if (heldForSending && !view.sending && !playTogether.isOpen()) {
         heldForSending = false;

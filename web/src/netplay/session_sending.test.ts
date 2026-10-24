@@ -74,8 +74,8 @@ let join: NetplaySession;
 let hostEnd: End;
 let joinEnd: End;
 let starts: { side: "host" | "join"; at: number; start: NetplayStart }[];
-let checkGame: (game: GamePackage) => Promise<boolean>;
-let prepareGame: (game: GamePackage) => Promise<boolean>;
+/** The joiner's check: how long loading the game took it, in ms, or null when it cannot run it. */
+let checkGame: (game: GamePackage) => Promise<number | null>;
 let confirmStart: (game: GamePackage) => boolean;
 
 async function connected() {
@@ -84,8 +84,7 @@ async function connected() {
     hostEnd.other = joinEnd;
     joinEnd.other = hostEnd;
     starts = [];
-    checkGame = async () => true;
-    prepareGame = async () => true;
+    checkGame = async () => 0;
     confirmStart = () => true;
     host = createNetplaySession({
         links: linksTo(hostEnd),
@@ -97,7 +96,6 @@ async function connected() {
         links: linksTo(joinEnd),
         build: BUILD,
         checkGame: (g) => checkGame(g),
-        prepareGame: (g) => prepareGame(g),
         onStart: (start) => starts.push({ side: "join", at: performance.now(), start }),
     });
     join.join();
@@ -209,7 +207,7 @@ describe("sending the game", () => {
     });
 
     it("did not arrive when the joiner's browser cannot load what came", async () => {
-        checkGame = async () => false;
+        checkGame = async () => null;
         host.startGame(game(50_000), TITLE);
         await run(2000);
         expect(host.view().notice).toBe("not-arrived");
@@ -271,11 +269,11 @@ describe("sending the game", () => {
     });
 
     it("can be tried again after it did not arrive, and clears the notice when it starts", async () => {
-        checkGame = async () => false;
+        checkGame = async () => null;
         host.startGame(game(20_000), TITLE);
         await run(1000);
         expect(host.view().notice).toBe("not-arrived");
-        checkGame = async () => true;
+        checkGame = async () => 0;
         host.startGame(game(20_000), TITLE);
         expect(host.view().notice).toBeNull();
         await run(2000);
@@ -314,13 +312,23 @@ describe("sending the game", () => {
         expect(join.view()).toMatchObject({ sending: null, notice: "host-stopped" });
     });
 
-    it("starts both together however long the joiner takes to set the game up", async () => {
-        prepareGame = () => new Promise((resolve) => setTimeout(() => resolve(true), 700));
+    it("waits on the host's side as long as setting the game up takes the joiner, so both counts begin together", async () => {
+        checkGame = async () => 300;
         host.startGame(game(50_000), TITLE);
         await run(3000);
-        expect(starts.map((s) => s.side).sort()).toEqual(["host", "join"]);
-        const [a, b] = starts;
-        expect(Math.abs(a.at - b.at)).toBeLessThanOrEqual(ONE_WAY_MS);
+        const hostStart = starts.find((s) => s.side === "host")!;
+        const joinStart = starts.find((s) => s.side === "join")!;
+        // The joiner spends those 300 ms loading the game before its count begins.
+        expect(Math.abs(hostStart.at - (joinStart.at + 300))).toBeLessThanOrEqual(ONE_WAY_MS);
+    });
+
+    it("waits no longer than two seconds for a joiner that claims a slow set-up", async () => {
+        checkGame = async () => 60_000;
+        host.startGame(game(50_000), TITLE);
+        await run(4000);
+        const hostStart = starts.find((s) => s.side === "host")!;
+        const joinStart = starts.find((s) => s.side === "join")!;
+        expect(hostStart.at - joinStart.at).toBeLessThanOrEqual(2000 + ONE_WAY_MS);
     });
 
     it("times the host's start from the response time before sending, not one slowed by the game queued on the link", async () => {
@@ -349,22 +357,11 @@ describe("sending the game", () => {
         expect(join.view()).toMatchObject({ sending: null, notice: "not-arrived" });
     });
 
-    it("asks the joiner to set the game up only once the host has confirmed it", async () => {
-        const prepared = vi.fn(async () => true);
-        prepareGame = prepared;
-        confirmStart = () => false;
-        host.startGame(game(50_000), TITLE);
-        await run(2000);
-        expect(prepared).not.toHaveBeenCalled();
-    });
-
-    it("starts neither side when the joiner cannot set the game up", async () => {
-        prepareGame = async () => false;
-        host.startGame(game(50_000), TITLE);
-        await run(2000);
-        expect(starts).toEqual([]);
-        expect(host.view().notice).toBe("not-arrived");
-        expect(join.view().notice).toBe("not-arrived");
+    it("tells the host whether a cancel happened", async () => {
+        host.startGame(game(2_000_000), TITLE);
+        await run(100);
+        expect(host.cancelSending()).toBe(true);
+        expect(host.cancelSending()).toBe(false);
     });
 
     it("keeps measuring the response time while sending", async () => {

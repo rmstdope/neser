@@ -34,7 +34,7 @@ class FakeSession implements NetplaySession {
     startAgain = vi.fn();
     link = vi.fn(() => null);
     startGame = vi.fn();
-    cancelSending = vi.fn();
+    cancelSending = vi.fn(() => true);
     view = () => this.state;
     subscribe(listener: (view: NetplayView) => void) {
         this.listener = listener;
