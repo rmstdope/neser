@@ -64,6 +64,7 @@ import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normaliz
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
+import { createAudioFade, type AudioFade } from "./audio/audio_fade";
 import { gameTitle } from "./ui/game_title";
 import { BROWSER_CANNOT_DRAW, errorPlace, libraryAlert, showLibraryAlert, unsupportedFileMessage } from "./ui/errors";
 import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
@@ -1717,6 +1718,9 @@ const AUDIO_MAX_ADJUST = AUDIO_PROFILE.maxAdjust; // +/- playback rate bound
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
 let masterGain: GainNode | null = null;
+/** Playing together, the sound fades out wherever it runs dry and back in after (nr-ayk5.7); otherwise always full. */
+let fadeGain: GainNode | null = null;
+let audioFade: AudioFade | null = null;
 let volumePercent = DEFAULT_VOLUME;
 function createEmptyGamepadState(): GamepadButtonState {
     return {
@@ -1972,6 +1976,9 @@ async function initAudioContext(): Promise<void> {
         masterGain = audioContext.createGain();
         masterGain.gain.value = volumeToGain(volumePercent);
         masterGain.connect(audioContext.destination);
+        fadeGain = audioContext.createGain();
+        fadeGain.connect(masterGain);
+        audioFade = createAudioFade(fadeGain.gain);
         console.log(`Audio initialized: ${audioContext.sampleRate} Hz`);
     }
 }
@@ -2015,13 +2022,15 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
     // Create a buffer source and schedule it
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
-    source.connect(masterGain ?? audioContext.destination);
+    source.connect(fadeGain ?? masterGain ?? audioContext.destination);
 
     // Schedule playback at the next available time
     // Ensure smooth continuous playback by scheduling samples back-to-back
     const now = audioContext.currentTime;
     if (nextAudioTime < now) {
-        nextAudioTime = now;
+        // Playing together, sound that ran dry starts again with the lead it always has, so it
+        // stays as far behind the picture as ever and the chunks after it carry on without a dip.
+        nextAudioTime = play ? now + AUDIO_TARGET_LATENCY : now;
     }
     // Cap how far ahead of real-time we schedule audio to avoid unbounded latency
     const MAX_AUDIO_LOOKAHEAD = 0.5; // seconds
@@ -2029,15 +2038,19 @@ function playAudioSamples(samples: Float32Array, channels = 1) {
         nextAudioTime = now + MAX_AUDIO_LOOKAHEAD;
     }
     const latencySeconds = Math.max(0, nextAudioTime - now);
-    const playbackRate = computePlaybackRate({
+    const corrected = computePlaybackRate({
         latencySeconds,
         targetLatencySeconds: AUDIO_TARGET_LATENCY,
         maxAdjust: AUDIO_MAX_ADJUST,
         gain: AUDIO_LATENCY_GAIN
     });
+    // Both games running slower together, the sound keeps its pitch: never slowed to fill the gaps.
+    const playbackRate = play?.view().speed != null ? Math.max(1, corrected) : corrected;
     source.playbackRate.value = playbackRate;
     source.start(nextAudioTime);
+    const start = nextAudioTime;
     nextAudioTime += buffer.duration / playbackRate;
+    if (play) audioFade?.chunk(now, start, nextAudioTime);
 }
 
 async function start(): Promise<boolean> {
@@ -3828,6 +3841,8 @@ function leavePlay() {
     playRole = null;
     playFrame = null;
     releasePlayPorts();
+    // Playing alone, the sound is never faded.
+    if (audioContext) audioFade?.reset(audioContext.currentTime);
     updatePlayLocks();
     updateSaveStateButtons();
 }
