@@ -7,4 +7,6 @@
 //! and loss.
 
 pub mod lockstep;
+#[cfg(test)]
+pub(crate) mod simulation;
 pub mod wire;
