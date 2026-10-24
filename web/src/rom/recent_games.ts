@@ -134,6 +134,65 @@ export function createRecentGamesStore(name = "neser-recent"): RecentGamesStore 
     };
 }
 
+/**
+ * Where a picture waits, in `localStorage`, until its database write has committed. A picture
+ * is taken as the page is hidden or left, and Chromium aborts every database write the page has
+ * not finished when it goes, so on a slow machine the picture would be lost with the page
+ * (nr-39ib). `localStorage` is written at once, and the next page finishes the write. One note
+ * at a time: two tabs losing their writes together keep only the picture noted last.
+ */
+export const PENDING_THUMBNAIL_KEY = "neser.recentPendingThumbnail";
+
+type PendingStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** Sets a game's picture so that it outlives the page: noted at once, then written to `store`. */
+export async function keepThumbnail(store: RecentGamesStore, storage: PendingStorage | null, name: string, thumbnail: string): Promise<void> {
+    const note = JSON.stringify({ name, thumbnail });
+    try {
+        storage?.setItem(PENDING_THUMBNAIL_KEY, note);
+    } catch {
+        // Too full or not allowed: the database write is then the only copy.
+    }
+    // A write the store refuses while the page lives would fail again on every load, so its note
+    // goes too; only a write the page's going cut off leaves its note behind.
+    try {
+        await store.setThumbnail(name, thumbnail);
+    } finally {
+        try {
+            // A later picture's note stays until its own write commits.
+            if (storage?.getItem(PENDING_THUMBNAIL_KEY) === note) storage.removeItem(PENDING_THUMBNAIL_KEY);
+        } catch {
+            // Nothing to tidy where storage cannot be read.
+        }
+    }
+}
+
+/** Finishes writing a picture the last page noted but could not write before it went. */
+export async function applyPendingThumbnail(store: RecentGamesStore, storage: PendingStorage | null): Promise<void> {
+    let note: string | null;
+    try {
+        note = storage?.getItem(PENDING_THUMBNAIL_KEY) ?? null;
+    } catch {
+        return;
+    }
+    if (!note) return;
+    let pending: { name?: unknown; thumbnail?: unknown } | null = null;
+    try {
+        pending = JSON.parse(note) as { name?: unknown; thumbnail?: unknown } | null;
+    } catch {
+        // Not a note this page wrote; dropped below.
+    }
+    if (typeof pending?.name === "string" && typeof pending.thumbnail === "string") {
+        await keepThumbnail(store, storage, pending.name, pending.thumbnail);
+        return;
+    }
+    try {
+        storage?.removeItem(PENDING_THUMBNAIL_KEY);
+    } catch {
+        // Left for the next page.
+    }
+}
+
 /** When a game was last played, in words: Today, Yesterday, "3 days ago" within a week, "Last week" within two, else the date. */
 export function playedWhen(now: Date, then: Date): string {
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();

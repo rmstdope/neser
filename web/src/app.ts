@@ -71,7 +71,7 @@ import { closeOpenChoiceMenus, createChoiceMenu } from "./ui/choice_menu";
 import { phoneFpsChip, sheetDragCloses } from "./ui/handheld";
 import { DEFAULT_VOLUME, parseStoredVolume, readStoredVolume, volumeIconState, volumeToGain, writeStoredVolume } from "./ui/volume";
 import { filterLibrary, groupLibrary, renderLibrary, renderNewsWave, type LibraryGroup, type LibrarySystem } from "./ui/library";
-import { createRecentGamesStore, renderRecentGames, type RecentGame } from "./rom/recent_games";
+import { applyPendingThumbnail, createRecentGamesStore, keepThumbnail, renderRecentGames, type RecentGame } from "./rom/recent_games";
 import { frameThumbnail } from "./display/thumbnail";
 import { createSavePreviewStore, savedAgo, savedAtLine, type SavePreview } from "./save-state/save_preview";
 import { createSettingsPanel, gamepadLines, renderKeyList } from "./ui/settings_panel";
@@ -1321,7 +1321,9 @@ function captureRecentThumbnail() {
     const channels = lastFrame.format === gl.RGB ? 3 : 4;
     const picture = frameThumbnail(lastFrame.frame, channels, width, height);
     if (!picture) return;
-    void recentGames.setThumbnail(romMetadata.name, picture).then(refreshRecentGames, (err) => console.error("Failed to keep the game's picture", err));
+    void keepThumbnail(recentGames, browserStorage(), romMetadata.name, picture).then(refreshRecentGames, (err) =>
+        console.error("Failed to keep the game's picture", err)
+    );
 }
 
 document.getElementById("recent-clear")!.addEventListener("click", () => {
@@ -1332,7 +1334,10 @@ document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") captureRecentThumbnail();
 });
 window.addEventListener("pagehide", () => captureRecentThumbnail());
-void refreshRecentGames();
+// A picture the last page took as it went may not have reached the database before it did.
+void applyPendingThumbnail(recentGames, browserStorage())
+    .catch((err) => console.error("Failed to keep the last game's picture", err))
+    .then(refreshRecentGames);
 
 // A game file dropped anywhere on the page is loaded and started.
 const dragHasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
