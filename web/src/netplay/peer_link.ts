@@ -34,6 +34,8 @@ export interface PeerLinks {
 
 /** A code carries every address at once, so the offer and answer wait for the browser to find them. */
 const GATHER_LIMIT_MS = 3000;
+/** How long a closing channel may take to send what is queued before the connection is ended anyway. */
+const CLOSE_LIMIT_MS = 2000;
 
 function gathered(pc: RTCPeerConnection): Promise<void> {
     return new Promise((resolve) => {
@@ -67,10 +69,14 @@ function wrap(pc: RTCPeerConnection, channel: RTCDataChannel): PeerLink {
         onClosed: (listener) => {
             closedListener = listener;
         },
+        // Closing the connection itself would abort the channel and drop what is still queued (a
+        // refusal, a goodbye), so the channel closes first and takes the connection with it.
         close: () => {
             ended = true;
+            if (channel.readyState === "closed") return pc.close();
+            channel.addEventListener("close", () => pc.close(), { once: true });
+            setTimeout(() => pc.close(), CLOSE_LIMIT_MS);
             channel.close();
-            pc.close();
         },
     };
 }

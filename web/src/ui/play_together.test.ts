@@ -414,3 +414,33 @@ describe("the pasted code", () => {
         expect(body().querySelector("textarea")!.value).toBe("NSR1-reply");
     });
 });
+
+describe("a failed step", () => {
+    it.each([
+        ["host", { step: 2 as const, phase: "failed" as const, failure: "unreachable" as const }],
+        ["join", { step: 1 as const, phase: "failed" as const, failure: "other-build" as const, theirs: BUILD }],
+    ])("keeps the %s's pasted code but no longer takes another", (choice, failed) => {
+        open();
+        body().querySelector<HTMLButtonElement>(`[data-choice=${choice}]`)!.click();
+        session.emit(failed);
+        expect(body().querySelector("textarea")!.readOnly).toBe(true);
+    });
+});
+
+describe("copying without the clipboard API", () => {
+    it("says Copied only when the browser copied", async () => {
+        Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+        const execCommand = vi.fn(() => false);
+        Object.defineProperty(document, "execCommand", { value: execCommand, configurable: true });
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
+        button("Copy code")!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(execCommand).toHaveBeenCalledWith("copy");
+        expect(buttonNames()).toContain("Copy code");
+        execCommand.mockReturnValue(true);
+        button("Copy code")!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(buttonNames()).toContain("✓ Copied");
+    });
+});

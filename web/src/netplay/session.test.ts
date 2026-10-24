@@ -190,6 +190,13 @@ describe("hosting", () => {
         expect(link.closed).toBe(true);
     });
 
+    it("lets an open link close itself, so the refusal is delivered before the connection ends", async () => {
+        const { fake, link } = await hostToConnect(200);
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(link.closed).toBe(true);
+        expect(fake.hostCancel).not.toHaveBeenCalled();
+    });
+
     it("gives up after 15 seconds when the other player cannot be reached", async () => {
         const fake = fakeLinks();
         session = createNetplaySession({ links: fake.links, build: OURS });
@@ -351,5 +358,38 @@ describe("cancelling", () => {
         await settle();
         session.next();
         expect(seen).toContain(2);
+    });
+});
+
+describe("a connection that cannot start", () => {
+    it("tells a host whose browser cannot make a connection", async () => {
+        const fake = fakeLinks();
+        fake.links.startHost = () => Promise.reject(new Error("no WebRTC"));
+        session = createNetplaySession({ links: fake.links, build: OURS });
+        session.host();
+        await settle();
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
+    });
+
+    it("tells a joiner whose pasted code cannot be answered", async () => {
+        const fake = fakeLinks();
+        fake.links.startJoin = () => Promise.reject(new Error("bad SDP"));
+        session = createNetplaySession({ links: fake.links, build: OURS });
+        session.join();
+        await session.paste(await encodeCode("host", OURS, "offer-sdp"));
+        session.next();
+        await settle();
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
+    });
+});
+
+describe("a link that goes silent", () => {
+    it("shows the wait for the unanswered round trip, turning Too slow while still connected", async () => {
+        const { link } = await hostToConnect(20);
+        await vi.advanceTimersByTimeAsync(2000);
+        link.rtt = 1_000_000;
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(session.view().phase).toBe("connected");
+        expect(session.view().rtt).toBeGreaterThan(120);
     });
 });

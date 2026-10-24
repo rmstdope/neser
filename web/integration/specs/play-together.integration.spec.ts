@@ -1,4 +1,5 @@
-import { test, expect, type Browser, type Page } from "@playwright/test";
+import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import config from "../../../playwright.config";
 import {
     loadGbaRomFromFileInput,
     loadRomFromFileInput,
@@ -13,7 +14,8 @@ import {
 // What is under test is the page's connecting, not the operating system's mDNS.
 test.use({
     launchOptions: {
-        args: ["--use-angle=swiftshader", "--use-gl=angle", "--disable-features=WebRtcHideLocalIpsWithMdns"]
+        ...config.use?.launchOptions,
+        args: [...(config.use?.launchOptions?.args ?? []), "--disable-features=WebRtcHideLocalIpsWithMdns"]
     }
 });
 
@@ -34,10 +36,18 @@ async function shownCode(page: Page): Promise<string> {
     return (await box.textContent())!;
 }
 
+/** The joiner's browser, closed after each test so its connection does not outlive it. */
+let joinerContext: BrowserContext | null = null;
+
 async function secondBrowser(browser: Browser): Promise<Page> {
-    const context = await browser.newContext({ baseURL: test.info().project.use.baseURL });
-    return context.newPage();
+    joinerContext = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+    return joinerContext.newPage();
 }
+
+test.afterEach(async () => {
+    await joinerContext?.close();
+    joinerContext = null;
+});
 
 test.describe("Play together", () => {
     test("Given a host running a NES game and a joiner in the library, when they swap codes, then both are connected with a Great response time, and the host's chip shows when the joiner leaves", async ({

@@ -200,7 +200,7 @@ export function createPlayTogether({
         const copy = btn("Copy code", async () => {
             const code = session.view().ownCode;
             if (!code) return;
-            await copyText(code);
+            if (!(await copyText(code))) return;
             copy.textContent = "✓ Copied";
             clearTimeout(copiedTimer);
             copiedTimer = setTimeout(() => (copy.textContent = "Copy code"), COPIED_FOR_MS);
@@ -216,6 +216,8 @@ export function createPlayTogether({
     function pasteBox(role: Role, placeholder: string, view: NetplayView) {
         const box = el("textarea", "netplay-paste");
         box.value = view.phase === "idle" ? "" : lastPaste;
+        // Once connecting or failed, the code shown is the one that was tried; Start again takes a new one.
+        box.readOnly = view.phase !== "idle";
         box.placeholder = placeholder;
         box.rows = 4;
         box.spellcheck = false;
@@ -247,7 +249,6 @@ export function createPlayTogether({
         const paste = pasteBox("host", "Paste their code here", view);
         body.append(steps("host", 2), el("p", "", "Paste the code the other player sends back."), paste.box, paste.problem);
         if (view.phase === "connecting") {
-            paste.box.readOnly = true;
             body.append(el("p", "netplay-muted", "⟳ Connecting…"), actions(btn("Cancel", close)));
             return;
         }
@@ -398,11 +399,14 @@ export function createPlayTogether({
     return { open, close, isOpen: () => isOpen };
 }
 
-/** Copies to the clipboard; a page served over plain http on a home network has no clipboard API. */
-async function copyText(text: string): Promise<void> {
+/**
+ * Copies to the clipboard, saying whether it did; a page served over plain http on a home network
+ * has no clipboard API, so the older copy command is tried there.
+ */
+async function copyText(text: string): Promise<boolean> {
     try {
         await navigator.clipboard.writeText(text);
-        return;
+        return true;
     } catch {
         // Fall through to the old way, which works without a secure context.
     }
@@ -412,6 +416,7 @@ async function copyText(text: string): Promise<void> {
     scratch.style.opacity = "0";
     document.body.append(scratch);
     scratch.select();
-    document.execCommand("copy");
+    const copied = document.execCommand("copy");
     scratch.remove();
+    return copied;
 }

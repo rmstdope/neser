@@ -91,6 +91,8 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     let joinStart: JoinStart | null = null;
     let live: PeerLink | null = null;
     let samples: number[] = [];
+    /** When each ping still waiting for its pong was sent, by id: a silent link shows as slow. */
+    let unanswered = new Map<number, number>();
     let pingId = 0;
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const intervals = new Set<ReturnType<typeof setInterval>>();
@@ -113,14 +115,19 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     function teardown() {
         attempt++;
         stopClocks();
-        hostStart?.cancel();
-        joinStart?.cancel();
-        live?.close();
+        // An open link closes its own connection once its last message is out; cancelling the
+        // connection under it would drop that message (a refusal, a goodbye).
+        if (live) live.close();
+        else {
+            hostStart?.cancel();
+            joinStart?.cancel();
+        }
         hostStart = null;
         joinStart = null;
         live = null;
         pastedSdp = null;
         samples = [];
+        unanswered = new Map();
     }
 
     function send(link: PeerLink, message: Message) {
@@ -128,7 +135,9 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     }
 
     function ping(link: PeerLink) {
-        send(link, { t: "ping", id: ++pingId, at: now() });
+        const at = now();
+        unanswered.set(++pingId, at);
+        send(link, { t: "ping", id: pingId, at });
     }
 
     function fail(failure: Failure, extra: Partial<NetplayView> = {}) {
@@ -138,7 +147,26 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
 
     function measureLive(link: PeerLink) {
         samples = [];
-        intervals.add(setInterval(() => ping(link), LIVE_INTERVAL_MS));
+        unanswered = new Map();
+        intervals.add(
+            setInterval(() => {
+                showLive();
+                ping(link);
+            }, LIVE_INTERVAL_MS)
+        );
+    }
+
+    /**
+     * The response time shown once connected: the median of the last few round trips, or how long
+     * the oldest unanswered ping has waited when that is longer, so a link that has gone silent
+     * turns Too slow rather than keep showing its last good time.
+     */
+    function showLive() {
+        if (state.phase !== "connected") return;
+        const measured = samples.length > 0 ? median(samples) : (state.rtt ?? 0);
+        const oldest = Math.min(...unanswered.values());
+        const waited = Number.isFinite(oldest) ? now() - oldest : 0;
+        set({ rtt: Math.round(Math.max(measured, waited)) });
     }
 
     function connected(link: PeerLink, rtt: number) {
@@ -159,7 +187,10 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
                 return;
             }
             if (message.t === "ping") send(link, { t: "pong", id: message.id, at: message.at });
-            else if (message.t === "pong") onSample(Math.round(now() - message.at));
+            else if (message.t === "pong") {
+                unanswered.delete(message.id);
+                onSample(Math.round(now() - message.at));
+            }
             else if (message.t === "bye") peerLeft();
             else onMessage(message);
         });
@@ -176,17 +207,21 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
     function liveSample(rtt: number) {
         if (state.phase !== "connected") return;
         samples = [...samples.slice(1 - LIVE_SAMPLES), rtt];
-        set({ rtt: Math.round(median(samples)) });
+        showLive();
     }
 
     function beginHost() {
         const mine = attempt;
         set({ ...IDLE, role: "host" });
-        links.startHost().then(async (start) => {
+        (async () => {
+            const start = await links.startHost();
             if (mine !== attempt) return start.cancel();
             hostStart = start;
             const code = await encodeCode("host", build, start.sdp);
             if (mine === attempt) set({ ownCode: code });
+        })().catch(() => {
+            // No working WebRTC, or no deflate: the nearest agreed message is that it could not connect.
+            if (mine === attempt) fail("unreachable");
         });
     }
 
@@ -270,7 +305,8 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
             const mine = attempt;
             const hostSdp = pastedSdp;
             set({ step: 2, phase: "waiting", ownCode: null, pasteReady: false });
-            links.startJoin(hostSdp).then(async (start) => {
+            (async () => {
+                const start = await links.startJoin(hostSdp);
                 if (mine !== attempt) return start.cancel();
                 joinStart = start;
                 start.link.then(
@@ -284,6 +320,9 @@ export function createNetplaySession({ links, build = THIS_BUILD }: { links: Pee
                 );
                 const code = await encodeCode("reply", build, start.sdp);
                 if (mine === attempt) set({ ownCode: code });
+            })().catch(() => {
+                // A code whose connection details the browser refuses, or no working WebRTC.
+                if (mine === attempt) fail("unreachable");
             });
         },
         back: () => {
