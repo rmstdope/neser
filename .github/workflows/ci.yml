@@ -404,7 +404,7 @@ jobs:
   web-integration:
     name: web-integration (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    # The tests take up to ten minutes on a shard. The limit was raised to 30 when installing
+    # The tests take about seven minutes on a shard (nr-y7yu, one worker). The limit was raised to 30 when installing
     # Playwright's system packages from a slow apt mirror took up to eleven; that step no longer
     # touches apt unless a library is missing (nr-2e2l).
     timeout-minutes: 30
@@ -464,10 +464,10 @@ jobs:
       - name: Run web integration tests
         # Playwright splits shards by test count in file order, so the weights place the cut. The
         # 2:1 of nr-ks6 suited slow specs that sorted last; by nr-y7yu they sorted early (app-shell,
-        # gb-hardware-choice, gba-filter) and shard 1's tests took about 470 s to shard 2's 220. The
-        # list reporter logs each test's duration: summing the passing ones by position (run
-        # 40028363298) put the midpoint after test 58 of 118, which 29:30 gives. Recompute it the
-        # same way when specs move. Weights are integers.
+        # gb-hardware-choice, gba-filter) and, on one worker, shard 1's tests took 789 s to shard 2's
+        # 166. 29:30 cuts between the last gb-hardware-choice test and gba-filter: run 40049199903
+        # summed 397 s and 373 s of passing tests. The list reporter logs each test's duration;
+        # sum them by position to recompute the cut when specs move. Weights are integers.
         # PWTEST_SHARD_WEIGHTS is read by the Playwright 1.60 CLI; a Playwright upgrade that drops
         # it silently falls back to an even split, so check it then.
         # NESER_WEB_PREBUILT makes Playwright's webServer serve the build above.

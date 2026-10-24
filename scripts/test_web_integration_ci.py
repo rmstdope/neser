@@ -58,10 +58,10 @@ class WebIntegrationShardsTest(unittest.TestCase):
         """Playwright splits by test count in file order, so the weights place the cut.
 
         2:1 (nr-ks6) suited a suite whose slow specs sorted last; by nr-y7yu the slow specs sorted
-        early and shard 1's test step took about 470 s to shard 2's 220 s. The list reporter's
-        passing durations on run 40028363298 put the midpoint after test 58 of 118 (735 against 740
-        worker-seconds), which 29:30 gives (58 and 60). One weight per matrix entry; Playwright
-        parses them as integers.
+        early and, on one worker, shard 1's test step took 789 s to shard 2's 166 s. 29:30 cuts
+        between the last gb-hardware-choice test and gba-filter; the list reporter's passing
+        durations on run 40049199903 summed 397 s and 373 s. One weight per matrix entry;
+        Playwright parses them as integers.
         """
 
         weights = re.search(r'PWTEST_SHARD_WEIGHTS: "([0-9:]+)"', self.job)
