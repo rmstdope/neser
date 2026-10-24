@@ -2522,10 +2522,23 @@ body.handheld #netplay-open:not([data-tone]) {
   .netplay-chip-long {
     display: none;
   }
+
+  .netplay-chip-short {
+    display: inline;
+  }
 }
 
 body.handheld .netplay-chip-long {
   display: none;
+}
+
+/* Resyncing (nr-ayk5.6): a narrow window's chip shows the response time in place of the word. */
+.netplay-chip-short {
+  display: none;
+}
+
+body.handheld .netplay-chip-short {
+  display: inline;
 }
 
 /* Starting together (nr-ayk5.4): the picture dims under "You are player N" and a 3-2-1 count. */

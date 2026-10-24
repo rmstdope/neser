@@ -90,9 +90,9 @@ import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
 import { THIS_BUILD } from "./netplay/build_id";
 import { webRtcLinks } from "./netplay/peer_link";
-import { NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
+import { crc32, NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
 import { createNetplaySession, type NetplayStart, type Role } from "./netplay/session";
-import { createPlay, type CountLabel, type Play, type PlayCore, type PlayView } from "./netplay/play";
+import { createPlay, type CountLabel, type EndedHow, type Play, type PlayCore, type PlayView } from "./netplay/play";
 import { createPlayScreen, type PlayScreen } from "./ui/play_screen";
 import { createPlayTogether } from "./ui/play_together";
 import { runCountdown } from "./ui/countdown";
@@ -3702,6 +3702,7 @@ const COUNT_WORDS: Record<CountLabel, string> = {
     resume: "Resuming",
     "reset-me": "You reset the game",
     "reset-them": "The other player reset the game",
+    resync: "Resynced",
 };
 
 /** The shared game as the play controller drives it: both pads on ports 1 and 2, then one frame. */
@@ -3717,6 +3718,27 @@ const playCore: PlayCore = {
         playFrame = core.render_frame_rgba();
     },
     reset: (soft) => netplayCore()?.reset(soft),
+    // The whole save state, so anything that makes the two games differ shows in the hash.
+    stateHash: () => {
+        const core = netplayCore();
+        return core ? crc32(core.save_state_bytes()) : 0;
+    },
+    saveState: () => {
+        const core = netplayCore();
+        if (!core) throw new Error("no game to resync from");
+        return core.save_state_bytes();
+    },
+    loadState: (bytes) => {
+        const core = netplayCore();
+        if (!core) return false;
+        try {
+            core.load_state_bytes(bytes);
+            return true;
+        } catch (error) {
+            console.error("Could not set the game to the host's moment", error);
+            return false;
+        }
+    },
 };
 
 function releasePlayPorts() {
@@ -3736,7 +3758,13 @@ function beginPlaying(role: Role, inputDelay: number) {
     play = createPlay({
         player: role === "host" ? 1 : 2,
         lockstep: new WasmLockstep(role === "host" ? 1 : 2, inputDelay),
-        link: { sendPacket: (bytes) => netplaySession.sendPacket(bytes), sendPlay: (message) => netplaySession.sendPlay(message) },
+        hashEvery: WasmLockstep.hash_interval(),
+        link: {
+            sendPacket: (bytes) => netplaySession.sendPacket(bytes),
+            sendPlay: (message) => netplaySession.sendPlay(message),
+            sendState: (at, bytes) => netplaySession.sendState(at, bytes),
+            giveUp: () => netplaySession.endUnsynced(),
+        },
         core: playCore,
         count: (label, onDone) => {
             netplayCounting = true;
@@ -3901,7 +3929,8 @@ netplaySession.subscribe((view) => {
         // Once both are playing, an end stops both games on their last picture; before then, the
         // start is called off as it always was.
         if (play && play.view().phase !== "starting") {
-            play.ended(endingHere ? "me" : view.leaving === "ended" ? "them" : "left");
+            const how: EndedHow = endingHere ? "me" : view.leaving === "ended" ? "them" : view.leaving === "unsynced" ? "unsynced" : "left";
+            play.ended(how);
         } else {
             leavePlay();
             endReceivedGame();
@@ -3928,6 +3957,7 @@ const playTogether = createPlayTogether({
     hostGame: netplayHostGame,
     playing,
     waiting: () => play?.view().waiting ?? false,
+    resyncing: () => play?.view().phase === "resyncing",
     // Mid-game, Disconnect ends playing together for both, so it asks first.
     onDisconnect: () => (playing() ? playScreen?.askToEnd() : netplaySession.disconnect()),
     onOpen: () => {

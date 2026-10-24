@@ -3,7 +3,8 @@ import type { PauseReason, PlayView } from "../netplay/play";
 /**
  * The screens over the game while playing together (nr-ayk5.5,
  * docs/ui/nr-ayk5.5-playing-together.html): paused, waiting for the other player, catching up and
- * ended, each dimming the picture with its heading, its line and its buttons; and the one question
+ * ended, each dimming the picture with its heading, its line and its buttons; resyncing
+ * (nr-ayk5.6, docs/ui/nr-ayk5.6-resync.html), the same on both sides; and the one question
  * before ending, "End playing together?". It draws the play controller's view and nothing else;
  * the 3-2-1 counts are `countdown.ts`.
  */
@@ -22,7 +23,12 @@ const OTHER_IS_IN: Record<PauseReason, string> = {
     together: "The other player is in the Play together window.",
 };
 
-const ENDED_BY = { me: "You ended it.", them: "The other player ended it.", left: "The other player left." } as const;
+const ENDED_BY = {
+    me: "You ended it.",
+    them: "The other player ended it.",
+    left: "The other player left.",
+    unsynced: "The games couldn't be resynced.",
+} as const;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
     const node = document.createElement(tag);
@@ -125,6 +131,16 @@ export function createPlayScreen({
             const line = view.pausedBy === "me" ? "You paused the game." : OTHER_IS_IN[view.pauseReason];
             const resume = btn("Resume", onResume, "primary");
             return show(`paused|${line}`, "Paused", [line], [endButton(), resume], resume);
+        }
+        // Shown every time, however short; focus stays where it was, and Tab reaches the button.
+        if (view.phase === "resyncing") {
+            return show(
+                "resyncing",
+                "⟳ Resyncing the games…",
+                ["Your two games stopped matching, so the other player's game is being set to the host's."],
+                [endButton()],
+                null
+            );
         }
         if (view.phase === "playing" && view.waiting) {
             return show(
