@@ -1,13 +1,16 @@
 import type { ConsoleKind } from "../console/consoles";
 import { buildLabel, type BuildId } from "../netplay/build_id";
 import { responseTimeRating } from "../netplay/response_time";
+import type { GamePackage } from "../netplay/game_package";
 import type { NetplaySession, NetplayView, Role } from "../netplay/session";
 
 /**
  * The Play together window and its top-bar button (nr-ayk5.3; the agreed design is
  * docs/ui/nr-ayk5.3-play-together.html). It draws the session's view one step at a time and turns
  * the button into a status chip while connected. Closing the window keeps a connection; before
- * one, closing cancels the attempt.
+ * one, closing cancels the attempt. Once connected the host sends its game from here
+ * (nr-ayk5.4, docs/ui/nr-ayk5.4-sending-the-game.html); closing the window while it is on its way
+ * does not stop it, and the chip shows how far it is.
  */
 
 export type CurrentGame = { kind: ConsoleKind; title: string };
@@ -21,6 +24,9 @@ const STEPS: Record<Role, readonly string[]> = {
 };
 
 const OTHER: Record<Role, string> = { host: "the other player", join: "the host" };
+
+const kb = (bytes: number) => Math.floor(bytes / 1024);
+const percent = (done: number, total: number) => (total > 0 ? Math.floor((done * 100) / total) : 0);
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
     const node = document.createElement(tag);
@@ -83,6 +89,7 @@ export function createPlayTogether({
     session,
     build,
     currentGame,
+    hostGame,
     onOpen,
     onClose,
 }: {
@@ -94,6 +101,8 @@ export function createPlayTogether({
     session: NetplaySession;
     build: BuildId;
     currentGame: () => CurrentGame | null;
+    /** What Start game sends: the host's game as it is now, and its title; null without one to send. */
+    hostGame: () => { game: GamePackage; title: string } | null;
     onOpen: () => void;
     onClose: () => void;
 }) {
@@ -131,7 +140,16 @@ export function createPlayTogether({
 
     function drawButton(view: NetplayView) {
         const lost = view.phase === "failed" && view.failure === "peer-left";
-        if (view.phase === "connected" && view.rtt !== null) {
+        if (view.phase === "connected" && view.sending) {
+            const { direction, done, total } = view.sending;
+            openButton.removeAttribute("data-icon");
+            openButton.dataset.tone = "busy";
+            openButton.replaceChildren(
+                dot("busy"),
+                el("span", "netplay-chip-long", direction === "send" ? "Sending · " : "Receiving · "),
+                `${percent(done, total)}%`
+            );
+        } else if (view.phase === "connected" && view.rtt !== null) {
             const tone = responseTimeRating(view.rtt).tone;
             openButton.removeAttribute("data-icon");
             openButton.dataset.tone = tone;
@@ -286,6 +304,8 @@ export function createPlayTogether({
                 body.append(failureAlert(view), actions(btn("Close", close)));
                 return;
             }
+            const own = currentGame();
+            if (own) body.append(alert("warn", "", `${own.title} will be closed when the host's game arrives. Your saves are kept.`));
             const next = btn("Next", () => session.next(), true);
             body.append(actions(btn("Cancel", close), next));
             update = (v) => {
@@ -351,11 +371,10 @@ export function createPlayTogether({
         }
         const status = el("p", "netplay-status");
         const live = el("div", "netplay-live");
-        const disconnect = btn("Disconnect", () => session.disconnect());
         body.append(status, live);
-        if (role === "join") body.append(el("p", "netplay-muted", "The host will send the game next."));
-        body.append(actions(disconnect));
+        const fillSending = view.sending ? drawSending(view) : drawReady(view);
         update = (v) => {
+            fillSending(v);
             if (v.rtt === null) return;
             const rating = responseTimeRating(v.rtt);
             status.replaceChildren(dot(rating.tone), " ", el("b", "", "Connected"), ` to ${OTHER[role]}.`);
@@ -373,11 +392,86 @@ export function createPlayTogether({
             }
         };
         update(view);
-        disconnect.focus();
+    }
+
+    function noticeAlert(view: NetplayView): HTMLElement | null {
+        if (view.notice === "host-stopped") return alert("warn", "", "The host stopped sending the game.");
+        if (view.notice === "joiner-stopped") return alert("warn", "", "The other player stopped the game from being sent.");
+        if (view.notice === "not-arrived") {
+            const then = view.role === "host" ? "try again." : "the host can try again.";
+            return alert("err", "The game didn't arrive.", `Something went wrong while sending it. You're still connected — ${then}`);
+        }
+        return null;
+    }
+
+    /** The connected step with nothing on its way: the host's Start game, the joiner's wait. */
+    function drawReady(view: NetplayView): (v: NetplayView) => void {
+        const notice = noticeAlert(view);
+        if (notice) body.append(notice);
+        const disconnect = btn("Disconnect", () => session.disconnect());
+        if (view.role === "join") {
+            body.append(el("p", "netplay-muted", "⟳ Waiting for the host to start the game…"), actions(disconnect));
+            disconnect.focus();
+            return () => {};
+        }
+        const game = currentGame();
+        const hostable = game !== null && HOSTABLE.includes(game.kind);
+        const start = btn(
+            "Start game",
+            () => {
+                const sent = hostGame();
+                if (sent) session.startGame(sent.game, sent.title);
+            },
+            true
+        );
+        start.disabled = !hostable;
+        const hint = !game
+            ? "Load a NES or Super Nintendo game first, then come back here."
+            : !hostable
+              ? "Network play works with NES and Super Nintendo games."
+              : notice
+                ? null
+                : `When you're both ready, send ${game.title} and start.`;
+        if (hint) body.append(el("p", "netplay-muted", hint));
+        body.append(actions(disconnect, start));
+        (hostable ? start : disconnect).focus();
+        return () => {};
+    }
+
+    /** The game on its way: a bar and a count on both sides, and Cancel. */
+    function drawSending(view: NetplayView): (v: NetplayView) => void {
+        const { direction, name } = view.sending!;
+        const bar = el("i");
+        const progress = el("div", "netplay-progress");
+        progress.setAttribute("role", "progressbar");
+        progress.setAttribute("aria-valuemin", "0");
+        progress.setAttribute("aria-valuemax", "100");
+        progress.append(bar);
+        const count = el("p", "netplay-muted netplay-count");
+        body.append(el("p", "netplay-sending", `${direction === "send" ? "Sending" : "Receiving"} ${name}…`), progress, count);
+        if (direction === "receive") {
+            body.append(
+                el(
+                    "p",
+                    "netplay-muted netplay-small",
+                    "You'll play with the host's game settings. Your own settings come back when you stop playing together."
+                )
+            );
+        }
+        const cancel = btn("Cancel", () => session.cancelSending());
+        body.append(actions(cancel));
+        cancel.focus();
+        return (v) => {
+            if (!v.sending) return;
+            const share = percent(v.sending.done, v.sending.total);
+            bar.style.width = `${share}%`;
+            progress.setAttribute("aria-valuenow", String(share));
+            count.textContent = `${kb(v.sending.done)} KB of ${kb(v.sending.total)} KB`;
+        };
     }
 
     function draw(view: NetplayView) {
-        const key = `${view.role}|${view.step}|${view.phase}|${view.failure}`;
+        const key = `${view.role}|${view.step}|${view.phase}|${view.failure}|${view.sending?.direction ?? ""}|${view.notice}`;
         if (key === screenKey) return update(view);
         screenKey = key;
         update = () => {};

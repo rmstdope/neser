@@ -2267,6 +2267,7 @@ body.handheld:not(.handheld-portrait).touch-running .screen-wrap canvas {
   --np-ok: #5fd3b0;
   --np-warn: #e9b65f;
   --np-err: #f2718a;
+  --np-busy: #7fb0e3;
   width: min(440px, calc(100vw - 32px));
   max-height: calc(100dvh - 48px);
   padding: 0;
@@ -2424,6 +2425,40 @@ body.handheld:not(.handheld-portrait).touch-running .screen-wrap canvas {
 .netplay-dot[data-tone="warn"] { background: var(--np-warn, #e9b65f); }
 .netplay-dot[data-tone="err"] { background: var(--np-err, #f2718a); }
 
+.netplay-dot[data-tone="busy"] { background: var(--np-busy, #7fb0e3); }
+
+/* Sending the game (nr-ayk5.4): a bar under the line naming it, the KB count beneath. */
+.netplay-sending {
+  margin: 10px 0 0;
+}
+
+.netplay-progress {
+  height: 6px;
+  margin: 8px 0 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--line);
+}
+
+.netplay-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 99px;
+  background: var(--np-busy, #7fb0e3);
+  transition: width 0.2s linear;
+}
+
+.netplay-count {
+  margin: 0;
+  font-size: 12px;
+}
+
+.netplay-small {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
 .netplay-pill {
   display: inline-flex;
   margin: 6px 0;
@@ -2461,6 +2496,7 @@ body.handheld:not(.handheld-portrait).touch-running .screen-wrap canvas {
 
 #netplay-open[data-tone="warn"] { border-color: #e9b65f; }
 #netplay-open[data-tone="err"] { border-color: #f2718a; }
+#netplay-open[data-tone="busy"] { border-color: #7fb0e3; }
 
 body.handheld #netplay-open:not([data-tone]) {
   width: 2.25rem;
@@ -2489,4 +2525,31 @@ body.handheld #netplay-open:not([data-tone]) {
 
 body.handheld .netplay-chip-long {
   display: none;
+}
+
+/* Starting together (nr-ayk5.4): the picture dims under "You are player N" and a 3-2-1 count. */
+.netplay-countdown {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  pointer-events: all;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.netplay-countdown-player {
+  font-size: clamp(14px, 3.5vmin, 22px);
+  font-weight: 600;
+}
+
+.netplay-countdown-number {
+  font-size: clamp(40px, 18vmin, 120px);
+  font-weight: 800;
+  line-height: 1;
 }
