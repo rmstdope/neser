@@ -33,6 +33,7 @@ mod neser_mode7_tests;
 mod neser_obj_tests;
 mod neser_opt_tests;
 mod neser_pal_tests;
+mod netplay_tests;
 mod obc1_tests;
 mod peterlemon_cpu_tests;
 mod peterlemon_gsu_tests;
