@@ -24,6 +24,7 @@
         <span class="flex-1"></span>
         <span id="fps-counter" class="badge badge-neutral" style="display:none"></span>
         <button id="debugger-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn hidden" data-icon="bug" data-tip="Debugger" data-keys="F5" aria-keyshortcuts="F5" aria-label="Debugger" aria-pressed="false">Debugger</button>
+        <button id="netplay-open" class="btn btn-ghost btn-sm topbar-btn-labeled" data-icon="people" data-tip="Play together with another browser" aria-controls="netplay-panel" aria-haspopup="dialog" aria-expanded="false">Play together</button>
         <button id="library-open" class="btn btn-ghost btn-sm topbar-btn-labeled" data-icon="library" data-tip="Choose a game" aria-controls="library">Library</button>
         <button id="settings-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="gear" data-tip="Settings" aria-label="Settings" aria-controls="settings-panel" aria-haspopup="dialog" aria-expanded="false">Settings</button>
         <button id="help-open" class="btn btn-ghost btn-sm btn-icon-only topbar-btn" data-icon="help" data-tip="Keys and controls" data-keys="H" aria-keyshortcuts="H" aria-label="Keys and controls" aria-controls="help-panel" aria-expanded="false" aria-haspopup="dialog">Keys and controls</button>
@@ -187,6 +188,15 @@
         </div>
       </main>
     </div>
+
+    <!-- Play together: two browsers connect with two copy-paste codes (nr-ayk5.3). The game pauses while it is open. -->
+    <dialog id="netplay-panel" class="netplay-sheet" aria-labelledby="netplay-title">
+      <div class="netplay-head">
+        <h2 id="netplay-title">Play together</h2>
+        <button type="button" id="netplay-close" class="btn btn-ghost btn-sm btn-icon-only" data-icon="close" aria-label="Close">Close</button>
+      </div>
+      <div id="netplay-body" class="netplay-body"></div>
+    </dialog>
 
     <!-- Settings: the things set once, in a sheet from the right. The game pauses while it is open. -->
     <dialog id="settings-panel" class="settings-sheet" aria-labelledby="settings-title">
