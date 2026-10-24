@@ -64,7 +64,7 @@ import { monoSampleNormalizer, normalizeGbaSample } from "./audio/audio_normaliz
 import { configureEmulatorAudioSampleRate } from "./audio/audio_output_rate";
 import { getPlaybackAudioSamples } from "./audio/playback_samples";
 import { planFrame } from "./audio/frame_plan";
-import { createAudioFade, type AudioFade } from "./audio/audio_fade";
+import { createAudioFade, fadeSecondsFor, type AudioFade } from "./audio/audio_fade";
 import { gameTitle } from "./ui/game_title";
 import { BROWSER_CANNOT_DRAW, errorPlace, libraryAlert, showLibraryAlert, unsupportedFileMessage } from "./ui/errors";
 import { readDebuggerButton, writeDebuggerButton } from "./debugger/debugger_dock";
@@ -96,6 +96,7 @@ import { createNetplaySession, type NetplayStart, type Role } from "./netplay/se
 import { createPlay, type CountLabel, type EndedHow, type Play, type PlayCore, type PlayView } from "./netplay/play";
 import { createPlayScreen, type PlayScreen } from "./ui/play_screen";
 import { createPlayTogether } from "./ui/play_together";
+import { createSlowNote } from "./ui/slow_note";
 import { runCountdown } from "./ui/countdown";
 import { createCrosshair } from "./display/crosshair";
 import {
@@ -1978,7 +1979,7 @@ async function initAudioContext(): Promise<void> {
         masterGain.connect(audioContext.destination);
         fadeGain = audioContext.createGain();
         fadeGain.connect(masterGain);
-        audioFade = createAudioFade(fadeGain.gain);
+        audioFade = createAudioFade(fadeGain.gain, fadeSecondsFor(AUDIO_TARGET_LATENCY));
         console.log(`Audio initialized: ${audioContext.sampleRate} Hz`);
     }
 }
@@ -3823,27 +3824,13 @@ function gameFrameRate(): number {
     return emulator?.inst.frame_rate_hz() ?? 60;
 }
 
-const SLOW_NOTES = {
-    me: "Your computer can't keep full speed, so both games run a little slower.",
-    them: "The other player's computer can't keep full speed, so both games run a little slower.",
-} as const;
-const SLOW_NOTE_MS = 5000;
-/** Takes the slow-speed note away while it shows. */
-let dismissSlowNote: (() => void) | null = null;
-let slowNoteShown = false;
+/** The note that says why both games run slower, once each time players play together. */
+const slowNote = createSlowNote((message, ms) => toastOverlay.show(message, ms));
 
 /** Both games run at the speed the slower computer keeps; the first time, a note says why, once (nr-ayk5.7). */
 function showPlaySpeed(view: PlayView) {
     frameLimiter.setTargetFps(view.speed ?? gameFrameRate());
-    if (view.slowNote && !slowNoteShown) {
-        slowNoteShown = true;
-        dismissSlowNote = toastOverlay.show(SLOW_NOTES[view.slowNote], SLOW_NOTE_MS);
-    }
-    // Paused, a window open, a count, a resync or the end: the note goes, not to come back.
-    if (view.phase !== "playing") {
-        dismissSlowNote?.();
-        dismissSlowNote = null;
-    }
+    slowNote.draw(view);
 }
 
 /** The shared game runs only while it is played; paused, counting or ended, its loop rests. */
@@ -3875,9 +3862,7 @@ function leavePlay() {
     releasePlayPorts();
     // Playing alone, the sound is never faded, and the game runs at its own speed.
     if (audioContext) audioFade?.reset(audioContext.currentTime);
-    dismissSlowNote?.();
-    dismissSlowNote = null;
-    slowNoteShown = false;
+    slowNote.end();
     if (emulator) frameLimiter.setTargetFps(gameFrameRate());
     updatePlayLocks();
     updateSaveStateButtons();

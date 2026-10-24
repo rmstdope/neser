@@ -1100,3 +1100,27 @@ describe("a computer that can't keep full speed (nr-ayk5.7)", () => {
         expect(join.play.view().slowNote).toBe("me");
     });
 });
+
+describe("the other side's speed (nr-ayk5.7 review)", () => {
+    it("takes no speed at or above full speed for a slower one", async () => {
+        const { play } = alone(1);
+        play.hear({ t: "speed", fps: 1000 });
+        expect(play.view()).toMatchObject({ speed: null, slowNote: null });
+        play.hear({ t: "speed", fps: FULL_SPEED });
+        expect(play.view()).toMatchObject({ speed: null, slowNote: null });
+        play.hear({ t: "speed", fps: 38 });
+        expect(play.view()).toMatchObject({ speed: 38, slowNote: "them" });
+    });
+
+    it("asks for the note only while playing, not while this game is stopped (review 2)", async () => {
+        await run(200);
+        host.play.pause();
+        await run(300);
+        expect(join.play.view().phase).toBe("paused");
+        join.play.hear({ t: "speed", fps: 38 });
+        expect(join.play.view()).toMatchObject({ speed: 38, slowNote: null });
+        join.play.resume();
+        await run(3500);
+        expect(join.play.view()).toMatchObject({ phase: "playing", speed: 38, slowNote: "them" });
+    });
+});

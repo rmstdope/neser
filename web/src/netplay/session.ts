@@ -227,7 +227,8 @@ const IDLE: NetplayView = {
 
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
 
-const isRate = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
+/** A speed as this build sends it: whole frames a second, at least one. */
+const isRate = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 1;
 
 /** Whether a message from the other side is a play or speed message as this build sends them. */
 function isPlayMessage(message: { t: string } & Record<string, unknown>): message is PlayMessage | SpeedMessage {

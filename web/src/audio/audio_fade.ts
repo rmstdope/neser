@@ -20,10 +20,28 @@ export interface FadeParam {
 
 /** How long a fade takes: a few hundredths of a second, as agreed. */
 export const FADE_SECONDS = 0.02;
+/** The time one frame takes, at about 60 frames a second. */
+const FRAME_SECONDS = 1 / 60;
+/** What the audio clock and animation frames may wander by, on top of one frame. */
+const JITTER_SECONDS = 0.01;
+/** The shortest fade that still does not click. */
+const SHORTEST_FADE_SECONDS = 0.005;
+
+/**
+ * The fade for a sound lead of `leadSeconds`: one frame held, handed over a little late, must
+ * still come before the pending fade-out begins, or every one-frame correction between two
+ * computers would dip. The balanced lead (60 ms) leaves room for the full fade; the low-latency
+ * one (40 ms) needs a quicker one.
+ */
+export function fadeSecondsFor(leadSeconds: number): number {
+    const room = leadSeconds - FRAME_SECONDS - JITTER_SECONDS;
+    return Math.min(FADE_SECONDS, Math.max(SHORTEST_FADE_SECONDS, room));
+}
+
 /** How far a pending fade-out starts after a fade-in has finished, so cancelling it never touches the fade-in. */
 const APART = 1e-4;
 
-export function createAudioFade(param: FadeParam) {
+export function createAudioFade(param: FadeParam, fadeSeconds = FADE_SECONDS) {
     /** Where the sound scheduled so far ends, and with it the pending fade-out. */
     let soundEnd = -Infinity;
     /** Where the pending fade-out begins. */
@@ -40,12 +58,12 @@ export function createAudioFade(param: FadeParam) {
             } else {
                 // After a gap, or the sound so far is already fading out (it reaches silence at
                 // `start`): this chunk fades in, within its first half at most.
-                const length = Math.min(FADE_SECONDS, (end - start) / 2);
+                const length = Math.min(fadeSeconds, (end - start) / 2);
                 param.setValueAtTime(0, start);
                 param.linearRampToValueAtTime(1, start + length);
                 fadeInEnd = start + length;
             }
-            fadeOutStart = Math.max(end - FADE_SECONDS, fadeInEnd + APART);
+            fadeOutStart = Math.max(end - fadeSeconds, fadeInEnd + APART);
             soundEnd = end;
             param.setValueAtTime(1, fadeOutStart);
             param.linearRampToValueAtTime(0, soundEnd);

@@ -204,6 +204,10 @@ export function createPlay({
 
     function set(changes: Partial<PlayView>) {
         const next = { ...state, ...changes };
+        // The first slowdown's note is asked for only while playing, so it is never used up unseen.
+        if (next.phase === "playing" && next.slowNote === null && next.speed !== null) {
+            next.slowNote = mySpeed !== null ? "me" : "them";
+        }
         // Stopped, the game's seconds say nothing about this computer's speed.
         if (state.phase === "playing" && next.phase !== "playing") speedWatch.reset();
         const same = (Object.keys(next) as (keyof PlayView)[]).every((key) => next[key] === state[key]);
@@ -365,12 +369,11 @@ export function createPlay({
         return behindSince !== null && known > delay;
     }
 
-    /** Both games run at the slower of the two computers' speeds; the first slowdown asks for its note. */
+    /** Both games run at the slower of the two computers' speeds; `set` asks for the first slowdown's note. */
     function updateSpeed() {
         const speeds = [mySpeed, theirSpeed].filter((fps): fps is number => fps !== null);
         const speed = speeds.length > 0 ? Math.min(...speeds) : null;
-        const slowNote = state.slowNote ?? (speed === null ? null : mySpeed !== null ? "me" : "them");
-        set({ speed, slowNote });
+        set({ speed });
     }
 
     function animationFrame(t: number) {
@@ -499,7 +502,8 @@ export function createPlay({
             else if (data.t === "state") hearState(data);
             else if (data.t === "speed") {
                 if (state.phase === "ended") return;
-                theirSpeed = data.fps;
+                // A speed this game keeps anyway asks nothing of it.
+                theirSpeed = data.fps !== null && data.fps < fullSpeed() ? data.fps : null;
                 updateSpeed();
             }
             else message(data);

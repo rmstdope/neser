@@ -20,8 +20,12 @@ export const HEADROOM = 0.95;
 /** How many seconds in a row decide. */
 const SECONDS_TO_DECIDE = 3;
 const WINDOW_MS = 1000;
-/** A second with fewer frames than this was mostly held: it says nothing about speed. */
-const ENOUGH_FRAMES = 10;
+/**
+ * A second whose frames took less time than this to run was mostly held, waiting for the other
+ * player: it says nothing about speed. Told apart by time, not by frames, since a very slow
+ * computer runs few frames too, but they take the whole second.
+ */
+const ENOUGH_MS = 250;
 /** A longer wait between two animation frames is the page hidden or a stall, not speed. */
 const LONGEST_FRAME_MS = 250;
 
@@ -37,7 +41,7 @@ export function createSpeedWatch(fullSpeed: () => number) {
 
     function judge() {
         const target = wanted ?? fullSpeed();
-        if (frames < ENOUGH_FRAMES || ms <= 0) {
+        if (frames === 0 || ms < ENOUGH_MS) {
             slow = 0;
             full = 0;
             return;

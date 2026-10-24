@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAudioFade, FADE_SECONDS, type FadeParam } from "./audio_fade";
+import { createAudioFade, FADE_SECONDS, fadeSecondsFor, type FadeParam } from "./audio_fade";
 
 /**
  * A gain `AudioParam` as Web Audio automates it: values set at a time hold until the next event,
@@ -112,6 +112,25 @@ describe("audio fade", () => {
         fade.chunk(end - LEAD + CHUNK, end, end + CHUNK);
         const after = playChunks(fade, end + CHUNK, 30);
         for (let t = 1 + F; t < after - LEAD; t += 0.001) expect(gain.at(t)).toBeCloseTo(1, 6);
+    });
+
+    it("fades quicker under a shorter sound lead, so a frame held late still never dips (review 4)", () => {
+        // The low-latency profile's 40 ms lead: one held frame leaves about 23 ms, and the audio
+        // clock and animation frames jitter by several milliseconds.
+        const lead = 0.04;
+        expect(fadeSecondsFor(0.06)).toBe(FADE_SECONDS);
+        const fade = fadeSecondsFor(lead);
+        expect(fade).toBeGreaterThanOrEqual(0.005);
+        expect(fade).toBeLessThan(FADE_SECONDS);
+        const gain = new Gain();
+        const faded = createAudioFade(gain, fade);
+        let start = 1;
+        for (let i = 0; i < 30; i++, start += CHUNK) faded.chunk(start - lead, start, start + CHUNK);
+        // A held frame, then handed 8 ms later still.
+        faded.chunk(start - lead + CHUNK + 0.008, start, start + CHUNK);
+        start += CHUNK;
+        for (let i = 0; i < 30; i++, start += CHUNK) faded.chunk(start - lead, start, start + CHUNK);
+        for (let t = 1 + fade; t < start - lead; t += 0.001) expect(gain.at(t)).toBeCloseTo(1, 6);
     });
 
     it("fades a lone short chunk in and out within it", () => {

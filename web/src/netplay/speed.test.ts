@@ -79,6 +79,12 @@ describe("speed watch", () => {
         expect(w.wanted()).toBe(28);
     });
 
+    it("slows for a computer that manages only a few frames a second (review 1)", () => {
+        const w = watch();
+        drive(w, { from: 0, ms: 4000, interval: 125 });
+        expect(w.wanted()).toBe(7);
+    });
+
     it("does not take a long gap (a hidden page) for slowness", () => {
         const w = watch();
         let t = drive(w, { from: 0, ms: 1000, interval: 1000 / 60 });

@@ -459,8 +459,9 @@ describe("playing together", () => {
     it("passes on no speed it cannot use", async () => {
         const toHost: PlayData[] = [];
         host.onPlay((data) => toHost.push(data));
-        joinEnd.forge(JSON.stringify({ t: "pace", known: 2 }));
         joinEnd.forge(JSON.stringify({ t: "speed", fps: 0 }));
+        joinEnd.forge(JSON.stringify({ t: "speed", fps: 0.001 }));
+        joinEnd.forge(JSON.stringify({ t: "speed", fps: 37.5 }));
         joinEnd.forge(JSON.stringify({ t: "speed", fps: "48" }));
         joinEnd.forge(JSON.stringify({ t: "speed" }));
         await run(100);
