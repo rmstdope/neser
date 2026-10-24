@@ -1360,6 +1360,13 @@ mod tests {
         write_mmc1_register(bus, 0x8000, value);
     }
 
+    /// A $2007 read made a few CPU cycles after the last access, as any real read loop is:
+    /// a read on the very next CPU cycle is ignored.
+    fn read_ppudata(ppu: &mut ppu::Ppu) -> u8 {
+        ppu.run_ppu_cycles(6);
+        ppu.read_data()
+    }
+
     fn assert_vertical_mirroring(ppu: &mut ppu::Ppu) {
         ppu.write_address(0x20, false);
         ppu.write_address(0x00, false);
@@ -1367,8 +1374,8 @@ mod tests {
 
         ppu.write_address(0x28, false);
         ppu.write_address(0x00, false);
-        let _ = ppu.read_data();
-        assert_eq!(ppu.read_data(), 0x42);
+        let _ = read_ppudata(ppu);
+        assert_eq!(read_ppudata(ppu), 0x42);
     }
 
     fn assert_horizontal_mirroring(ppu: &mut ppu::Ppu) {
@@ -1378,8 +1385,8 @@ mod tests {
 
         ppu.write_address(0x24, false);
         ppu.write_address(0x00, false);
-        let _ = ppu.read_data();
-        assert_eq!(ppu.read_data(), 0x55);
+        let _ = read_ppudata(ppu);
+        assert_eq!(read_ppudata(ppu), 0x55);
     }
 
     #[test]
@@ -2110,6 +2117,7 @@ mod tests {
 
         // Read from PPUDATA (first read returns buffer, second returns actual value)
         memory.read(0x2007, false); // Skip buffered read
+        memory.ppu.borrow_mut().run_ppu_cycles(6); // two CPU cycles apart: a $2007 read on the next CPU cycle is ignored
         assert_eq!(memory.read(0x2007, false), 0x42);
     }
 

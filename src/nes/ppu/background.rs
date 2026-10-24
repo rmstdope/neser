@@ -129,6 +129,11 @@ impl Background {
         self.pattern_lo_latch = read_chr(self.tile_addr);
     }
 
+    /// The low-plane pattern address latched by the latest nametable fetch.
+    pub fn tile_addr(&self) -> u16 {
+        self.tile_addr
+    }
+
     /// Fetch pattern table high byte from CHR ROM using the latched tile address.
     pub fn fetch_pattern_hi<F>(&mut self, read_chr: F)
     where
