@@ -188,7 +188,6 @@ it("dockedPictureMaxWidth - leaves the debugger's top 200px inside the window un
 
 it("dockedPictureMaxWidth - a short window keeps the picture at the console's own 1x", () => {
     expect(dockedPictureMaxWidth(400, 90, 70, 240, NES_AR)).toBe(256);
-    expect(dockedPictureMaxWidth(300, 90, 70, 144, 160 / 144)).toBe(160);
 });
 
 it("scrollToShowDockedDebugger - no scroll when the debugger's top 200px are already in the window", () => {

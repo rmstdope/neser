@@ -238,6 +238,25 @@ test.describe("Settings panel, firmware and debugger", () => {
         const picture = (await page.locator("#screen").boundingBox())!;
         expect(picture.height).toBeGreaterThanOrEqual(240 - 1);
         expect(picture.height).toBeLessThan(260);
+        // The debugger starts below the bottom edge, so opening scrolls just enough to show its top.
+        expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+        expect((await page.locator("#debugger-panel").boundingBox())!.y + 200).toBeLessThanOrEqual(400 + 1);
+    });
+
+    test("Given a narrow 720px-tall window, when the debugger opens, then its top is in view without scrolling", async ({ page }) => {
+        await openDebuggerIn(page, 900, 720);
+        expect(await page.evaluate(() => window.scrollY)).toBe(0);
+        expect((await page.locator("#debugger-panel").boundingBox())!.y + 200).toBeLessThanOrEqual(720);
+    });
+
+    test("Given the debugger docked under a capped picture, when it closes, then zooming in is offered again", async ({ page }) => {
+        await openDebuggerIn(page, 850, 720);
+        const plus = page.locator("#screen-plus");
+        await expect(plus).toBeDisabled();
+        await page.locator("#screen").focus();
+        await page.keyboard.press("F5");
+        await expect(page.locator("#debugger-panel")).toBeHidden();
+        await expect(plus).toBeEnabled();
     });
 
     test("Given the open panel over a running game, when the backdrop is clicked, then it closes and the game carries on", async ({ page }) => {

@@ -101,11 +101,10 @@ import {
     computeHandheldCanvasSize,
     dockedPictureMaxWidth,
     initialWindowedHeight,
-    MIN_WINDOWED_HEIGHT,
     scrollToShowDockedDebugger,
 } from "./display/canvas_size";
 import {
-    zoomLevelLabel, probeNextZoomHeight, probeZoomAvailability } from "./display/zoom_controls";
+    zoomLevelLabel, probeNextZoomHeight, probeZoomAvailability, MIN_CANVAS_HEIGHT } from "./display/zoom_controls";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./ui/toast_overlay";
 import {
     browserStorage,
@@ -2574,7 +2573,8 @@ function showDebuggerPanel() {
     const opening = debuggerPanel.classList.contains("hidden");
     debuggerPanel.classList.remove("hidden");
     updateDebuggerPanel();
-    fitDockedPicture();
+    // Fits the picture to the docked debugger, and lets + and - say what that leaves room for.
+    updateZoomButtonState();
     // Docked under a picture already at 1x on a short window, it can open below the fold: scroll just
     // far enough for its top to show, so F5 visibly does something.
     if (opening) window.scrollBy(0, scrollToShowDockedDebugger(debuggerPanel.getBoundingClientRect().top, window.innerHeight));
@@ -2586,7 +2586,7 @@ function hideDebuggerPanel() {
     if (debuggerPanel) {
         debuggerPanel.classList.add("hidden");
     }
-    fitDockedPicture();
+    updateZoomButtonState();
     updateDebuggerButton();
 }
 
@@ -4002,7 +4002,7 @@ function fitDockedPicture() {
         return;
     }
     // 1x is the console's own lines, and never under the smallest picture a window shows.
-    const oneTimesHeight = Math.max(MIN_WINDOWED_HEIGHT, height);
+    const oneTimesHeight = Math.max(MIN_CANVAS_HEIGHT, height);
     // A second pass: at its new width the control bar under the picture may wrap, moving the debugger.
     for (let pass = 0; pass < 2; pass++) {
         const picture = canvas.getBoundingClientRect();
@@ -4070,10 +4070,7 @@ function updateZoomLevel() {
     const zoomLevelEl = document.getElementById("zoom-level");
     if (zoomLevelEl) zoomLevelEl.textContent = running ? zoomLevelLabel(canvas.clientHeight, height) : "";
 }
-window.addEventListener("resize", () => {
-    fitDockedPicture();
-    updateZoomLevel();
-});
+window.addEventListener("resize", () => updateZoomLevel());
 
 function updateZoomButtonState() {
     const inScreenFullscreen = isInFullscreen();
