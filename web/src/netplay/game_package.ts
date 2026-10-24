@@ -9,8 +9,14 @@
  * null), then the ROM, the firmware and the state, back to back.
  */
 
+import type { ConsoleKind } from "../console/consoles";
+
+/** The consoles a network game can be played on. */
+export const NETPLAY_KINDS = ["nes", "snes"] as const satisfies readonly ConsoleKind[];
+export type NetplayKind = (typeof NETPLAY_KINDS)[number];
+
 export type GamePackage = {
-    kind: "nes" | "snes";
+    kind: NetplayKind;
     name: string;
     rom: Uint8Array;
     firmware: { chip: string; image: Uint8Array } | null;
@@ -64,7 +70,7 @@ export function unpackGame(bytes: Uint8Array): GamePackage | null {
     }
     if (typeof header !== "object" || header === null) return null;
     const { kind, name, rom, chip, firmware, state } = header;
-    if (kind !== "nes" && kind !== "snes") return null;
+    if (!NETPLAY_KINDS.some((k) => k === kind)) return null;
     if (typeof name !== "string" || name.length === 0 || name.length > MAX_NAME_LENGTH) return null;
     if (!isLength(rom) || !isLength(firmware) || !isLength(state) || rom === 0 || state === 0) return null;
     if (chip !== null && typeof chip !== "string") return null;
@@ -74,7 +80,7 @@ export function unpackGame(bytes: Uint8Array): GamePackage | null {
     const romBytes = bytes.slice(start, start + rom);
     const image = bytes.slice(start + rom, start + rom + firmware);
     const stateBytes = bytes.slice(start + rom + firmware);
-    return { kind, name, rom: romBytes, firmware: chip === null ? null : { chip, image }, state: stateBytes };
+    return { kind: kind as NetplayKind, name, rom: romBytes, firmware: chip === null ? null : { chip, image }, state: stateBytes };
 }
 
 let crcTable: Uint32Array | null = null;
