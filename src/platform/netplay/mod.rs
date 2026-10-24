@@ -6,4 +6,5 @@
 //! The test-only `simulation` module proves the rules over a channel with latency, jitter
 //! and loss.
 
+pub mod lockstep;
 pub mod wire;
