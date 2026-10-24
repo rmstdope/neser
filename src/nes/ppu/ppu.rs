@@ -783,7 +783,8 @@ impl Ppu {
             // While rendering, the write lands at whatever address the fetches put on the bus.
             // For CHR and nametables above, NESER approximates that with v; palette RAM answers
             // only to a $3Fxx bus address, which the fetches never produce, so a palette write
-            // cannot land at all (nr-sjt).
+            // is dropped (nr-sjt). Before the first fetch after rendering turns on, a $3Fxx v
+            // can still be on the bus and Mesen2 would write palette RAM; NESER drops it.
             0x3F00..=0x3FFF if !self.is_actively_rendering() => {
                 self.memory.write_palette(addr, value);
             }
@@ -986,7 +987,9 @@ impl Ppu {
     /// PPUDATA accesses do not tell the mapper about `v` (nr-6gs). A PPUDATA read refills its
     /// buffer from the latest fetch address (nr-6wgi). A PPUDATA write still goes to `v`, an
     /// approximation (Mesen2 writes to the current fetch address), except that one aimed at
-    /// palette RAM is dropped, since the fetches never put `$3Fxx` on the bus (nr-sjt).
+    /// palette RAM is dropped, since the fetches never put `$3Fxx` on the bus (nr-sjt). Only
+    /// a `$3Fxx` v left on the bus when rendering turns on, before the first fetch, would let
+    /// Mesen2 write palette RAM there; NESER drops that write too.
     pub(crate) fn is_actively_rendering(&self) -> bool {
         self.registers.is_rendering_enabled() && self.is_on_rendering_scanline()
     }
