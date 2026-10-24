@@ -177,6 +177,12 @@ Master, SD Gundam GX, Top Gear 3000) need the chip's genuine firmware, which you
 desktop put `dsp1b.rom`, `dsp2.rom`, `dsp3.rom` or `dsp4.rom` in `~/.neser/firmware` (or set `snes-firmware-dir`); the browser version
 asks for each chip's file once. See [README-SNES.md](README-SNES.md).
 
+**Play together** (top bar) connects two browsers for a NES or Super Nintendo network game:
+the host copies a code to the other player, who pastes it and sends one back. There is no server,
+so both computers must be on the same network (or VPN). The two must run the same NESER build, and
+a connection slower than 120 ms round trip is refused. Sending the game and playing it together
+are still to come.
+
 See [web/README.md](web/README.md) for detailed prerequisites, build, run, and test commands.
 
 Build and serve it:

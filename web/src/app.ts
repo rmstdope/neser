@@ -87,6 +87,10 @@ import { remapLegacySnesButtonId } from "./input/snes_button_mapping";
 import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touch_controls";
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import { helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad } from "./ui/help_panel";
+import { THIS_BUILD } from "./netplay/build_id";
+import { webRtcLinks } from "./netplay/peer_link";
+import { createNetplaySession } from "./netplay/session";
+import { createPlayTogether } from "./ui/play_together";
 import { createCrosshair } from "./display/crosshair";
 import {
     createSuperScopeSession,
@@ -3434,6 +3438,30 @@ function toggleShortcutHelp() {
     if (helpPanel.open) closeHelp();
     else openHelp();
 }
+
+// ── Play together: two browsers connect for a network game (nr-ayk5.3); the game pauses while it is open ──
+const netplaySession = createNetplaySession({ links: webRtcLinks, build: THIS_BUILD });
+let pausedByNetplay = false;
+createPlayTogether({
+    dialog: document.getElementById("netplay-panel") as HTMLDialogElement,
+    title: document.getElementById("netplay-title") as HTMLElement,
+    body: document.getElementById("netplay-body") as HTMLElement,
+    closeButton: document.getElementById("netplay-close") as HTMLButtonElement,
+    openButton: document.getElementById("netplay-open") as HTMLButtonElement,
+    session: netplaySession,
+    build: THIS_BUILD,
+    currentGame: () => (emulator && romMetadata ? { kind: emulator.kind, title: gameTitle(romMetadata.name, emulator.kind).title } : null),
+    onOpen: () => {
+        pausedByNetplay = running && !paused;
+        if (pausedByNetplay) pauseResume();
+    },
+    onClose: () => {
+        if (pausedByNetplay && running && paused) pauseResume();
+        pausedByNetplay = false;
+    },
+});
+// Leaving the page tells the other browser at once, rather than leaving it to notice the silence.
+window.addEventListener("pagehide", () => netplaySession.disconnect());
 
 function updateFilterToggleButtonLabel() {
     filterToggleBtn.textContent = `Filter: ${filters[buttonFilterKey(filterSelection)].name}`;
