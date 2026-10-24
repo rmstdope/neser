@@ -86,11 +86,12 @@ pub(crate) fn assert_save_mid_run_continues_identically(
     }
 }
 
-fn read_rom(path: &str) -> Vec<u8> {
+pub(crate) fn read_rom(path: &str) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-fn loaded_console(system: SystemType, rom: &[u8], name: &str) -> Console {
+/// A console built as the web frontend builds one, with the run's power-on RAM seed.
+pub(crate) fn loaded_console(system: SystemType, rom: &[u8], name: &str) -> Console {
     loaded_console_with_seed(system, rom, name, RAM_SEED)
 }
 
@@ -128,8 +129,8 @@ fn pads_for_frame(frame: u32) -> [u16; 2] {
 }
 
 /// What one frame leaves observable.
-struct FrameOutput {
-    state: Vec<u8>,
+pub(crate) struct FrameOutput {
+    pub state: Vec<u8>,
     screen_crc: u32,
     /// Stereo samples as raw bits, so the comparison is exact.
     audio: Vec<(u32, u32)>,
@@ -138,24 +139,29 @@ struct FrameOutput {
 /// Apply `frame`'s pad presses, run the console to the end of the frame, and collect what
 /// it produced.
 fn play_frame(console: &mut Console, system: SystemType, frame: u32, name: &str) -> FrameOutput {
+    let label = format!("{name}, frame {frame}");
+    play_frame_with_pads(console, system, pads_for_frame(frame), &label)
+}
+
+/// Apply `pads` (player 1, player 2; one bit per button id), run the console to the end of
+/// the frame, and collect what it produced. `name` labels a hang.
+pub(crate) fn play_frame_with_pads(
+    console: &mut Console,
+    system: SystemType,
+    pads: [u16; 2],
+    name: &str,
+) -> FrameOutput {
     let (ports, buttons) = pad_layout(system);
-    for (port, pad) in ports.into_iter().zip(pads_for_frame(frame)) {
+    for (port, pad) in ports.into_iter().zip(pads) {
         for button in 0..buttons {
             console.set_button(port, button, pad & (1 << button) != 0);
         }
     }
     let mut ticks = 0;
     while !console.is_ready_to_render() {
-        assert_ne!(
-            console.run_tick(),
-            0,
-            "{name}: no progress in frame {frame}"
-        );
+        assert_ne!(console.run_tick(), 0, "{name}: no progress in a frame");
         ticks += 1;
-        assert!(
-            ticks < MAX_TICKS_PER_FRAME,
-            "{name}: frame {frame} never ended"
-        );
+        assert!(ticks < MAX_TICKS_PER_FRAME, "{name}: a frame never ended");
     }
     console.clear_ready_to_render();
     let mut audio = Vec::new();

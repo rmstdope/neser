@@ -8,6 +8,7 @@ mod determinism_tests;
 mod input_tests;
 mod mapper_tests;
 mod miscellaneous_tests;
+mod netplay_tests;
 mod obsolete_tests;
 mod ppu_tests;
 mod ram_init_tests;

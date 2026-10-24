@@ -233,7 +233,7 @@ impl Lockstep {
     }
 
     fn is_hash_frame(&self, frame: u32) -> bool {
-        self.config.hash_interval != 0 && frame % self.config.hash_interval == 0
+        self.config.hash_interval != 0 && frame.is_multiple_of(self.config.hash_interval)
     }
 
     /// Record the first frame both sides hashed differently, if there is one yet.

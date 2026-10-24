@@ -5,6 +5,9 @@
 //! is reproducible.
 
 use super::lockstep::{Desync, FrameInputs, Lockstep, LockstepConfig, Player};
+use crate::platform::crc32::crc32;
+use crate::platform::determinism::{loaded_console, play_frame_with_pads, read_rom};
+use crate::platform::emulator::{Console, SystemType};
 
 /// Simulated milliseconds per tick: the two sides run at 60 ticks a second.
 const MS_PER_TICK: f64 = 1000.0 / 60.0;
@@ -115,6 +118,104 @@ impl SimGame for FoldGame {
         }
         self.frames += 1;
         (self.state ^ (self.state >> 32)) as u32
+    }
+}
+
+/// A real console as a [`SimGame`]: its hash is the CRC-32 of its save state.
+pub(crate) struct ConsoleGame {
+    console: Console,
+    system: SystemType,
+    name: String,
+    frames: u32,
+    /// The state hash after every frame run, in order.
+    pub hashes: Vec<u32>,
+    /// On this frame player 2's first button is flipped on this console alone, bypassing
+    /// lockstep: an injected desync.
+    pub extra_press_on: Option<u32>,
+}
+
+impl ConsoleGame {
+    pub(crate) fn new(system: SystemType, rom_path: &str) -> Self {
+        let rom = read_rom(rom_path);
+        ConsoleGame {
+            console: loaded_console(system, &rom, rom_path),
+            system,
+            name: rom_path.to_owned(),
+            frames: 0,
+            hashes: Vec::new(),
+            extra_press_on: None,
+        }
+    }
+}
+
+impl SimGame for ConsoleGame {
+    fn run_frame(&mut self, mut pads: [u16; 2]) -> u32 {
+        if self.extra_press_on == Some(self.frames) {
+            pads[1] ^= 1;
+        }
+        let label = format!("{}, frame {}", self.name, self.frames);
+        let output = play_frame_with_pads(&mut self.console, self.system, pads, &label);
+        self.frames += 1;
+        let hash = crc32(&[&output.state]);
+        self.hashes.push(hash);
+        hash
+    }
+}
+
+/// How the console runs are played: the lossy link, a 4-frame delay, hashes every 30 frames.
+fn console_pair() -> PairSim {
+    PairSim {
+        link: SimLink {
+            latency_ms: 60.0,
+            jitter_ms: 40.0,
+            loss: 0.2,
+            seed: 0xC0_501E,
+        },
+        config: LockstepConfig {
+            input_delay: 4,
+            hash_interval: 30,
+        },
+        ticks: 180,
+        drop_one_each_way_at: None,
+    }
+}
+
+/// Two consoles of `system` on `rom_path`, in lockstep over a lossy link, run the same
+/// frames on the same pads, agree on their whole state after every frame, and report no
+/// desync.
+pub(crate) fn assert_consoles_stay_in_step(system: SystemType, rom_path: &str) {
+    let mut games = [
+        ConsoleGame::new(system, rom_path),
+        ConsoleGame::new(system, rom_path),
+    ];
+    let [a_game, b_game] = &mut games;
+    let [a, b] = run_pair(&console_pair(), [a_game, b_game]);
+    let common = a.ran.len().min(b.ran.len());
+    assert!(common >= 60, "{rom_path}: only {common} frames ran");
+    assert_eq!(a.ran[..common], b.ran[..common], "{rom_path}: pads differ");
+    assert_eq!(
+        games[0].hashes[..common],
+        games[1].hashes[..common],
+        "{rom_path}: states differ"
+    );
+    assert_eq!((a.desync, b.desync), (None, None), "{rom_path}");
+}
+
+/// The same pair, with one extra press on the second console alone at frame 60: both
+/// sides report a desync at the first hashed frame from 60 on.
+pub(crate) fn assert_injected_console_mismatch_is_detected(system: SystemType, rom_path: &str) {
+    let mut a_game = ConsoleGame::new(system, rom_path);
+    let mut b_game = ConsoleGame {
+        extra_press_on: Some(60),
+        ..ConsoleGame::new(system, rom_path)
+    };
+    let [a, b] = run_pair(&console_pair(), [&mut a_game, &mut b_game]);
+    for log in [&a, &b] {
+        assert_eq!(
+            log.desync.map(|d| d.frame),
+            Some(60),
+            "{rom_path}: the injected press went unnoticed"
+        );
     }
 }
 
