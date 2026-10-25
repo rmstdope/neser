@@ -25,7 +25,9 @@ export function createCrosshair(
     overlayCanvas.style.left = "0";
     overlayCanvas.style.pointerEvents = "none"; // Allow mouse events to pass through
     overlayCanvas.style.zIndex = "10";
-    
+    // The stylesheet paints every canvas black behind its picture; this one lies over the picture.
+    overlayCanvas.style.background = "transparent";
+
     // Match the target canvas size
     overlayCanvas.width = targetCanvas.width;
     overlayCanvas.height = targetCanvas.height;
