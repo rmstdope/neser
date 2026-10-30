@@ -41,6 +41,18 @@ class PlaywrightRunnerImageTest(unittest.TestCase):
                 assert runs_on is not None, f"{name} has no runs-on"
                 self.assertEqual(runs_on.group(1), PINNED_IMAGE)
 
+    def test_cached_browsers_are_keyed_by_the_pinned_image(self) -> None:
+        """A cached Chromium skips the install, the one step that checks the image (review of #3396).
+
+        The cache once hid this very bug in web-integration, so moving the pin must miss the cache.
+        """
+
+        keys = [(name, key) for name, body in jobs().items() for key in re.findall(r"key: (playwright-\S+)", body)]
+        self.assertTrue(keys, "no Playwright browser cache found in ci.yml")
+        for name, key in keys:
+            with self.subTest(job=name):
+                self.assertIn(PINNED_IMAGE, key)
+
 
 if __name__ == "__main__":
     unittest.main()
