@@ -403,7 +403,9 @@ jobs:
   # per-shard names need no fan-in job.
   web-integration:
     name: web-integration (${{ matrix.shard }}/2)
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright 1.60 refuses ubuntu26.04 (nr-7sn1). Move it together
+    # with a Playwright that supports the new image.
+    runs-on: ubuntu-24.04
     # The tests take about seven minutes on a shard (nr-y7yu, one worker). The limit was raised to 30 when installing
     # Playwright's system packages from a slow apt mirror took up to eleven; that step no longer
     # touches apt unless a library is missing (nr-2e2l).
@@ -439,7 +441,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ hashFiles('pnpm-lock.yaml') }}
+          key: playwright-chromium-ubuntu-24.04-${{ hashFiles('pnpm-lock.yaml') }}
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
@@ -488,7 +490,9 @@ jobs:
           retention-days: 7
 
   web-container:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright 1.60 refuses ubuntu26.04 (nr-7sn1). Move it together
+    # with a Playwright that supports the new image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     needs: [changes, python-tests, rust-test-build, rust-test-run, rust-lint, wasm, web, web-integration]
     if: >-
