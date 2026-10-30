@@ -66,11 +66,43 @@ describe("reading what liaison says", () => {
         });
     });
 
-    it("ignores the relay liaison may offer, which this build does not use", () => {
-        expect(parseServerMessage('{"type":"created","room":"K7Q-M4X","iceServers":[{"urls":["turn:x"]}]}')).toEqual({
+    it("reads the relay liaison offers with created and joined", () => {
+        const relay = { urls: ["turn:outpost.rmstdope.eu:3478?transport=udp", "turn:outpost.rmstdope.eu:3478?transport=tcp"], username: "u", credential: "c" };
+        const servers = JSON.stringify([relay]);
+        expect(parseServerMessage(`{"type":"created","room":"K7Q-M4X","iceServers":${servers}}`)).toEqual({
             type: "created",
             room: "K7Q-M4X",
+            iceServers: [relay],
         });
+        expect(parseServerMessage(`{"type":"joined","iceServers":${servers}}`)).toEqual({ type: "joined", iceServers: [relay] });
+        expect(parseServerMessage('{"type":"joined","iceServers":[{"urls":"turns:r.example:443","username":"u","credential":"c"}]}')).toEqual({
+            type: "joined",
+            iceServers: [{ urls: "turns:r.example:443", username: "u", credential: "c" }],
+        });
+    });
+
+    it("drops a relay that is not exactly TURN servers, and still reads the message", () => {
+        for (const servers of [
+            "7",
+            "{}",
+            "[]",
+            '["turn:x"]',
+            '[{"urls":["turn:x"]}]',
+            '[{"urls":["turn:x"],"username":"u"}]',
+            '[{"urls":["turn:x"],"username":"u","credential":5}]',
+            '[{"urls":["stun:x"],"username":"u","credential":"c"}]',
+            '[{"urls":["https://x"],"username":"u","credential":"c"}]',
+            '[{"urls":[],"username":"u","credential":"c"}]',
+            '[{"urls":[7],"username":"u","credential":"c"}]',
+            JSON.stringify(Array.from({ length: 5 }, () => ({ urls: "turn:x", username: "u", credential: "c" }))),
+            JSON.stringify([{ urls: Array.from({ length: 9 }, () => "turn:x"), username: "u", credential: "c" }]),
+        ]) {
+            expect(parseServerMessage(`{"type":"created","room":"K7Q-M4X","iceServers":${servers}}`), servers).toEqual({
+                type: "created",
+                room: "K7Q-M4X",
+            });
+            expect(parseServerMessage(`{"type":"joined","iceServers":${servers}}`), servers).toEqual({ type: "joined" });
+        }
     });
 
     it("takes nothing that is not exactly a message", () => {
