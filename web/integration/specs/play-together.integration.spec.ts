@@ -27,6 +27,7 @@ const CONNECT_TIMEOUT_MS = 20_000;
  * Liaison, the meeting service (nr-z4nw), played by the test so CI never reaches the real one: it
  * opens rooms named K7Q-M4X, T9W-2HB, …, puts a joiner in by its code, passes signals between the
  * two, and tells the one left when the other's connection closes, as liaison's README describes.
+ * Given `relay`, it sends it with `created` and `joined` as the room's TURN relay (nr-1wbx).
  */
 type Room = { code: string; host: WebSocketRoute; joiner: WebSocketRoute | null };
 const ROOM_CODES = ["K7Q-M4X", "T9W-2HB", "P3R-8ZD", "H6N-5LQ"];
@@ -34,9 +35,14 @@ const ROOM_CODES = ["K7Q-M4X", "T9W-2HB", "P3R-8ZD", "H6N-5LQ"];
 class FakeLiaison {
     private rooms = new Map<string, Room>();
     private opened = 0;
+    relay: object[] | null = null;
 
     async serve(page: Page) {
         await page.routeWebSocket(/liaison\.rmstdope\.eu/, (ws) => this.accept(ws));
+    }
+
+    private relayField() {
+        return this.relay ? { iceServers: this.relay } : {};
     }
 
     private accept(ws: WebSocketRoute) {
@@ -47,14 +53,14 @@ class FakeLiaison {
             if (message.type === "create") {
                 room = { code: ROOM_CODES[this.opened++ % ROOM_CODES.length], host: ws, joiner: null };
                 this.rooms.set(room.code, room);
-                tell(ws, { type: "created", room: room.code });
+                tell(ws, { type: "created", room: room.code, ...this.relayField() });
             } else if (message.type === "join") {
                 const wanted = this.rooms.get(message.room);
                 if (!wanted) return tell(ws, { type: "error", reason: "room-not-found" });
                 if (wanted.joiner) return tell(ws, { type: "error", reason: "room-full" });
                 wanted.joiner = ws;
                 room = wanted;
-                tell(ws, { type: "joined" });
+                tell(ws, { type: "joined", ...this.relayField() });
                 tell(wanted.host, { type: "peer-joined" });
             } else if (message.type === "signal" && room) {
                 const other = ws === room.host ? room.joiner : room.host;
@@ -463,6 +469,29 @@ test.describe("Play together", () => {
         await expect(endedScreen(joiner).getByRole("button", { name: "Back to library" })).toBeFocused();
         await endedScreen(host).getByRole("button", { name: "Resume" }).click();
         await waitForRunningState(host);
+    });
+
+    test("Given liaison offers a relay, when two players who can reach each other directly connect, then they connect directly and nothing says Relayed", async ({
+        page: host,
+        browser
+    }) => {
+        // A relay nobody answers on: the two must not need it. Over TCP to a closed port it is refused at
+        // once; over UDP Chrome keeps retrying the allocation, and closing the page then outlasts the
+        // test's time on CI.
+        liaison.relay = [{ urls: ["turn:127.0.0.1:9?transport=tcp"], username: "u", credential: "c" }];
+        await openApp(host);
+        await loadRomFromFileInput(host);
+        await waitForRunningState(host);
+        const joiner = await secondBrowser(browser);
+        await openApp(joiner);
+
+        await connect(host, joiner);
+        for (const page of [host, joiner]) {
+            await expect(panel(page).locator(".netplay-pill")).toHaveText(/^Response time \d+ ms · /);
+            await expect(panel(page).locator(".netplay-relay")).toHaveCount(0);
+            await page.locator("#netplay-close").click();
+            await expect(page.locator("#netplay-open")).toHaveText(/^Connected · \d+ ms$/);
+        }
     });
 
     test("Given a Game Boy Advance game, when Play together opens, then hosting is greyed out with its reason", async ({ page }) => {

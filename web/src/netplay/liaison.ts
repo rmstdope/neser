@@ -3,8 +3,9 @@ import type { BuildId } from "./build_id";
 /**
  * The meeting service for network play (nr-z4nw): liaison, github.com/rmstdope/liaison. Two
  * browsers meet in a room named by a short code and swap, through it, the offer and answer that
- * open their direct connection; liaison never sees the game. This is the only file that touches
- * `WebSocket`; the session drives it through `Signaling`.
+ * open their connection, and get the TURN relay outpost gives the room (nr-1wbx); liaison never
+ * sees the game. This is the only file that touches `WebSocket`; the session drives it through
+ * `Signaling`.
  */
 
 export const LIAISON_URL = "wss://liaison.rmstdope.eu/ws";
@@ -30,12 +31,13 @@ export type ErrorReason =
     | "room-expired";
 
 /**
- * What liaison says. The TURN relay it may offer (`iceServers`) is left out: this build connects
- * the two browsers directly only.
+ * What liaison says. `created` and `joined` carry the room's TURN relay (`iceServers`, nr-1wbx)
+ * when outpost gave liaison one; both browsers get the same, and use it only when no direct path
+ * works.
  */
 export type ServerMessage =
-    | { type: "created"; room: string }
-    | { type: "joined" }
+    | { type: "created"; room: string; iceServers?: RTCIceServer[] }
+    | { type: "joined"; iceServers?: RTCIceServer[] }
     | { type: "peer-joined" }
     | { type: "peer-left" }
     | { type: "signal"; data: unknown }
@@ -61,6 +63,38 @@ function isBuild(value: unknown): value is BuildId {
     return isObject(value) && typeof value.version === "string" && typeof value.commit === "string";
 }
 
+/** The most relay servers, and URLs per server, taken from liaison: far more than it sends. */
+const MAX_RELAYS = 4;
+const MAX_RELAY_URLS = 8;
+
+const isTurnUrl = (value: unknown): value is string => typeof value === "string" && /^turns?:/.test(value);
+
+/**
+ * The relay liaison offers, read as untrusted: TURN servers with their credentials, exactly, or
+ * undefined. A relay that is not one is dropped and the room works for direct connections only.
+ */
+export function parseIceServers(value: unknown): RTCIceServer[] | undefined {
+    if (!Array.isArray(value) || value.length === 0 || value.length > MAX_RELAYS) return undefined;
+    const servers: RTCIceServer[] = [];
+    for (const entry of value) {
+        if (!isObject(entry) || typeof entry.username !== "string" || typeof entry.credential !== "string") return undefined;
+        const { urls, username, credential } = entry;
+        if (Array.isArray(urls)) {
+            if (urls.length === 0 || urls.length > MAX_RELAY_URLS || !urls.every(isTurnUrl)) return undefined;
+            servers.push({ urls: [...urls], username, credential });
+        } else if (isTurnUrl(urls)) {
+            servers.push({ urls, username, credential });
+        } else return undefined;
+    }
+    return servers;
+}
+
+/** `message` with the relay liaison offered, when it is one. */
+function withRelay<T extends object>(message: T, value: unknown): T & { iceServers?: RTCIceServer[] } {
+    const iceServers = parseIceServers(value);
+    return iceServers ? { ...message, iceServers } : message;
+}
+
 /** A message from liaison, read as untrusted: anything that is not exactly one is null. */
 export function parseServerMessage(text: string): ServerMessage | null {
     let message: unknown;
@@ -72,8 +106,9 @@ export function parseServerMessage(text: string): ServerMessage | null {
     if (!isObject(message)) return null;
     switch (message.type) {
         case "created":
-            return typeof message.room === "string" ? { type: "created", room: message.room } : null;
+            return typeof message.room === "string" ? withRelay({ type: "created" as const, room: message.room }, message.iceServers) : null;
         case "joined":
+            return withRelay({ type: "joined" as const }, message.iceServers);
         case "peer-joined":
         case "peer-left":
             return { type: message.type };

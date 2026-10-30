@@ -2,12 +2,13 @@
  * The direct connection between two browsers (nr-ayk5.3): one WebRTC data channel, set up from
  * an offer and an answer the two browsers swap through liaison (nr-z4nw). Each browser asks
  * outpost, NESER's own STUN server, for the public address its router gives it (nr-ri8n), so two
- * players in different homes can reach each other directly; no TURN relay is used (liaison's is
- * left for nr-1wbx), so a pair whose networks block a direct connection cannot connect. This is
- * the only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
+ * players in different homes can reach each other directly. Beside it each is given the room's TURN
+ * relay, outpost in Sweden, when liaison has one (nr-1wbx): WebRTC still prefers a direct path and
+ * goes through the relay only when none works, and the open link says which it took. This is the
+ * only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
  */
 
-/** outpost answers STUN only; it never carries game data. Without it, same-network play still works. */
+/** outpost's STUN, which never carries game data. Without it, same-network play still works. */
 export const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:outpost.rmstdope.eu:3478" }];
 
 /**
@@ -15,8 +16,12 @@ export const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:outpost.rmstdope.eu:34
  * being sent, nr-ayk5.4). `onClosed` is told once, however the channel ends.
  */
 export interface PeerLink {
+    /** Whether the two connected through the relay, as found when the channel opened; it never changes. */
+    readonly relayed: boolean;
     send(data: string | Uint8Array): void;
+    /** One listener: a later call replaces it. What arrived before the first is handed to it. */
     onMessage(listener: (data: string | Uint8Array) => void): void;
+    /** One listener: a later call replaces it. A close before it was set is told to it at once. */
     onClosed(listener: () => void): void;
     close(): void;
 }
@@ -35,9 +40,10 @@ export interface JoinStart {
     cancel(): void;
 }
 
+/** `relay` is the room's TURN relay from liaison, or none. */
 export interface PeerLinks {
-    startHost(): Promise<HostStart>;
-    startJoin(hostSdp: string): Promise<JoinStart>;
+    startHost(relay: RTCIceServer[]): Promise<HostStart>;
+    startJoin(hostSdp: string, relay: RTCIceServer[]): Promise<JoinStart>;
 }
 
 /**
@@ -60,31 +66,72 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
     });
 }
 
+/**
+ * Whether the candidate pair the connection chose has the relay at either end: the transport's
+ * selected pair, or else the nominated pair that succeeded. Either end, so both browsers agree.
+ */
+export function isRelayed(report: RTCStatsReport): boolean {
+    const stats = new Map<string, Record<string, unknown>>();
+    report.forEach((stat: Record<string, unknown>) => stats.set(String(stat.id), stat));
+    const all = [...stats.values()];
+    const selectedId = all.find((stat) => stat.type === "transport" && typeof stat.selectedCandidatePairId === "string")?.selectedCandidatePairId;
+    const pair =
+        (typeof selectedId === "string" ? stats.get(selectedId) : undefined) ??
+        all.find((stat) => stat.type === "candidate-pair" && stat.nominated === true && stat.state === "succeeded");
+    if (!pair) return false;
+    return [pair.localCandidateId, pair.remoteCandidateId].some((id) => stats.get(String(id))?.candidateType === "relay");
+}
+
+/** Whether `pc` is connected through the relay; a connection whose stats cannot be read counts as direct. */
+async function readRelayed(pc: RTCPeerConnection): Promise<boolean> {
+    try {
+        return isRelayed(await pc.getStats());
+    } catch {
+        return false;
+    }
+}
+
 export function wrapChannel(pc: RTCPeerConnection, channel: RTCDataChannel): PeerLink {
     channel.binaryType = "arraybuffer";
-    let closedListener: () => void = () => {};
+    // The link is made as the channel opens, before anyone listens (the stats are read first), so
+    // what arrives meanwhile is kept for the first listener, and a close is told to it late.
+    let closedListener: (() => void) | null = null;
+    let messageListener: ((data: string | Uint8Array) => void) | null = null;
+    const early: (string | Uint8Array)[] = [];
     let ended = false;
+    /** The channel ended from the other side, or the network, before anyone listened. */
+    let endedUntold = false;
     const end = () => {
         if (ended) return;
         ended = true;
-        closedListener();
+        if (closedListener) closedListener();
+        else endedUntold = true;
     };
     channel.addEventListener("close", end);
+    channel.addEventListener("message", (event) => {
+        const data = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : String(event.data);
+        if (messageListener) messageListener(data);
+        else early.push(data);
+    });
     pc.addEventListener("connectionstatechange", () => {
         if (pc.connectionState === "failed" || pc.connectionState === "closed") end();
     });
     return {
+        relayed: false,
         send: (data) => {
             if (channel.readyState !== "open") return;
             if (typeof data === "string") channel.send(data);
             else channel.send(data as Uint8Array<ArrayBuffer>);
         },
-        onMessage: (listener) =>
-            channel.addEventListener("message", (event) =>
-                listener(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : String(event.data))
-            ),
+        onMessage: (listener) => {
+            messageListener = listener;
+            for (const data of early.splice(0)) listener(data);
+        },
         onClosed: (listener) => {
             closedListener = listener;
+            if (!endedUntold) return;
+            endedUntold = false;
+            listener();
         },
         // Closing the connection itself would abort the channel and drop what is still queued (a
         // refusal, a goodbye), so the channel closes first and takes the connection with it.
@@ -104,15 +151,20 @@ function opened(pc: RTCPeerConnection, channel: Promise<RTCDataChannel>): Promis
         pc.addEventListener("connectionstatechange", () => {
             if (pc.connectionState === "failed" || pc.connectionState === "closed") reject(new Error("unreachable"));
         });
+        // Wrapped at once, so nothing that arrives while the stats are read is lost.
+        const open = (ch: RTCDataChannel) => {
+            const link = wrapChannel(pc, ch);
+            readRelayed(pc).then((relayed) => resolve({ ...link, relayed }));
+        };
         channel.then((ch) => {
-            if (ch.readyState === "open") resolve(wrapChannel(pc, ch));
-            else ch.addEventListener("open", () => resolve(wrapChannel(pc, ch)), { once: true });
+            if (ch.readyState === "open") open(ch);
+            else ch.addEventListener("open", () => open(ch), { once: true });
         });
     });
 }
 
-async function startHost(): Promise<HostStart> {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+async function startHost(relay: RTCIceServer[]): Promise<HostStart> {
+    const pc = new RTCPeerConnection({ iceServers: [...ICE_SERVERS, ...relay] });
     const channel = pc.createDataChannel("neser");
     try {
         await pc.setLocalDescription();
@@ -131,8 +183,8 @@ async function startHost(): Promise<HostStart> {
     };
 }
 
-async function startJoin(hostSdp: string): Promise<JoinStart> {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+async function startJoin(hostSdp: string, relay: RTCIceServer[]): Promise<JoinStart> {
+    const pc = new RTCPeerConnection({ iceServers: [...ICE_SERVERS, ...relay] });
     const channel = new Promise<RTCDataChannel>((resolve) => {
         pc.addEventListener("datachannel", (event) => resolve(event.channel), { once: true });
     });

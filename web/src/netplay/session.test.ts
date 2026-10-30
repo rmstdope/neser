@@ -8,6 +8,7 @@ const THEIRS = { version: "1.3.0", commit: "b81e07d" };
 
 /** The other browser at the end of a fake link: it answers pings after `rtt` ms, and logs the rest. */
 class FakeLink implements PeerLink {
+    relayed = false;
     sent: Record<string, unknown>[] = [];
     closed = false;
     rtt: number;
@@ -56,19 +57,20 @@ function fakeLinks() {
     const accepted = deferred<PeerLink>();
     const joined = deferred<PeerLink>();
     let offers = 0;
+    /** The relay each start was given, in order. */
+    const hostRelays: RTCIceServer[][] = [];
+    const joinRelays: RTCIceServer[][] = [];
     const links: PeerLinks = {
-        startHost: async (): Promise<HostStart> => ({
-            sdp: `offer-sdp-${++offers}`,
-            accept: vi.fn(() => accepted.promise),
-            cancel: hostCancel,
-        }),
-        startJoin: async (hostSdp: string): Promise<JoinStart> => ({
-            sdp: `answer-to-${hostSdp}`,
-            link: joined.promise,
-            cancel: joinCancel,
-        }),
+        startHost: async (relay): Promise<HostStart> => {
+            hostRelays.push(relay);
+            return { sdp: `offer-sdp-${++offers}`, accept: vi.fn(() => accepted.promise), cancel: hostCancel };
+        },
+        startJoin: async (hostSdp: string, relay): Promise<JoinStart> => {
+            joinRelays.push(relay);
+            return { sdp: `answer-to-${hostSdp}`, link: joined.promise, cancel: joinCancel };
+        },
     };
-    return { links, accepted, joined, hostCancel, joinCancel };
+    return { links, accepted, joined, hostCancel, joinCancel, hostRelays, joinRelays };
 }
 
 /** This browser's connection to liaison, which the test speaks for. */
@@ -469,6 +471,130 @@ describe("joining", () => {
         session.joinRoom("K7QM4Y");
         await settle();
         expect(liaison.sockets).toHaveLength(2);
+    });
+});
+
+const RELAY: RTCIceServer = { urls: ["turn:outpost.rmstdope.eu:3478?transport=udp"], username: "u", credential: "c" };
+
+describe("the relay (nr-1wbx)", () => {
+    it("gives the host's connection the relay liaison sent with the room", async () => {
+        session.host();
+        await settle();
+        const socket = liaison.last();
+        socket.says({ type: "created", room: "K7Q-M4X", iceServers: [RELAY] });
+        expect(session.view().relayTried).toBe(false);
+        socket.says({ type: "peer-joined" });
+        await settle();
+        expect(fake.hostRelays).toEqual([[RELAY]]);
+        // Tried once both sides have started with it: the joiner answered.
+        expect(session.view().relayTried).toBe(false);
+        socket.says({ type: "signal", data: { answer: "answer-sdp" } });
+        await settle();
+        expect(session.view().relayTried).toBe(true);
+    });
+
+    it("gives the joiner's connection the relay liaison sent on joining", async () => {
+        const socket = await joinTried();
+        socket.says({ type: "joined", iceServers: [RELAY] });
+        expect(session.view().relayTried).toBe(false);
+        socket.says({ type: "signal", data: { offer: "offer-sdp" } });
+        await settle();
+        expect(fake.joinRelays).toEqual([[RELAY]]);
+        expect(session.view().relayTried).toBe(true);
+    });
+
+    it("connects directly only when liaison sent no relay", async () => {
+        await hostSwapped();
+        await joinToWaiting();
+        expect(fake.hostRelays).toEqual([[]]);
+        expect(fake.joinRelays).toEqual([[]]);
+        expect(session.view().relayTried).toBe(false);
+    });
+
+    it("uses the relay of the room it has now, when a new room replaced the old", async () => {
+        session.host();
+        await settle();
+        liaison.last().says({ type: "created", room: "K7Q-M4X", iceServers: [RELAY] });
+        liaison.last().says({ type: "error", reason: "room-expired" });
+        await settle();
+        const socket = liaison.last();
+        socket.says({ type: "created", room: "ABC-DEF" });
+        socket.says({ type: "peer-joined" });
+        await settle();
+        expect(fake.hostRelays).toEqual([[]]);
+        expect(session.view().relayTried).toBe(false);
+    });
+
+    it("says the connection is relayed when its link went through the relay, on both sides", async () => {
+        await hostSwapped();
+        const link = new FakeLink(20);
+        link.relayed = true;
+        fake.accepted.resolve(link);
+        await settle();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(session.view()).toMatchObject({ phase: "connected", relayed: true });
+
+        session.cancel();
+        fake = fakeLinks();
+        session = createNetplaySession({ signaling: liaison.signaling, links: fake.links, build: OURS });
+        await joinToWaiting();
+        const joinLink = new FakeLink(20);
+        joinLink.relayed = true;
+        fake.joined.resolve(joinLink);
+        await settle();
+        joinLink.deliver({ t: "ready", rtt: 90 });
+        expect(session.view()).toMatchObject({ phase: "connected", relayed: true });
+    });
+
+    it("says a direct connection is not relayed", async () => {
+        await hostToConnect(20);
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(session.view()).toMatchObject({ phase: "connected", relayed: false });
+    });
+
+    it("keeps saying a refused connection was relayed, for its advice", async () => {
+        await joinToWaiting();
+        const link = new FakeLink(200);
+        link.relayed = true;
+        fake.joined.resolve(link);
+        await settle();
+        link.deliver({ t: "refuse", rtt: 210 });
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "too-slow", relayed: true });
+    });
+
+    it("says the relay was tried when the two could not connect even with it", async () => {
+        const socket = await joinTried();
+        socket.says({ type: "joined", iceServers: [RELAY] });
+        socket.says({ type: "signal", data: { offer: "offer-sdp" } });
+        await vi.advanceTimersByTimeAsync(10_100);
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: true });
+        session.startAgain();
+        expect(session.view()).toMatchObject({ relayTried: false, relayed: false });
+    });
+
+    it("does not say the relay was tried when either browser could not start a connection, so both say the same", async () => {
+        fake.links.startHost = () => Promise.reject(new Error("no WebRTC"));
+        session.host();
+        await settle();
+        liaison.last().says({ type: "created", room: "K7Q-M4X", iceServers: [RELAY] });
+        liaison.last().says({ type: "peer-joined" });
+        await settle();
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: false });
+
+        fake.links.startJoin = () => Promise.reject(new Error("no WebRTC"));
+        const socket = await joinTried();
+        socket.says({ type: "joined", iceServers: [RELAY] });
+        socket.says({ type: "signal", data: { offer: "offer-sdp" } });
+        await settle();
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: false });
+    });
+
+    it("does not say the relay was tried when liaison ends a room nobody connected through", async () => {
+        session.host();
+        await settle();
+        liaison.last().says({ type: "created", room: "K7Q-M4X", iceServers: [RELAY] });
+        liaison.last().says({ type: "error", reason: "bad-message" });
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: false });
     });
 });
 

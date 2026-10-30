@@ -40,9 +40,38 @@ export function inviteMessage(gameTitle: string, room: string): string {
     );
 }
 
-/** Always beneath the two cards (nr-ri8n, docs/ui/nr-ri8n-internet-play.html): plain information, nothing to accept. */
+/**
+ * Always beneath the two cards (nr-ri8n, docs/ui/nr-ri8n-internet-play.html; worded for the relay
+ * in nr-1wbx): plain information, nothing to accept.
+ */
 const ADDRESS_LINE =
-    "ⓘ Playing together connects your computer directly to the other player's, so each of you can see the other's internet address.";
+    "ⓘ Playing together connects your computer to the other player's — directly, or through NESER's relay when it has to — so each of you can see the other's internet address.";
+
+/**
+ * A game relayed through outpost (nr-1wbx, docs/ui/nr-1wbx-relay.html): this line beneath the
+ * response time, "Relayed" on the chip, and its own advice when it is too slow.
+ */
+const RELAY_LINE =
+    "↪ Connected through NESER's relay in Sweden, because your networks don't allow a direct connection. This can add a little delay.";
+const TOO_SLOW_TO_START = {
+    direct: "The connection between the two computers is too slow for the game to keep up. Try a wired connection or being closer to the router — or play on the same network.",
+    relayed:
+        "The connection through NESER's relay is too slow for the game to keep up. A direct connection is usually faster — try again with both of you on a home network, ideally wired.",
+};
+const BECAME_TOO_SLOW = {
+    direct: "The connection has become too slow to play. It may recover by itself — if not, try a wired connection or being closer to the router.",
+    relayed:
+        "The connection through NESER's relay has become too slow to play. It may recover by itself — if not, try again with both of you on a home network, ideally wired.",
+};
+/** Couldn't connect, by whether the connection was given a relay to try. */
+const COULD_NOT_CONNECT = {
+    noRelay:
+        "Your networks don't allow a direct connection, and NESER's relay can't be reached right now. Try again in a while, or with both of you on a home network.",
+    relayTried:
+        "Your networks blocked every way of connecting them, even through NESER's relay. This can happen on strict work or school networks — try again from another network.",
+};
+
+const relayWay = (view: NetplayView) => (view.relayed ? "relayed" : "direct");
 
 const OTHER: Record<Role, string> = { host: "the other player", join: "the host" };
 
@@ -181,6 +210,8 @@ export function createPlayTogether({
     }
 
     function drawButton(view: NetplayView) {
+        // Only the relayed chip names itself, so a screen reader hears "Relayed" on a narrow window too.
+        openButton.removeAttribute("aria-label");
         const lost = view.phase === "failed" && view.failure === "peer-left";
         if (view.phase === "connected" && view.sending) {
             const { direction, done, total } = view.sending;
@@ -208,7 +239,14 @@ export function createPlayTogether({
             const tone = responseTimeRating(view.rtt).tone;
             openButton.removeAttribute("data-icon");
             openButton.dataset.tone = tone;
-            openButton.replaceChildren(dot(tone), el("span", "netplay-chip-long", "Connected · "), `${view.rtt} ms`);
+            if (view.relayed) {
+                const arrow = el("span", "netplay-chip-short", "↪ ");
+                arrow.setAttribute("aria-hidden", "true");
+                openButton.replaceChildren(dot(tone), el("span", "netplay-chip-long", "Connected · Relayed · "), arrow, `${view.rtt} ms`);
+                openButton.setAttribute("aria-label", `Connected · Relayed · ${view.rtt} ms`);
+            } else {
+                openButton.replaceChildren(dot(tone), el("span", "netplay-chip-long", "Connected · "), `${view.rtt} ms`);
+            }
         } else if (lost || (endedHere && view.phase === "idle")) {
             openButton.removeAttribute("data-icon");
             openButton.dataset.tone = "err";
@@ -408,11 +446,7 @@ export function createPlayTogether({
         if (view.failure === "too-many-attempts") {
             return alert("err", "Too many wrong codes.", "Check the code with the host, then press Start again.");
         }
-        return alert(
-            "err",
-            "Couldn't connect your two computers.",
-            "Your networks don't allow a direct connection between them. This often happens on mobile, hotspot or work networks — try again with both of you on a home network."
-        );
+        return alert("err", "Couldn't connect your two computers.", view.relayTried ? COULD_NOT_CONNECT.relayTried : COULD_NOT_CONNECT.noRelay);
     }
 
     function drawRefused(view: NetplayView) {
@@ -421,11 +455,7 @@ export function createPlayTogether({
         body.append(status);
         if (view.rtt !== null) body.append(pill(view.rtt));
         body.append(
-            alert(
-                "err",
-                "",
-                "The connection between the two computers is too slow for the game to keep up. Try a wired connection or being closer to the router — or play on the same network."
-            ),
+            alert("err", "", TOO_SLOW_TO_START[relayWay(view)]),
             actions(btn("Close", close), btn("Try again", () => session.startAgain(), true))
         );
         body.querySelector<HTMLButtonElement>(".netplay-actions button")?.focus();
@@ -449,16 +479,11 @@ export function createPlayTogether({
             const rating = responseTimeRating(v.rtt);
             status.replaceChildren(dot(rating.tone), " ", el("b", "", "Connected"), ` to ${OTHER[role]}.`);
             live.replaceChildren(pill(v.rtt));
+            if (v.relayed) live.append(el("p", "netplay-relay", RELAY_LINE));
             if (rating.tone === "warn") {
                 live.append(alert("warn", "", "Your button presses will take a moment longer to show up. Fine for most games, harder for fast ones."));
             } else if (rating.tone === "err") {
-                live.append(
-                    alert(
-                        "err",
-                        "",
-                        "The connection has become too slow to play. It may recover by itself — if not, try a wired connection or being closer to the router."
-                    )
-                );
+                live.append(alert("err", "", BECAME_TOO_SLOW[relayWay(v)]));
             }
         };
         update(view);
