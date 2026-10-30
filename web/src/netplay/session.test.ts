@@ -486,6 +486,10 @@ describe("the relay (nr-1wbx)", () => {
         socket.says({ type: "peer-joined" });
         await settle();
         expect(fake.hostRelays).toEqual([[RELAY]]);
+        // Tried once both sides have started with it: the joiner answered.
+        expect(session.view().relayTried).toBe(false);
+        socket.says({ type: "signal", data: { answer: "answer-sdp" } });
+        await settle();
         expect(session.view().relayTried).toBe(true);
     });
 
@@ -566,6 +570,23 @@ describe("the relay (nr-1wbx)", () => {
         expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: true });
         session.startAgain();
         expect(session.view()).toMatchObject({ relayTried: false, relayed: false });
+    });
+
+    it("does not say the relay was tried when either browser could not start a connection, so both say the same", async () => {
+        fake.links.startHost = () => Promise.reject(new Error("no WebRTC"));
+        session.host();
+        await settle();
+        liaison.last().says({ type: "created", room: "K7Q-M4X", iceServers: [RELAY] });
+        liaison.last().says({ type: "peer-joined" });
+        await settle();
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: false });
+
+        fake.links.startJoin = () => Promise.reject(new Error("no WebRTC"));
+        const socket = await joinTried();
+        socket.says({ type: "joined", iceServers: [RELAY] });
+        socket.says({ type: "signal", data: { offer: "offer-sdp" } });
+        await settle();
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: false });
     });
 
     it("does not say the relay was tried when liaison ends a room nobody connected through", async () => {

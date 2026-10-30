@@ -19,7 +19,9 @@ export interface PeerLink {
     /** Whether the two connected through the relay, as found when the channel opened; it never changes. */
     readonly relayed: boolean;
     send(data: string | Uint8Array): void;
+    /** One listener: a later call replaces it. What arrived before the first is handed to it. */
     onMessage(listener: (data: string | Uint8Array) => void): void;
+    /** One listener: a later call replaces it. A close before it was set is told to it at once. */
     onClosed(listener: () => void): void;
     close(): void;
 }

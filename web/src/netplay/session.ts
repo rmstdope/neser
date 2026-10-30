@@ -139,8 +139,9 @@ export interface NetplayView {
     /** How the other player went, once they have (failure "peer-left"). */
     leaving: Leaving | null;
     /**
-     * This attempt's connection was given the room's relay (nr-1wbx): which message says the two
-     * couldn't connect. A failure before any connection was made, or with no relay, says none was available.
+     * Both browsers started their connections with the room's relay (nr-1wbx): which message says
+     * the two couldn't connect. Set by the host on the joiner's answer and by the joiner once it has
+     * answered, so both say the same; a failure before then, or with no relay, says none was available.
      */
     relayTried: boolean;
     /** The two connected through the relay; kept by a failure, so a too-slow refusal can say so. */
@@ -679,7 +680,6 @@ export function createNetplaySession({
         } else if (m.type === "peer-joined" && state.phase === "waiting") {
             set({ phase: "connecting" });
             startConnectLimit(mine);
-            set({ relayTried: relay.length > 0 });
             links.startHost(relay).then(
                 (start) => {
                     if (mine !== attempt) return start.cancel();
@@ -693,6 +693,8 @@ export function createNetplaySession({
             const answer = sdpIn(m.data, "answer");
             if (answer === null) return;
             swapped = true;
+            // Both browsers have now started with the room's relay: from here, it has been tried.
+            set({ relayTried: relay.length > 0 });
             hostStart.accept(answer).then(
                 (link) => {
                     if (mine !== attempt) return link.close();
@@ -729,11 +731,12 @@ export function createNetplaySession({
             const offer = sdpIn(m.data, "offer");
             if (offer === null) return;
             swapped = true;
-            set({ relayTried: relay.length > 0 });
             links.startJoin(offer, relay).then(
                 (start) => {
                     if (mine !== attempt) return start.cancel();
                     joinStart = start;
+                    // Both browsers have now started with the room's relay: from here, it has been tried.
+                    set({ relayTried: relay.length > 0 });
                     socket?.send({ type: "signal", data: { answer: start.sdp } });
                     start.link.then(
                         (link) => {
