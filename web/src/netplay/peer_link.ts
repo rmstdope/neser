@@ -1,6 +1,7 @@
 /**
  * The direct connection between two browsers (nr-ayk5.3): one WebRTC data channel, set up from
- * the offer and answer the two players copy to each other. No STUN or TURN server is asked, so
+ * an offer and an answer the two browsers swap through liaison (nr-z4nw). No STUN or TURN server
+ * is asked (liaison's relay is not used either), so
  * only the browsers' own addresses are offered and the two must reach each other directly. This
  * is the only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
  */
@@ -35,7 +36,7 @@ export interface PeerLinks {
     startJoin(hostSdp: string): Promise<JoinStart>;
 }
 
-/** A code carries every address at once, so the offer and answer wait for the browser to find them. */
+/** The offer and answer each carry every address at once, so they wait for the browser to find them. */
 const GATHER_LIMIT_MS = 3000;
 /** How long a closing channel may take to send what is queued before the connection is ended anyway. */
 const CLOSE_LIMIT_MS = 2000;

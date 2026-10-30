@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeCode } from "./code";
+import type { ClientMessage, ServerMessage, Signaling, SignalingSocket } from "./liaison";
 import { MAX_PACKAGE_BYTES, type GamePackage } from "./game_package";
 import type { HostStart, JoinStart, PeerLink, PeerLinks } from "./peer_link";
 import {
@@ -68,6 +68,32 @@ function linksTo(end: End): PeerLinks {
     };
 }
 
+/** Liaison as one room: the host's `create` opens it, the joiner's `join` puts both in it, and signals cross. */
+function liaisonRoom(): Signaling {
+    const listeners: ((m: ServerMessage) => void)[] = [];
+    const tell = (to: number, m: ServerMessage) => setTimeout(() => listeners[to]?.(m), 0);
+    return {
+        open: async (): Promise<SignalingSocket> => {
+            const me = listeners.length;
+            listeners.push(() => {});
+            return {
+                send: (m: ClientMessage) => {
+                    if (m.type === "create") tell(me, { type: "created", room: "K7Q-M4X" });
+                    else if (m.type === "join") {
+                        tell(me, { type: "joined" });
+                        tell(0, { type: "peer-joined" });
+                    } else tell(1 - me, { type: "signal", data: m.data });
+                },
+                onMessage: (listener) => {
+                    listeners[me] = listener;
+                },
+                onClosed: () => {},
+                close: () => {},
+            };
+        },
+    };
+}
+
 async function settle() {
     for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
 }
@@ -95,27 +121,30 @@ async function connected() {
     starts = [];
     checkGame = async () => 0;
     confirmStart = () => true;
+    const signaling = liaisonRoom();
     host = createNetplaySession({
+        signaling,
         links: linksTo(hostEnd),
         build: BUILD,
         confirmStart: (g) => confirmStart(g),
         onStart: (start) => starts.push({ side: "host", at: performance.now(), start }),
     });
     join = createNetplaySession({
+        signaling,
         links: linksTo(joinEnd),
         build: BUILD,
         checkGame: (g) => checkGame(g),
         onStart: (start) => starts.push({ side: "join", at: performance.now(), start }),
     });
-    join.join();
-    await join.paste(await encodeCode("host", BUILD, "offer"));
-    join.next();
     host.host();
-    for (let i = 0; i < 10_000 && host.view().ownCode === null; i++) await new Promise((r) => setImmediate(r));
-    host.next();
-    await host.paste(await encodeCode("reply", BUILD, "answer"));
-    host.connect();
     await settle();
+    await vi.advanceTimersByTimeAsync(0);
+    join.join();
+    join.joinRoom(host.view().room ?? "");
+    for (let i = 0; i < 10; i++) {
+        await settle();
+        await vi.advanceTimersByTimeAsync(0);
+    }
     await vi.advanceTimersByTimeAsync(2000);
     expect(host.view().phase).toBe("connected");
     expect(join.view().phase).toBe("connected");
