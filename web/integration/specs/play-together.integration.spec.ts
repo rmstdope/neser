@@ -475,8 +475,10 @@ test.describe("Play together", () => {
         page: host,
         browser
     }) => {
-        // A relay nobody answers on: the two must not need it, and must not wait on it past the limit.
-        liaison.relay = [{ urls: ["turn:127.0.0.1:9?transport=udp"], username: "u", credential: "c" }];
+        // A relay nobody answers on: the two must not need it. Over TCP to a closed port it is refused at
+        // once; over UDP Chrome keeps retrying the allocation, and closing the page then outlasts the
+        // test's time on CI.
+        liaison.relay = [{ urls: ["turn:127.0.0.1:9?transport=tcp"], username: "u", credential: "c" }];
         await openApp(host);
         await loadRomFromFileInput(host);
         await waitForRunningState(host);
