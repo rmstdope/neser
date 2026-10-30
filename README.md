@@ -181,7 +181,9 @@ asks for each chip's file once. See [README-SNES.md](README-SNES.md).
 the host gets a short room code (like `K7Q-M4X`) to read out or copy, and the other player types it.
 The two browsers meet through NESER's meeting service, liaison (`wss://liaison.rmstdope.eu/ws`), which
 only passes the connection setup between them and never sees the game; they then connect directly,
-so both computers must be on the same network (or VPN). The two must run the same NESER build, and
+so both computers must be on the same network (or VPN). liaison accepts pages served from
+https://neser.rmstdope.eu and from `localhost`/`127.0.0.1` only, so a self-hosted copy reached by another
+address (a LAN IP, say) cannot start a network game. The two must run the same NESER build, and
 a connection slower than 120 ms round trip is refused. Once connected the host presses **Start game**:
 the game (with any SNES firmware it needs) and the host's current moment are sent to the other
 player, who needs no copy of the game and does not keep it, and both start from that moment after a

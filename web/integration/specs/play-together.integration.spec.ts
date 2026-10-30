@@ -489,6 +489,11 @@ test.describe("Play together", () => {
         await expect(panel(page)).toContainText("There's no game with that code. Check the code with the host and try again.");
         await expect(field).toHaveValue("ABC-DEF");
         await expect(field).toBeFocused();
+        // A code pasted from a chat, with spaces round the dash, is taken whole.
+        await field.selectText();
+        await page.keyboard.insertText(" k7q - m4x ");
+        await expect(field).toHaveValue("K7Q-M4X");
+        await expect(panel(page).getByRole("button", { name: "Join", exact: true })).toBeEnabled();
         await page.keyboard.press("Escape");
         await expect(panel(page)).toBeHidden();
         await expect(page.locator("#netplay-open")).toBeFocused();

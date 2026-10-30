@@ -330,7 +330,7 @@ export function createPlayTogether({
         field.setAttribute("autocapitalize", "characters");
         field.autocomplete = "off";
         field.spellcheck = false;
-        field.maxLength = ROOM_CODE_LENGTH + 1;
+        // No maxlength: the browser would cut a paste short before it is tidied (" k7q - m4x ").
         field.value = showRoomCode(typedRoom);
         // While a code is tried, and after a failure, the field shows the code that was tried.
         field.readOnly = view.phase !== "idle";
@@ -359,8 +359,12 @@ export function createPlayTogether({
         const join = btn("Join", () => session.joinRoom(showRoomCode(typedRoom)), true);
         const ready = () => (join.disabled = typedRoom.length !== ROOM_CODE_LENGTH);
         field.addEventListener("input", () => {
+            // The caret stays after the same code character, so a typo is fixed where it is.
+            const before = tidyRoomCode(field.value.slice(0, field.selectionStart ?? field.value.length)).length;
             typedRoom = tidyRoomCode(field.value);
             field.value = showRoomCode(typedRoom);
+            const at = showRoomCode(typedRoom.slice(0, before)).length;
+            field.setSelectionRange(at, at);
             ready();
         });
         field.addEventListener("keydown", (event) => {

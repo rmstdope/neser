@@ -415,6 +415,37 @@ describe("joining", () => {
         expect(field().value).toBe("K7Q-M4X");
     });
 
+    it("takes a pasted code whatever its length before tidying, even into a full field", () => {
+        joinStep1();
+        expect(field().hasAttribute("maxlength")).toBe(false);
+        type("K7QM4X");
+        type("K7Q-M4X  k7q - m4y ");
+        expect(field().value).toBe("K7Q-M4X");
+    });
+
+    it("keeps the caret where a typo is being fixed", () => {
+        joinStep1();
+        type("K7QM4X");
+        // The 7 is deleted: the dash moves, and the caret stays after the K.
+        field().value = "KQ-M4X";
+        field().setSelectionRange(1, 1);
+        field().dispatchEvent(new Event("input"));
+        expect(field().value).toBe("KQM-4X");
+        expect(field().selectionStart).toBe(1);
+        // A 7 typed there lands where the old one was.
+        field().value = "K7QM-4X";
+        field().setSelectionRange(2, 2);
+        field().dispatchEvent(new Event("input"));
+        expect(field().value).toBe("K7Q-M4X");
+        expect(field().selectionStart).toBe(2);
+        // Past the dash, the caret keeps its place after the code character before it.
+        field().value = "K7Q-MZ4X";
+        field().setSelectionRange(6, 6);
+        field().dispatchEvent(new Event("input"));
+        expect(field().value).toBe("K7Q-MZ4");
+        expect(field().selectionStart).toBe(6);
+    });
+
     it("enables Join once six characters are in, and Enter presses it", () => {
         joinStep1();
         type("K7QM4");
