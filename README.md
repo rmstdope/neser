@@ -184,8 +184,11 @@ only passes the connection setup between them and never sees the game; they then
 each browser first asking outpost, NESER's own STUN server (`stun:outpost.rmstdope.eu:3478`), for its
 public address, so players in different homes can play together and each can see the other's internet
 address. Networks that pick a new public port for every destination (common on mobile, hotspot and
-work networks) cannot be connected this way; after about 10 seconds both players are told so. With
-outpost down, only computers on the same network (or VPN) connect. liaison accepts pages served from
+work networks) cannot be connected directly; for those, liaison hands both browsers the room's TURN
+relay on outpost, in Sweden, and the game goes through it, which the window and the top-bar chip
+("Relayed") say. Players who can connect directly still do. When even the relay cannot connect them,
+or liaison had no relay to give, both players are told so after about 10 seconds. With outpost down,
+only computers on the same network (or VPN) connect. liaison accepts pages served from
 https://neser.rmstdope.eu and from `localhost`/`127.0.0.1` only, so a self-hosted copy reached by another
 address (a LAN IP, say) cannot start a network game. The two must run the same NESER build, and
 a connection slower than 120 ms round trip is refused. Once connected the host presses **Start game**:
