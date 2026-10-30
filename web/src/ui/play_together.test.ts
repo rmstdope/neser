@@ -19,6 +19,8 @@ const IDLE: NetplayView = {
     sending: null,
     notice: null,
     leaving: null,
+    relayOffered: false,
+    relayed: false,
 };
 
 class FakeSession implements NetplaySession {
@@ -50,6 +52,10 @@ class FakeSession implements NetplaySession {
 }
 
 const BUILD = { version: "1.3.0", commit: "4f2a9c1" };
+const NO_RELAY =
+    "Couldn't connect your two computers. Your networks don't allow a direct connection, and NESER's relay can't be reached right now. Try again in a while, or with both of you on a home network.";
+const RELAY_TRIED =
+    "Couldn't connect your two computers. Your networks blocked every way of connecting them, even through NESER's relay. This can happen on strict work or school networks — try again from another network.";
 let session: FakeSession;
 let game: CurrentGame | null;
 const PACKAGE: GamePackage = { kind: "nes", name: "smb3.nes", rom: new Uint8Array([1]), firmware: null, state: new Uint8Array([2]) };
@@ -88,6 +94,15 @@ function open() {
 }
 function alerts() {
     return [...body().querySelectorAll<HTMLElement>(".netplay-alert")].map((a) => [a.dataset.tone, a.textContent]);
+}
+function hostStep1() {
+    open();
+    body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
+}
+function joinStep1() {
+    game = null;
+    open();
+    body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
 }
 
 beforeEach(() => {
@@ -161,7 +176,7 @@ describe("the choice", () => {
     });
 
     const ADDRESS_LINE =
-        "ⓘ Playing together connects your computer directly to the other player's, so each of you can see the other's internet address.";
+        "ⓘ Playing together connects your computer to the other player's — directly, or through NESER's relay when it has to — so each of you can see the other's internet address.";
 
     it.each([
         ["a NES game", { kind: "nes", title: "Super Mario Bros. 3" }],
@@ -193,10 +208,6 @@ describe("the choice", () => {
 });
 
 describe("hosting", () => {
-    function hostStep1() {
-        open();
-        body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
-    }
     function room() {
         return body().querySelector(".netplay-room")?.textContent;
     }
@@ -312,10 +323,10 @@ describe("hosting", () => {
         expect(buttonNames()).toEqual(["Close", "Try again"]);
     });
 
-    it("says when the two computers could not be connected, offering to start again (nr-ri8n)", () => {
+    it("says when the two computers could not be connected and no relay was available, offering to start again (nr-1wbx)", () => {
         hostStep1();
-        session.emit({ phase: "failed", failure: "unreachable" });
-        expect(alerts()).toEqual([["err", "Couldn't connect your two computers. Your networks don't allow a direct connection between them. This often happens on mobile, hotspot or work networks — try again with both of you on a home network."]]);
+        session.emit({ phase: "failed", failure: "unreachable", relayOffered: false });
+        expect(alerts()).toEqual([["err", NO_RELAY]]);
         expect(buttonNames()).toEqual(["Close", "Start again"]);
         expect(document.activeElement).toBe(button("Start again"));
         button("Start again")!.click();
@@ -387,11 +398,6 @@ describe("hosting", () => {
 });
 
 describe("joining", () => {
-    function joinStep1() {
-        game = null;
-        open();
-        body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
-    }
     function field() {
         return body().querySelector<HTMLInputElement>("input.netplay-room-field")!;
     }
@@ -550,11 +556,11 @@ describe("joining", () => {
         expect(buttonNames()).toEqual(["Cancel", "Join"]);
     });
 
-    it("says when the two computers could not be connected, offering to start again (nr-ri8n)", () => {
+    it("says when the two computers could not be connected and no relay was available, offering to start again (nr-1wbx)", () => {
         joinStep1();
         type("K7QM4X");
-        session.emit({ phase: "failed", failure: "unreachable" });
-        expect(alerts()).toEqual([["err", "Couldn't connect your two computers. Your networks don't allow a direct connection between them. This often happens on mobile, hotspot or work networks — try again with both of you on a home network."]]);
+        session.emit({ phase: "failed", failure: "unreachable", relayOffered: false });
+        expect(alerts()).toEqual([["err", NO_RELAY]]);
         expect(buttonNames()).toEqual(["Close", "Start again"]);
         expect(document.activeElement).toBe(button("Start again"));
     });
@@ -574,6 +580,115 @@ describe("joining", () => {
         expect(text()).toContain("Connected to the host.");
         expect(text()).toContain("⟳ Waiting for the host to start the game…");
         expect(buttonNames()).toEqual(["Disconnect"]);
+    });
+});
+
+describe("playing through the relay (nr-1wbx)", () => {
+    const RELAY_LINE =
+        "↪ Connected through NESER's relay in Sweden, because your networks don't allow a direct connection. This can add a little delay.";
+    const relayLines = () => [...body().querySelectorAll<HTMLElement>(".netplay-relay")].map((line) => line.textContent);
+
+    it.each([
+        ["host", hostStep1],
+        ["joiner", joinStep1],
+    ] as const)("says the %s is connected through the relay, beneath the response time", (_, toStep1) => {
+        toStep1();
+        session.emit({ step: 2, phase: "connected", rtt: 18, relayed: true });
+        expect(relayLines()).toEqual([RELAY_LINE]);
+        const live = body().querySelector(".netplay-live")!;
+        expect([...live.children].map((child) => child.className)).toEqual(["netplay-pill", "netplay-relay"]);
+        expect(body().querySelector(".netplay-relay")!.matches("button, a, [tabindex]")).toBe(false);
+    });
+
+    it("puts the line above the joiner's wait for the host", () => {
+        joinStep1();
+        session.emit({ step: 2, phase: "connected", rtt: 18, relayed: true });
+        expect(text().indexOf(RELAY_LINE)).toBeLessThan(text().indexOf("⟳ Waiting for the host to start the game…"));
+    });
+
+    it("says nothing of a relay on a direct connection", () => {
+        hostStep1();
+        session.emit({ step: 2, phase: "connected", rtt: 18, relayed: false });
+        expect(relayLines()).toEqual([]);
+        expect(text()).not.toContain("relay");
+    });
+
+    it("keeps the line above the alert when the relayed connection becomes too slow, with the relay's advice", () => {
+        hostStep1();
+        session.emit({ step: 2, phase: "connected", rtt: 18, relayed: true });
+        session.emit({ rtt: 190 });
+        const live = body().querySelector(".netplay-live")!;
+        expect([...live.children].map((child) => child.className)).toEqual(["netplay-pill", "netplay-relay", "netplay-alert"]);
+        expect(alerts()).toEqual([
+            [
+                "err",
+                "The connection through NESER's relay has become too slow to play. It may recover by itself — if not, try again with both of you on a home network, ideally wired.",
+            ],
+        ]);
+        expect(buttonNames()).toEqual(["Disconnect", "Start game"]);
+    });
+
+    it("gives the relay's advice when a relayed connection is too slow at connect time", () => {
+        hostStep1();
+        session.emit({ phase: "failed", failure: "too-slow", rtt: 210, relayed: true });
+        expect(text()).toContain("Too slow to play");
+        expect(alerts()).toEqual([
+            [
+                "err",
+                "The connection through NESER's relay is too slow for the game to keep up. A direct connection is usually faster — try again with both of you on a home network, ideally wired.",
+            ],
+        ]);
+        expect(buttonNames()).toEqual(["Close", "Try again"]);
+    });
+
+    it.each([
+        ["host", hostStep1],
+        ["joiner", joinStep1],
+    ] as const)("tells the %s the relay was tried and still could not connect them", (_, toStep1) => {
+        toStep1();
+        session.emit({ phase: "failed", failure: "unreachable", relayOffered: true });
+        expect(alerts()).toEqual([["err", RELAY_TRIED]]);
+        expect(buttonNames()).toEqual(["Close", "Start again"]);
+        expect(document.activeElement).toBe(button("Start again"));
+    });
+
+    it("says Relayed on the chip, and only the arrow on a narrow window, while the screen reader hears Relayed", () => {
+        open();
+        session.emit({ role: "host", step: 2, phase: "connected", rtt: 18, relayed: true });
+        q("#netplay-close")!.click();
+        expect(chip().querySelector(".netplay-chip-long")!.textContent).toBe("Connected · Relayed · ");
+        expect(chip().querySelector(".netplay-chip-short")!.textContent).toBe("↪ ");
+        expect(chip().querySelector(".netplay-chip-short")!.getAttribute("aria-hidden")).toBe("true");
+        expect(chip().getAttribute("aria-label")).toBe("Connected · Relayed · 18 ms");
+        expect(chip().dataset.tone).toBe("ok");
+        session.emit({ rtt: 110 });
+        expect(chip().dataset.tone).toBe("warn");
+        expect(chip().getAttribute("aria-label")).toBe("Connected · Relayed · 110 ms");
+        session.emit({ rtt: 160 });
+        expect(chip().dataset.tone).toBe("err");
+    });
+
+    it("says neither Relayed nor the arrow while waiting or once disconnected", () => {
+        open();
+        session.emit({ role: "host", step: 2, phase: "connected", rtt: 84, relayed: true });
+        q("#netplay-close")!.click();
+        waiting = true;
+        window_.refresh();
+        expect(chip().textContent).toBe("Waiting…");
+        expect(chip().hasAttribute("aria-label")).toBe(false);
+        waiting = false;
+        session.emit({ phase: "failed", failure: "peer-left" });
+        expect(chip().textContent).toBe("Disconnected");
+        expect(chip().hasAttribute("aria-label")).toBe(false);
+    });
+
+    it("leaves a direct game's chip as it was", () => {
+        open();
+        session.emit({ role: "host", step: 2, phase: "connected", rtt: 18, relayed: false });
+        q("#netplay-close")!.click();
+        expect(chip().textContent).toBe("Connected · 18 ms");
+        expect(chip().querySelector(".netplay-chip-short")).toBeNull();
+        expect(chip().hasAttribute("aria-label")).toBe(false);
     });
 });
 

@@ -2543,6 +2543,13 @@ body.handheld:not(.handheld-portrait).touch-running .screen-wrap canvas {
   color: var(--steel-hi);
 }
 
+/* A relayed game (nr-1wbx): one blue line beneath the response time; plain text that wraps. */
+.netplay-body p.netplay-relay {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--steel-hi);
+}
+
 .netplay-pill {
   display: inline-flex;
   margin: 6px 0;
