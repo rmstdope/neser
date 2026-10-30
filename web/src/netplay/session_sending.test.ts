@@ -24,6 +24,7 @@ type Data = string | Uint8Array;
 
 /** One end of the pair; what it sends reaches the other end `ONE_WAY_MS` later, unless held or dropped. */
 class End implements PeerLink {
+    relayed = false;
     other!: End;
     listener: (data: Data) => void = () => {};
     closedListener: () => void = () => {};

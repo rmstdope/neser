@@ -19,7 +19,9 @@ import { ROOM_CODE_LENGTH, showRoomCode, tidyRoomCode } from "./room_code";
  * other side does once its link is open, and the link itself says whether the two connected. A
  * host whose room ran out, or whose joiner left before the swap, gets a fresh room by itself. The
  * joiner keeps one connection to liaison across its tries at a code, so liaison's limit on wrong
- * codes holds; Start again begins with a fresh one.
+ * codes holds; Start again begins with a fresh one. liaison may give the room a TURN relay with
+ * `created` and `joined` (nr-1wbx); both connections are offered it, the view says whether one was
+ * offered (which can't-connect message to show) and whether the link went through it.
  *
  * The two browsers talk in JSON text over the link: each answers `ping` with `pong`; the host
  * measures `CHECK_SAMPLES` round trips on connecting and sends `ready` or `refuse` with their
@@ -136,6 +138,10 @@ export interface NetplayView {
     notice: SendingNotice | null;
     /** How the other player went, once they have (failure "peer-left"). */
     leaving: Leaving | null;
+    /** Liaison gave this attempt's room a relay (nr-1wbx): which message says the two couldn't connect. */
+    relayOffered: boolean;
+    /** The two connected through the relay; kept by a failure, so a too-slow refusal can say so. */
+    relayed: boolean;
 }
 
 export interface NetplaySession {
@@ -251,6 +257,8 @@ const IDLE: NetplayView = {
     sending: null,
     notice: null,
     leaving: null,
+    relayOffered: false,
+    relayed: false,
 };
 
 const isCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0;
@@ -295,6 +303,8 @@ export function createNetplaySession({
     let socket: SignalingSocket | null = null;
     /** The offer and answer have been swapped: the other side leaving the room is no longer news. */
     let swapped = false;
+    /** The TURN relay liaison gave the room of the attempt under way, or none. */
+    let relay: RTCIceServer[] = [];
     let hostStart: HostStart | null = null;
     let joinStart: JoinStart | null = null;
     let live: PeerLink | null = null;
@@ -344,6 +354,7 @@ export function createNetplaySession({
         live = null;
         closeSocket();
         swapped = false;
+        relay = [];
         samples = [];
         unanswered = new Map();
     }
@@ -554,6 +565,7 @@ export function createNetplaySession({
     /** Listens on a fresh link: pongs feed `onSample`, and the other player's leaving ends it. */
     function adopt(link: PeerLink, mine: number, onSample: (rtt: number) => void, onMessage: (m: Message) => void) {
         live = link;
+        set({ relayed: link.relayed });
         link.onMessage((data) => {
             if (mine !== attempt) return;
             if (typeof data !== "string") {
@@ -659,11 +671,12 @@ export function createNetplaySession({
 
     function hostHears(m: ServerMessage, mine: number) {
         if (m.type === "created" && state.phase === "opening") {
-            set({ phase: "waiting", room: showRoomCode(tidyRoomCode(m.room)) });
+            relay = m.iceServers ?? [];
+            set({ phase: "waiting", room: showRoomCode(tidyRoomCode(m.room)), relayOffered: relay.length > 0 });
         } else if (m.type === "peer-joined" && state.phase === "waiting") {
             set({ phase: "connecting" });
             startConnectLimit(mine);
-            links.startHost().then(
+            links.startHost(relay).then(
                 (start) => {
                     if (mine !== attempt) return start.cancel();
                     hostStart = start;
@@ -706,12 +719,14 @@ export function createNetplaySession({
     function joinerHears(m: ServerMessage, mine: number) {
         if (state.phase !== "connecting") return;
         if (m.type === "joined") {
+            relay = m.iceServers ?? [];
+            set({ relayOffered: relay.length > 0 });
             startConnectLimit(mine);
         } else if (m.type === "signal" && !joinStart && !swapped) {
             const offer = sdpIn(m.data, "offer");
             if (offer === null) return;
             swapped = true;
-            links.startJoin(offer).then(
+            links.startJoin(offer, relay).then(
                 (start) => {
                     if (mine !== attempt) return start.cancel();
                     joinStart = start;
@@ -749,7 +764,7 @@ export function createNetplaySession({
         const chars = tidyRoomCode(code);
         if (state.role !== "join" || state.phase !== "idle" || chars.length !== ROOM_CODE_LENGTH) return;
         const mine = attempt;
-        set({ phase: "connecting", joinProblem: null });
+        set({ phase: "connecting", joinProblem: null, relayOffered: false });
         const ask = (s: SignalingSocket) => s.send({ type: "join", room: showRoomCode(chars), build });
         if (socket) return ask(socket);
         openSocket(

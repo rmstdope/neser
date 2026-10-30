@@ -106,9 +106,9 @@ export function parseServerMessage(text: string): ServerMessage | null {
     if (!isObject(message)) return null;
     switch (message.type) {
         case "created":
-            return typeof message.room === "string" ? withRelay({ type: "created", room: message.room }, message.iceServers) : null;
+            return typeof message.room === "string" ? withRelay({ type: "created" as const, room: message.room }, message.iceServers) : null;
         case "joined":
-            return withRelay({ type: "joined" }, message.iceServers);
+            return withRelay({ type: "joined" as const }, message.iceServers);
         case "peer-joined":
         case "peer-left":
             return { type: message.type };
