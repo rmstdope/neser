@@ -89,32 +89,47 @@ async function readRelayed(pc: RTCPeerConnection): Promise<boolean> {
     }
 }
 
-export function wrapChannel(pc: RTCPeerConnection, channel: RTCDataChannel, relayed = false): PeerLink {
+export function wrapChannel(pc: RTCPeerConnection, channel: RTCDataChannel): PeerLink {
     channel.binaryType = "arraybuffer";
-    let closedListener: () => void = () => {};
+    // The link is made as the channel opens, before anyone listens (the stats are read first), so
+    // what arrives meanwhile is kept for the first listener, and a close is told to it late.
+    let closedListener: (() => void) | null = null;
+    let messageListener: ((data: string | Uint8Array) => void) | null = null;
+    const early: (string | Uint8Array)[] = [];
     let ended = false;
+    /** The channel ended from the other side, or the network, before anyone listened. */
+    let endedUntold = false;
     const end = () => {
         if (ended) return;
         ended = true;
-        closedListener();
+        if (closedListener) closedListener();
+        else endedUntold = true;
     };
     channel.addEventListener("close", end);
+    channel.addEventListener("message", (event) => {
+        const data = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : String(event.data);
+        if (messageListener) messageListener(data);
+        else early.push(data);
+    });
     pc.addEventListener("connectionstatechange", () => {
         if (pc.connectionState === "failed" || pc.connectionState === "closed") end();
     });
     return {
-        relayed,
+        relayed: false,
         send: (data) => {
             if (channel.readyState !== "open") return;
             if (typeof data === "string") channel.send(data);
             else channel.send(data as Uint8Array<ArrayBuffer>);
         },
-        onMessage: (listener) =>
-            channel.addEventListener("message", (event) =>
-                listener(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : String(event.data))
-            ),
+        onMessage: (listener) => {
+            messageListener = listener;
+            for (const data of early.splice(0)) listener(data);
+        },
         onClosed: (listener) => {
             closedListener = listener;
+            if (!endedUntold) return;
+            endedUntold = false;
+            listener();
         },
         // Closing the connection itself would abort the channel and drop what is still queued (a
         // refusal, a goodbye), so the channel closes first and takes the connection with it.
@@ -134,7 +149,11 @@ function opened(pc: RTCPeerConnection, channel: Promise<RTCDataChannel>): Promis
         pc.addEventListener("connectionstatechange", () => {
             if (pc.connectionState === "failed" || pc.connectionState === "closed") reject(new Error("unreachable"));
         });
-        const open = (ch: RTCDataChannel) => readRelayed(pc).then((relayed) => resolve(wrapChannel(pc, ch, relayed)));
+        // Wrapped at once, so nothing that arrives while the stats are read is lost.
+        const open = (ch: RTCDataChannel) => {
+            const link = wrapChannel(pc, ch);
+            readRelayed(pc).then((relayed) => resolve({ ...link, relayed }));
+        };
         channel.then((ch) => {
             if (ch.readyState === "open") open(ch);
             else ch.addEventListener("open", () => open(ch), { once: true });

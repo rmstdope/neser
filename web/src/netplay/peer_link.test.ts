@@ -28,6 +28,32 @@ describe("the link to the other browser", () => {
         expect(got[1]).toBe("hello");
     });
 
+    it("keeps what arrives before anyone listens, for the first listener (nr-1wbx: the link opens after reading its stats)", () => {
+        const { link, receive } = fakeChannel();
+        receive("ping");
+        receive(new Uint8Array([4]).buffer);
+        const got: (string | Uint8Array)[] = [];
+        link.onMessage((data) => got.push(data));
+        receive("later");
+        expect(got.map((data) => (typeof data === "string" ? data : Array.from(data)))).toEqual(["ping", [4], "later"]);
+    });
+
+    it("tells a listener that comes late that the channel has already closed", () => {
+        const { channel, link } = fakeChannel();
+        channel.dispatchEvent(new Event("close"));
+        const closed = vi.fn();
+        link.onClosed(closed);
+        expect(closed).toHaveBeenCalledOnce();
+    });
+
+    it("does not tell of a close this side made", () => {
+        const { link } = fakeChannel();
+        link.close();
+        const closed = vi.fn();
+        link.onClosed(closed);
+        expect(closed).not.toHaveBeenCalled();
+    });
+
     it("sends bytes as bytes and text as text", () => {
         const { channel, link } = fakeChannel();
         const bytes = new Uint8Array([9, 8]);

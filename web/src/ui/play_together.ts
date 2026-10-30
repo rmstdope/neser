@@ -63,7 +63,7 @@ const BECAME_TOO_SLOW = {
     relayed:
         "The connection through NESER's relay has become too slow to play. It may recover by itself — if not, try again with both of you on a home network, ideally wired.",
 };
-/** Couldn't connect, by whether liaison offered a relay for the game. */
+/** Couldn't connect, by whether the connection was given a relay to try. */
 const COULD_NOT_CONNECT = {
     noRelay:
         "Your networks don't allow a direct connection, and NESER's relay can't be reached right now. Try again in a while, or with both of you on a home network.",
@@ -446,7 +446,7 @@ export function createPlayTogether({
         if (view.failure === "too-many-attempts") {
             return alert("err", "Too many wrong codes.", "Check the code with the host, then press Start again.");
         }
-        return alert("err", "Couldn't connect your two computers.", view.relayOffered ? COULD_NOT_CONNECT.relayTried : COULD_NOT_CONNECT.noRelay);
+        return alert("err", "Couldn't connect your two computers.", view.relayTried ? COULD_NOT_CONNECT.relayTried : COULD_NOT_CONNECT.noRelay);
     }
 
     function drawRefused(view: NetplayView) {

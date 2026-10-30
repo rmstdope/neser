@@ -19,7 +19,7 @@ const IDLE: NetplayView = {
     sending: null,
     notice: null,
     leaving: null,
-    relayOffered: false,
+    relayTried: false,
     relayed: false,
 };
 
@@ -325,7 +325,7 @@ describe("hosting", () => {
 
     it("says when the two computers could not be connected and no relay was available, offering to start again (nr-1wbx)", () => {
         hostStep1();
-        session.emit({ phase: "failed", failure: "unreachable", relayOffered: false });
+        session.emit({ phase: "failed", failure: "unreachable", relayTried: false });
         expect(alerts()).toEqual([["err", NO_RELAY]]);
         expect(buttonNames()).toEqual(["Close", "Start again"]);
         expect(document.activeElement).toBe(button("Start again"));
@@ -559,7 +559,7 @@ describe("joining", () => {
     it("says when the two computers could not be connected and no relay was available, offering to start again (nr-1wbx)", () => {
         joinStep1();
         type("K7QM4X");
-        session.emit({ phase: "failed", failure: "unreachable", relayOffered: false });
+        session.emit({ phase: "failed", failure: "unreachable", relayTried: false });
         expect(alerts()).toEqual([["err", NO_RELAY]]);
         expect(buttonNames()).toEqual(["Close", "Start again"]);
         expect(document.activeElement).toBe(button("Start again"));
@@ -646,7 +646,7 @@ describe("playing through the relay (nr-1wbx)", () => {
         ["joiner", joinStep1],
     ] as const)("tells the %s the relay was tried and still could not connect them", (_, toStep1) => {
         toStep1();
-        session.emit({ phase: "failed", failure: "unreachable", relayOffered: true });
+        session.emit({ phase: "failed", failure: "unreachable", relayTried: true });
         expect(alerts()).toEqual([["err", RELAY_TRIED]]);
         expect(buttonNames()).toEqual(["Close", "Start again"]);
         expect(document.activeElement).toBe(button("Start again"));

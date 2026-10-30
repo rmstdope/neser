@@ -482,19 +482,21 @@ describe("the relay (nr-1wbx)", () => {
         await settle();
         const socket = liaison.last();
         socket.says({ type: "created", room: "K7Q-M4X", iceServers: [RELAY] });
-        expect(session.view().relayOffered).toBe(true);
+        expect(session.view().relayTried).toBe(false);
         socket.says({ type: "peer-joined" });
         await settle();
         expect(fake.hostRelays).toEqual([[RELAY]]);
+        expect(session.view().relayTried).toBe(true);
     });
 
     it("gives the joiner's connection the relay liaison sent on joining", async () => {
         const socket = await joinTried();
         socket.says({ type: "joined", iceServers: [RELAY] });
-        expect(session.view().relayOffered).toBe(true);
+        expect(session.view().relayTried).toBe(false);
         socket.says({ type: "signal", data: { offer: "offer-sdp" } });
         await settle();
         expect(fake.joinRelays).toEqual([[RELAY]]);
+        expect(session.view().relayTried).toBe(true);
     });
 
     it("connects directly only when liaison sent no relay", async () => {
@@ -502,7 +504,7 @@ describe("the relay (nr-1wbx)", () => {
         await joinToWaiting();
         expect(fake.hostRelays).toEqual([[]]);
         expect(fake.joinRelays).toEqual([[]]);
-        expect(session.view().relayOffered).toBe(false);
+        expect(session.view().relayTried).toBe(false);
     });
 
     it("uses the relay of the room it has now, when a new room replaced the old", async () => {
@@ -513,10 +515,10 @@ describe("the relay (nr-1wbx)", () => {
         await settle();
         const socket = liaison.last();
         socket.says({ type: "created", room: "ABC-DEF" });
-        expect(session.view().relayOffered).toBe(false);
         socket.says({ type: "peer-joined" });
         await settle();
         expect(fake.hostRelays).toEqual([[]]);
+        expect(session.view().relayTried).toBe(false);
     });
 
     it("says the connection is relayed when its link went through the relay, on both sides", async () => {
@@ -556,13 +558,22 @@ describe("the relay (nr-1wbx)", () => {
         expect(session.view()).toMatchObject({ phase: "failed", failure: "too-slow", relayed: true });
     });
 
-    it("says whether a relay was offered when the two could not connect at all", async () => {
+    it("says the relay was tried when the two could not connect even with it", async () => {
         const socket = await joinTried();
         socket.says({ type: "joined", iceServers: [RELAY] });
+        socket.says({ type: "signal", data: { offer: "offer-sdp" } });
         await vi.advanceTimersByTimeAsync(10_100);
-        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayOffered: true });
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: true });
         session.startAgain();
-        expect(session.view()).toMatchObject({ relayOffered: false, relayed: false });
+        expect(session.view()).toMatchObject({ relayTried: false, relayed: false });
+    });
+
+    it("does not say the relay was tried when liaison ends a room nobody connected through", async () => {
+        session.host();
+        await settle();
+        liaison.last().says({ type: "created", room: "K7Q-M4X", iceServers: [RELAY] });
+        liaison.last().says({ type: "error", reason: "bad-message" });
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable", relayTried: false });
     });
 });
 

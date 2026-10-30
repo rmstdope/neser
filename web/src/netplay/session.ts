@@ -21,7 +21,7 @@ import { ROOM_CODE_LENGTH, showRoomCode, tidyRoomCode } from "./room_code";
  * joiner keeps one connection to liaison across its tries at a code, so liaison's limit on wrong
  * codes holds; Start again begins with a fresh one. liaison may give the room a TURN relay with
  * `created` and `joined` (nr-1wbx); both connections are offered it, the view says whether one was
- * offered (which can't-connect message to show) and whether the link went through it.
+ * tried (which can't-connect message to show) and whether the link went through it.
  *
  * The two browsers talk in JSON text over the link: each answers `ping` with `pong`; the host
  * measures `CHECK_SAMPLES` round trips on connecting and sends `ready` or `refuse` with their
@@ -138,8 +138,11 @@ export interface NetplayView {
     notice: SendingNotice | null;
     /** How the other player went, once they have (failure "peer-left"). */
     leaving: Leaving | null;
-    /** Liaison gave this attempt's room a relay (nr-1wbx): which message says the two couldn't connect. */
-    relayOffered: boolean;
+    /**
+     * This attempt's connection was given the room's relay (nr-1wbx): which message says the two
+     * couldn't connect. A failure before any connection was made, or with no relay, says none was available.
+     */
+    relayTried: boolean;
     /** The two connected through the relay; kept by a failure, so a too-slow refusal can say so. */
     relayed: boolean;
 }
@@ -257,7 +260,7 @@ const IDLE: NetplayView = {
     sending: null,
     notice: null,
     leaving: null,
-    relayOffered: false,
+    relayTried: false,
     relayed: false,
 };
 
@@ -672,10 +675,11 @@ export function createNetplaySession({
     function hostHears(m: ServerMessage, mine: number) {
         if (m.type === "created" && state.phase === "opening") {
             relay = m.iceServers ?? [];
-            set({ phase: "waiting", room: showRoomCode(tidyRoomCode(m.room)), relayOffered: relay.length > 0 });
+            set({ phase: "waiting", room: showRoomCode(tidyRoomCode(m.room)) });
         } else if (m.type === "peer-joined" && state.phase === "waiting") {
             set({ phase: "connecting" });
             startConnectLimit(mine);
+            set({ relayTried: relay.length > 0 });
             links.startHost(relay).then(
                 (start) => {
                     if (mine !== attempt) return start.cancel();
@@ -720,12 +724,12 @@ export function createNetplaySession({
         if (state.phase !== "connecting") return;
         if (m.type === "joined") {
             relay = m.iceServers ?? [];
-            set({ relayOffered: relay.length > 0 });
             startConnectLimit(mine);
         } else if (m.type === "signal" && !joinStart && !swapped) {
             const offer = sdpIn(m.data, "offer");
             if (offer === null) return;
             swapped = true;
+            set({ relayTried: relay.length > 0 });
             links.startJoin(offer, relay).then(
                 (start) => {
                     if (mine !== attempt) return start.cancel();
@@ -764,7 +768,7 @@ export function createNetplaySession({
         const chars = tidyRoomCode(code);
         if (state.role !== "join" || state.phase !== "idle" || chars.length !== ROOM_CODE_LENGTH) return;
         const mine = attempt;
-        set({ phase: "connecting", joinProblem: null, relayOffered: false });
+        set({ phase: "connecting", joinProblem: null, relayTried: false });
         const ask = (s: SignalingSocket) => s.send({ type: "join", room: showRoomCode(chars), build });
         if (socket) return ask(socket);
         openSocket(
