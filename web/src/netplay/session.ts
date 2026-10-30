@@ -1,14 +1,25 @@
 import { THIS_BUILD, type BuildId } from "./build_id";
-import { encodeCode, readCode, type CodeKind } from "./code";
 import { crc32, MAX_PACKAGE_BYTES, packGame, unpackGame, type GamePackage } from "./game_package";
+import type { Signaling, SignalingSocket, ServerMessage } from "./liaison";
 import type { HostStart, JoinStart, PeerLink, PeerLinks } from "./peer_link";
 import { isTooSlow, median } from "./response_time";
+import { ROOM_CODE_LENGTH, showRoomCode, tidyRoomCode } from "./room_code";
 
 /**
  * Connecting two browsers for a network game (nr-ayk5.3), without the page: the host's and the
- * joiner's steps, the codes they swap, the response-time check that decides whether the
- * connection is good enough, and what happens when it ends. The Play together window draws
- * `view()`; this module owns every bit of state behind it, and the open link once connected.
+ * joiner's steps, the response-time check that decides whether the connection is good enough, and
+ * what happens when it ends. The Play together window draws `view()`; this module owns every bit
+ * of state behind it, and the open link once connected.
+ *
+ * The two meet through liaison (nr-z4nw, `liaison.ts`): the host opens a room and shows its code;
+ * the joiner joins it by that code, and liaison checks the two run the same build. Once someone
+ * has joined, the host sends its offer through the room as `signal {offer}` and the joiner its
+ * answer as `signal {answer}`; once the direct link is open each side closes its connection to
+ * liaison. From the swap on, the other side leaving the room is no longer news: it is what the
+ * other side does once its link is open, and the link itself says whether the two connected. A
+ * host whose room ran out, or whose joiner left before the swap, gets a fresh room by itself. The
+ * joiner keeps one connection to liaison across its tries at a code, so liaison's limit on wrong
+ * codes holds; Start again begins with a fresh one.
  *
  * The two browsers talk in JSON text over the link: each answers `ping` with `pong`; the host
  * measures `CHECK_SAMPLES` round trips on connecting and sends `ready` or `refuse` with their
@@ -42,8 +53,18 @@ import { isTooSlow, median } from "./response_time";
  */
 
 export type Role = "host" | "join";
-export type PasteProblem = "not-neser" | "wrong-kind";
-export type Failure = "other-build" | "unreachable" | "too-slow" | "peer-left";
+/**
+ * Why the joiner's step failed in a way the code field can fix: no room by that code, a full one,
+ * liaison out of reach or busy, or the host leaving before the two connected.
+ */
+export type JoinProblem = "room-not-found" | "room-full" | "service" | "busy" | "host-left";
+/** Why the host has a new room: the old one ran out, or the joiner left before the two connected. */
+export type RoomNote = "expired" | "left";
+/**
+ * Why an attempt ended for good: another build, no direct path, too slow, the other side leaving
+ * once connected, liaison out of reach or busy (host), or too many wrong codes (joiner).
+ */
+export type Failure = "other-build" | "unreachable" | "too-slow" | "peer-left" | "service" | "busy" | "too-many-attempts";
 /** The line on the connected step about the last attempt to send the game. */
 export type SendingNotice = "host-stopped" | "joiner-stopped" | "not-arrived";
 
@@ -92,14 +113,19 @@ export type Leaving = "ended" | "left" | "unsynced";
 export interface NetplayView {
     /** Who this browser is; null on the first screen, where the player chooses. */
     role: Role | null;
-    step: 1 | 2 | 3;
-    /** The code this browser shows (host step 1, joiner step 2); null while it is being made. */
-    ownCode: string | null;
-    /** What is wrong with the pasted text, if anything; null when it is fine or empty. */
-    pasteProblem: PasteProblem | null;
-    /** Whether the pasted text is a code this step can use. */
-    pasteReady: boolean;
-    phase: "idle" | "connecting" | "waiting" | "connected" | "failed";
+    step: 1 | 2;
+    /** The host's room code, as shown (`K7Q-M4X`); null until liaison has opened the room. */
+    room: string | null;
+    /** Why the host's room is a new one, until the attempt ends. */
+    roomNote: RoomNote | null;
+    /** What went wrong with the joiner's last try at a code; null before one, and while trying. */
+    joinProblem: JoinProblem | null;
+    /**
+     * Host: `opening` (asking liaison for a room), `waiting` (the code shown), `connecting` (someone
+     * joined). Joiner: `idle` (typing a code), `connecting` (after Join), `waiting` (linked,
+     * waiting for the host's check). Both: `connected`, `failed`.
+     */
+    phase: "idle" | "opening" | "waiting" | "connecting" | "connected" | "failed";
     failure: Failure | null;
     /** The other player's build, when it is not ours. */
     theirs: BuildId | null;
@@ -117,10 +143,8 @@ export interface NetplaySession {
     subscribe(listener: (view: NetplayView) => void): void;
     host(): void;
     join(): void;
-    next(): void;
-    back(): void;
-    paste(text: string): Promise<void>;
-    connect(): void;
+    /** The joiner's Join: tries `code`, as typed, once it has all six characters. */
+    joinRoom(code: string): void;
     disconnect(): void;
     /** Ends whatever is under way and goes back to the choice: Cancel, or the window closing before connecting. */
     cancel(): void;
@@ -161,7 +185,7 @@ export function inputDelayFor(rttMs: number): number {
     return Math.min(MAX_INPUT_DELAY, Math.max(MIN_INPUT_DELAY, frames));
 }
 
-/** How long the host waits, from Connect, for the connection and its check. */
+/** How long the two have, from the joiner being in the room, for the connection and its check. */
 export const CONNECT_LIMIT_MS = 15_000;
 const CHECK_SAMPLES = 5;
 const CHECK_INTERVAL_MS = 200;
@@ -213,9 +237,9 @@ type Incoming = { id: number; total: number; crc: number; buffer: Uint8Array; re
 const IDLE: NetplayView = {
     role: null,
     step: 1,
-    ownCode: null,
-    pasteProblem: null,
-    pasteReady: false,
+    room: null,
+    roomNote: null,
+    joinProblem: null,
     phase: "idle",
     failure: null,
     theirs: null,
@@ -239,12 +263,14 @@ function isPlayMessage(message: { t: string } & Record<string, unknown>): messag
 }
 
 export function createNetplaySession({
+    signaling,
     links,
     build = THIS_BUILD,
     checkGame = async () => 0,
     confirmStart = () => true,
     onStart = () => {},
 }: {
+    signaling: Signaling;
     links: PeerLinks;
     build?: BuildId;
     /**
@@ -261,8 +287,10 @@ export function createNetplaySession({
     const listeners: ((view: NetplayView) => void)[] = [];
     /** Bumped whenever an attempt ends, so the late results of an abandoned one are dropped. */
     let attempt = 0;
-    let pastedSdp: string | null = null;
-    let pasteCheck = 0;
+    /** The connection to liaison of the attempt under way, until the direct link is open. */
+    let socket: SignalingSocket | null = null;
+    /** The offer and answer have been swapped: the other side leaving the room is no longer news. */
+    let swapped = false;
     let hostStart: HostStart | null = null;
     let joinStart: JoinStart | null = null;
     let live: PeerLink | null = null;
@@ -310,7 +338,8 @@ export function createNetplaySession({
         hostStart = null;
         joinStart = null;
         live = null;
-        pastedSdp = null;
+        closeSocket();
+        swapped = false;
         samples = [];
         unanswered = new Map();
     }
@@ -485,7 +514,7 @@ export function createNetplaySession({
 
     function fail(failure: Failure, extra: Partial<NetplayView> = {}) {
         teardown();
-        set({ phase: "failed", failure, pasteReady: false, sending: null, notice: null, ...extra });
+        set({ phase: "failed", failure, sending: null, notice: null, ...extra });
     }
 
     function measureLive(link: PeerLink) {
@@ -514,7 +543,7 @@ export function createNetplaySession({
 
     function connected(link: PeerLink, rtt: number) {
         stopClocks();
-        set({ step: 3, phase: "connected", rtt });
+        set({ step: 2, phase: "connected", rtt });
         measureLive(link);
     }
 
@@ -567,23 +596,169 @@ export function createNetplaySession({
         showLive();
     }
 
-    function beginHost() {
+    function closeSocket() {
+        socket?.close();
+        socket = null;
+    }
+
+    /** Opens a connection to liaison for this attempt; `hear` and `lost` are told only while it is current. */
+    function openSocket(mine: number, hear: (m: ServerMessage) => void, lost: () => void, then: (s: SignalingSocket) => void, failed: () => void) {
+        signaling.open().then(
+            (opened) => {
+                if (mine !== attempt) return opened.close();
+                socket = opened;
+                opened.onMessage((m) => {
+                    if (mine === attempt && socket === opened) hear(m);
+                });
+                opened.onClosed(() => {
+                    if (mine !== attempt || socket !== opened) return;
+                    socket = null;
+                    lost();
+                });
+                then(opened);
+            },
+            () => {
+                if (mine === attempt) failed();
+            }
+        );
+    }
+
+    /** No direct link within the limit, from the moment the joiner is in the room. */
+    function startConnectLimit(mine: number) {
+        timers.add(setTimeout(() => mine === attempt && fail("unreachable"), CONNECT_LIMIT_MS));
+    }
+
+    const sdpIn = (data: unknown, key: "offer" | "answer"): string | null => {
+        if (typeof data !== "object" || data === null) return null;
+        const sdp = (data as Record<string, unknown>)[key];
+        return typeof sdp === "string" ? sdp : null;
+    };
+
+    function beginHost(note: RoomNote | null = null) {
         const mine = attempt;
-        set({ ...IDLE, role: "host" });
-        (async () => {
-            const start = await links.startHost();
-            if (mine !== attempt) return start.cancel();
-            hostStart = start;
-            const code = await encodeCode("host", build, start.sdp);
-            if (mine === attempt) set({ ownCode: code });
-        })().catch(() => {
-            // No working WebRTC, or no deflate: the nearest agreed message is that it could not connect.
-            if (mine === attempt) fail("unreachable");
-        });
+        set({ ...IDLE, role: "host", phase: "opening", roomNote: note });
+        openSocket(
+            mine,
+            (m) => hostHears(m, mine),
+            // Once the two have swapped, liaison is no longer needed; before, its loss ends the attempt.
+            () => swapped || fail("service"),
+            (s) => s.send({ type: "create", build }),
+            () => fail("service")
+        );
+    }
+
+    /** A fresh room, the old one gone: it ran out, or its joiner left before the two connected. */
+    function renewRoom(note: RoomNote) {
+        teardown();
+        beginHost(note);
+    }
+
+    function hostHears(m: ServerMessage, mine: number) {
+        if (m.type === "created" && state.phase === "opening") {
+            set({ phase: "waiting", room: showRoomCode(tidyRoomCode(m.room)) });
+        } else if (m.type === "peer-joined" && state.phase === "waiting") {
+            set({ phase: "connecting" });
+            startConnectLimit(mine);
+            links.startHost().then(
+                (start) => {
+                    if (mine !== attempt) return start.cancel();
+                    hostStart = start;
+                    socket?.send({ type: "signal", data: { offer: start.sdp } });
+                },
+                // No working WebRTC: the nearest agreed message is that it could not connect.
+                () => mine === attempt && fail("unreachable")
+            );
+        } else if (m.type === "signal" && state.phase === "connecting" && hostStart && !swapped) {
+            const answer = sdpIn(m.data, "answer");
+            if (answer === null) return;
+            swapped = true;
+            hostStart.accept(answer).then(
+                (link) => {
+                    if (mine !== attempt) return link.close();
+                    closeSocket();
+                    hostCheck(link, mine);
+                },
+                () => mine === attempt && fail("unreachable")
+            );
+        } else if (m.type === "peer-left" && !swapped) {
+            renewRoom("left");
+        } else if (m.type === "error" && !swapped) {
+            if (m.reason === "room-expired") renewRoom("expired");
+            else if (m.reason === "server-busy") fail("busy");
+            else fail("unreachable");
+        }
     }
 
     function beginJoin() {
         set({ ...IDLE, role: "join" });
+    }
+
+    /** A try at a code that the field can put right: back to typing, saying why. */
+    function joinTryFailed(problem: JoinProblem) {
+        stopClocks();
+        set({ phase: "idle", joinProblem: problem });
+    }
+
+    function joinerHears(m: ServerMessage, mine: number) {
+        if (state.phase !== "connecting") return;
+        if (m.type === "joined") {
+            startConnectLimit(mine);
+        } else if (m.type === "signal" && !joinStart && !swapped) {
+            const offer = sdpIn(m.data, "offer");
+            if (offer === null) return;
+            swapped = true;
+            links.startJoin(offer).then(
+                (start) => {
+                    if (mine !== attempt) return start.cancel();
+                    joinStart = start;
+                    socket?.send({ type: "signal", data: { answer: start.sdp } });
+                    start.link.then(
+                        (link) => {
+                            if (mine !== attempt) return link.close();
+                            closeSocket();
+                            set({ phase: "waiting" });
+                            joinerListen(link, mine);
+                        },
+                        () => mine === attempt && fail("unreachable")
+                    );
+                },
+                // An offer the browser refuses, or no working WebRTC.
+                () => mine === attempt && fail("unreachable")
+            );
+        } else if (m.type === "peer-left" && !swapped) {
+            teardown();
+            joinTryFailed("host-left");
+        } else if (m.type === "error" && !swapped) {
+            if (m.reason === "room-not-found") joinTryFailed("room-not-found");
+            else if (m.reason === "room-full") joinTryFailed("room-full");
+            else if (m.reason === "server-busy") joinTryFailed("busy");
+            else if (m.reason === "other-build" && m.theirs) fail("other-build", { theirs: m.theirs });
+            else if (m.reason === "too-many-attempts") fail("too-many-attempts");
+            else if (m.reason === "room-expired") {
+                teardown();
+                joinTryFailed("host-left");
+            } else fail("unreachable");
+        }
+    }
+
+    function joinRoom(code: string) {
+        const chars = tidyRoomCode(code);
+        if (state.role !== "join" || state.phase !== "idle" || chars.length !== ROOM_CODE_LENGTH) return;
+        const mine = attempt;
+        set({ phase: "connecting", joinProblem: null });
+        const ask = (s: SignalingSocket) => s.send({ type: "join", room: showRoomCode(chars), build });
+        if (socket) return ask(socket);
+        openSocket(
+            mine,
+            (m) => joinerHears(m, mine),
+            () => {
+                if (swapped || state.phase !== "connecting") return;
+                teardown();
+                joinTryFailed("service");
+            },
+            ask,
+            () => joinTryFailed("service")
+        );
     }
 
     function hostCheck(link: PeerLink, mine: number) {
@@ -619,27 +794,6 @@ export function createNetplaySession({
         });
     }
 
-    async function paste(text: string) {
-        const expected: CodeKind = state.role === "host" ? "reply" : "host";
-        const mine = ++pasteCheck;
-        if (text.trim() === "") {
-            pastedSdp = null;
-            set({ pasteProblem: null, pasteReady: false });
-            return;
-        }
-        const check = await readCode(text, expected, build);
-        if (mine !== pasteCheck) return;
-        if (check.ok) {
-            pastedSdp = check.sdp;
-            set({ pasteProblem: null, pasteReady: true });
-        } else if (check.problem === "other-build") {
-            fail("other-build", { theirs: check.theirs, pasteProblem: null });
-        } else {
-            pastedSdp = null;
-            set({ pasteProblem: check.problem, pasteReady: false });
-        }
-    }
-
     return {
         view: () => state,
         subscribe: (next) => {
@@ -653,57 +807,7 @@ export function createNetplaySession({
             teardown();
             beginJoin();
         },
-        next: () => {
-            if (state.role === "host" && state.step === 1) {
-                set({ step: 2, pasteProblem: null, pasteReady: false });
-                return;
-            }
-            if (state.role !== "join" || state.step !== 1 || !pastedSdp) return;
-            const mine = attempt;
-            const hostSdp = pastedSdp;
-            set({ step: 2, phase: "waiting", ownCode: null, pasteReady: false });
-            (async () => {
-                const start = await links.startJoin(hostSdp);
-                if (mine !== attempt) return start.cancel();
-                joinStart = start;
-                start.link.then(
-                    (link) => {
-                        if (mine !== attempt) return link.close();
-                        joinerListen(link, mine);
-                    },
-                    () => {
-                        if (mine === attempt) fail("unreachable");
-                    }
-                );
-                const code = await encodeCode("reply", build, start.sdp);
-                if (mine === attempt) set({ ownCode: code });
-            })().catch(() => {
-                // A code whose connection details the browser refuses, or no working WebRTC.
-                if (mine === attempt) fail("unreachable");
-            });
-        },
-        back: () => {
-            if (state.role === "host" && state.step === 2 && state.phase === "idle") {
-                pastedSdp = null;
-                set({ step: 1, pasteProblem: null, pasteReady: false });
-            }
-        },
-        paste,
-        connect: () => {
-            if (state.role !== "host" || !hostStart || !pastedSdp || state.phase !== "idle") return;
-            const mine = attempt;
-            set({ phase: "connecting", pasteReady: false });
-            timers.add(setTimeout(() => mine === attempt && fail("unreachable"), CONNECT_LIMIT_MS));
-            hostStart.accept(pastedSdp).then(
-                (link) => {
-                    if (mine !== attempt) return link.close();
-                    hostCheck(link, mine);
-                },
-                () => {
-                    if (mine === attempt) fail("unreachable");
-                }
-            );
-        },
+        joinRoom,
         disconnect: () => {
             if (live) send(live, { t: "bye" });
             teardown();

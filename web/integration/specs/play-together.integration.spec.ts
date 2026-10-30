@@ -1,4 +1,4 @@
-import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { test, expect, type Browser, type BrowserContext, type Page, type WebSocketRoute } from "@playwright/test";
 import config from "../../../playwright.config";
 import {
     loadGbaRomFromFileInput,
@@ -22,6 +22,63 @@ test.use({
 
 const CONNECT_TIMEOUT_MS = 20_000;
 
+/**
+ * Liaison, the meeting service (nr-z4nw), played by the test so CI never reaches the real one: it
+ * opens rooms named K7Q-M4X, T9W-2HB, …, puts a joiner in by its code, passes signals between the
+ * two, and tells the one left when the other's connection closes, as liaison's README describes.
+ */
+type Room = { code: string; host: WebSocketRoute; joiner: WebSocketRoute | null };
+const ROOM_CODES = ["K7Q-M4X", "T9W-2HB", "P3R-8ZD", "H6N-5LQ"];
+
+class FakeLiaison {
+    private rooms = new Map<string, Room>();
+    private opened = 0;
+
+    async serve(page: Page) {
+        await page.routeWebSocket(/liaison\.rmstdope\.eu/, (ws) => this.accept(ws));
+    }
+
+    private accept(ws: WebSocketRoute) {
+        let room: Room | null = null;
+        const tell = (to: WebSocketRoute, message: object) => to.send(JSON.stringify(message));
+        ws.onMessage((text) => {
+            const message = JSON.parse(String(text));
+            if (message.type === "create") {
+                room = { code: ROOM_CODES[this.opened++ % ROOM_CODES.length], host: ws, joiner: null };
+                this.rooms.set(room.code, room);
+                tell(ws, { type: "created", room: room.code });
+            } else if (message.type === "join") {
+                const wanted = this.rooms.get(message.room);
+                if (!wanted) return tell(ws, { type: "error", reason: "room-not-found" });
+                if (wanted.joiner) return tell(ws, { type: "error", reason: "room-full" });
+                wanted.joiner = ws;
+                room = wanted;
+                tell(ws, { type: "joined" });
+                tell(wanted.host, { type: "peer-joined" });
+            } else if (message.type === "signal" && room) {
+                const other = ws === room.host ? room.joiner : room.host;
+                if (other) tell(other, { type: "signal", data: message.data });
+            }
+        });
+        ws.onClose(() => {
+            if (!room) return;
+            this.rooms.delete(room.code);
+            const other = ws === room.host ? room.joiner : room.host;
+            room = null;
+            if (!other) return;
+            tell(other, { type: "peer-left" });
+            void other.close();
+        });
+    }
+}
+
+let liaison: FakeLiaison;
+
+test.beforeEach(async ({ page }) => {
+    liaison = new FakeLiaison();
+    await liaison.serve(page);
+});
+
 function panel(page: Page) {
     return page.locator("#netplay-panel");
 }
@@ -32,8 +89,8 @@ async function openPlayTogether(page: Page) {
 }
 
 async function shownCode(page: Page): Promise<string> {
-    const box = panel(page).locator(".netplay-code");
-    await expect(box).toHaveText(/^NSR1-/, { timeout: CONNECT_TIMEOUT_MS });
+    const box = panel(page).locator(".netplay-room");
+    await expect(box).toHaveText(/^[A-Z2-9]{3}-[A-Z2-9]{3}$/, { timeout: CONNECT_TIMEOUT_MS });
     return (await box.textContent())!;
 }
 
@@ -42,7 +99,9 @@ let joinerContext: BrowserContext | null = null;
 
 async function secondBrowser(browser: Browser): Promise<Page> {
     joinerContext = await browser.newContext({ baseURL: test.info().project.use.baseURL });
-    return joinerContext.newPage();
+    const page = await joinerContext.newPage();
+    await liaison.serve(page);
+    return page;
 }
 
 test.afterEach(async () => {
@@ -50,21 +109,16 @@ test.afterEach(async () => {
     joinerContext = null;
 });
 
-/** The two players swap codes until both windows say they are connected. */
+/** The host shows its room code and the joiner types it, until both windows say they are connected. */
 async function connect(host: Page, joiner: Page) {
     await openPlayTogether(host);
     await panel(host).getByRole("button", { name: /Host this game/ }).click();
-    const hostCode = await shownCode(host);
-    await panel(host).getByRole("button", { name: "Next" }).click();
+    const code = await shownCode(host);
 
     await openPlayTogether(joiner);
     await panel(joiner).getByRole("button", { name: /Join a game/ }).click();
-    await panel(joiner).getByPlaceholder("Paste the host's code here").fill(hostCode);
-    await panel(joiner).getByRole("button", { name: "Next" }).click();
-    const reply = await shownCode(joiner);
-
-    await panel(host).getByPlaceholder("Paste their code here").fill(reply);
-    await panel(host).getByRole("button", { name: "Connect" }).click();
+    await panel(joiner).getByPlaceholder("ABC-DEF").fill(code);
+    await panel(joiner).getByRole("button", { name: "Join", exact: true }).click();
     await expect(panel(host)).toContainText("Connected to the other player.", { timeout: CONNECT_TIMEOUT_MS });
     await expect(panel(joiner)).toContainText("Connected to the host.", { timeout: CONNECT_TIMEOUT_MS });
 }
@@ -172,7 +226,7 @@ function resyncScreen(page: Page) {
 }
 
 test.describe("Play together", () => {
-    test("Given a host running a NES game and a joiner in the library, when they swap codes, then both are connected with a Great response time, and the host's chip shows when the joiner leaves", async ({
+    test("Given a host running a NES game and a joiner in the library, when the joiner types the host's room code, then both are connected with a Great response time, and the host's chip shows when the joiner leaves", async ({
         page: host,
         browser
     }) => {
@@ -185,18 +239,17 @@ test.describe("Play together", () => {
         await openPlayTogether(host);
         await waitForPausedState(host);
         await panel(host).getByRole("button", { name: /Host this game/ }).click();
-        const hostCode = await shownCode(host);
-        await panel(host).getByRole("button", { name: "Next" }).click();
+        const code = await shownCode(host);
+        await expect(panel(host)).toContainText("⟳ Waiting for the other player to type it…");
+        await expect(panel(host).getByRole("button", { name: "Copy code" })).toBeFocused();
 
         await openPlayTogether(joiner);
         await panel(joiner).getByRole("button", { name: /Join a game/ }).click();
-        await panel(joiner).getByPlaceholder("Paste the host's code here").fill(hostCode);
-        await panel(joiner).getByRole("button", { name: "Next" }).click();
-        const reply = await shownCode(joiner);
-        await expect(panel(joiner)).toContainText("⟳ Waiting for the host to paste your code…");
-
-        await panel(host).getByPlaceholder("Paste their code here").fill(reply);
-        await panel(host).getByRole("button", { name: "Connect" }).click();
+        const field = panel(joiner).getByPlaceholder("ABC-DEF");
+        await expect(field).toBeFocused();
+        await field.pressSequentially(code.replace("-", "").toLowerCase());
+        await expect(field).toHaveValue(code);
+        await field.press("Enter");
         await expect(panel(host)).toContainText("Connected to the other player.", { timeout: CONNECT_TIMEOUT_MS });
         await expect(panel(host).locator(".netplay-pill")).toHaveText(/^Response time \d+ ms · Great$/);
         await expect(panel(joiner)).toContainText("Connected to the host.", { timeout: CONNECT_TIMEOUT_MS });
@@ -423,14 +476,24 @@ test.describe("Play together", () => {
         await expect(panel(page).locator("[data-choice=join]")).toBeFocused();
     });
 
-    test("Given a joiner, when the pasted text is not a code, then it says so and Next stays disabled", async ({ page }) => {
+    test("Given a joiner, when the code typed is no game's, then it says so beneath the field and keeps the code to fix", async ({ page }) => {
         await openApp(page);
         await openPlayTogether(page);
         await expect(panel(page).locator("[data-choice=host]")).toContainText("Host a game");
         await panel(page).getByRole("button", { name: /Join a game/ }).click();
-        await panel(page).getByPlaceholder("Paste the host's code here").fill("hello can u paste the thing");
-        await expect(panel(page)).toContainText("That isn't a NESER code.");
-        await expect(panel(page).getByRole("button", { name: "Next" })).toBeDisabled();
+        const field = panel(page).getByPlaceholder("ABC-DEF");
+        await field.fill("abc-de");
+        await expect(panel(page).getByRole("button", { name: "Join", exact: true })).toBeDisabled();
+        await field.pressSequentially("f");
+        await panel(page).getByRole("button", { name: "Join", exact: true }).click();
+        await expect(panel(page)).toContainText("There's no game with that code. Check the code with the host and try again.");
+        await expect(field).toHaveValue("ABC-DEF");
+        await expect(field).toBeFocused();
+        // A code pasted from a chat, with spaces round the dash, is taken whole.
+        await field.selectText();
+        await page.keyboard.insertText(" k7q - m4x ");
+        await expect(field).toHaveValue("K7Q-M4X");
+        await expect(panel(page).getByRole("button", { name: "Join", exact: true })).toBeEnabled();
         await page.keyboard.press("Escape");
         await expect(panel(page)).toBeHidden();
         await expect(page.locator("#netplay-open")).toBeFocused();

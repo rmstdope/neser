@@ -90,6 +90,7 @@ import { initTouchControls, isTouchDevice, isHandheldDevice } from "./input/touc
 import { dispatchWebShortcutAction } from "./shortcuts/shortcut_actions";
 import { applyHelpPadFit, helpChips, helpPadKeys, helpPadZoom, renderHelpShortcuts, renderPad, renderPadKeyList } from "./ui/help_panel";
 import { THIS_BUILD } from "./netplay/build_id";
+import { liaisonSignaling } from "./netplay/liaison";
 import { webRtcLinks } from "./netplay/peer_link";
 import { NETPLAY_KINDS, type GamePackage } from "./netplay/game_package";
 import { createNetplaySession, type NetplayStart, type Role } from "./netplay/session";
@@ -3580,8 +3581,10 @@ function toggleShortcutHelp() {
 }
 
 // ── Play together: two browsers connect for a network game (nr-ayk5.3); the game pauses while it is open ──
-// The host's game is sent to the joiner and both start together (nr-ayk5.4).
+// The host's game is sent to the joiner and both start together (nr-ayk5.4). The two meet
+// through liaison by one short room code (nr-z4nw).
 const netplaySession = createNetplaySession({
+    signaling: liaisonSignaling(),
     links: webRtcLinks,
     build: THIS_BUILD,
     checkGame: checkReceivedGame,

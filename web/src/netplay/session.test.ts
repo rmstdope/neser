@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeCode } from "./code";
+import type { ClientMessage, ServerMessage, Signaling, SignalingSocket } from "./liaison";
 import type { HostStart, JoinStart, PeerLink, PeerLinks } from "./peer_link";
-import { createNetplaySession, type NetplaySession } from "./session";
+import { CONNECT_LIMIT_MS, createNetplaySession, type NetplaySession } from "./session";
 
 const OURS = { version: "1.3.0", commit: "4f2a9c1" };
 const THEIRS = { version: "1.3.0", commit: "b81e07d" };
@@ -71,119 +71,153 @@ function fakeLinks() {
     return { links, accepted, joined, hostCancel, joinCancel };
 }
 
-/**
- * Lets promises, compression streams and zero-delay work finish without moving the clock. A code
- * on its way (a step that shows one, not yet failed) is waited for, however many turns the
- * compression stream takes on a slow machine: a fixed count of turns was enough here and not on CI.
- */
-async function settle() {
-    const turn = () => new Promise((r) => setImmediate(r));
-    for (let i = 0; i < 20; i++) await turn();
-    const codeDue = () => {
-        const view = session?.view();
-        if (!view || view.phase === "failed" || view.ownCode !== null) return false;
-        return (view.role === "host" && view.step === 1) || (view.role === "join" && view.step === 2);
+/** This browser's connection to liaison, which the test speaks for. */
+class FakeSocket implements SignalingSocket {
+    sent: ClientMessage[] = [];
+    closed = false;
+    private messageListener: (m: ServerMessage) => void = () => {};
+    private closedListener: () => void = () => {};
+    send(message: ClientMessage) {
+        this.sent.push(message);
+    }
+    onMessage(listener: (m: ServerMessage) => void) {
+        this.messageListener = listener;
+    }
+    onClosed(listener: () => void) {
+        this.closedListener = listener;
+    }
+    close() {
+        this.closed = true;
+    }
+    says(message: ServerMessage) {
+        this.messageListener(message);
+    }
+    /** Liaison, or the network, ended the connection. */
+    ends() {
+        this.closedListener();
+    }
+    sentOfType<T extends ClientMessage["type"]>(type: T) {
+        return this.sent.filter((m): m is Extract<ClientMessage, { type: T }> => m.type === type);
+    }
+}
+
+/** Liaison: every connection the session opens, or a refusal while `reachable` is false. */
+function fakeLiaison() {
+    const sockets: FakeSocket[] = [];
+    const liaison = {
+        reachable: true,
+        sockets,
+        last: () => sockets[sockets.length - 1],
+        signaling: {
+            open: async (): Promise<SignalingSocket> => {
+                if (!liaison.reachable) throw new Error("unreachable");
+                const socket = new FakeSocket();
+                sockets.push(socket);
+                return socket;
+            },
+        } as Signaling,
     };
-    for (let i = 0; i < 10_000 && codeDue(); i++) await turn();
+    return liaison;
+}
+
+/** Lets promises and zero-delay work finish without moving the clock. */
+async function settle() {
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
 }
 
 let session: NetplaySession;
+let liaison: ReturnType<typeof fakeLiaison>;
+let fake: ReturnType<typeof fakeLinks>;
 
 beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
+    liaison = fakeLiaison();
+    fake = fakeLinks();
+    session = createNetplaySession({ signaling: liaison.signaling, links: fake.links, build: OURS });
 });
 afterEach(() => {
     session?.cancel();
     vi.useRealTimers();
 });
 
-async function hostToConnect(rtt: number) {
-    const fake = fakeLinks();
-    session = createNetplaySession({ links: fake.links, build: OURS });
+/** The host's room is open, showing K7Q-M4X. */
+async function hostWaiting() {
     session.host();
     await settle();
-    session.next();
-    await session.paste(await encodeCode("reply", OURS, "answer-sdp"));
-    session.connect();
+    liaison.last().says({ type: "created", room: "K7Q-M4X" });
+    return liaison.last();
+}
+
+/** Someone typed the host's code and the two swap offer and answer; the link is not open yet. */
+async function hostSwapped() {
+    const socket = await hostWaiting();
+    socket.says({ type: "peer-joined" });
+    await settle();
+    socket.says({ type: "signal", data: { answer: "answer-sdp" } });
+    await settle();
+    return socket;
+}
+
+async function hostToConnect(rtt: number) {
+    const socket = await hostSwapped();
     const link = new FakeLink(rtt);
     fake.accepted.resolve(link);
     await settle();
-    return { fake, link };
+    return { socket, link };
 }
 
-async function joinToWaiting() {
-    const fake = fakeLinks();
-    session = createNetplaySession({ links: fake.links, build: OURS });
+/** The joiner typed `code` and pressed Join; liaison has the request. */
+async function joinTried(code = "k7q-m4x") {
     session.join();
-    await session.paste(await encodeCode("host", OURS, "offer-sdp"));
-    session.next();
+    session.joinRoom(code);
     await settle();
-    return fake;
+    return liaison.last();
+}
+
+/** The joiner is in the room, has the host's offer, and has sent its answer back. */
+async function joinToWaiting() {
+    const socket = await joinTried();
+    socket.says({ type: "joined" });
+    socket.says({ type: "signal", data: { offer: "offer-sdp" } });
+    await settle();
+    return socket;
 }
 
 describe("hosting", () => {
-    it("starts at step 1 with the host's code to send", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
+    it("asks liaison for a room for this build, and shows its code", async () => {
         session.host();
+        expect(session.view()).toMatchObject({ role: "host", step: 1, phase: "opening", room: null });
         await settle();
-        const view = session.view();
-        expect(view).toMatchObject({ role: "host", step: 1, phase: "idle" });
-        expect(view.ownCode).toMatch(/^NSR1-/);
+        expect(liaison.last().sent).toEqual([{ type: "create", build: OURS }]);
+        liaison.last().says({ type: "created", room: "K7Q-M4X" });
+        expect(session.view()).toMatchObject({ phase: "waiting", room: "K7Q-M4X", roomNote: null });
     });
 
-    it("keeps the same code when going Back from step 2", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.host();
-        await settle();
-        const code = session.view().ownCode;
-        session.next();
-        expect(session.view().step).toBe(2);
-        session.back();
-        expect(session.view()).toMatchObject({ step: 1, ownCode: code });
+    it("waits for the other player without a time limit of its own", async () => {
+        await hostWaiting();
+        await vi.advanceTimersByTimeAsync(14 * 60_000);
+        expect(session.view()).toMatchObject({ phase: "waiting", room: "K7Q-M4X" });
     });
 
-    it("can connect only once a valid reply code is pasted", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.host();
-        await settle();
-        session.next();
-        expect(session.view().pasteReady).toBe(false);
-        await session.paste("hello can u paste the thing");
-        expect(session.view()).toMatchObject({ pasteReady: false, pasteProblem: "not-neser" });
-        await session.paste(await encodeCode("host", OURS, "x"));
-        expect(session.view()).toMatchObject({ pasteReady: false, pasteProblem: "wrong-kind" });
-        await session.paste(await encodeCode("reply", OURS, "x"));
-        expect(session.view()).toMatchObject({ pasteReady: true, pasteProblem: null });
-    });
-
-    it("stops at a reply from another NESER build, naming it", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.host();
-        await settle();
-        session.next();
-        await session.paste(await encodeCode("reply", THEIRS, "x"));
-        expect(session.view()).toMatchObject({ phase: "failed", failure: "other-build", theirs: THEIRS, pasteReady: false });
-    });
-
-    it("hands the pasted reply to the connection and shows Connecting", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.host();
-        await settle();
-        session.next();
-        await session.paste(await encodeCode("reply", OURS, "answer-sdp"));
-        session.connect();
+    it("sends its offer through the room once someone has typed the code, and shows Connecting", async () => {
+        const socket = await hostWaiting();
+        socket.says({ type: "peer-joined" });
         expect(session.view().phase).toBe("connecting");
+        await settle();
+        expect(socket.sentOfType("signal")).toEqual([{ type: "signal", data: { offer: "offer-sdp-1" } }]);
+    });
+
+    it("hands the joiner's answer to the connection, and leaves liaison once the link is open", async () => {
+        const { socket } = await hostToConnect(20);
+        expect(socket.closed).toBe(true);
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(session.view()).toMatchObject({ step: 2, phase: "connected", rtt: 20 });
     });
 
     it("connects with a Great response time when round trips are short", async () => {
         const { link } = await hostToConnect(20);
         await vi.advanceTimersByTimeAsync(2000);
-        expect(session.view()).toMatchObject({ step: 3, phase: "connected", rtt: 20 });
+        expect(session.view()).toMatchObject({ step: 2, phase: "connected", rtt: 20 });
         expect(link.sentOfType("ready")).toEqual([{ t: "ready", rtt: 20 }]);
     });
 
@@ -202,94 +236,236 @@ describe("hosting", () => {
     });
 
     it("lets an open link close itself, so the refusal is delivered before the connection ends", async () => {
-        const { fake, link } = await hostToConnect(200);
+        const { link } = await hostToConnect(200);
         await vi.advanceTimersByTimeAsync(3000);
         expect(link.closed).toBe(true);
         expect(fake.hostCancel).not.toHaveBeenCalled();
     });
 
-    it("gives up after 15 seconds when the other player cannot be reached", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.host();
+    it("gives up 15 seconds after someone typed the code when the other player cannot be reached", async () => {
+        const socket = await hostWaiting();
+        socket.says({ type: "peer-joined" });
         await settle();
-        session.next();
-        await session.paste(await encodeCode("reply", OURS, "answer-sdp"));
-        session.connect();
-        await vi.advanceTimersByTimeAsync(14_900);
+        socket.says({ type: "signal", data: { answer: "answer-sdp" } });
+        await vi.advanceTimersByTimeAsync(CONNECT_LIMIT_MS - 100);
         expect(session.view().phase).toBe("connecting");
         await vi.advanceTimersByTimeAsync(200);
         expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
         expect(fake.hostCancel).toHaveBeenCalled();
+        expect(socket.closed).toBe(true);
     });
 
-    it("starts again from step 1 with a fresh code", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
+    it("gets a new code by itself when the old one runs out, saying so", async () => {
+        const old = await hostWaiting();
+        old.says({ type: "error", reason: "room-expired" });
+        expect(old.closed).toBe(true);
+        expect(session.view()).toMatchObject({ phase: "opening", room: null, roomNote: "expired" });
+        await settle();
+        expect(liaison.sockets).toHaveLength(2);
+        liaison.last().says({ type: "created", room: "T9W-2HB" });
+        expect(session.view()).toMatchObject({ phase: "waiting", room: "T9W-2HB", roomNote: "expired" });
+    });
+
+    it("gets a new code by itself when the joiner leaves before the two swapped, saying so", async () => {
+        const old = await hostWaiting();
+        old.says({ type: "peer-joined" });
+        await settle();
+        old.says({ type: "peer-left" });
+        expect(fake.hostCancel).toHaveBeenCalled();
+        await settle();
+        liaison.last().says({ type: "created", room: "T9W-2HB" });
+        expect(session.view()).toMatchObject({ phase: "waiting", room: "T9W-2HB", roomNote: "left", failure: null });
+    });
+
+    it("does not take the joiner leaving the room once the two have swapped as leaving the game", async () => {
+        const socket = await hostSwapped();
+        socket.says({ type: "peer-left" });
+        socket.ends();
+        expect(session.view()).toMatchObject({ phase: "connecting", failure: null });
+        expect(liaison.sockets).toHaveLength(1);
+    });
+
+    it("cannot start when liaison cannot be reached", async () => {
+        liaison.reachable = false;
         session.host();
         await settle();
-        const first = session.view().ownCode;
-        session.next();
-        await session.paste(await encodeCode("reply", OURS, "answer-sdp"));
-        session.connect();
-        await vi.advanceTimersByTimeAsync(15_100);
+        expect(session.view()).toMatchObject({ role: "host", phase: "failed", failure: "service" });
+    });
+
+    it("cannot go on when its connection to liaison drops while it waits", async () => {
+        const socket = await hostWaiting();
+        socket.ends();
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "service" });
+    });
+
+    it("says liaison is busy when it has too many rooms open", async () => {
+        session.host();
+        await settle();
+        liaison.last().says({ type: "error", reason: "server-busy" });
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "busy" });
+        expect(liaison.last().closed).toBe(true);
+    });
+
+    it("tries again with a fresh connection to liaison", async () => {
+        liaison.reachable = false;
+        session.host();
+        await settle();
+        liaison.reachable = true;
         session.startAgain();
         await settle();
-        expect(session.view()).toMatchObject({ role: "host", step: 1, phase: "idle", failure: null });
-        expect(session.view().ownCode).not.toBe(first);
-        expect(fake.hostCancel).toHaveBeenCalled();
+        liaison.last().says({ type: "created", room: "K7Q-M4X" });
+        expect(session.view()).toMatchObject({ role: "host", phase: "waiting", failure: null, room: "K7Q-M4X" });
+    });
+
+    it("starts again with a fresh room after failing to reach the other player", async () => {
+        await hostSwapped();
+        await vi.advanceTimersByTimeAsync(CONNECT_LIMIT_MS + 100);
+        session.startAgain();
+        await settle();
+        expect(liaison.sockets).toHaveLength(2);
+        liaison.last().says({ type: "created", room: "T9W-2HB" });
+        expect(session.view()).toMatchObject({ role: "host", step: 1, phase: "waiting", failure: null, roomNote: null, room: "T9W-2HB" });
     });
 });
 
 describe("joining", () => {
-    it("moves on only from a valid host code", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
+    it("starts with nothing tried", () => {
         session.join();
-        expect(session.view()).toMatchObject({ role: "join", step: 1, pasteReady: false });
-        await session.paste(await encodeCode("reply", OURS, "x"));
-        expect(session.view()).toMatchObject({ pasteReady: false, pasteProblem: "wrong-kind" });
-        await session.paste(await encodeCode("host", OURS, "offer-sdp"));
-        expect(session.view()).toMatchObject({ pasteReady: true, pasteProblem: null });
+        expect(session.view()).toMatchObject({ role: "join", step: 1, phase: "idle", joinProblem: null });
     });
 
-    it("finds out about another NESER build at step 1, before sending anything back", async () => {
-        const fake = fakeLinks();
-        const startJoin = vi.spyOn(fake.links, "startJoin");
-        session = createNetplaySession({ links: fake.links, build: OURS });
+    it("tries nothing until the code has all six characters", async () => {
         session.join();
-        await session.paste(await encodeCode("host", THEIRS, "offer-sdp"));
-        expect(session.view()).toMatchObject({ step: 1, phase: "failed", failure: "other-build", theirs: THEIRS });
-        expect(startJoin).not.toHaveBeenCalled();
+        session.joinRoom("K7Q-M4");
+        await settle();
+        expect(liaison.sockets).toHaveLength(0);
+        expect(session.view().phase).toBe("idle");
     });
 
-    it("shows its reply code at step 2 and waits for the host without a time limit", async () => {
-        await joinToWaiting();
-        expect(session.view()).toMatchObject({ step: 2, phase: "waiting" });
-        expect(session.view().ownCode).toMatch(/^NSR1-/);
-        await vi.advanceTimersByTimeAsync(10 * 60_000);
-        expect(session.view()).toMatchObject({ step: 2, phase: "waiting", failure: null });
+    it("asks liaison for the room by its code, tidied, with this build", async () => {
+        const socket = await joinTried(" k7q m4x ");
+        expect(session.view().phase).toBe("connecting");
+        expect(socket.sent).toEqual([{ type: "join", room: "K7Q-M4X", build: OURS }]);
+    });
+
+    it("answers the host's offer through the room", async () => {
+        const socket = await joinToWaiting();
+        expect(socket.sentOfType("signal")).toEqual([{ type: "signal", data: { answer: "answer-to-offer-sdp" } }]);
+    });
+
+    it("leaves liaison once the link is open, and waits for the host's check", async () => {
+        const socket = await joinToWaiting();
+        fake.joined.resolve(new FakeLink(20));
+        await settle();
+        expect(socket.closed).toBe(true);
+        expect(session.view()).toMatchObject({ step: 1, phase: "waiting" });
     });
 
     it("is connected once the host says the connection is good, with the host's response time", async () => {
-        const fake = await joinToWaiting();
+        await joinToWaiting();
         const link = new FakeLink(20);
         fake.joined.resolve(link);
         await settle();
         link.deliver({ t: "ping", id: 1, at: 5 });
         expect(link.sentOfType("pong")).toEqual([{ t: "pong", id: 1, at: 5 }]);
         link.deliver({ t: "ready", rtt: 31 });
-        expect(session.view()).toMatchObject({ step: 3, phase: "connected", rtt: 31 });
+        expect(session.view()).toMatchObject({ step: 2, phase: "connected", rtt: 31 });
     });
 
     it("is refused when the host found the connection too slow", async () => {
-        const fake = await joinToWaiting();
+        await joinToWaiting();
         const link = new FakeLink(200);
         fake.joined.resolve(link);
         await settle();
         link.deliver({ t: "refuse", rtt: 210 });
         expect(session.view()).toMatchObject({ phase: "failed", failure: "too-slow", rtt: 210 });
         expect(link.closed).toBe(true);
+    });
+
+    it("gives up 15 seconds after getting into the room when the host cannot be reached", async () => {
+        await joinToWaiting();
+        await vi.advanceTimersByTimeAsync(CONNECT_LIMIT_MS + 100);
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
+        expect(fake.joinCancel).toHaveBeenCalled();
+    });
+
+    it("does not take the host leaving the room once the two have swapped as leaving", async () => {
+        const socket = await joinToWaiting();
+        socket.says({ type: "peer-left" });
+        socket.ends();
+        expect(session.view()).toMatchObject({ phase: "connecting", failure: null, joinProblem: null });
+    });
+
+    for (const [reason, problem] of [
+        ["room-not-found", "room-not-found"],
+        ["room-full", "room-full"],
+        ["server-busy", "busy"],
+    ] as const) {
+        it(`goes back to the code, saying ${problem}, when liaison answers ${reason}, and tries again on the same connection`, async () => {
+            const socket = await joinTried();
+            socket.says({ type: "error", reason });
+            expect(session.view()).toMatchObject({ phase: "idle", joinProblem: problem, failure: null });
+            session.joinRoom("K7QM4Y");
+            expect(session.view()).toMatchObject({ phase: "connecting", joinProblem: null });
+            await settle();
+            expect(liaison.sockets).toHaveLength(1);
+            expect(socket.sentOfType("join").map((m) => m.room)).toEqual(["K7Q-M4X", "K7Q-M4Y"]);
+        });
+    }
+
+    it("stops at a host running another NESER build, naming it", async () => {
+        const socket = await joinTried();
+        socket.says({ type: "error", reason: "other-build", theirs: THEIRS });
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "other-build", theirs: THEIRS });
+        expect(socket.closed).toBe(true);
+    });
+
+    it("stops after too many wrong codes, and Start again begins with a fresh connection", async () => {
+        const socket = await joinTried();
+        socket.says({ type: "error", reason: "too-many-attempts" });
+        expect(session.view()).toMatchObject({ phase: "failed", failure: "too-many-attempts" });
+        session.startAgain();
+        expect(session.view()).toMatchObject({ role: "join", phase: "idle", failure: null });
+        session.joinRoom("K7QM4X");
+        await settle();
+        expect(liaison.sockets).toHaveLength(2);
+    });
+
+    it("says the host closed the game when the host leaves before the two swapped", async () => {
+        const socket = await joinTried();
+        socket.says({ type: "joined" });
+        socket.says({ type: "peer-left" });
+        expect(session.view()).toMatchObject({ phase: "idle", joinProblem: "host-left", failure: null });
+        expect(socket.closed).toBe(true);
+        session.joinRoom("K7QM4X");
+        await settle();
+        expect(liaison.sockets).toHaveLength(2);
+    });
+
+    it("says liaison cannot be reached, keeping the code to try again", async () => {
+        liaison.reachable = false;
+        await joinTried();
+        expect(session.view()).toMatchObject({ role: "join", phase: "idle", joinProblem: "service", failure: null });
+        liaison.reachable = true;
+        session.joinRoom("K7QM4X");
+        await settle();
+        expect(session.view().phase).toBe("connecting");
+    });
+
+    it("says liaison cannot be reached when its connection drops during a try", async () => {
+        const socket = await joinTried();
+        socket.ends();
+        expect(session.view()).toMatchObject({ phase: "idle", joinProblem: "service" });
+    });
+
+    it("opens a fresh connection for the next try when liaison dropped it while the joiner was typing", async () => {
+        const socket = await joinTried();
+        socket.says({ type: "error", reason: "room-not-found" });
+        socket.ends();
+        expect(session.view()).toMatchObject({ phase: "idle", joinProblem: "room-not-found" });
+        session.joinRoom("K7QM4Y");
+        await settle();
+        expect(liaison.sockets).toHaveLength(2);
     });
 });
 
@@ -314,7 +490,7 @@ describe("once connected", () => {
     it("reports the other player leaving when the link closes", async () => {
         const { link } = await connected(20);
         link.drop();
-        expect(session.view()).toMatchObject({ step: 3, phase: "failed", failure: "peer-left" });
+        expect(session.view()).toMatchObject({ step: 2, phase: "failed", failure: "peer-left" });
     });
 
     it("reports the other player leaving when they say goodbye", async () => {
@@ -339,20 +515,21 @@ describe("once connected", () => {
 });
 
 describe("cancelling", () => {
-    it("cancels a host's pending connection and returns to the choice", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.host();
+    it("closes a host's room and pending connection and returns to the choice", async () => {
+        const socket = await hostWaiting();
+        socket.says({ type: "peer-joined" });
         await settle();
         session.cancel();
         expect(fake.hostCancel).toHaveBeenCalled();
-        expect(session.view()).toMatchObject({ role: null });
+        expect(socket.closed).toBe(true);
+        expect(session.view()).toMatchObject({ role: null, phase: "idle" });
     });
 
     it("cancels a joiner who is waiting", async () => {
-        const fake = await joinToWaiting();
+        const socket = await joinToWaiting();
         session.cancel();
         expect(fake.joinCancel).toHaveBeenCalled();
+        expect(socket.closed).toBe(true);
         const link = new FakeLink(20);
         fake.joined.resolve(link);
         await settle();
@@ -360,37 +537,38 @@ describe("cancelling", () => {
         expect(session.view()).toMatchObject({ role: null, phase: "idle" });
     });
 
-    it("tells every change to its listener", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        const seen: number[] = [];
-        session.subscribe((view) => seen.push(view.step));
+    it("closes a connection to liaison that opens only after Cancel", async () => {
         session.host();
+        session.cancel();
         await settle();
-        session.next();
-        expect(seen).toContain(2);
+        expect(liaison.last().closed).toBe(true);
+        expect(session.view()).toMatchObject({ role: null, phase: "idle" });
     });
 });
 
 describe("a connection that cannot start", () => {
     it("tells a host whose browser cannot make a connection", async () => {
-        const fake = fakeLinks();
         fake.links.startHost = () => Promise.reject(new Error("no WebRTC"));
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.host();
+        const socket = await hostWaiting();
+        socket.says({ type: "peer-joined" });
         await settle();
         expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
     });
 
-    it("tells a joiner whose pasted code cannot be answered", async () => {
-        const fake = fakeLinks();
+    it("tells a joiner whose browser cannot answer the host's offer", async () => {
         fake.links.startJoin = () => Promise.reject(new Error("bad SDP"));
-        session = createNetplaySession({ links: fake.links, build: OURS });
-        session.join();
-        await session.paste(await encodeCode("host", OURS, "offer-sdp"));
-        session.next();
-        await settle();
+        await joinToWaiting();
         expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
+    });
+
+    it("ignores signals that carry no offer or answer", async () => {
+        const socket = await joinTried();
+        socket.says({ type: "joined" });
+        socket.says({ type: "signal", data: { answer: "x" } });
+        socket.says({ type: "signal", data: "nonsense" });
+        await settle();
+        expect(socket.sentOfType("signal")).toEqual([]);
+        expect(session.view().phase).toBe("connecting");
     });
 });
 
@@ -407,8 +585,6 @@ describe("a link that goes silent", () => {
 
 describe("subscribers", () => {
     it("tells every subscriber of each change", async () => {
-        const fake = fakeLinks();
-        session = createNetplaySession({ links: fake.links, build: OURS });
         const first: string[] = [];
         const second: string[] = [];
         session.subscribe((v) => first.push(v.phase));

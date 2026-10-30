@@ -2434,34 +2434,47 @@ body.handheld:not(.handheld-portrait).touch-running .screen-wrap canvas {
   border-color: var(--np-ok);
 }
 
-.netplay-code,
-.netplay-paste {
+/* The room code (nr-z4nw): large monospace letters on one line, shrinking on a narrow window. */
+.netplay-room,
+.netplay-room-field {
   display: block;
   width: 100%;
-  padding: 10px;
-  font: 11.5px/1.45 ui-monospace, Menlo, monospace;
+  font-family: ui-monospace, Menlo, monospace;
+  letter-spacing: 0.14em;
   color: #b9dcff;
   background: #08101b;
-  border-radius: 8px;
+  white-space: nowrap;
 }
 
-/* The code scrolls inside its box; about five lines show. */
-.netplay-code {
-  max-height: 92px;
-  overflow-y: auto;
-  word-break: break-all;
+.netplay-room {
+  margin: 6px 0;
+  padding: 14px 8px;
+  font-size: clamp(28px, 10vw, 40px);
+  text-align: center;
   border: 1px solid var(--line);
+  border-radius: 12px;
 }
 
-.netplay-paste {
-  resize: vertical;
-  border: 1px dashed var(--line-strong);
+.netplay-room-field {
+  padding: 10px 12px;
+  font-size: 24px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
 }
 
-.netplay-paste:focus {
+.netplay-room-field::placeholder {
+  color: #3d4f66;
+}
+
+.netplay-room-field:focus {
   outline: none;
-  border-style: solid;
   border-color: var(--steel-hi);
+  box-shadow: 0 0 0 2px rgba(127, 176, 227, 0.35);
+}
+
+.netplay-copied {
+  margin-top: 8px;
+  overflow-wrap: anywhere;
 }
 
 .netplay-actions {
