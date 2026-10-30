@@ -10,9 +10,10 @@ import {
 } from "../helpers/lifecycle.helpers";
 
 // Two browser contexts on one runner connect over WebRTC by their own addresses, as two browsers on
-// one network do (the STUN address from outpost, nr-ri8n, is offered too, but not needed here). Chromium hides its local addresses behind multicast-DNS names by default; the
-// runner may not resolve those, so this spec has the browser offer its addresses as they are.
-// What is under test is the page's connecting, not the operating system's mDNS.
+// one network do (the STUN address from outpost, nr-ri8n, is offered too, but not needed here).
+// Chromium hides its local addresses behind multicast-DNS names by default; the runner may not
+// resolve those, so this spec has the browser offer its addresses as they are. What is under test
+// is the page's connecting, not the operating system's mDNS.
 test.use({
     launchOptions: {
         ...config.use?.launchOptions,
