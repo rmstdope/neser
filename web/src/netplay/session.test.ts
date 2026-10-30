@@ -242,12 +242,13 @@ describe("hosting", () => {
         expect(fake.hostCancel).not.toHaveBeenCalled();
     });
 
-    it("gives up 15 seconds after someone typed the code when the other player cannot be reached", async () => {
+    // About 10 seconds at most, on both sides (nr-ri8n): the limit is pinned here, not read back.
+    it("gives up 10 seconds after someone typed the code when the other player cannot be reached", async () => {
         const socket = await hostWaiting();
         socket.says({ type: "peer-joined" });
         await settle();
         socket.says({ type: "signal", data: { answer: "answer-sdp" } });
-        await vi.advanceTimersByTimeAsync(CONNECT_LIMIT_MS - 100);
+        await vi.advanceTimersByTimeAsync(9_900);
         expect(session.view().phase).toBe("connecting");
         await vi.advanceTimersByTimeAsync(200);
         expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
@@ -382,9 +383,11 @@ describe("joining", () => {
         expect(link.closed).toBe(true);
     });
 
-    it("gives up 15 seconds after getting into the room when the host cannot be reached", async () => {
+    it("gives up 10 seconds after getting into the room when the host cannot be reached", async () => {
         await joinToWaiting();
-        await vi.advanceTimersByTimeAsync(CONNECT_LIMIT_MS + 100);
+        await vi.advanceTimersByTimeAsync(9_900);
+        expect(session.view().phase).not.toBe("failed");
+        await vi.advanceTimersByTimeAsync(200);
         expect(session.view()).toMatchObject({ phase: "failed", failure: "unreachable" });
         expect(fake.joinCancel).toHaveBeenCalled();
     });

@@ -160,6 +160,31 @@ describe("the choice", () => {
         expect(host.textContent).toContain("Network play works with NES and Super Nintendo games.");
     });
 
+    const ADDRESS_LINE =
+        "ⓘ Playing together connects your computer directly to the other player's, so each of you can see the other's internet address.";
+
+    it.each([
+        ["a NES game", { kind: "nes", title: "Super Mario Bros. 3" }],
+        ["no game", null],
+        ["a Game Boy game", { kind: "gb", title: "Tetris" }],
+    ] as const)("says beneath the cards that each player sees the other's internet address, with %s (nr-ri8n)", (_, current) => {
+        game = current;
+        open();
+        const lines = body().querySelectorAll<HTMLElement>(".netplay-address");
+        expect(lines).toHaveLength(1);
+        expect(lines[0].textContent).toBe(ADDRESS_LINE);
+        expect(lines[0].tagName).toBe("P");
+        expect(lines[0].hasAttribute("tabindex")).toBe(false);
+        const join = body().querySelector("[data-choice=join]")!;
+        expect(join.compareDocumentPosition(lines[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("shows the address line only in the first window", () => {
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
+        expect(body().querySelector(".netplay-address")).toBeNull();
+    });
+
     it("lets a SNES game be hosted", () => {
         game = { kind: "snes", title: "Super Mario World" };
         open();
@@ -287,13 +312,12 @@ describe("hosting", () => {
         expect(buttonNames()).toEqual(["Close", "Try again"]);
     });
 
-    it("says when the other player could not be reached, offering to start again", () => {
+    it("says when the two computers could not be connected, offering to start again (nr-ri8n)", () => {
         hostStep1();
         session.emit({ phase: "failed", failure: "unreachable" });
-        expect(text()).toContain(
-            "Couldn't reach the other player. Network play needs both computers on the same network (or the same VPN). Check that, then start again."
-        );
+        expect(alerts()).toEqual([["err", "Couldn't connect your two computers. Your networks don't allow a direct connection between them. This often happens on mobile, hotspot or work networks — try again with both of you on a home network."]]);
         expect(buttonNames()).toEqual(["Close", "Start again"]);
+        expect(document.activeElement).toBe(button("Start again"));
         button("Start again")!.click();
         expect(session.startAgain).toHaveBeenCalled();
     });
@@ -326,7 +350,7 @@ describe("hosting", () => {
         session.emit({ rtt: 190 });
         expect(body().querySelector(".netplay-pill")!.textContent).toBe("Response time 190 ms · Too slow");
         expect(text()).toContain(
-            "The connection has become too slow to play. It may recover by itself — if not, try both being on the same network, or closer to the router."
+            "The connection has become too slow to play. It may recover by itself — if not, try a wired connection or being closer to the router."
         );
         expect(buttonNames()).toEqual(["Disconnect", "Start game"]);
         session.emit({ rtt: 20 });
@@ -339,7 +363,7 @@ describe("hosting", () => {
         expect(text()).toContain("Too slow to play");
         expect(body().querySelector(".netplay-pill")!.textContent).toBe("Response time 210 ms · Too slow");
         expect(text()).toContain(
-            "The connection between the two browsers is too slow for the game to keep up. Try both being on the same network, or closer to the router."
+            "The connection between the two computers is too slow for the game to keep up. Try a wired connection or being closer to the router — or play on the same network."
         );
         expect(buttonNames()).toEqual(["Close", "Try again"]);
         button("Try again")!.click();
@@ -526,17 +550,13 @@ describe("joining", () => {
         expect(buttonNames()).toEqual(["Cancel", "Join"]);
     });
 
-    it("says when the host could not be reached, offering to start again", () => {
+    it("says when the two computers could not be connected, offering to start again (nr-ri8n)", () => {
         joinStep1();
         type("K7QM4X");
         session.emit({ phase: "failed", failure: "unreachable" });
-        expect(alerts()).toEqual([
-            [
-                "err",
-                "Couldn't reach the other player. Network play needs both computers on the same network (or the same VPN). Check that, then start again.",
-            ],
-        ]);
+        expect(alerts()).toEqual([["err", "Couldn't connect your two computers. Your networks don't allow a direct connection between them. This often happens on mobile, hotspot or work networks — try again with both of you on a home network."]]);
         expect(buttonNames()).toEqual(["Close", "Start again"]);
+        expect(document.activeElement).toBe(button("Start again"));
     });
 
     it("starts with an empty field after the window is closed and opened again", () => {

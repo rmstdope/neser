@@ -181,7 +181,11 @@ asks for each chip's file once. See [README-SNES.md](README-SNES.md).
 the host gets a short room code (like `K7Q-M4X`) to read out or copy, and the other player types it.
 The two browsers meet through NESER's meeting service, liaison (`wss://liaison.rmstdope.eu/ws`), which
 only passes the connection setup between them and never sees the game; they then connect directly,
-so both computers must be on the same network (or VPN). liaison accepts pages served from
+each browser first asking outpost, NESER's own STUN server (`stun:outpost.rmstdope.eu:3478`), for its
+public address, so players in different homes can play together and each can see the other's internet
+address. Networks that pick a new public port for every destination (common on mobile, hotspot and
+work networks) cannot be connected this way; after about 10 seconds both players are told so. With
+outpost down, only computers on the same network (or VPN) connect. liaison accepts pages served from
 https://neser.rmstdope.eu and from `localhost`/`127.0.0.1` only, so a self-hosted copy reached by another
 address (a LAN IP, say) cannot start a network game. The two must run the same NESER build, and
 a connection slower than 120 ms round trip is refused. Once connected the host presses **Start game**:

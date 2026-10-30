@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { wrapChannel } from "./peer_link";
+import { webRtcLinks, wrapChannel } from "./peer_link";
 
 /** Just enough of a data channel and its connection for the link wrapper. */
 function fakeChannel() {
@@ -35,5 +35,36 @@ describe("the link to the other browser", () => {
         link.send("hi");
         expect(channel.send).toHaveBeenNthCalledWith(1, bytes);
         expect(channel.send).toHaveBeenNthCalledWith(2, "hi");
+    });
+});
+
+describe("connecting across the internet", () => {
+    it("asks outpost, NESER's own STUN server, for each browser's public address", async () => {
+        const configs: RTCConfiguration[] = [];
+        class FakeConnection extends EventTarget {
+            iceGatheringState = "complete";
+            localDescription: { sdp: string } | null = null;
+            constructor(config: RTCConfiguration) {
+                super();
+                configs.push(config);
+            }
+            createDataChannel() {
+                return new EventTarget();
+            }
+            async setLocalDescription() {
+                this.localDescription = { sdp: "local" };
+            }
+            async setRemoteDescription() {}
+            close() {}
+        }
+        vi.stubGlobal("RTCPeerConnection", FakeConnection);
+        try {
+            (await webRtcLinks.startHost()).cancel();
+            (await webRtcLinks.startJoin("offer")).cancel();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+        const outpost = { iceServers: [{ urls: "stun:outpost.rmstdope.eu:3478" }] };
+        expect(configs).toEqual([outpost, outpost]);
     });
 });
