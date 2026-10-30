@@ -1,10 +1,14 @@
 /**
  * The direct connection between two browsers (nr-ayk5.3): one WebRTC data channel, set up from
- * an offer and an answer the two browsers swap through liaison (nr-z4nw). No STUN or TURN server
- * is asked (liaison's relay is not used either), so
- * only the browsers' own addresses are offered and the two must reach each other directly. This
- * is the only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
+ * an offer and an answer the two browsers swap through liaison (nr-z4nw). Each browser asks
+ * outpost, NESER's own STUN server, for the public address its router gives it (nr-ri8n), so two
+ * players in different homes can reach each other directly; no TURN relay is used (liaison's is
+ * left for nr-1wbx), so a pair whose networks block a direct connection cannot connect. This is
+ * the only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
  */
+
+/** outpost answers STUN only; it never carries game data. Without it, same-network play still works. */
+export const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:outpost.rmstdope.eu:3478" }];
 
 /**
  * An open channel to the other browser, carrying text (the session's messages) and bytes (a game
@@ -36,7 +40,10 @@ export interface PeerLinks {
     startJoin(hostSdp: string): Promise<JoinStart>;
 }
 
-/** The offer and answer each carry every address at once, so they wait for the browser to find them. */
+/**
+ * The offer and answer each carry every address at once, so they wait for the browser to find them;
+ * with outpost out of reach, the wait ends here and only the browser's own addresses are offered.
+ */
 const GATHER_LIMIT_MS = 3000;
 /** How long a closing channel may take to send what is queued before the connection is ended anyway. */
 const CLOSE_LIMIT_MS = 2000;
@@ -105,7 +112,7 @@ function opened(pc: RTCPeerConnection, channel: Promise<RTCDataChannel>): Promis
 }
 
 async function startHost(): Promise<HostStart> {
-    const pc = new RTCPeerConnection({ iceServers: [] });
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     const channel = pc.createDataChannel("neser");
     try {
         await pc.setLocalDescription();
@@ -125,7 +132,7 @@ async function startHost(): Promise<HostStart> {
 }
 
 async function startJoin(hostSdp: string): Promise<JoinStart> {
-    const pc = new RTCPeerConnection({ iceServers: [] });
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     const channel = new Promise<RTCDataChannel>((resolve) => {
         pc.addEventListener("datachannel", (event) => resolve(event.channel), { once: true });
     });

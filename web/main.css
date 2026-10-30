@@ -2537,6 +2537,12 @@ body.handheld:not(.handheld-portrait).touch-running .screen-wrap canvas {
   font-size: 12px;
 }
 
+.netplay-body p.netplay-address {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--steel-hi);
+}
+
 .netplay-pill {
   display: inline-flex;
   margin: 6px 0;

@@ -40,6 +40,10 @@ export function inviteMessage(gameTitle: string, room: string): string {
     );
 }
 
+/** Always beneath the two cards (nr-ri8n, docs/ui/nr-ri8n-internet-play.html): plain information, nothing to accept. */
+const ADDRESS_LINE =
+    "ⓘ Playing together connects your computer directly to the other player's, so each of you can see the other's internet address.";
+
 const OTHER: Record<Role, string> = { host: "the other player", join: "the host" };
 
 const kb = (bytes: number) => Math.floor(bytes / 1024);
@@ -259,7 +263,12 @@ export function createPlayTogether({
                 session.join();
             }
         );
-        body.append(el("p", "netplay-lede", "Two browsers on the same network, one game, two pads."), host, join);
+        body.append(
+            el("p", "netplay-lede", "Two browsers on the same network, one game, two pads."),
+            host,
+            join,
+            el("p", "netplay-address", ADDRESS_LINE)
+        );
         (hostable ? host : join).focus();
     }
 
@@ -282,6 +291,12 @@ export function createPlayTogether({
         body.querySelector<HTMLButtonElement>(".netplay-actions button")?.focus();
     }
 
+    /** Couldn't connect puts focus on Start again, as agreed for it (nr-ri8n); other failures on the first button. */
+    function focusFailureAction(view: NetplayView) {
+        if (view.failure === "unreachable") body.querySelector<HTMLButtonElement>(".netplay-actions .btn-primary")?.focus();
+        else focusFirstAction();
+    }
+
     function drawHost(view: NetplayView) {
         if (view.phase === "failed" && view.failure === "too-slow") return drawRefused(view);
         body.append(steps("host", 1));
@@ -289,7 +304,7 @@ export function createPlayTogether({
             // Liaison out of reach or busy is tried again; anything else starts again.
             const again = view.failure === "service" || view.failure === "busy" ? "Try again" : "Start again";
             body.append(failureAlert(view), actions(btn("Close", close), btn(again, () => session.startAgain(), true)));
-            return focusFirstAction();
+            return focusFailureAction(view);
         }
         const room = el("div", "netplay-room", view.room ?? "…");
         room.setAttribute("aria-label", "Room code");
@@ -347,7 +362,7 @@ export function createPlayTogether({
                     ? actions(btn("Close", close))
                     : actions(btn("Close", close), btn("Start again", () => session.startAgain(), true))
             );
-            return focusFirstAction();
+            return focusFailureAction(view);
         }
         if (view.phase !== "idle") {
             body.append(el("p", "netplay-muted", "⟳ Connecting…"), actions(btn("Cancel", close)));
@@ -395,8 +410,8 @@ export function createPlayTogether({
         }
         return alert(
             "err",
-            "Couldn't reach the other player.",
-            "Network play needs both computers on the same network (or the same VPN). Check that, then start again."
+            "Couldn't connect your two computers.",
+            "Your networks don't allow a direct connection between them. This often happens on mobile, hotspot or work networks — try again with both of you on a home network."
         );
     }
 
@@ -409,7 +424,7 @@ export function createPlayTogether({
             alert(
                 "err",
                 "",
-                "The connection between the two browsers is too slow for the game to keep up. Try both being on the same network, or closer to the router."
+                "The connection between the two computers is too slow for the game to keep up. Try a wired connection or being closer to the router — or play on the same network."
             ),
             actions(btn("Close", close), btn("Try again", () => session.startAgain(), true))
         );
@@ -441,7 +456,7 @@ export function createPlayTogether({
                     alert(
                         "err",
                         "",
-                        "The connection has become too slow to play. It may recover by itself — if not, try both being on the same network, or closer to the router."
+                        "The connection has become too slow to play. It may recover by itself — if not, try a wired connection or being closer to the router."
                     )
                 );
             }

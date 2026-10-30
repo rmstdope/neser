@@ -185,8 +185,12 @@ export function inputDelayFor(rttMs: number): number {
     return Math.min(MAX_INPUT_DELAY, Math.max(MIN_INPUT_DELAY, frames));
 }
 
-/** How long the two have, from the joiner being in the room, for the connection and its check. */
-export const CONNECT_LIMIT_MS = 15_000;
+/**
+ * How long the two have, from the joiner being in the room, for the connection and its check:
+ * "about 10 seconds at most" before both are told their networks don't allow it (nr-ri8n). It
+ * leaves room for both browsers' address gathering (3 s each at most) when outpost is out of reach.
+ */
+export const CONNECT_LIMIT_MS = 10_000;
 const CHECK_SAMPLES = 5;
 const CHECK_INTERVAL_MS = 200;
 const LIVE_INTERVAL_MS = 1000;
