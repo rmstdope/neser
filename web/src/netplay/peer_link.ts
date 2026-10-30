@@ -2,12 +2,13 @@
  * The direct connection between two browsers (nr-ayk5.3): one WebRTC data channel, set up from
  * an offer and an answer the two browsers swap through liaison (nr-z4nw). Each browser asks
  * outpost, NESER's own STUN server, for the public address its router gives it (nr-ri8n), so two
- * players in different homes can reach each other directly; no TURN relay is used (liaison's is
- * left for nr-1wbx), so a pair whose networks block a direct connection cannot connect. This is
- * the only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
+ * players in different homes can reach each other directly. Beside it each is given the room's TURN
+ * relay, outpost in Sweden, when liaison has one (nr-1wbx): WebRTC still prefers a direct path and
+ * goes through the relay only when none works, and the open link says which it took. This is the
+ * only file that touches `RTCPeerConnection`; the session drives it through `PeerLinks`.
  */
 
-/** outpost answers STUN only; it never carries game data. Without it, same-network play still works. */
+/** outpost's STUN, which never carries game data. Without it, same-network play still works. */
 export const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:outpost.rmstdope.eu:3478" }];
 
 /**
@@ -15,6 +16,8 @@ export const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:outpost.rmstdope.eu:34
  * being sent, nr-ayk5.4). `onClosed` is told once, however the channel ends.
  */
 export interface PeerLink {
+    /** Whether the two connected through the relay, as found when the channel opened; it never changes. */
+    readonly relayed: boolean;
     send(data: string | Uint8Array): void;
     onMessage(listener: (data: string | Uint8Array) => void): void;
     onClosed(listener: () => void): void;
@@ -35,9 +38,10 @@ export interface JoinStart {
     cancel(): void;
 }
 
+/** `relay` is the room's TURN relay from liaison, or none. */
 export interface PeerLinks {
-    startHost(): Promise<HostStart>;
-    startJoin(hostSdp: string): Promise<JoinStart>;
+    startHost(relay: RTCIceServer[]): Promise<HostStart>;
+    startJoin(hostSdp: string, relay: RTCIceServer[]): Promise<JoinStart>;
 }
 
 /**
@@ -60,7 +64,32 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
     });
 }
 
-export function wrapChannel(pc: RTCPeerConnection, channel: RTCDataChannel): PeerLink {
+/**
+ * Whether the candidate pair the connection chose has the relay at either end: the transport's
+ * selected pair, or else the nominated pair that succeeded. Either end, so both browsers agree.
+ */
+export function isRelayed(report: RTCStatsReport): boolean {
+    const stats = new Map<string, Record<string, unknown>>();
+    report.forEach((stat: Record<string, unknown>) => stats.set(String(stat.id), stat));
+    const all = [...stats.values()];
+    const selectedId = all.find((stat) => stat.type === "transport" && typeof stat.selectedCandidatePairId === "string")?.selectedCandidatePairId;
+    const pair =
+        (typeof selectedId === "string" ? stats.get(selectedId) : undefined) ??
+        all.find((stat) => stat.type === "candidate-pair" && stat.nominated === true && stat.state === "succeeded");
+    if (!pair) return false;
+    return [pair.localCandidateId, pair.remoteCandidateId].some((id) => stats.get(String(id))?.candidateType === "relay");
+}
+
+/** Whether `pc` is connected through the relay; a connection whose stats cannot be read counts as direct. */
+async function readRelayed(pc: RTCPeerConnection): Promise<boolean> {
+    try {
+        return isRelayed(await pc.getStats());
+    } catch {
+        return false;
+    }
+}
+
+export function wrapChannel(pc: RTCPeerConnection, channel: RTCDataChannel, relayed = false): PeerLink {
     channel.binaryType = "arraybuffer";
     let closedListener: () => void = () => {};
     let ended = false;
@@ -74,6 +103,7 @@ export function wrapChannel(pc: RTCPeerConnection, channel: RTCDataChannel): Pee
         if (pc.connectionState === "failed" || pc.connectionState === "closed") end();
     });
     return {
+        relayed,
         send: (data) => {
             if (channel.readyState !== "open") return;
             if (typeof data === "string") channel.send(data);
@@ -104,15 +134,16 @@ function opened(pc: RTCPeerConnection, channel: Promise<RTCDataChannel>): Promis
         pc.addEventListener("connectionstatechange", () => {
             if (pc.connectionState === "failed" || pc.connectionState === "closed") reject(new Error("unreachable"));
         });
+        const open = (ch: RTCDataChannel) => readRelayed(pc).then((relayed) => resolve(wrapChannel(pc, ch, relayed)));
         channel.then((ch) => {
-            if (ch.readyState === "open") resolve(wrapChannel(pc, ch));
-            else ch.addEventListener("open", () => resolve(wrapChannel(pc, ch)), { once: true });
+            if (ch.readyState === "open") open(ch);
+            else ch.addEventListener("open", () => open(ch), { once: true });
         });
     });
 }
 
-async function startHost(): Promise<HostStart> {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+async function startHost(relay: RTCIceServer[]): Promise<HostStart> {
+    const pc = new RTCPeerConnection({ iceServers: [...ICE_SERVERS, ...relay] });
     const channel = pc.createDataChannel("neser");
     try {
         await pc.setLocalDescription();
@@ -131,8 +162,8 @@ async function startHost(): Promise<HostStart> {
     };
 }
 
-async function startJoin(hostSdp: string): Promise<JoinStart> {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+async function startJoin(hostSdp: string, relay: RTCIceServer[]): Promise<JoinStart> {
+    const pc = new RTCPeerConnection({ iceServers: [...ICE_SERVERS, ...relay] });
     const channel = new Promise<RTCDataChannel>((resolve) => {
         pc.addEventListener("datachannel", (event) => resolve(event.channel), { once: true });
     });
