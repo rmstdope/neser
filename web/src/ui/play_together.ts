@@ -2,7 +2,8 @@ import type { ConsoleKind } from "../console/consoles";
 import { buildLabel, type BuildId } from "../netplay/build_id";
 import { responseTimeRating } from "../netplay/response_time";
 import { NETPLAY_KINDS, type GamePackage } from "../netplay/game_package";
-import type { NetplaySession, NetplayView, Role } from "../netplay/session";
+import { ROOM_CODE_LENGTH, showRoomCode, tidyRoomCode } from "../netplay/room_code";
+import type { JoinProblem, NetplaySession, NetplayView, Role } from "../netplay/session";
 
 /**
  * The Play together window and its top-bar button (nr-ayk5.3; the agreed design is
@@ -13,6 +14,10 @@ import type { NetplaySession, NetplayView, Role } from "../netplay/session";
  * does not stop it, and the chip shows how far it is. While the game is played together
  * (nr-ayk5.5) the connected step offers only Disconnect, which the page asks about first, and the
  * chip says "Waiting…" while the other player's game holds this one.
+ *
+ * The two meet by one short room code (nr-z4nw, docs/ui/nr-z4nw-room-code.html): the host's step
+ * shows it, with Copy code and Copy invite message; the joiner's step is one field that takes only
+ * code characters, puts the dash in itself and keeps what was typed through every error.
  */
 
 export type CurrentGame = { kind: ConsoleKind; title: string };
@@ -21,9 +26,19 @@ const HOSTABLE: readonly ConsoleKind[] = NETPLAY_KINDS;
 const COPIED_FOR_MS = 1500;
 
 const STEPS: Record<Role, readonly string[]> = {
-    host: ["1. Send your code", "2. Paste their code", "3. Connected"],
-    join: ["1. Paste the host's code", "2. Send your code", "3. Connected"],
+    host: ["1. Share the code", "2. Connected"],
+    join: ["1. Type the host's code", "2. Connected"],
 };
+
+/** Where the invite sends the other player. */
+const NESER_ADDRESS = "https://neser.rmstdope.eu";
+
+export function inviteMessage(gameTitle: string, room: string): string {
+    return (
+        `Play ${gameTitle} with me in NESER! Open ${NESER_ADDRESS}, press Play together, ` +
+        `then Join a game, and type the code ${room}`
+    );
+}
 
 const OTHER: Record<Role, string> = { host: "the other player", join: "the host" };
 
@@ -55,18 +70,21 @@ function alert(tone: "warn" | "err", lead: string, rest = ""): HTMLElement {
     return box;
 }
 
-function pasteAlert(role: Role, problem: NetplayView["pasteProblem"]): HTMLElement | null {
-    if (problem === "not-neser") {
-        const from = role === "join" ? "the host's window" : "the other player's window";
-        return alert("err", "That isn't a NESER code.", `Copy the whole code from ${from} and paste it again.`);
-    }
-    if (problem === "wrong-kind") {
-        return role === "join"
-            ? alert("err", "This is a reply code, not a host's code.", "Ask the host for the code from their window.")
-            : alert("err", "This is a host's code, not the other player's reply.", "Ask the other player for the code from their window.");
-    }
-    return null;
-}
+const JOIN_PROBLEMS: Record<JoinProblem, [string, string]> = {
+    "room-not-found": ["There's no game with that code.", "Check the code with the host and try again."],
+    "room-full": ["That game already has two players.", "Ask the host to start a new game and tell you the new code."],
+    service: [
+        "Network play can't start right now.",
+        "NESER couldn't reach its meeting service on the internet. Check that this computer is online, then try again.",
+    ],
+    busy: ["Too many games are being started right now.", "Wait a minute, then try again."],
+    "host-left": ["The host closed this game before you were connected.", "Ask them to start a new one and tell you the new code."],
+};
+
+const ROOM_NOTES = {
+    expired: "The old code ran out, so here is a new one.",
+    left: "The other player left before you were connected. Here is a new code.",
+} as const;
 
 function pill(rtt: number): HTMLElement {
     const rating = responseTimeRating(rtt);
@@ -124,8 +142,8 @@ export function createPlayTogether({
     /** Which screen is drawn; a change of it redraws the window, anything else updates it in place. */
     let screenKey = "";
     let update: (view: NetplayView) => void = () => {};
-    /** The text last pasted, shown again while it is being connected or after it failed. */
-    let lastPaste = "";
+    /** The code characters in the joiner's field, kept through every error and Start again. */
+    let typedRoom = "";
     const buttonLabel = openButton.textContent ?? "Play together";
     /** This player ended playing together: the chip says Disconnected until it is pressed. */
     let endedHere = false;
@@ -236,128 +254,123 @@ export function createPlayTogether({
             "Join a game",
             "Connect to a game someone else is hosting. You are player 2 — you don't need the game file.",
             true,
-            () => session.join()
+            () => {
+                typedRoom = "";
+                session.join();
+            }
         );
         body.append(el("p", "netplay-lede", "Two browsers on the same network, one game, two pads."), host, join);
         (hostable ? host : join).focus();
     }
 
-    /** A code to copy, with Copy code turning to "✓ Copied" for a moment. */
-    function codeBox(view: NetplayView) {
-        const box = el("div", "netplay-code");
-        box.tabIndex = 0;
-        box.setAttribute("aria-label", "Your code");
-        let copiedTimer: ReturnType<typeof setTimeout> | undefined;
-        const copy = btn("Copy code", async () => {
-            const code = session.view().ownCode;
-            if (!code) return;
-            if (!(await copyText(code))) return;
-            copy.textContent = "✓ Copied";
-            clearTimeout(copiedTimer);
-            copiedTimer = setTimeout(() => (copy.textContent = "Copy code"), COPIED_FOR_MS);
+    /** A copy button that says `done` for a moment once `text()` is on the clipboard. */
+    function copyButton(label: string, done: string, text: () => string | null, onCopied: (copied: string) => void = () => {}) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const button = btn(label, async () => {
+            const copied = text();
+            if (!copied || !(await copyText(copied))) return;
+            button.textContent = done;
+            onCopied(copied);
+            clearTimeout(timer);
+            timer = setTimeout(() => (button.textContent = label), COPIED_FOR_MS);
         });
-        const fill = (v: NetplayView) => {
-            box.textContent = v.ownCode ?? "…";
-            copy.disabled = v.ownCode === null;
-        };
-        fill(view);
-        return { box, copy, fill };
+        return button;
     }
 
-    function pasteBox(role: Role, placeholder: string, view: NetplayView) {
-        const box = el("textarea", "netplay-paste");
-        box.value = view.phase === "idle" ? "" : lastPaste;
-        // Once connecting or failed, the code shown is the one that was tried; Start again takes a new one.
-        box.readOnly = view.phase !== "idle";
-        box.placeholder = placeholder;
-        box.rows = 4;
-        box.spellcheck = false;
-        box.setAttribute("aria-label", placeholder);
-        box.addEventListener("input", () => {
-            lastPaste = box.value;
-            void session.paste(box.value);
-        });
-        const problem = el("div");
-        const fill = (v: NetplayView) => problem.replaceChildren(...[pasteAlert(role, v.pasteProblem)].filter((n) => n !== null));
-        return { box, problem, fill };
+    /** The first button of the step's row, for a step whose only way on is a button. */
+    function focusFirstAction() {
+        body.querySelector<HTMLButtonElement>(".netplay-actions button")?.focus();
     }
 
     function drawHost(view: NetplayView) {
-        if (view.step === 1) {
-            const code = codeBox(view);
-            body.append(steps("host", 1), el("p", "", "Send this code to the other player — by chat, email, anything."), code.box);
-            if (view.phase === "failed") {
-                // The browser could not make a connection to offer at all.
-                body.append(failureAlert(view), actions(btn("Close", close), btn("Start again", () => session.startAgain(), true)));
-                body.querySelector<HTMLButtonElement>(".netplay-actions button")?.focus();
-                return;
-            }
-            const next = btn("Next", () => session.next(), true);
-            body.append(actions(btn("Cancel", close), code.copy, next));
-            update = (v) => {
-                code.fill(v);
-                next.disabled = v.ownCode === null;
-            };
-            update(view);
-            code.copy.focus();
-            return;
-        }
         if (view.phase === "failed" && view.failure === "too-slow") return drawRefused(view);
-        const paste = pasteBox("host", "Paste their code here", view);
-        body.append(steps("host", 2), el("p", "", "Paste the code the other player sends back."), paste.box, paste.problem);
-        if (view.phase === "connecting") {
-            body.append(el("p", "netplay-muted", "⟳ Connecting…"), actions(btn("Cancel", close)));
-            return;
-        }
+        body.append(steps("host", 1));
         if (view.phase === "failed") {
-            body.append(failureAlert(view));
-            body.append(
-                view.failure === "other-build"
-                    ? actions(btn("Close", close))
-                    : actions(btn("Close", close), btn("Start again", () => session.startAgain(), true))
-            );
-            return;
+            // Liaison out of reach or busy is tried again; anything else starts again.
+            const again = view.failure === "service" || view.failure === "busy" ? "Try again" : "Start again";
+            body.append(failureAlert(view), actions(btn("Close", close), btn(again, () => session.startAgain(), true)));
+            return focusFirstAction();
         }
-        const connect = btn("Connect", () => session.connect(), true);
-        body.append(actions(btn("Back", () => session.back()), connect));
-        update = (v) => {
-            paste.fill(v);
-            connect.disabled = !v.pasteReady;
-        };
-        update(view);
-        paste.box.focus();
+        const room = el("div", "netplay-room", view.room ?? "…");
+        room.setAttribute("aria-label", "Room code");
+        body.append(el("p", "", "Tell the other player this code:"), room);
+        if (view.roomNote) body.append(alert("warn", "", ROOM_NOTES[view.roomNote]));
+        if (view.phase === "connecting") {
+            body.append(el("p", "netplay-muted", "⟳ The other player is here — connecting…"), actions(btn("Cancel", close)));
+            return focusFirstAction();
+        }
+        body.append(el("p", "netplay-muted", "⟳ Waiting for the other player to type it…"));
+        const shown = () => session.view().room;
+        const copiedLine = el("p", "netplay-muted netplay-small netplay-copied");
+        const invite = copyButton(
+            "Copy invite message",
+            "✓ Invite copied",
+            () => {
+                const code = shown();
+                return code ? inviteMessage(currentGame()?.title ?? "a game", code) : null;
+            },
+            (message) => {
+                copiedLine.textContent = `Copied: “${message}”`;
+                if (!copiedLine.isConnected) body.append(copiedLine);
+            }
+        );
+        const copy = copyButton("Copy code", "✓ Copied", shown);
+        invite.disabled = copy.disabled = view.room === null;
+        body.append(actions(btn("Cancel", close), invite, copy));
+        if (view.room) copy.focus();
+        else focusFirstAction();
     }
 
     function drawJoin(view: NetplayView) {
         if (view.phase === "failed" && view.failure === "too-slow") return drawRefused(view);
-        if (view.step === 1) {
-            const paste = pasteBox("join", "Paste the host's code here", view);
-            body.append(steps("join", 1), el("p", "", "Paste the code the host sent you."), paste.box, paste.problem);
-            if (view.phase === "failed") {
-                body.append(failureAlert(view), actions(btn("Close", close)));
-                return;
-            }
-            const own = currentGame();
-            if (own) body.append(alert("warn", "", `${own.title} will be closed when the host's game arrives. Your saves are kept.`));
-            const next = btn("Next", () => session.next(), true);
-            body.append(actions(btn("Cancel", close), next));
-            update = (v) => {
-                paste.fill(v);
-                next.disabled = !v.pasteReady;
-            };
-            update(view);
-            paste.box.focus();
-            return;
-        }
-        const code = codeBox(view);
-        body.append(steps("join", 2), el("p", "", "Send this code back to the host."), code.box);
+        const field = el("input", "netplay-room-field");
+        field.type = "text";
+        field.placeholder = "ABC-DEF";
+        field.setAttribute("aria-label", "Room code");
+        field.setAttribute("autocapitalize", "characters");
+        field.autocomplete = "off";
+        field.spellcheck = false;
+        field.maxLength = ROOM_CODE_LENGTH + 1;
+        field.value = showRoomCode(typedRoom);
+        // While a code is tried, and after a failure, the field shows the code that was tried.
+        field.readOnly = view.phase !== "idle";
+        body.append(
+            steps("join", 1),
+            el("p", "", "Type the code the host tells you."),
+            field,
+            el("p", "netplay-muted netplay-small", "Codes never use I, O, 0 or 1.")
+        );
         if (view.phase === "failed") {
-            body.append(failureAlert(view), actions(btn("Close", close), btn("Start again", () => session.startAgain(), true)));
-            return;
+            body.append(
+                failureAlert(view),
+                view.failure === "other-build"
+                    ? actions(btn("Close", close))
+                    : actions(btn("Close", close), btn("Start again", () => session.startAgain(), true))
+            );
+            return focusFirstAction();
         }
-        body.append(el("p", "netplay-muted", "⟳ Waiting for the host to paste your code…"), actions(btn("Cancel", close), code.copy));
-        update = code.fill;
-        code.copy.focus();
+        if (view.phase !== "idle") {
+            body.append(el("p", "netplay-muted", "⟳ Connecting…"), actions(btn("Cancel", close)));
+            return focusFirstAction();
+        }
+        if (view.joinProblem) body.append(alert("err", ...JOIN_PROBLEMS[view.joinProblem]));
+        const own = currentGame();
+        if (own) body.append(alert("warn", "", `${own.title} will be closed when the host's game arrives. Your saves are kept.`));
+        const join = btn("Join", () => session.joinRoom(showRoomCode(typedRoom)), true);
+        const ready = () => (join.disabled = typedRoom.length !== ROOM_CODE_LENGTH);
+        field.addEventListener("input", () => {
+            typedRoom = tidyRoomCode(field.value);
+            field.value = showRoomCode(typedRoom);
+            ready();
+        });
+        field.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" || join.disabled) return;
+            event.preventDefault();
+            join.click();
+        });
+        ready();
+        body.append(actions(btn("Cancel", close), join));
+        field.focus();
     }
 
     function failureAlert(view: NetplayView): HTMLElement {
@@ -371,6 +384,11 @@ export function createPlayTogether({
             );
         }
         if (view.failure === "peer-left") return alert("err", "The other player disconnected.");
+        if (view.failure === "service") return alert("err", ...JOIN_PROBLEMS.service);
+        if (view.failure === "busy") return alert("err", ...JOIN_PROBLEMS.busy);
+        if (view.failure === "too-many-attempts") {
+            return alert("err", "Too many wrong codes.", "Check the code with the host, then press Start again.");
+        }
         return alert(
             "err",
             "Couldn't reach the other player.",
@@ -396,7 +414,7 @@ export function createPlayTogether({
 
     function drawConnected(view: NetplayView) {
         const role = view.role!;
-        body.append(steps(role, 3));
+        body.append(steps(role, 2));
         if (view.phase === "failed") {
             body.append(failureAlert(view), actions(btn("Close", close), btn("Start again", () => session.startAgain(), true)));
             body.querySelector<HTMLButtonElement>(".netplay-actions button")?.focus();
@@ -512,14 +530,24 @@ export function createPlayTogether({
     }
 
     function draw(view: NetplayView) {
-        const key = `${view.role}|${view.step}|${view.phase}|${view.failure}|${view.sending?.direction ?? ""}|${view.notice}`;
+        const key = [
+            view.role,
+            view.step,
+            view.phase,
+            view.failure,
+            view.sending?.direction ?? "",
+            view.notice,
+            view.room,
+            view.roomNote,
+            view.joinProblem,
+        ].join("|");
         if (key === screenKey) return update(view);
         screenKey = key;
         update = () => {};
         body.replaceChildren();
         title.textContent = view.role === "host" ? "Host this game" : view.role === "join" ? "Join a game" : "Play together";
         if (view.role === null) drawChoice();
-        else if (view.step === 3) drawConnected(view);
+        else if (view.step === 2) drawConnected(view);
         else if (view.role === "host") drawHost(view);
         else drawJoin(view);
     }

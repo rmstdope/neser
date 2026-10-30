@@ -9,9 +9,9 @@ import { createPlayTogether, type CurrentGame } from "./play_together";
 const IDLE: NetplayView = {
     role: null,
     step: 1,
-    ownCode: null,
-    pasteProblem: null,
-    pasteReady: false,
+    room: null,
+    roomNote: null,
+    joinProblem: null,
     phase: "idle",
     failure: null,
     theirs: null,
@@ -24,12 +24,9 @@ const IDLE: NetplayView = {
 class FakeSession implements NetplaySession {
     state: NetplayView = { ...IDLE };
     private listener: (view: NetplayView) => void = () => {};
-    host = vi.fn(() => this.emit({ role: "host", step: 1, ownCode: "NSR1-hostcode" }));
+    host = vi.fn(() => this.emit({ role: "host", step: 1, phase: "waiting", room: "K7Q-M4X" }));
     join = vi.fn(() => this.emit({ role: "join", step: 1 }));
-    next = vi.fn();
-    back = vi.fn();
-    paste = vi.fn(async () => {});
-    connect = vi.fn();
+    joinRoom = vi.fn();
     disconnect = vi.fn(() => this.emit({ ...IDLE }));
     cancel = vi.fn(() => this.emit({ ...IDLE }));
     startAgain = vi.fn();
@@ -88,6 +85,9 @@ function title() {
 }
 function open() {
     chip().click();
+}
+function alerts() {
+    return [...body().querySelectorAll<HTMLElement>(".netplay-alert")].map((a) => [a.dataset.tone, a.textContent]);
 }
 
 beforeEach(() => {
@@ -172,90 +172,124 @@ describe("hosting", () => {
         open();
         body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
     }
+    function room() {
+        return body().querySelector(".netplay-room")?.textContent;
+    }
+    const INVITE =
+        "Play Super Mario Bros. 3 with me in NESER! Open https://neser.rmstdope.eu, press Play together, then Join a game, and type the code K7Q-M4X";
 
-    it("shows step 1 with the code to send", () => {
+    it("shows the room code straight away, with Copy code in focus", () => {
         hostStep1();
         expect(session.host).toHaveBeenCalled();
         expect(title()).toBe("Host this game");
         const steps = [...body().querySelectorAll(".netplay-steps span")].map((s) => [s.textContent, s.className]);
         expect(steps).toEqual([
-            ["1. Send your code", "on"],
-            ["2. Paste their code", ""],
-            ["3. Connected", ""],
+            ["1. Share the code", "on"],
+            ["2. Connected", ""],
         ]);
-        expect(text()).toContain("Send this code to the other player — by chat, email, anything.");
-        expect(body().querySelector(".netplay-code")!.textContent).toBe("NSR1-hostcode");
-        expect(buttonNames()).toEqual(["Cancel", "Copy code", "Next"]);
+        expect(text()).toContain("Tell the other player this code:");
+        expect(room()).toBe("K7Q-M4X");
+        expect(text()).toContain("⟳ Waiting for the other player to type it…");
+        expect(buttonNames()).toEqual(["Cancel", "Copy invite message", "Copy code"]);
+        expect(document.activeElement).toBe(button("Copy code"));
     });
 
-    it("copies the code, says so, and moves on only with Next", async () => {
+    it("cannot copy while the code is on its way, and gives Copy code focus once it is there", () => {
+        open();
+        session.host.mockImplementationOnce(() => session.emit({ role: "host", step: 1, phase: "opening", room: null }));
+        body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
+        expect(room()).toBe("…");
+        expect(button("Copy code")!.disabled).toBe(true);
+        expect(button("Copy invite message")!.disabled).toBe(true);
+        session.emit({ phase: "waiting", room: "K7Q-M4X" });
+        expect(room()).toBe("K7Q-M4X");
+        expect(button("Copy code")!.disabled).toBe(false);
+        expect(document.activeElement).toBe(button("Copy code"));
+    });
+
+    it("copies only the code, and says Copied for a moment", async () => {
         vi.useFakeTimers();
         hostStep1();
         button("Copy code")!.click();
         await vi.advanceTimersByTimeAsync(0);
-        expect(writeText).toHaveBeenCalledWith("NSR1-hostcode");
-        expect(buttonNames()).toContain("✓ Copied");
-        expect(session.next).not.toHaveBeenCalled();
+        expect(writeText).toHaveBeenCalledWith("K7Q-M4X");
+        expect(buttonNames()).toEqual(["Cancel", "Copy invite message", "✓ Copied"]);
         await vi.advanceTimersByTimeAsync(1600);
-        expect(buttonNames()).toContain("Copy code");
-        button("Next")!.click();
-        expect(session.next).toHaveBeenCalled();
+        expect(buttonNames()).toEqual(["Cancel", "Copy invite message", "Copy code"]);
     });
 
-    it("waits for its code before it can be copied", () => {
+    it("copies the invite message in one press, and shows what was copied", async () => {
+        vi.useFakeTimers();
         hostStep1();
-        session.emit({ ownCode: null });
-        expect(button("Copy code")!.disabled).toBe(true);
-        expect(button("Next")!.disabled).toBe(true);
+        button("Copy invite message")!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(writeText).toHaveBeenCalledWith(INVITE);
+        expect(buttonNames()).toEqual(["Cancel", "✓ Invite copied", "Copy code"]);
+        expect(body().querySelector(".netplay-copied")!.textContent).toBe(`Copied: “${INVITE}”`);
+        await vi.advanceTimersByTimeAsync(1600);
+        expect(buttonNames()).toEqual(["Cancel", "Copy invite message", "Copy code"]);
+        expect(body().querySelector(".netplay-copied")!.textContent).toBe(`Copied: “${INVITE}”`);
     });
 
-    it("asks for the reply at step 2, with Connect waiting for a valid one", () => {
+    it("shows a new code by itself when the old one ran out, clearing what was copied", async () => {
         hostStep1();
-        session.emit({ step: 2 });
-        expect(text()).toContain("Paste the code the other player sends back.");
-        const box = body().querySelector("textarea")!;
-        expect(box.placeholder).toBe("Paste their code here");
-        expect(document.activeElement).toBe(box);
-        expect(buttonNames()).toEqual(["Back", "Connect"]);
-        expect(button("Connect")!.disabled).toBe(true);
-        box.value = "NSR1-reply";
-        box.dispatchEvent(new Event("input"));
-        expect(session.paste).toHaveBeenCalledWith("NSR1-reply");
-        session.emit({ pasteReady: true });
-        expect(button("Connect")!.disabled).toBe(false);
-        expect(document.activeElement).toBe(box);
-        expect(box.value).toBe("NSR1-reply");
-        button("Connect")!.click();
-        expect(session.connect).toHaveBeenCalled();
+        button("Copy invite message")!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        session.emit({ phase: "opening", room: null, roomNote: "expired" });
+        session.emit({ phase: "waiting", room: "T9W-2HB" });
+        expect(room()).toBe("T9W-2HB");
+        expect(alerts()).toEqual([["warn", "The old code ran out, so here is a new one."]]);
+        expect(text()).toContain("⟳ Waiting for the other player to type it…");
+        expect(body().querySelector(".netplay-copied")).toBeNull();
+        button("Copy code")!.click();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(writeText).toHaveBeenLastCalledWith("T9W-2HB");
     });
 
-    it("says what is wrong with a pasted reply, in the host's words", () => {
+    it("shows a new code by itself when the other player left before connecting", () => {
         hostStep1();
-        session.emit({ step: 2, pasteProblem: "not-neser" });
-        expect(text()).toContain("That isn't a NESER code. Copy the whole code from the other player's window and paste it again.");
-        session.emit({ pasteProblem: "wrong-kind" });
-        expect(text()).toContain("This is a host's code, not the other player's reply. Ask the other player for the code from their window.");
+        session.emit({ phase: "connecting" });
+        session.emit({ phase: "opening", room: null, roomNote: "left" });
+        session.emit({ phase: "waiting", room: "T9W-2HB" });
+        expect(room()).toBe("T9W-2HB");
+        expect(alerts()).toEqual([["warn", "The other player left before you were connected. Here is a new code."]]);
+        expect(buttonNames()).toEqual(["Cancel", "Copy invite message", "Copy code"]);
     });
 
-    it("names both builds when the other player's NESER differs", () => {
+    it("moves on by itself once the other player typed the code, offering only Cancel", () => {
         hostStep1();
-        session.emit({ step: 2, phase: "failed", failure: "other-build", theirs: { version: "1.3.0", commit: "b81e07d" } });
-        expect(text()).toContain(
-            "Different versions of NESER. You have NESER 1.3.0 (4f2a9c1), the other player has 1.3.0 (b81e07d). You both need the same version to play together — reload the page on both computers."
-        );
-        expect(buttonNames()).toEqual(["Close"]);
-    });
-
-    it("shows Connecting with Cancel", () => {
-        hostStep1();
-        session.emit({ step: 2, phase: "connecting" });
-        expect(text()).toContain("⟳ Connecting…");
+        session.emit({ phase: "connecting" });
+        expect(room()).toBe("K7Q-M4X");
+        expect(text()).toContain("⟳ The other player is here — connecting…");
+        expect(text()).not.toContain("Waiting for the other player");
         expect(buttonNames()).toEqual(["Cancel"]);
+    });
+
+    it("says when the meeting service cannot be reached, offering to try again", () => {
+        hostStep1();
+        session.emit({ phase: "failed", failure: "service", room: null });
+        expect(alerts()).toEqual([
+            [
+                "err",
+                "Network play can't start right now. NESER couldn't reach its meeting service on the internet. Check that this computer is online, then try again.",
+            ],
+        ]);
+        expect(room()).toBeUndefined();
+        expect(buttonNames()).toEqual(["Close", "Try again"]);
+        button("Try again")!.click();
+        expect(session.startAgain).toHaveBeenCalled();
+    });
+
+    it("says when too many games are being started, offering to try again", () => {
+        hostStep1();
+        session.emit({ phase: "failed", failure: "busy", room: null });
+        expect(alerts()).toEqual([["err", "Too many games are being started right now. Wait a minute, then try again."]]);
+        expect(buttonNames()).toEqual(["Close", "Try again"]);
     });
 
     it("says when the other player could not be reached, offering to start again", () => {
         hostStep1();
-        session.emit({ step: 2, phase: "failed", failure: "unreachable" });
+        session.emit({ phase: "failed", failure: "unreachable" });
         expect(text()).toContain(
             "Couldn't reach the other player. Network play needs both computers on the same network (or the same VPN). Check that, then start again."
         );
@@ -264,9 +298,14 @@ describe("hosting", () => {
         expect(session.startAgain).toHaveBeenCalled();
     });
 
-    it("is connected at step 3 with a Great response time", () => {
+    it("is connected at step 2 with a Great response time", () => {
         hostStep1();
-        session.emit({ step: 3, phase: "connected", rtt: 18 });
+        session.emit({ step: 2, phase: "connected", rtt: 18 });
+        const steps = [...body().querySelectorAll(".netplay-steps span")].map((s) => [s.textContent, s.className]);
+        expect(steps).toEqual([
+            ["1. Share the code", "done"],
+            ["2. Connected", "on"],
+        ]);
         expect(text()).toContain("Connected to the other player.");
         expect(body().querySelector(".netplay-pill")!.textContent).toBe("Response time 18 ms · Great");
         expect(body().querySelector(".netplay-pill")!.getAttribute("data-tone")).toBe("ok");
@@ -276,14 +315,14 @@ describe("hosting", () => {
 
     it("warns when the response time is only Playable", () => {
         hostStep1();
-        session.emit({ step: 3, phase: "connected", rtt: 84 });
+        session.emit({ step: 2, phase: "connected", rtt: 84 });
         expect(body().querySelector(".netplay-pill")!.textContent).toBe("Response time 84 ms · Playable");
         expect(text()).toContain("Your button presses will take a moment longer to show up. Fine for most games, harder for fast ones.");
     });
 
     it("turns red, still connected, when it becomes too slow, and back when it recovers", () => {
         hostStep1();
-        session.emit({ step: 3, phase: "connected", rtt: 18 });
+        session.emit({ step: 2, phase: "connected", rtt: 18 });
         session.emit({ rtt: 190 });
         expect(body().querySelector(".netplay-pill")!.textContent).toBe("Response time 190 ms · Too slow");
         expect(text()).toContain(
@@ -296,7 +335,7 @@ describe("hosting", () => {
 
     it("refuses a connection too slow at connect time", () => {
         hostStep1();
-        session.emit({ step: 2, phase: "failed", failure: "too-slow", rtt: 210 });
+        session.emit({ phase: "failed", failure: "too-slow", rtt: 210 });
         expect(text()).toContain("Too slow to play");
         expect(body().querySelector(".netplay-pill")!.textContent).toBe("Response time 210 ms · Too slow");
         expect(text()).toContain(
@@ -309,14 +348,14 @@ describe("hosting", () => {
 
     it("says when the other player leaves", () => {
         hostStep1();
-        session.emit({ step: 3, phase: "failed", failure: "peer-left" });
+        session.emit({ step: 2, phase: "failed", failure: "peer-left" });
         expect(text()).toContain("The other player disconnected.");
         expect(buttonNames()).toEqual(["Close", "Start again"]);
     });
 
-    it("disconnects from step 3", () => {
+    it("disconnects from step 2", () => {
         hostStep1();
-        session.emit({ step: 3, phase: "connected", rtt: 18 });
+        session.emit({ step: 2, phase: "connected", rtt: 18 });
         button("Disconnect")!.click();
         expect(session.disconnect).toHaveBeenCalled();
         expect(title()).toBe("Play together");
@@ -325,56 +364,164 @@ describe("hosting", () => {
 
 describe("joining", () => {
     function joinStep1() {
+        game = null;
         open();
         body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
     }
+    function field() {
+        return body().querySelector<HTMLInputElement>("input.netplay-room-field")!;
+    }
+    function type(value: string) {
+        field().value = value;
+        field().dispatchEvent(new Event("input"));
+    }
+    function enter() {
+        field().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    }
 
-    it("asks for the host's code at step 1", () => {
+    it("asks for the host's code in one field, with the field in focus", () => {
         joinStep1();
         expect(title()).toBe("Join a game");
-        expect([...body().querySelectorAll(".netplay-steps span")].map((s) => s.textContent)).toEqual([
-            "1. Paste the host's code",
-            "2. Send your code",
-            "3. Connected",
+        expect([...body().querySelectorAll(".netplay-steps span")].map((s) => [s.textContent, s.className])).toEqual([
+            ["1. Type the host's code", "on"],
+            ["2. Connected", ""],
         ]);
-        expect(text()).toContain("Paste the code the host sent you.");
-        const box = body().querySelector("textarea")!;
-        expect(box.placeholder).toBe("Paste the host's code here");
-        expect(document.activeElement).toBe(box);
-        expect(buttonNames()).toEqual(["Cancel", "Next"]);
-        expect(button("Next")!.disabled).toBe(true);
+        expect(text()).toContain("Type the code the host tells you.");
+        expect(field().placeholder).toBe("ABC-DEF");
+        expect(field().getAttribute("autocapitalize")).toBe("characters");
+        expect(text()).toContain("Codes never use I, O, 0 or 1.");
+        expect(document.activeElement).toBe(field());
+        expect(buttonNames()).toEqual(["Cancel", "Join"]);
+        expect(button("Join")!.disabled).toBe(true);
     });
 
-    it("says what is wrong with a pasted code, in the joiner's words", () => {
+    it("shows capitals, puts in the dash, and leaves out what a code never contains", () => {
         joinStep1();
-        session.emit({ pasteProblem: "not-neser" });
-        expect(text()).toContain("That isn't a NESER code. Copy the whole code from the host's window and paste it again.");
-        session.emit({ pasteProblem: "wrong-kind" });
-        expect(text()).toContain("This is a reply code, not a host's code. Ask the host for the code from their window.");
+        type("k7");
+        expect(field().value).toBe("K7");
+        type("k7qi");
+        expect(field().value).toBe("K7Q");
+        type("K7Q0m");
+        expect(field().value).toBe("K7Q-M");
+        type("K7Q-M1!4 x9");
+        expect(field().value).toBe("K7Q-M4X");
     });
 
-    it("names both builds when the host's NESER differs", () => {
+    it("takes a pasted code with or without its dash, spaces or lower case", () => {
         joinStep1();
+        type("  k7q m4x ");
+        expect(field().value).toBe("K7Q-M4X");
+        type("k7qm4x");
+        expect(field().value).toBe("K7Q-M4X");
+    });
+
+    it("enables Join once six characters are in, and Enter presses it", () => {
+        joinStep1();
+        type("K7QM4");
+        expect(button("Join")!.disabled).toBe(true);
+        enter();
+        expect(session.joinRoom).not.toHaveBeenCalled();
+        type("K7QM4X");
+        expect(button("Join")!.disabled).toBe(false);
+        enter();
+        expect(session.joinRoom).toHaveBeenCalledWith("K7Q-M4X");
+        button("Join")!.click();
+        expect(session.joinRoom).toHaveBeenCalledTimes(2);
+    });
+
+    it("shows Connecting beneath the code, with only Cancel", () => {
+        joinStep1();
+        type("K7QM4X");
+        session.emit({ phase: "connecting" });
+        expect(field().value).toBe("K7Q-M4X");
+        expect(field().readOnly).toBe(true);
+        expect(text()).toContain("⟳ Connecting…");
+        expect(buttonNames()).toEqual(["Cancel"]);
+        session.emit({ phase: "waiting" });
+        expect(text()).toContain("⟳ Connecting…");
+        expect(buttonNames()).toEqual(["Cancel"]);
+    });
+
+    it.each([
+        ["room-not-found", "There's no game with that code. Check the code with the host and try again."],
+        ["room-full", "That game already has two players. Ask the host to start a new game and tell you the new code."],
+        [
+            "service",
+            "Network play can't start right now. NESER couldn't reach its meeting service on the internet. Check that this computer is online, then try again.",
+        ],
+        ["busy", "Too many games are being started right now. Wait a minute, then try again."],
+        ["host-left", "The host closed this game before you were connected. Ask them to start a new one and tell you the new code."],
+    ] as const)("says %s beneath the field, keeping the code to fix and Join again", (problem, words) => {
+        joinStep1();
+        type("K7QM4Y");
+        session.emit({ phase: "connecting" });
+        session.emit({ phase: "idle", joinProblem: problem });
+        expect(alerts()).toEqual([["err", words]]);
+        expect(field().value).toBe("K7Q-M4Y");
+        expect(field().readOnly).toBe(false);
+        expect(document.activeElement).toBe(field());
+        expect(buttonNames()).toEqual(["Cancel", "Join"]);
+        expect(button("Join")!.disabled).toBe(false);
+        type("K7QM4X");
+        button("Join")!.click();
+        expect(session.joinRoom).toHaveBeenLastCalledWith("K7Q-M4X");
+    });
+
+    it("names both builds when the host's NESER differs, offering only Close", () => {
+        joinStep1();
+        type("K7QM4X");
         session.emit({ phase: "failed", failure: "other-build", theirs: { version: "1.3.0", commit: "b81e07d" } });
-        expect(text()).toContain("You have NESER 1.3.0 (4f2a9c1), the host has 1.3.0 (b81e07d).");
+        expect(alerts()).toEqual([
+            [
+                "err",
+                "Different versions of NESER. You have NESER 1.3.0 (4f2a9c1), the host has 1.3.0 (b81e07d). You both need the same version to play together — reload the page on both computers.",
+            ],
+        ]);
+        expect(field().value).toBe("K7Q-M4X");
         expect(buttonNames()).toEqual(["Close"]);
     });
 
-    it("sends its code back at step 2 while waiting for the host", () => {
+    it("stops after too many wrong codes, and Start again keeps the code to edit", () => {
         joinStep1();
-        session.emit({ step: 2, phase: "waiting", ownCode: "NSR1-reply" });
-        expect(text()).toContain("Send this code back to the host.");
-        expect(body().querySelector(".netplay-code")!.textContent).toBe("NSR1-reply");
-        expect(text()).toContain("⟳ Waiting for the host to paste your code…");
-        expect(buttonNames()).toEqual(["Cancel", "Copy code"]);
+        type("K7QM4Y");
+        session.emit({ phase: "failed", failure: "too-many-attempts" });
+        expect(alerts()).toEqual([["err", "Too many wrong codes. Check the code with the host, then press Start again."]]);
+        expect(buttonNames()).toEqual(["Close", "Start again"]);
+        button("Start again")!.click();
+        expect(session.startAgain).toHaveBeenCalled();
+        session.emit({ phase: "idle", failure: null });
+        expect(field().value).toBe("K7Q-M4Y");
+        expect(field().readOnly).toBe(false);
+        expect(buttonNames()).toEqual(["Cancel", "Join"]);
+    });
+
+    it("says when the host could not be reached, offering to start again", () => {
+        joinStep1();
+        type("K7QM4X");
+        session.emit({ phase: "failed", failure: "unreachable" });
+        expect(alerts()).toEqual([
+            [
+                "err",
+                "Couldn't reach the other player. Network play needs both computers on the same network (or the same VPN). Check that, then start again.",
+            ],
+        ]);
+        expect(buttonNames()).toEqual(["Close", "Start again"]);
+    });
+
+    it("starts with an empty field after the window is closed and opened again", () => {
+        joinStep1();
+        type("K7QM4X");
+        q("#netplay-close")!.click();
+        open();
+        body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
+        expect(field().value).toBe("");
     });
 
     it("is connected to the host, waiting for the host to start the game", () => {
         joinStep1();
-        session.emit({ step: 3, phase: "connected", rtt: 18 });
+        session.emit({ step: 2, phase: "connected", rtt: 18 });
         expect(text()).toContain("Connected to the host.");
         expect(text()).toContain("⟳ Waiting for the host to start the game…");
-        expect(text()).not.toContain("The host will send the game next.");
         expect(buttonNames()).toEqual(["Disconnect"]);
     });
 });
@@ -399,7 +546,7 @@ describe("closing the window", () => {
 
     it("once connected keeps the connection, and the top-bar button shows it", () => {
         open();
-        session.emit({ role: "host", step: 3, phase: "connected", rtt: 18 });
+        session.emit({ role: "host", step: 2, phase: "connected", rtt: 18 });
         q("#netplay-close")!.click();
         expect(session.cancel).not.toHaveBeenCalled();
         expect(chip().querySelector(".netplay-chip-long")!.textContent).toBe("Connected · ");
@@ -413,7 +560,7 @@ describe("closing the window", () => {
 
     it("shows Disconnected on the button when the other player leaves, until it is pressed", () => {
         open();
-        session.emit({ role: "host", step: 3, phase: "connected", rtt: 18 });
+        session.emit({ role: "host", step: 2, phase: "connected", rtt: 18 });
         q("#netplay-close")!.click();
         session.emit({ phase: "failed", failure: "peer-left" });
         expect(chip().textContent).toBe("Disconnected");
@@ -429,31 +576,6 @@ describe("closing the window", () => {
         open();
         q("#netplay-close")!.click();
         expect(document.activeElement).toBe(chip());
-    });
-});
-
-describe("the pasted code", () => {
-    it("stays in view while connecting", () => {
-        open();
-        body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
-        session.emit({ step: 2 });
-        const box = body().querySelector("textarea")!;
-        box.value = "NSR1-reply";
-        box.dispatchEvent(new Event("input"));
-        session.emit({ phase: "connecting" });
-        expect(body().querySelector("textarea")!.value).toBe("NSR1-reply");
-    });
-});
-
-describe("a failed step", () => {
-    it.each([
-        ["host", { step: 2 as const, phase: "failed" as const, failure: "unreachable" as const }],
-        ["join", { step: 1 as const, phase: "failed" as const, failure: "other-build" as const, theirs: BUILD }],
-    ])("keeps the %s's pasted code but no longer takes another", (choice, failed) => {
-        open();
-        body().querySelector<HTMLButtonElement>(`[data-choice=${choice}]`)!.click();
-        session.emit(failed);
-        expect(body().querySelector("textarea")!.readOnly).toBe(true);
     });
 });
 
@@ -475,30 +597,19 @@ describe("copying without the clipboard API", () => {
     });
 });
 
-describe("a host whose connection cannot start", () => {
-    it("says it could not reach the other player, offering to start again", () => {
-        open();
-        body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
-        session.emit({ ownCode: null, phase: "failed", failure: "unreachable" });
-        expect(text()).toContain("Couldn't reach the other player.");
-        expect(buttonNames()).toEqual(["Close", "Start again"]);
-    });
-});
-
 describe("sending the game (nr-ayk5.4)", () => {
     function hostConnected() {
         open();
         body().querySelector<HTMLButtonElement>("[data-choice=host]")!.click();
-        session.emit({ step: 3, phase: "connected", rtt: 18 });
+        session.emit({ step: 2, phase: "connected", rtt: 18 });
     }
     function joinConnected() {
         open();
         body().querySelector<HTMLButtonElement>("[data-choice=join]")!.click();
-        session.emit({ step: 3, phase: "connected", rtt: 18 });
+        session.emit({ step: 2, phase: "connected", rtt: 18 });
     }
     const sending = (direction: "send" | "receive", done: number, total: number) =>
         session.emit({ sending: { direction, name: "Super Mario Bros. 3", done, total } });
-    const alerts = () => [...body().querySelectorAll<HTMLElement>(".netplay-alert")].map((a) => [a.dataset.tone, a.textContent]);
 
     it("offers the host Start game, with focus, under the hint", () => {
         hostConnected();
@@ -637,7 +748,7 @@ describe("sending the game (nr-ayk5.4)", () => {
 describe("playing together (nr-ayk5.5)", () => {
     function playingTogether(role: "host" | "join") {
         playing = true;
-        session.emit({ role, step: 3, phase: "connected", rtt: 18 });
+        session.emit({ role, step: 2, phase: "connected", rtt: 18 });
     }
 
     it.each(["host", "join"] as const)("offers the %s only Disconnect while the game is played, which asks first", (role) => {

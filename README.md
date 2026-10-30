@@ -178,7 +178,9 @@ desktop put `dsp1b.rom`, `dsp2.rom`, `dsp3.rom` or `dsp4.rom` in `~/.neser/firmw
 asks for each chip's file once. See [README-SNES.md](README-SNES.md).
 
 **Play together** (top bar) connects two browsers for a NES or Super Nintendo network game:
-the host copies a code to the other player, who pastes it and sends one back. There is no server,
+the host gets a short room code (like `K7Q-M4X`) to read out or copy, and the other player types it.
+The two browsers meet through NESER's meeting service, liaison (`wss://liaison.rmstdope.eu/ws`), which
+only passes the connection setup between them and never sees the game; they then connect directly,
 so both computers must be on the same network (or VPN). The two must run the same NESER build, and
 a connection slower than 120 ms round trip is refused. Once connected the host presses **Start game**:
 the game (with any SNES firmware it needs) and the host's current moment are sent to the other
